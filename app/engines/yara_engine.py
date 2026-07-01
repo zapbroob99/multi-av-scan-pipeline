@@ -1,0 +1,277 @@
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+from time import perf_counter
+
+from app.models import EngineResultInput, ScanRecord
+
+
+ENGINE_NAME = "YARA"
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+DEFAULT_RULES_DIR = ROOT_DIR / "rules"
+DEFAULT_TIMEOUT_SECONDS = 30
+
+
+def get_yara_config() -> dict[str, str | int | bool]:
+    command = os.getenv("MASP_YARA_COMMAND", "yara")
+    rules_dir = Path(os.getenv("MASP_YARA_RULES_DIR", str(DEFAULT_RULES_DIR)))
+    rule_files = list_rule_files(rules_dir)
+
+    return {
+        "command": command,
+        "rules_dir": str(rules_dir),
+        "rule_count": len(rule_files),
+        "timeout_seconds": int(
+            os.getenv("MASP_YARA_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
+        ),
+        "enabled": shutil.which(command) is not None and bool(rule_files),
+    }
+
+
+def check_yara_health() -> dict[str, str | bool]:
+    config = get_yara_config()
+    command = str(config["command"])
+    path = shutil.which(command)
+    if path is None:
+        return {
+            "ok": False,
+            "status": "not configured",
+            "detail": f"{command} was not found on PATH.",
+        }
+
+    if int(config["rule_count"]) == 0:
+        return {
+            "ok": False,
+            "status": "no rules",
+            "detail": f"No .yar or .yara files found in {config['rules_dir']}.",
+        }
+
+    try:
+        completed = subprocess.run(
+            [command, "--version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "ok": False,
+            "status": "unavailable",
+            "detail": f"Could not execute {command}: {exc}",
+        }
+
+    version = (completed.stdout or completed.stderr).strip()
+    if completed.returncode != 0:
+        return {
+            "ok": False,
+            "status": "unavailable",
+            "detail": f"{command} exited with code {completed.returncode}: {version}",
+        }
+
+    return {
+        "ok": True,
+        "status": "available",
+        "detail": f"{command} {version} found at {path}; {config['rule_count']} rules loaded.",
+    }
+
+
+def run_yara_engine(scan: ScanRecord) -> EngineResultInput:
+    config = get_yara_config()
+    started_at = perf_counter()
+    command = str(config["command"])
+    timeout = int(config["timeout_seconds"])
+    rules_dir = Path(str(config["rules_dir"]))
+    rule_files = list_rule_files(rules_dir)
+
+    if shutil.which(command) is None:
+        return build_result(
+            status="skipped",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=f"{command} was not found on PATH.",
+            error_message="YARA is not installed or not configured.",
+            duration_ms=elapsed_ms(started_at),
+            signature_version=None,
+        )
+
+    if not rule_files:
+        return build_result(
+            status="skipped",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=f"No .yar or .yara files found in {rules_dir}.",
+            error_message="YARA rules directory is empty.",
+            duration_ms=elapsed_ms(started_at),
+            signature_version=str(rules_dir),
+        )
+
+    sample_path = Path(scan.storage_path)
+    if not sample_path.is_file():
+        return build_result(
+            status="failed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=f"Sample file not found: {scan.storage_path}",
+            error_message="Stored sample file is missing.",
+            duration_ms=elapsed_ms(started_at),
+            signature_version=str(rules_dir),
+        )
+
+    outputs = []
+    errors = []
+    matches: list[str] = []
+
+    for rule_file in rule_files:
+        try:
+            completed = subprocess.run(
+                [command, "-w", str(rule_file), str(sample_path)],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            errors.append(f"{rule_file.name}: timed out after {timeout} seconds")
+            outputs.append((exc.stdout or "") + (exc.stderr or ""))
+            continue
+        except OSError as exc:
+            return build_result(
+                status="failed",
+                detected=False,
+                signature=None,
+                severity="info",
+                confidence=0,
+                raw_output=str(exc),
+                error_message="YARA could not be executed.",
+                duration_ms=elapsed_ms(started_at),
+                signature_version=str(rules_dir),
+            )
+
+        raw_output = "\n".join(
+            part for part in [completed.stdout.strip(), completed.stderr.strip()] if part
+        )
+        if raw_output:
+            outputs.append(raw_output)
+
+        file_matches = parse_matches(completed.stdout)
+        matches.extend(file_matches)
+
+        stderr = completed.stderr.strip()
+        if completed.returncode != 0 and not file_matches and stderr:
+            errors.append(
+                f"{rule_file.name}: yara exited with code {completed.returncode}"
+            )
+            continue
+
+    unique_matches = sorted(set(matches))
+    raw_output = json.dumps(
+        {
+            "rules_dir": str(rules_dir),
+            "rule_files": [str(rule_file) for rule_file in rule_files],
+            "matches": unique_matches,
+            "output": outputs,
+            "errors": errors,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+
+    if unique_matches:
+        return build_result(
+            status="completed",
+            detected=True,
+            signature=", ".join(unique_matches),
+            severity="high",
+            confidence=85,
+            raw_output=raw_output,
+            error_message="; ".join(errors) if errors else None,
+            duration_ms=elapsed_ms(started_at),
+            signature_version=str(rules_dir),
+        )
+
+    if errors:
+        return build_result(
+            status="failed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=raw_output,
+            error_message="; ".join(errors),
+            duration_ms=elapsed_ms(started_at),
+            signature_version=str(rules_dir),
+        )
+
+    return build_result(
+        status="completed",
+        detected=False,
+        signature=None,
+        severity="info",
+        confidence=100,
+        raw_output=raw_output,
+        error_message=None,
+        duration_ms=elapsed_ms(started_at),
+        signature_version=str(rules_dir),
+    )
+
+
+def list_rule_files(rules_dir: Path) -> list[Path]:
+    if not rules_dir.is_dir():
+        return []
+    return sorted(
+        path
+        for pattern in ("*.yar", "*.yara")
+        for path in rules_dir.rglob(pattern)
+        if path.is_file()
+    )
+
+
+def parse_matches(stdout: str) -> list[str]:
+    matches = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        rule_name = stripped.split(maxsplit=1)[0]
+        if rule_name:
+            matches.append(rule_name)
+    return matches
+
+
+def build_result(
+    status: str,
+    detected: bool,
+    signature: str | None,
+    severity: str,
+    confidence: int,
+    raw_output: str,
+    error_message: str | None,
+    duration_ms: int,
+    signature_version: str | None,
+) -> EngineResultInput:
+    return EngineResultInput(
+        engine_name=ENGINE_NAME,
+        engine_version="yara-cli",
+        signature_version=signature_version,
+        status=status,
+        detected=detected,
+        signature=signature,
+        severity=severity,
+        confidence=confidence,
+        raw_output=raw_output,
+        error_message=error_message,
+        duration_ms=duration_ms,
+    )
+
+
+def elapsed_ms(started_at: float) -> int:
+    return max(1, int((perf_counter() - started_at) * 1000))

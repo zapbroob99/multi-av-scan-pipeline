@@ -50,6 +50,9 @@ def calculate_risk(engine_results: list[EngineResultRecord]) -> RiskAssessment:
     for result in unavailable:
         reasons.append(f"{result.engine_name} was {result.status}.")
 
+    if unavailable:
+        reasons.append("Assessment confidence reduced because one or more engines were unavailable.")
+
     score = min(score, 100)
     return RiskAssessment(
         score=score,

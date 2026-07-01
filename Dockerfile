@@ -5,12 +5,17 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends yara \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY rules ./rules
 
-RUN mkdir -p /app/data /app/storage/samples
+RUN mkdir -p /app/data /app/storage/samples /app/rules
 
 EXPOSE 8000
 

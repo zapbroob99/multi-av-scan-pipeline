@@ -122,8 +122,8 @@ def create_scan_job(
     case_name: str,
     priority: str,
     note: str,
-    status: str = "completed",
-    verdict: str = "metadata_only",
+    status: str = "queued",
+    verdict: str = "pending",
     risk_score: int | None = None,
 ) -> int:
     with connect() as connection:
@@ -139,7 +139,13 @@ def create_scan_job(
                 risk_score,
                 completed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?,
+                CASE
+                    WHEN ? IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
+                    ELSE NULL
+                END
+            )
             """,
             (
                 sample_id,
@@ -149,6 +155,7 @@ def create_scan_job(
                 status,
                 verdict,
                 risk_score,
+                status,
             ),
         )
         return require_lastrowid(cursor)
@@ -311,12 +318,87 @@ def update_scan_assessment(scan_id: int, verdict: str, risk_score: int) -> None:
         )
 
 
+def update_scan_status(scan_id: int, status: str) -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE scan_jobs
+            SET
+                status = ?,
+                completed_at = CASE
+                    WHEN ? IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
+                    ELSE NULL
+                END
+            WHERE id = ?
+            """,
+            (status, status, scan_id),
+        )
+
+
+def claim_next_scan_job() -> ScanRecord | None:
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        queued_row = connection.execute(
+            """
+            SELECT id
+            FROM scan_jobs
+            WHERE status = 'queued'
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """
+        ).fetchone()
+
+        if queued_row is None:
+            return None
+
+        scan_id = int(row_value(queued_row, "id"))
+        connection.execute(
+            """
+            UPDATE scan_jobs
+            SET status = 'running', completed_at = NULL
+            WHERE id = ?
+            """,
+            (scan_id,),
+        )
+        row = connection.execute(
+            """
+            SELECT
+                scan_jobs.id,
+                scan_jobs.sample_id,
+                scan_jobs.case_name,
+                scan_jobs.priority,
+                scan_jobs.note,
+                scan_jobs.status,
+                scan_jobs.verdict,
+                scan_jobs.risk_score,
+                scan_jobs.created_at,
+                scan_jobs.completed_at,
+                samples.original_filename,
+                samples.stored_filename,
+                samples.storage_path,
+                samples.content_type,
+                samples.size_bytes,
+                samples.md5,
+                samples.sha1,
+                samples.sha256
+            FROM scan_jobs
+            JOIN samples ON samples.id = scan_jobs.sample_id
+            WHERE scan_jobs.id = ?
+            """,
+            (scan_id,),
+        ).fetchone()
+
+        if row is None:
+            return None
+        return row_to_scan_record(row)
+
+
 def get_scan_counts() -> dict[str, int]:
     with connect() as connection:
         total = fetch_count(connection, "SELECT COUNT(*) FROM scan_jobs")
         running = fetch_count(
             connection,
-            "SELECT COUNT(*) FROM scan_jobs WHERE status = 'running'",
+            "SELECT COUNT(*) FROM scan_jobs WHERE status IN ('queued', 'running')",
         )
         high_risk = fetch_count(
             connection,

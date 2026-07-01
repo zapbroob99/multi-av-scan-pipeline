@@ -6,7 +6,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.database import (
-    create_engine_result,
     create_sample,
     create_scan_job,
     delete_scan,
@@ -17,8 +16,8 @@ from app.database import (
     list_recent_scans,
     update_scan_assessment,
 )
-from app.engines.clamav import check_clamav_health, get_clamav_config, run_clamav_engine
-from app.engines.static_metadata import run_static_metadata_engine
+from app.engines.clamav import check_clamav_health, get_clamav_config
+from app.engines.yara_engine import check_yara_health, get_yara_config
 from app.models import EngineResultRecord, ScanRecord
 from app.services.cleanup import delete_sample_file
 from app.services.ingest import store_upload
@@ -36,13 +35,26 @@ app = FastAPI(
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+CSS_PATH = STATIC_DIR / "css" / "app.css"
+REQUIRED_DETECTION_ENGINES = ("ClamAV", "YARA")
 
 init_db()
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
-def page_shell(title: str, active: str, body: str) -> str:
+def page_shell(
+    title: str,
+    active: str,
+    body: str,
+    refresh_seconds: int | None = None,
+) -> str:
+    css_version = int(CSS_PATH.stat().st_mtime) if CSS_PATH.exists() else 1
+    refresh_html = (
+        f'<meta http-equiv="refresh" content="{refresh_seconds}">'
+        if refresh_seconds is not None
+        else ""
+    )
     nav_items = [
         ("dashboard", "/", "Dashboard"),
         ("new_scan", "/scans/new", "New Scan"),
@@ -60,8 +72,21 @@ def page_shell(title: str, active: str, body: str) -> str:
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        {refresh_html}
         <title>{title} | MASP</title>
-        <link rel="stylesheet" href="/static/css/app.css">
+        <script>
+          (() => {{
+            try {{
+              const savedTheme = localStorage.getItem("masp-theme");
+              const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+              const theme = savedTheme || (prefersDark ? "dark" : "light");
+              document.documentElement.setAttribute("data-theme", theme);
+            }} catch (error) {{
+              document.documentElement.setAttribute("data-theme", "light");
+            }}
+          }})();
+        </script>
+        <link rel="stylesheet" href="/static/css/app.css?v={css_version}">
       </head>
       <body>
         <div class="app-shell">
@@ -89,6 +114,12 @@ def page_shell(title: str, active: str, body: str) -> str:
                 <p class="eyebrow">Multi AV orchestration</p>
                 <h1>{title}</h1>
               </div>
+              <div class="topbar-actions">
+                <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark theme" title="Toggle dark theme">
+                  <span class="theme-toggle-icon" aria-hidden="true"></span>
+                  <span data-theme-label>Dark</span>
+                </button>
+              </div>
             </header>
             <main class="content">
               {body}
@@ -100,18 +131,83 @@ def page_shell(title: str, active: str, body: str) -> str:
           const fileInput = document.querySelector("[data-file-input]");
           const selectedFile = document.querySelector("[data-selected-file]");
           const submitButton = document.querySelector("[data-submit-button]");
-          const selectAll = document.querySelector("[data-select-all]");
-          const scanCheckboxes = document.querySelectorAll("[data-scan-checkbox]");
+          const bulkDeleteForm = document.querySelector("[data-bulk-delete-form]");
           const bulkDeleteButton = document.querySelector("[data-bulk-delete]");
+          const scanRows = document.querySelectorAll("[data-scan-row]");
           const copyTargets = document.querySelectorAll("[data-copy-value]");
+          const themeToggle = document.querySelector("[data-theme-toggle]");
+          const themeLabel = document.querySelector("[data-theme-label]");
+          const selectedScanIds = new Set();
+          const clickTimers = new Map();
+
+          const applyTheme = (theme) => {{
+            document.documentElement.setAttribute("data-theme", theme);
+            try {{
+              localStorage.setItem("masp-theme", theme);
+            }} catch (error) {{
+              console.warn("Theme preference could not be saved", error);
+            }}
+            if (themeLabel) {{
+              themeLabel.textContent = theme === "dark" ? "Light" : "Dark";
+            }}
+          }};
+
+          applyTheme(document.documentElement.getAttribute("data-theme") || "light");
+
+          if (themeToggle) {{
+            themeToggle.addEventListener("click", () => {{
+              const currentTheme = document.documentElement.getAttribute("data-theme") || "light";
+              applyTheme(currentTheme === "dark" ? "light" : "dark");
+            }});
+          }}
 
           const updateBulkDeleteVisibility = () => {{
             if (!bulkDeleteButton) {{
               return;
             }}
 
-            const hasSelection = Array.from(scanCheckboxes).some((checkbox) => checkbox.checked);
-            bulkDeleteButton.hidden = !hasSelection;
+            bulkDeleteButton.hidden = selectedScanIds.size === 0;
+          }};
+
+          const syncBulkDeleteInputs = () => {{
+            if (!bulkDeleteForm) {{
+              return;
+            }}
+
+            bulkDeleteForm.querySelectorAll("input[name='scan_ids']").forEach((input) => input.remove());
+            selectedScanIds.forEach((scanId) => {{
+              const input = document.createElement("input");
+              input.type = "hidden";
+              input.name = "scan_ids";
+              input.value = scanId;
+              bulkDeleteForm.appendChild(input);
+            }});
+          }};
+
+          const setRowSelection = (row, selected) => {{
+            const scanId = row.getAttribute("data-scan-id");
+            if (!scanId) {{
+              return;
+            }}
+
+            if (selected) {{
+              selectedScanIds.add(scanId);
+            }} else {{
+              selectedScanIds.delete(scanId);
+            }}
+
+            row.classList.toggle("is-selected", selected);
+            row.setAttribute("aria-selected", selected ? "true" : "false");
+            syncBulkDeleteInputs();
+            updateBulkDeleteVisibility();
+          }};
+
+          const toggleRowSelection = (row) => {{
+            setRowSelection(row, !row.classList.contains("is-selected"));
+          }};
+
+          const shouldIgnoreRowClick = (event) => {{
+            return Boolean(event.target.closest("[data-copy-value], a, button, input, select, textarea, summary, details"));
           }};
 
           if (fileInput && selectedFile) {{
@@ -129,22 +225,46 @@ def page_shell(title: str, active: str, body: str) -> str:
             }});
           }}
 
-          if (selectAll && scanCheckboxes.length) {{
-            selectAll.addEventListener("change", () => {{
-              scanCheckboxes.forEach((checkbox) => {{
-                checkbox.checked = selectAll.checked;
-              }});
-              updateBulkDeleteVisibility();
-            }});
-          }}
-
-          if (scanCheckboxes.length) {{
-            scanCheckboxes.forEach((checkbox) => {{
-              checkbox.addEventListener("change", () => {{
-                if (selectAll) {{
-                  selectAll.checked = Array.from(scanCheckboxes).every((item) => item.checked);
+          if (scanRows.length) {{
+            scanRows.forEach((row) => {{
+              row.addEventListener("click", (event) => {{
+                if (shouldIgnoreRowClick(event)) {{
+                  return;
                 }}
-                updateBulkDeleteVisibility();
+
+                const scanId = row.getAttribute("data-scan-id");
+                window.clearTimeout(clickTimers.get(scanId));
+                clickTimers.set(scanId, window.setTimeout(() => {{
+                  toggleRowSelection(row);
+                  clickTimers.delete(scanId);
+                }}, 180));
+              }});
+
+              row.addEventListener("dblclick", (event) => {{
+                if (shouldIgnoreRowClick(event)) {{
+                  return;
+                }}
+
+                const scanId = row.getAttribute("data-scan-id");
+                window.clearTimeout(clickTimers.get(scanId));
+                const scanUrl = row.getAttribute("data-scan-url");
+                if (scanUrl) {{
+                  window.location.href = scanUrl;
+                }}
+              }});
+
+              row.addEventListener("keydown", (event) => {{
+                if (event.key === "Enter") {{
+                  const scanUrl = row.getAttribute("data-scan-url");
+                  if (scanUrl) {{
+                    window.location.href = scanUrl;
+                  }}
+                }}
+
+                if (event.key === " ") {{
+                  event.preventDefault();
+                  toggleRowSelection(row);
+                }}
               }});
             }});
             updateBulkDeleteVisibility();
@@ -152,7 +272,8 @@ def page_shell(title: str, active: str, body: str) -> str:
 
           if (copyTargets.length) {{
             copyTargets.forEach((target) => {{
-              target.addEventListener("click", async () => {{
+              target.addEventListener("click", async (event) => {{
+                event.stopPropagation();
                 const value = target.getAttribute("data-copy-value");
                 if (!value) {{
                   return;
@@ -209,17 +330,20 @@ def display_verdict(verdict: str) -> str:
 
 def status_pill(status: str) -> str:
     tone_by_status = {
+        "queued": "neutral",
         "completed": "success",
         "skipped": "neutral",
         "failed": "danger",
         "running": "warning",
+        "partial": "warning",
     }
     tone = tone_by_status.get(status, "warning")
-    return f'<span class="pill {tone}">{html.escape(status.title())}</span>'
+    return f'<span class="pill {tone}">{html.escape(display_verdict(status))}</span>'
 
 
 def verdict_pill(verdict: str) -> str:
     tone_by_verdict = {
+        "pending": "neutral",
         "info": "neutral",
         "metadata_only": "neutral",
         "low": "success",
@@ -253,33 +377,253 @@ def detected_pill(status: str, detected: bool) -> str:
     return '<span class="pill success">Clean</span>'
 
 
+def detection_engine_results(results: list[EngineResultRecord]) -> list[EngineResultRecord]:
+    return [
+        result
+        for result in results
+        if result.engine_name.lower() != "static metadata"
+    ]
+
+
+def detection_summary(results: list[EngineResultRecord]) -> tuple[int, int]:
+    detection_results = detection_engine_results(results)
+    detected = sum(
+        1
+        for result in detection_results
+        if result.status == "completed" and result.detected
+    )
+    return detected, len(detection_results)
+
+
+def detected_engine_names(results: list[EngineResultRecord]) -> list[str]:
+    return [
+        result.engine_name
+        for result in detection_engine_results(results)
+        if result.status == "completed" and result.detected
+    ]
+
+
+def detection_summary_text(results: list[EngineResultRecord]) -> str:
+    detected, total = detection_summary(results)
+    if total == 0:
+        return "No detection engines configured"
+    if detected == 0:
+        return f"0 of {total} engines detected"
+    return f"{detected} of {total} engines detected"
+
+
+def detection_summary_label(results: list[EngineResultRecord]) -> str:
+    return detection_summary_text(results)
+
+
+def detection_summary_pill(results: list[EngineResultRecord]) -> str:
+    detected, total = detection_summary(results)
+    if total == 0:
+        tone = "neutral"
+    elif detected > 0:
+        tone = "danger"
+    else:
+        tone = "success"
+    return f'<span class="pill {tone}">{html.escape(detection_summary_text(results))}</span>'
+
+
+def detection_meter(results: list[EngineResultRecord]) -> str:
+    detected, total = detection_summary(results)
+    meter_angle = 0 if total == 0 else round((detected / total) * 360)
+    if total == 0:
+        tone = "neutral"
+        label = "No detection engines configured"
+    elif detected > 0:
+        tone = "danger"
+        label = f"{detected} of {total} engines detected"
+    else:
+        tone = "success"
+        label = f"0 of {total} engines detected"
+
+    return f"""
+    <div class="detection-meter {tone}" style="--meter-angle: {meter_angle}deg" aria-label="{html.escape(label)}" title="{html.escape(label)}">
+      <div class="detection-meter-core">
+        <strong>{detected}</strong>
+        <span>/ {total}</span>
+      </div>
+    </div>
+    """
+
+
+def detection_summary_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status in {"queued", "running"}:
+        return "Pending engine results"
+    return detection_summary_text(results)
+
+
+def detection_summary_tone_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status in {"queued", "running"}:
+        return "neutral"
+    return detection_summary_tone(results)
+
+
+def detection_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status in {"queued", "running"}:
+        return "Detection engines have not completed yet."
+    return detection_detail_text(results)
+
+
+def detection_meter_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status not in {"queued", "running"}:
+        return detection_meter(results)
+
+    total = len(REQUIRED_DETECTION_ENGINES)
+    label = "Pending engine results"
+    return f"""
+    <div class="detection-meter neutral" style="--meter-angle: 0deg" aria-label="{html.escape(label)}" title="{html.escape(label)}">
+      <div class="detection-meter-core">
+        <strong>0</strong>
+        <span>/ {total}</span>
+      </div>
+    </div>
+    """
+
+
+def detection_summary_tone(results: list[EngineResultRecord]) -> str:
+    detected, total = detection_summary(results)
+    if total == 0:
+        return "neutral"
+    if detected > 0:
+        return "danger"
+    return "success"
+
+
+def engine_result_map(results: list[EngineResultRecord]) -> dict[str, EngineResultRecord]:
+    return {result.engine_name.lower(): result for result in results}
+
+
+def required_engine_coverage(
+    results: list[EngineResultRecord],
+) -> tuple[int, int, list[str]]:
+    result_map = engine_result_map(results)
+    unavailable = []
+    ran = 0
+
+    for engine_name in REQUIRED_DETECTION_ENGINES:
+        result = result_map.get(engine_name.lower())
+        if result is None:
+            unavailable.append(f"{engine_name} missing")
+            continue
+
+        if result.status == "completed":
+            ran += 1
+            continue
+
+        unavailable.append(f"{engine_name} {result.status}")
+
+    return ran, len(REQUIRED_DETECTION_ENGINES), unavailable
+
+
+def coverage_summary_text(results: list[EngineResultRecord]) -> str:
+    ran, total, _ = required_engine_coverage(results)
+    return f"{ran} of {total} required engines ran"
+
+
+def coverage_detail_text(results: list[EngineResultRecord]) -> str:
+    _, _, unavailable = required_engine_coverage(results)
+    if not unavailable:
+        return "All required detection engines completed."
+    return "; ".join(unavailable)
+
+
+def coverage_tone(results: list[EngineResultRecord]) -> str:
+    ran, total, unavailable = required_engine_coverage(results)
+    if not unavailable:
+        return "success"
+    if ran == 0 and total > 0:
+        return "danger"
+    return "warning"
+
+
+def coverage_summary_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status == "queued":
+        return "Waiting for worker"
+    if scan.status == "running":
+        return "Engines are running"
+    return coverage_summary_text(results)
+
+
+def coverage_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status == "queued":
+        return "Required engines have not started yet."
+    if scan.status == "running":
+        return "Required engines are being executed by the worker."
+    return coverage_detail_text(results)
+
+
+def coverage_tone_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status in {"queued", "running"}:
+        return "warning"
+    if scan.status == "failed":
+        return "danger"
+    return coverage_tone(results)
+
+
+def coverage_status_pill(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status != "completed":
+        return status_pill(scan.status)
+
+    tone = coverage_tone_for_scan(scan, results)
+    if tone == "success":
+        return status_pill(scan.status)
+    if tone == "danger":
+        return '<span class="pill danger">Engine Failure</span>'
+    return '<span class="pill warning">Partial</span>'
+
+
+def coverage_summary_card_class(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    return f"summary-wide coverage-summary-card {coverage_tone_for_scan(scan, results)}"
+
+
+def detection_detail_text(results: list[EngineResultRecord]) -> str:
+    names = detected_engine_names(results)
+    if names:
+        return ", ".join(names)
+
+    _, total = detection_summary(results)
+    if total == 0:
+        return "Add ClamAV, ICAP, YARA, or vendor adapters to populate this."
+    return "No configured detection engine flagged this sample."
+
+
+def detection_summary_card_class(results: list[EngineResultRecord]) -> str:
+    detected, total = detection_summary(results)
+    if total == 0:
+        return "summary-wide detection-summary-card neutral"
+    if detected > 0:
+        return "summary-wide detection-summary-card danger"
+    return "summary-wide detection-summary-card success"
+
+
 def render_recent_scan_rows(scans: list[ScanRecord]) -> str:
     if not scans:
-        return '<tr><td class="empty-cell" colspan="7">No scans submitted yet.</td></tr>'
+        return '<tr><td class="empty-cell" colspan="6">No scans submitted yet.</td></tr>'
 
     rows = []
     for scan in scans:
+        engine_results = list_engine_results(scan.id)
         rows.append(
             f"""
-            <tr>
-              <td class="select-cell">
-                <input class="row-checkbox" type="checkbox" name="scan_ids" value="{scan.id}" form="bulk-delete-form" data-scan-checkbox>
-              </td>
+            <tr class="dashboard-scan-row" data-scan-row data-scan-id="{scan.id}" data-scan-url="/scans/{scan.id}" tabindex="0" aria-selected="false">
               <td>
-                <a class="table-link" href="/scans/{scan.id}">
+                <div class="table-link">
                   <strong>{html.escape(scan.original_filename)}</strong>
                   <small>{html.escape(scan.case_name)}</small>
-                </a>
-              </td>
-              <td><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{short_hash(scan.sha256)}</code></td>
-              <td>{status_pill(scan.status)}</td>
-              <td>{verdict_pill(scan.verdict)}</td>
-              <td>{html.escape(scan.created_at)}</td>
-              <td>
-                <div class="row-actions">
-                  <a class="row-action" href="/scans/{scan.id}">View</a>
                 </div>
               </td>
+              <td><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{short_hash(scan.sha256)}</code></td>
+              <td>{coverage_status_pill(scan, engine_results)}</td>
+              <td>{verdict_pill(scan.verdict)}</td>
+              <td>
+                <span class="detection-count {detection_summary_tone_for_scan(scan, engine_results)}">{html.escape(detection_summary_text_for_scan(scan, engine_results))}</span>
+                <small class="coverage-count {coverage_tone_for_scan(scan, engine_results)}">{html.escape(coverage_summary_text_for_scan(scan, engine_results))}</small>
+              </td>
+              <td>{html.escape(scan.created_at)}</td>
             </tr>
             """
         )
@@ -300,9 +644,19 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
     for result in results:
         signature = result.signature or "-"
         error = result.error_message or "-"
+        row_class = (
+            ' class="engine-detected-row"'
+            if result.status == "completed" and result.detected
+            else ""
+        )
+        raw_row_class = (
+            "raw-output-row engine-detected-raw"
+            if result.status == "completed" and result.detected
+            else "raw-output-row"
+        )
         rows.append(
             f"""
-            <tr>
+            <tr{row_class}>
               <td>
                 <strong>{html.escape(result.engine_name)}</strong>
                 <small>{html.escape(result.engine_version or "version unknown")}</small>
@@ -314,7 +668,7 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
               <td>{html.escape(signature)}</td>
               <td>{html.escape(str(result.duration_ms))} ms</td>
             </tr>
-            <tr class="raw-output-row">
+            <tr class="{raw_row_class}">
               <td colspan="7">
                 <details>
                   <summary>Raw output</summary>
@@ -335,6 +689,35 @@ def render_risk_reasons(reasons: list[str]) -> str:
     )
 
 
+def render_coverage_notice(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status in {"queued", "running"}:
+        return f"""
+        <section class="notice processing-notice">
+          <div>
+            <strong>{html.escape(display_verdict(scan.status))}</strong>
+            <span>{html.escape(coverage_detail_text_for_scan(scan, results))} This page refreshes automatically.</span>
+          </div>
+        </section>
+        """
+
+    tone = coverage_tone_for_scan(scan, results)
+    if tone == "success":
+        return ""
+
+    title = "Required engine did not complete"
+    if tone == "danger":
+        title = "Required engines did not complete"
+
+    return f"""
+        <section class="notice warning-notice">
+          <div>
+            <strong>{html.escape(title)}</strong>
+            <span>{html.escape(coverage_summary_text_for_scan(scan, results))}: {html.escape(coverage_detail_text_for_scan(scan, results))}</span>
+          </div>
+        </section>
+        """
+
+
 def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord]) -> str:
     assessment = calculate_risk(engine_results)
     score = scan.risk_score if scan.risk_score is not None else assessment.score
@@ -347,6 +730,7 @@ def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord
       </div>
       <a class="row-action" href="/">Back to dashboard</a>
     </section>
+    {render_coverage_notice(scan, engine_results)}
 
     <section class="result-layout">
       <div class="panel">
@@ -355,7 +739,10 @@ def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord
             <h2>Scan summary</h2>
             <p>The sample was stored, analyzed by configured engines, and scored.</p>
           </div>
-          {verdict_pill(verdict)}
+          <div class="scan-verdict-group">
+            {verdict_pill(verdict)}
+            {detection_meter_for_scan(scan, engine_results)}
+          </div>
         </div>
         <div class="summary-grid">
           <div><span>Filename</span><strong>{html.escape(scan.original_filename)}</strong></div>
@@ -364,6 +751,16 @@ def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord
           <div><span>Size</span><strong>{format_bytes(scan.size_bytes)}</strong></div>
           <div><span>Content type</span><strong>{html.escape(scan.content_type)}</strong></div>
           <div><span>Risk score</span><strong>{score} / 100</strong></div>
+          <div class="{detection_summary_card_class(engine_results)}">
+            <span>Engine detections</span>
+            <strong>{html.escape(detection_summary_text_for_scan(scan, engine_results))}</strong>
+            <small>{html.escape(detection_detail_text_for_scan(scan, engine_results))}</small>
+          </div>
+          <div class="{coverage_summary_card_class(scan, engine_results)}">
+            <span>Engine coverage</span>
+            <strong>{html.escape(coverage_summary_text_for_scan(scan, engine_results))}</strong>
+            <small>{html.escape(coverage_detail_text_for_scan(scan, engine_results))}</small>
+          </div>
         </div>
         <div class="reason-block">
           <span>Reasons</span>
@@ -411,12 +808,15 @@ def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord
       </div>
     </section>
     """
-    return page_shell("Scan Result", "dashboard", body)
+    refresh_seconds = 5 if scan.status in {"queued", "running"} else None
+    return page_shell("Scan Result", "dashboard", body, refresh_seconds=refresh_seconds)
 
 
 def backfill_missing_assessments(limit: int = 250) -> None:
     for scan in list_recent_scans(limit=limit):
         if scan.risk_score is not None:
+            continue
+        if scan.status in {"queued", "running"}:
             continue
 
         engine_results = list_engine_results(scan.id)
@@ -439,9 +839,9 @@ def dashboard() -> str:
     body = f"""
     <section class="metric-grid">
       {metric_card("Samples", str(counts["total"]), "Persisted scan jobs")}
-      {metric_card("Running", str(counts["running"]), "Workers not added yet", "tone-blue")}
+      {metric_card("Active", str(counts["running"]), "Queued or running jobs", "tone-blue")}
       {metric_card("High risk", str(counts["high_risk"]), "All persisted jobs", "tone-red")}
-      {metric_card("Engines", "2 / 4", "Configured locally", "tone-green")}
+      {metric_card("Engines", "3 / 5", "Configured locally", "tone-green")}
     </section>
 
     <section class="dashboard-grid">
@@ -452,7 +852,7 @@ def dashboard() -> str:
             <p>Latest submitted samples will appear here.</p>
           </div>
           <div class="panel-actions">
-            <form id="bulk-delete-form" action="/scans/delete" method="post"></form>
+            <form id="bulk-delete-form" action="/scans/delete" method="post" data-bulk-delete-form></form>
             <button class="toolbar-delete" type="submit" form="bulk-delete-form" data-bulk-delete hidden>Delete selected</button>
           </div>
         </div>
@@ -460,18 +860,12 @@ def dashboard() -> str:
           <table>
             <thead>
               <tr>
-                <th class="select-cell">
-                  <label class="select-all">
-                    <input class="row-checkbox" type="checkbox" data-select-all>
-                    <span>Select</span>
-                  </label>
-                </th>
                 <th>File</th>
                 <th>SHA256</th>
                 <th>Status</th>
                 <th>Verdict</th>
+                <th>Engines</th>
                 <th>Submitted</th>
-                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -548,12 +942,17 @@ def new_scan() -> str:
       <aside class="panel">
         <div class="panel-header compact">
           <h2>Selected engines</h2>
-          <span class="pill success">2 active</span>
+          <span class="pill success">3 active</span>
         </div>
         <div class="engine-list">
           <div class="engine-row">
             <span class="engine-logo">CL</span>
             <div><strong>ClamAV</strong><small>clamd TCP or local CLI adapter</small></div>
+            <span class="pill success">Enabled</span>
+          </div>
+          <div class="engine-row">
+            <span class="engine-logo">YR</span>
+            <div><strong>YARA</strong><small>Local rule engine adapter</small></div>
             <span class="pill success">Enabled</span>
           </div>
           <div class="engine-row">
@@ -594,11 +993,6 @@ async def create_scan(
     scan = get_scan(scan_id)
     if scan is None:
         raise HTTPException(status_code=500, detail="Scan could not be loaded.")
-    create_engine_result(scan_id, run_static_metadata_engine(scan))
-    create_engine_result(scan_id, run_clamav_engine(scan))
-    engine_results = list_engine_results(scan_id)
-    assessment = calculate_risk(engine_results)
-    update_scan_assessment(scan_id, assessment.verdict, assessment.score)
 
     return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
 
@@ -641,8 +1035,17 @@ def test_clamav_engine() -> str:
     return render_engines_page(clamav_health=check_clamav_health())
 
 
-def render_engines_page(clamav_health: dict[str, str | bool] | None = None) -> str:
+@app.post("/engines/yara/test", response_class=HTMLResponse)
+def test_yara_engine() -> str:
+    return render_engines_page(yara_health=check_yara_health())
+
+
+def render_engines_page(
+    clamav_health: dict[str, str | bool] | None = None,
+    yara_health: dict[str, str | bool] | None = None,
+) -> str:
     clamav_config = get_clamav_config()
+    yara_config = get_yara_config()
     mode = str(clamav_config["mode"])
     health = clamav_health or {
         "ok": False,
@@ -652,6 +1055,15 @@ def render_engines_page(clamav_health: dict[str, str | bool] | None = None) -> s
     health_tone = "success" if health["ok"] else "neutral"
     if health["status"] in {"unreachable", "unexpected"}:
         health_tone = "danger"
+
+    yara_health_state = yara_health or {
+        "ok": False,
+        "status": "not tested",
+        "detail": "Use Test connection to check the current adapter.",
+    }
+    yara_health_tone = "success" if yara_health_state["ok"] else "neutral"
+    if yara_health_state["status"] in {"not configured", "no rules", "unavailable"}:
+        yara_health_tone = "danger"
 
     if mode == "clamd":
         clamav_fields = [
@@ -677,6 +1089,23 @@ def render_engines_page(clamav_health: dict[str, str | bool] | None = None) -> s
         </div>
         """
         for label, value in clamav_fields
+    )
+
+    yara_fields = [
+        ("Adapter", "local CLI"),
+        ("Command", str(yara_config["command"])),
+        ("Rules", str(yara_config["rules_dir"])),
+        ("Rule count", str(yara_config["rule_count"])),
+        ("Timeout", f'{yara_config["timeout_seconds"]}s'),
+    ]
+    yara_field_html = "\n".join(
+        f"""
+        <div>
+          <span>{html.escape(label)}</span>
+          <strong>{html.escape(value)}</strong>
+        </div>
+        """
+        for label, value in yara_fields
     )
 
     body = f"""
@@ -713,6 +1142,31 @@ def render_engines_page(clamav_health: dict[str, str | bool] | None = None) -> s
           </form>
         </div>
       </div>
+
+      <div class="engine-config stacked">
+        <div class="engine-config-header">
+          <span class="engine-logo">YR</span>
+          <div>
+            <h2>YARA</h2>
+            <p>Local rule engine adapter for pattern-based detection.</p>
+          </div>
+          <span class="pill {yara_health_tone}">{html.escape(str(yara_health_state["status"]).title())}</span>
+        </div>
+
+        <div class="config-grid">
+          {yara_field_html}
+        </div>
+
+        <div class="engine-health">
+          <div>
+            <span>Last check</span>
+            <strong>{html.escape(str(yara_health_state["detail"]))}</strong>
+          </div>
+          <form action="/engines/yara/test" method="post">
+            <button class="secondary-action" type="submit">Test connection</button>
+          </form>
+        </div>
+      </div>
     </section>
 
     <section class="panel engine-secondary">
@@ -725,11 +1179,6 @@ def render_engines_page(clamav_health: dict[str, str | bool] | None = None) -> s
           <span class="engine-logo">ST</span>
           <div><strong>Static Metadata</strong><small>Built-in metadata analyzer</small></div>
           <span class="pill success">Enabled</span>
-        </div>
-        <div class="engine-row muted">
-          <span class="engine-logo">YR</span>
-          <div><strong>YARA</strong><small>Rule engine adapter</small></div>
-          <span class="pill neutral">Planned</span>
         </div>
         <div class="engine-row muted">
           <span class="engine-logo">IC</span>
