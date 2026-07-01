@@ -1,0 +1,340 @@
+import os
+from pathlib import Path
+import shutil
+import socket
+import struct
+import subprocess
+from time import perf_counter
+
+from app.models import EngineResultInput, ScanRecord
+
+
+ENGINE_NAME = "ClamAV"
+DEFAULT_TIMEOUT_SECONDS = 60
+DEFAULT_CLAMD_PORT = 3310
+STREAM_CHUNK_SIZE = 1024 * 1024
+
+
+def get_clamav_config() -> dict[str, str | int | bool]:
+    clamd_host = os.getenv("MASP_CLAMD_HOST", "").strip()
+    if clamd_host:
+        return {
+            "mode": "clamd",
+            "host": clamd_host,
+            "port": int(os.getenv("MASP_CLAMD_PORT", str(DEFAULT_CLAMD_PORT))),
+            "timeout_seconds": int(
+                os.getenv("MASP_CLAMD_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
+            ),
+            "enabled": True,
+        }
+
+    command = os.getenv("MASP_CLAMAV_COMMAND", "clamscan")
+    return {
+        "mode": "cli",
+        "command": command,
+        "timeout_seconds": int(
+            os.getenv("MASP_CLAMAV_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
+        ),
+        "enabled": shutil.which(command) is not None,
+    }
+
+
+def check_clamav_health() -> dict[str, str | bool]:
+    config = get_clamav_config()
+    if config["mode"] == "clamd":
+        host = str(config["host"])
+        port = int(config["port"])
+        timeout = int(config["timeout_seconds"])
+        try:
+            response = ping_clamd(host, port, timeout)
+        except (OSError, TimeoutError, socket.timeout) as exc:
+            return {
+                "ok": False,
+                "status": "unreachable",
+                "detail": f"Could not connect to clamd at {host}:{port}: {exc}",
+            }
+
+        return {
+            "ok": response == "PONG",
+            "status": "reachable" if response == "PONG" else "unexpected",
+            "detail": f"clamd responded with {response!r}",
+        }
+
+    command = str(config["command"])
+    path = shutil.which(command)
+    if path is None:
+        return {
+            "ok": False,
+            "status": "not configured",
+            "detail": f"{command} was not found on PATH.",
+        }
+
+    return {
+        "ok": True,
+        "status": "available",
+        "detail": f"{command} found at {path}.",
+    }
+
+
+def run_clamav_engine(scan: ScanRecord) -> EngineResultInput:
+    clamd_host = os.getenv("MASP_CLAMD_HOST")
+    if clamd_host:
+        return run_clamd_scan(scan, clamd_host)
+    return run_cli_scan(scan)
+
+
+def run_clamd_scan(scan: ScanRecord, host: str) -> EngineResultInput:
+    port = int(os.getenv("MASP_CLAMD_PORT", str(DEFAULT_CLAMD_PORT)))
+    timeout = int(os.getenv("MASP_CLAMD_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))
+    started_at = perf_counter()
+
+    sample_path = Path(scan.storage_path)
+    if not sample_path.is_file():
+        return build_result(
+            status="failed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=f"Sample file not found: {scan.storage_path}",
+            error_message="Stored sample file is missing.",
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamd",
+        )
+
+    try:
+        raw_response = scan_with_clamd(sample_path, host, port, timeout)
+    except (OSError, TimeoutError, socket.timeout) as exc:
+        return build_result(
+            status="skipped",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=str(exc),
+            error_message=f"Could not connect to clamd at {host}:{port}.",
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamd",
+        )
+
+    signature = parse_clamd_signature(raw_response)
+    if raw_response.endswith(" OK"):
+        return build_result(
+            status="completed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=100,
+            raw_output=raw_response,
+            error_message=None,
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamd",
+        )
+
+    if raw_response.endswith(" FOUND"):
+        return build_result(
+            status="completed",
+            detected=True,
+            signature=signature,
+            severity="high",
+            confidence=90,
+            raw_output=raw_response,
+            error_message=None,
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamd",
+        )
+
+    return build_result(
+        status="failed",
+        detected=False,
+        signature=None,
+        severity="info",
+        confidence=0,
+        raw_output=raw_response,
+        error_message="clamd returned an unrecognized response.",
+        duration_ms=elapsed_ms(started_at),
+        engine_version="clamd",
+    )
+
+
+def run_cli_scan(scan: ScanRecord) -> EngineResultInput:
+    command = os.getenv("MASP_CLAMAV_COMMAND", "clamscan")
+    timeout = int(os.getenv("MASP_CLAMAV_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))
+    started_at = perf_counter()
+
+    if shutil.which(command) is None:
+        return build_result(
+            status="skipped",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=f"{command} was not found on PATH.",
+            error_message="ClamAV is not installed or not configured.",
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamscan",
+        )
+
+    sample_path = Path(scan.storage_path)
+    if not sample_path.is_file():
+        return build_result(
+            status="failed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=f"Sample file not found: {scan.storage_path}",
+            error_message="Stored sample file is missing.",
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamscan",
+        )
+
+    try:
+        completed = subprocess.run(
+            [command, "--no-summary", str(sample_path)],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return build_result(
+            status="failed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=(exc.stdout or "") + (exc.stderr or ""),
+            error_message=f"ClamAV timed out after {timeout} seconds.",
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamscan",
+        )
+    except OSError as exc:
+        return build_result(
+            status="failed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=str(exc),
+            error_message="ClamAV could not be executed.",
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamscan",
+        )
+
+    raw_output = "\n".join(
+        part for part in [completed.stdout.strip(), completed.stderr.strip()] if part
+    )
+    signature = parse_signature(raw_output)
+
+    if completed.returncode == 0:
+        return build_result(
+            status="completed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=100,
+            raw_output=raw_output or "No threats found.",
+            error_message=None,
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamscan",
+        )
+
+    if completed.returncode == 1:
+        return build_result(
+            status="completed",
+            detected=True,
+            signature=signature,
+            severity="high",
+            confidence=90,
+            raw_output=raw_output,
+            error_message=None,
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamscan",
+        )
+
+    return build_result(
+        status="failed",
+        detected=False,
+        signature=None,
+        severity="info",
+        confidence=0,
+        raw_output=raw_output,
+        error_message=f"ClamAV exited with code {completed.returncode}.",
+        duration_ms=elapsed_ms(started_at),
+        engine_version="clamscan",
+    )
+
+
+def scan_with_clamd(sample_path: Path, host: str, port: int, timeout: int) -> str:
+    with socket.create_connection((host, port), timeout=timeout) as connection:
+        connection.settimeout(timeout)
+        connection.sendall(b"zINSTREAM\0")
+
+        with sample_path.open("rb") as sample:
+            while chunk := sample.read(STREAM_CHUNK_SIZE):
+                connection.sendall(struct.pack("!I", len(chunk)))
+                connection.sendall(chunk)
+
+        connection.sendall(struct.pack("!I", 0))
+        chunks = []
+        while True:
+            chunk = connection.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+
+    return b"".join(chunks).decode("utf-8", errors="replace").strip("\x00\r\n ")
+
+
+def ping_clamd(host: str, port: int, timeout: int) -> str:
+    with socket.create_connection((host, port), timeout=timeout) as connection:
+        connection.settimeout(timeout)
+        connection.sendall(b"zPING\0")
+        response = connection.recv(4096)
+    return response.decode("utf-8", errors="replace").strip("\x00\r\n ")
+
+
+def parse_signature(raw_output: str) -> str | None:
+    for line in raw_output.splitlines():
+        if line.endswith(" FOUND"):
+            _, _, finding = line.partition(": ")
+            return finding.removesuffix(" FOUND").strip() or None
+    return None
+
+
+def parse_clamd_signature(raw_response: str) -> str | None:
+    _, _, finding = raw_response.partition(": ")
+    if not finding:
+        return None
+    return finding.removesuffix(" FOUND").strip() or None
+
+
+def build_result(
+    status: str,
+    detected: bool,
+    signature: str | None,
+    severity: str,
+    confidence: int,
+    raw_output: str,
+    error_message: str | None,
+    duration_ms: int,
+    engine_version: str | None,
+) -> EngineResultInput:
+    return EngineResultInput(
+        engine_name=ENGINE_NAME,
+        engine_version=engine_version,
+        signature_version=None,
+        status=status,
+        detected=detected,
+        signature=signature,
+        severity=severity,
+        confidence=confidence,
+        raw_output=raw_output,
+        error_message=error_message,
+        duration_ms=duration_ms,
+    )
+
+
+def elapsed_ms(started_at: float) -> int:
+    return max(1, int((perf_counter() - started_at) * 1000))

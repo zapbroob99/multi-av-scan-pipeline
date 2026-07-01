@@ -1,0 +1,26 @@
+name: masp
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      MASP_CLAMD_HOST: clamav
+      MASP_CLAMD_PORT: "3310"
+      MASP_CLAMD_TIMEOUT_SECONDS: "60"
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+    depends_on:
+      - clamav
+
+  clamav:
+    image: clamav/clamav:stable
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav-db:/var/lib/clamav
+
+volumes:
+  clamav-db:

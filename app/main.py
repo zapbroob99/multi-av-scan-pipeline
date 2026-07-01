@@ -15,11 +15,14 @@ from app.database import (
     init_db,
     list_engine_results,
     list_recent_scans,
+    update_scan_assessment,
 )
+from app.engines.clamav import check_clamav_health, get_clamav_config, run_clamav_engine
 from app.engines.static_metadata import run_static_metadata_engine
 from app.models import EngineResultRecord, ScanRecord
 from app.services.cleanup import delete_sample_file
 from app.services.ingest import store_upload
+from app.services.scoring import calculate_risk
 
 
 app = FastAPI(
@@ -205,12 +208,26 @@ def display_verdict(verdict: str) -> str:
 
 
 def status_pill(status: str) -> str:
-    tone = "success" if status == "completed" else "warning"
+    tone_by_status = {
+        "completed": "success",
+        "skipped": "neutral",
+        "failed": "danger",
+        "running": "warning",
+    }
+    tone = tone_by_status.get(status, "warning")
     return f'<span class="pill {tone}">{html.escape(status.title())}</span>'
 
 
 def verdict_pill(verdict: str) -> str:
-    tone = "neutral" if verdict == "metadata_only" else "warning"
+    tone_by_verdict = {
+        "info": "neutral",
+        "metadata_only": "neutral",
+        "low": "success",
+        "medium": "warning",
+        "high": "danger",
+        "critical": "danger",
+    }
+    tone = tone_by_verdict.get(verdict, "warning")
     return f'<span class="pill {tone}">{html.escape(display_verdict(verdict))}</span>'
 
 
@@ -226,7 +243,11 @@ def severity_pill(severity: str) -> str:
     return f'<span class="pill {tone}">{html.escape(severity.title())}</span>'
 
 
-def detected_pill(detected: bool) -> str:
+def detected_pill(status: str, detected: bool) -> str:
+    if status == "skipped":
+        return '<span class="pill neutral">Not run</span>'
+    if status == "failed":
+        return '<span class="pill danger">Error</span>'
     if detected:
         return '<span class="pill danger">Detected</span>'
     return '<span class="pill success">Clean</span>'
@@ -287,7 +308,7 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
                 <small>{html.escape(result.engine_version or "version unknown")}</small>
               </td>
               <td>{status_pill(result.status)}</td>
-              <td>{detected_pill(result.detected)}</td>
+              <td>{detected_pill(result.status, result.detected)}</td>
               <td>{severity_pill(result.severity)}</td>
               <td>{result.confidence}%</td>
               <td>{html.escape(signature)}</td>
@@ -307,7 +328,17 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
     return "\n".join(rows)
 
 
+def render_risk_reasons(reasons: list[str]) -> str:
+    return "\n".join(
+        f"<li>{html.escape(reason)}</li>"
+        for reason in reasons
+    )
+
+
 def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord]) -> str:
+    assessment = calculate_risk(engine_results)
+    score = scan.risk_score if scan.risk_score is not None else assessment.score
+    verdict = scan.verdict if scan.risk_score is not None else assessment.verdict
     body = f"""
     <section class="notice success-notice">
       <div>
@@ -321,10 +352,10 @@ def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord
       <div class="panel">
         <div class="panel-header">
           <div>
-            <h2>Scan intake completed</h2>
-            <p>The sample was stored locally and cryptographic hashes were calculated.</p>
+            <h2>Scan summary</h2>
+            <p>The sample was stored, analyzed by configured engines, and scored.</p>
           </div>
-          <span class="pill success">Completed</span>
+          {verdict_pill(verdict)}
         </div>
         <div class="summary-grid">
           <div><span>Filename</span><strong>{html.escape(scan.original_filename)}</strong></div>
@@ -332,7 +363,13 @@ def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord
           <div><span>Priority</span><strong>{html.escape(scan.priority)}</strong></div>
           <div><span>Size</span><strong>{format_bytes(scan.size_bytes)}</strong></div>
           <div><span>Content type</span><strong>{html.escape(scan.content_type)}</strong></div>
-          <div><span>Status</span><strong>{html.escape(display_verdict(scan.verdict))}</strong></div>
+          <div><span>Risk score</span><strong>{score} / 100</strong></div>
+        </div>
+        <div class="reason-block">
+          <span>Reasons</span>
+          <ul>
+            {render_risk_reasons(assessment.reasons)}
+          </ul>
         </div>
       </div>
 
@@ -375,6 +412,19 @@ def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord
     </section>
     """
     return page_shell("Scan Result", "dashboard", body)
+
+
+def backfill_missing_assessments(limit: int = 250) -> None:
+    for scan in list_recent_scans(limit=limit):
+        if scan.risk_score is not None:
+            continue
+
+        engine_results = list_engine_results(scan.id)
+        assessment = calculate_risk(engine_results)
+        update_scan_assessment(scan.id, assessment.verdict, assessment.score)
+
+
+backfill_missing_assessments()
 
 
 @app.get("/health")
@@ -503,7 +553,7 @@ def new_scan() -> str:
         <div class="engine-list">
           <div class="engine-row">
             <span class="engine-logo">CL</span>
-            <div><strong>ClamAV</strong><small>Signature scan adapter</small></div>
+            <div><strong>ClamAV</strong><small>clamd TCP or local CLI adapter</small></div>
             <span class="pill success">Enabled</span>
           </div>
           <div class="engine-row">
@@ -545,6 +595,10 @@ async def create_scan(
     if scan is None:
         raise HTTPException(status_code=500, detail="Scan could not be loaded.")
     create_engine_result(scan_id, run_static_metadata_engine(scan))
+    create_engine_result(scan_id, run_clamav_engine(scan))
+    engine_results = list_engine_results(scan_id)
+    assessment = calculate_risk(engine_results)
+    update_scan_assessment(scan_id, assessment.verdict, assessment.score)
 
     return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
 
@@ -579,24 +633,97 @@ def scan_detail(scan_id: int) -> str:
 
 @app.get("/engines", response_class=HTMLResponse)
 def engines() -> str:
-    body = """
+    return render_engines_page()
+
+
+@app.post("/engines/clamav/test", response_class=HTMLResponse)
+def test_clamav_engine() -> str:
+    return render_engines_page(clamav_health=check_clamav_health())
+
+
+def render_engines_page(clamav_health: dict[str, str | bool] | None = None) -> str:
+    clamav_config = get_clamav_config()
+    mode = str(clamav_config["mode"])
+    health = clamav_health or {
+        "ok": False,
+        "status": "not tested",
+        "detail": "Use Test connection to check the current adapter.",
+    }
+    health_tone = "success" if health["ok"] else "neutral"
+    if health["status"] in {"unreachable", "unexpected"}:
+        health_tone = "danger"
+
+    if mode == "clamd":
+        clamav_fields = [
+            ("Adapter", "clamd TCP"),
+            ("Host", str(clamav_config["host"])),
+            ("Port", str(clamav_config["port"])),
+            ("Timeout", f'{clamav_config["timeout_seconds"]}s'),
+            ("Configured via", "environment"),
+        ]
+    else:
+        clamav_fields = [
+            ("Adapter", "local CLI"),
+            ("Command", str(clamav_config["command"])),
+            ("Timeout", f'{clamav_config["timeout_seconds"]}s'),
+            ("Configured via", "environment"),
+        ]
+
+    clamav_field_html = "\n".join(
+        f"""
+        <div>
+          <span>{html.escape(label)}</span>
+          <strong>{html.escape(value)}</strong>
+        </div>
+        """
+        for label, value in clamav_fields
+    )
+
+    body = f"""
     <section class="panel">
       <div class="panel-header">
         <div>
           <h2>Engine registry</h2>
-          <p>Configured adapters and local availability.</p>
+          <p>Configured adapters, connection settings, and local availability.</p>
         </div>
         <span class="pill success">Node online</span>
       </div>
+
+      <div class="engine-config">
+        <div class="engine-config-header">
+          <span class="engine-logo">CL</span>
+          <div>
+            <h2>ClamAV</h2>
+            <p>clamd TCP adapter with local CLI fallback.</p>
+          </div>
+          <span class="pill {health_tone}">{html.escape(str(health["status"]).title())}</span>
+        </div>
+
+        <div class="config-grid">
+          {clamav_field_html}
+        </div>
+
+        <div class="engine-health">
+          <div>
+            <span>Last check</span>
+            <strong>{html.escape(str(health["detail"]))}</strong>
+          </div>
+          <form action="/engines/clamav/test" method="post">
+            <button class="secondary-action" type="submit">Test connection</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel engine-secondary">
+      <div class="panel-header compact">
+        <h2>Other adapters</h2>
+        <span class="pill neutral">Roadmap</span>
+      </div>
       <div class="engine-table">
         <div class="engine-row">
-          <span class="engine-logo">CL</span>
-          <div><strong>ClamAV</strong><small>clamd TCP adapter</small></div>
-          <span class="pill success">Enabled</span>
-        </div>
-        <div class="engine-row">
           <span class="engine-logo">ST</span>
-          <div><strong>Static Metadata</strong><small>Local file inspection</small></div>
+          <div><strong>Static Metadata</strong><small>Built-in metadata analyzer</small></div>
           <span class="pill success">Enabled</span>
         </div>
         <div class="engine-row muted">
@@ -605,8 +732,13 @@ def engines() -> str:
           <span class="pill neutral">Planned</span>
         </div>
         <div class="engine-row muted">
-          <span class="engine-logo">AV</span>
-          <div><strong>Commercial AV</strong><small>Vendor API adapter</small></div>
+          <span class="engine-logo">IC</span>
+          <div><strong>ICAP</strong><small>Network AV gateway adapter</small></div>
+          <span class="pill neutral">Planned</span>
+        </div>
+        <div class="engine-row muted">
+          <span class="engine-logo">API</span>
+          <div><strong>Commercial REST AV</strong><small>Vendor API adapter</small></div>
           <span class="pill neutral">Not configured</span>
         </div>
       </div>

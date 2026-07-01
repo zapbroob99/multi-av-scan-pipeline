@@ -299,6 +299,18 @@ def delete_scan(scan_id: int) -> ScanRecord | None:
     return scan
 
 
+def update_scan_assessment(scan_id: int, verdict: str, risk_score: int) -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE scan_jobs
+            SET verdict = ?, risk_score = ?
+            WHERE id = ?
+            """,
+            (verdict, risk_score, scan_id),
+        )
+
+
 def get_scan_counts() -> dict[str, int]:
     with connect() as connection:
         total = fetch_count(connection, "SELECT COUNT(*) FROM scan_jobs")
