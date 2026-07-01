@@ -2,7 +2,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-from app.models import ScanRecord, StoredSample
+from app.models import EngineResultInput, EngineResultRecord, ScanRecord, StoredSample
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -64,6 +64,24 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 completed_at TEXT,
                 FOREIGN KEY (sample_id) REFERENCES samples (id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS engine_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_job_id INTEGER NOT NULL,
+                engine_name TEXT NOT NULL,
+                engine_version TEXT,
+                signature_version TEXT,
+                status TEXT NOT NULL,
+                detected INTEGER NOT NULL,
+                signature TEXT,
+                severity TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                raw_output TEXT NOT NULL,
+                error_message TEXT,
+                duration_ms INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE
             );
             """
         )
@@ -136,6 +154,72 @@ def create_scan_job(
         return require_lastrowid(cursor)
 
 
+def create_engine_result(scan_job_id: int, result: EngineResultInput) -> int:
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO engine_results (
+                scan_job_id,
+                engine_name,
+                engine_version,
+                signature_version,
+                status,
+                detected,
+                signature,
+                severity,
+                confidence,
+                raw_output,
+                error_message,
+                duration_ms
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scan_job_id,
+                result.engine_name,
+                result.engine_version,
+                result.signature_version,
+                result.status,
+                1 if result.detected else 0,
+                result.signature,
+                result.severity,
+                result.confidence,
+                result.raw_output,
+                result.error_message,
+                result.duration_ms,
+            ),
+        )
+        return require_lastrowid(cursor)
+
+
+def list_engine_results(scan_job_id: int) -> list[EngineResultRecord]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                id,
+                scan_job_id,
+                engine_name,
+                engine_version,
+                signature_version,
+                status,
+                detected,
+                signature,
+                severity,
+                confidence,
+                raw_output,
+                error_message,
+                duration_ms,
+                created_at
+            FROM engine_results
+            WHERE scan_job_id = ?
+            ORDER BY created_at ASC, id ASC
+            """,
+            (scan_job_id,),
+        ).fetchall()
+    return [row_to_engine_result_record(row) for row in rows]
+
+
 def list_recent_scans(limit: int = 20) -> list[ScanRecord]:
     with connect() as connection:
         rows = connection.execute(
@@ -204,6 +288,17 @@ def get_scan(scan_id: int) -> ScanRecord | None:
     return row_to_scan_record(row)
 
 
+def delete_scan(scan_id: int) -> ScanRecord | None:
+    scan = get_scan(scan_id)
+    if scan is None:
+        return None
+
+    with connect() as connection:
+        connection.execute("DELETE FROM samples WHERE id = ?", (scan.sample_id,))
+
+    return scan
+
+
 def get_scan_counts() -> dict[str, int]:
     with connect() as connection:
         total = fetch_count(connection, "SELECT COUNT(*) FROM scan_jobs")
@@ -251,4 +346,31 @@ def row_to_scan_record(row: sqlite3.Row) -> ScanRecord:
         md5=str(row_value(row, "md5")),
         sha1=str(row_value(row, "sha1")),
         sha256=str(row_value(row, "sha256")),
+    )
+
+
+def row_to_engine_result_record(row: sqlite3.Row) -> EngineResultRecord:
+    return EngineResultRecord(
+        id=int(row_value(row, "id")),
+        scan_job_id=int(row_value(row, "scan_job_id")),
+        engine_name=str(row_value(row, "engine_name")),
+        engine_version=None
+        if row_value(row, "engine_version") is None
+        else str(row_value(row, "engine_version")),
+        signature_version=None
+        if row_value(row, "signature_version") is None
+        else str(row_value(row, "signature_version")),
+        status=str(row_value(row, "status")),
+        detected=bool(row_value(row, "detected")),
+        signature=None
+        if row_value(row, "signature") is None
+        else str(row_value(row, "signature")),
+        severity=str(row_value(row, "severity")),
+        confidence=int(row_value(row, "confidence")),
+        raw_output=str(row_value(row, "raw_output")),
+        error_message=None
+        if row_value(row, "error_message") is None
+        else str(row_value(row, "error_message")),
+        duration_ms=int(row_value(row, "duration_ms")),
+        created_at=str(row_value(row, "created_at")),
     )

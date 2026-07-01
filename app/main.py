@@ -6,21 +6,26 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.database import (
+    create_engine_result,
     create_sample,
     create_scan_job,
+    delete_scan,
     get_scan,
     get_scan_counts,
     init_db,
+    list_engine_results,
     list_recent_scans,
 )
-from app.models import ScanRecord
+from app.engines.static_metadata import run_static_metadata_engine
+from app.models import EngineResultRecord, ScanRecord
+from app.services.cleanup import delete_sample_file
 from app.services.ingest import store_upload
 
 
 app = FastAPI(
-    title="Multi-Engine File Scanning Pipeline",
+    title="MASP",
     description=(
-        "Self-hosted orchestration layer for file scanning engines, "
+        "Multi AV Scan Pipeline: self-hosted orchestration layer for file scanning engines, "
         "normalization, risk scoring, and analyst reports."
     ),
     version="0.1.0",
@@ -52,17 +57,19 @@ def page_shell(title: str, active: str, body: str) -> str:
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>{title} | Sentinel Pipeline</title>
+        <title>{title} | MASP</title>
         <link rel="stylesheet" href="/static/css/app.css">
       </head>
       <body>
         <div class="app-shell">
           <aside class="sidebar">
             <a class="brand" href="/">
-              <span class="brand-mark">SP</span>
+              <span class="brand-mark" aria-hidden="true">
+                <span class="brand-glyph"></span>
+              </span>
               <span>
-                <strong>Sentinel Pipeline</strong>
-                <small>On-prem analysis</small>
+                <strong>MASP</strong>
+                <small>Multi AV Scan Pipeline</small>
               </span>
             </a>
             <nav class="nav-list" aria-label="Main navigation">
@@ -76,7 +83,7 @@ def page_shell(title: str, active: str, body: str) -> str:
           <div class="workspace">
             <header class="topbar">
               <div>
-                <p class="eyebrow">Multi-engine orchestration</p>
+                <p class="eyebrow">Multi AV orchestration</p>
                 <h1>{title}</h1>
               </div>
             </header>
@@ -85,6 +92,85 @@ def page_shell(title: str, active: str, body: str) -> str:
             </main>
           </div>
         </div>
+        <script>
+          const uploadForm = document.querySelector("[data-upload-form]");
+          const fileInput = document.querySelector("[data-file-input]");
+          const selectedFile = document.querySelector("[data-selected-file]");
+          const submitButton = document.querySelector("[data-submit-button]");
+          const selectAll = document.querySelector("[data-select-all]");
+          const scanCheckboxes = document.querySelectorAll("[data-scan-checkbox]");
+          const bulkDeleteButton = document.querySelector("[data-bulk-delete]");
+          const copyTargets = document.querySelectorAll("[data-copy-value]");
+
+          const updateBulkDeleteVisibility = () => {{
+            if (!bulkDeleteButton) {{
+              return;
+            }}
+
+            const hasSelection = Array.from(scanCheckboxes).some((checkbox) => checkbox.checked);
+            bulkDeleteButton.hidden = !hasSelection;
+          }};
+
+          if (fileInput && selectedFile) {{
+            fileInput.addEventListener("change", () => {{
+              const file = fileInput.files && fileInput.files[0];
+              selectedFile.textContent = file ? file.name : "No file selected";
+              selectedFile.classList.toggle("has-file", Boolean(file));
+            }});
+          }}
+
+          if (uploadForm && submitButton) {{
+            uploadForm.addEventListener("submit", () => {{
+              submitButton.textContent = "Uploading...";
+              submitButton.disabled = true;
+            }});
+          }}
+
+          if (selectAll && scanCheckboxes.length) {{
+            selectAll.addEventListener("change", () => {{
+              scanCheckboxes.forEach((checkbox) => {{
+                checkbox.checked = selectAll.checked;
+              }});
+              updateBulkDeleteVisibility();
+            }});
+          }}
+
+          if (scanCheckboxes.length) {{
+            scanCheckboxes.forEach((checkbox) => {{
+              checkbox.addEventListener("change", () => {{
+                if (selectAll) {{
+                  selectAll.checked = Array.from(scanCheckboxes).every((item) => item.checked);
+                }}
+                updateBulkDeleteVisibility();
+              }});
+            }});
+            updateBulkDeleteVisibility();
+          }}
+
+          if (copyTargets.length) {{
+            copyTargets.forEach((target) => {{
+              target.addEventListener("click", async () => {{
+                const value = target.getAttribute("data-copy-value");
+                if (!value) {{
+                  return;
+                }}
+
+                try {{
+                  await navigator.clipboard.writeText(value);
+                  target.classList.add("is-copied");
+                  const previousLabel = target.getAttribute("aria-label") || "Copy value";
+                  target.setAttribute("aria-label", "Copied");
+                  window.setTimeout(() => {{
+                    target.classList.remove("is-copied");
+                    target.setAttribute("aria-label", previousLabel);
+                  }}, 1200);
+                }} catch (error) {{
+                  console.error("Clipboard copy failed", error);
+                }}
+              }});
+            }});
+          }}
+        </script>
       </body>
     </html>
     """
@@ -128,34 +214,109 @@ def verdict_pill(verdict: str) -> str:
     return f'<span class="pill {tone}">{html.escape(display_verdict(verdict))}</span>'
 
 
+def severity_pill(severity: str) -> str:
+    tone_by_severity = {
+        "info": "neutral",
+        "low": "success",
+        "medium": "warning",
+        "high": "warning",
+        "critical": "danger",
+    }
+    tone = tone_by_severity.get(severity, "neutral")
+    return f'<span class="pill {tone}">{html.escape(severity.title())}</span>'
+
+
+def detected_pill(detected: bool) -> str:
+    if detected:
+        return '<span class="pill danger">Detected</span>'
+    return '<span class="pill success">Clean</span>'
+
+
 def render_recent_scan_rows(scans: list[ScanRecord]) -> str:
     if not scans:
-        return '<tr><td class="empty-cell" colspan="6">No scans submitted yet.</td></tr>'
+        return '<tr><td class="empty-cell" colspan="7">No scans submitted yet.</td></tr>'
 
     rows = []
     for scan in scans:
         rows.append(
             f"""
             <tr>
+              <td class="select-cell">
+                <input class="row-checkbox" type="checkbox" name="scan_ids" value="{scan.id}" form="bulk-delete-form" data-scan-checkbox>
+              </td>
               <td>
                 <a class="table-link" href="/scans/{scan.id}">
                   <strong>{html.escape(scan.original_filename)}</strong>
                   <small>{html.escape(scan.case_name)}</small>
                 </a>
               </td>
-              <td><code>{short_hash(scan.sha256)}</code></td>
+              <td><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{short_hash(scan.sha256)}</code></td>
               <td>{status_pill(scan.status)}</td>
               <td>{verdict_pill(scan.verdict)}</td>
               <td>{html.escape(scan.created_at)}</td>
-              <td><a class="row-action" href="/scans/{scan.id}">View</a></td>
+              <td>
+                <div class="row-actions">
+                  <a class="row-action" href="/scans/{scan.id}">View</a>
+                </div>
+              </td>
             </tr>
             """
         )
     return "\n".join(rows)
 
 
-def render_scan_result(scan: ScanRecord) -> str:
+def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
+    if not results:
+        return """
+        <tr>
+          <td class="empty-cell" colspan="7">
+            No engine results yet. The next step is wiring the Static Metadata engine.
+          </td>
+        </tr>
+        """
+
+    rows = []
+    for result in results:
+        signature = result.signature or "-"
+        error = result.error_message or "-"
+        rows.append(
+            f"""
+            <tr>
+              <td>
+                <strong>{html.escape(result.engine_name)}</strong>
+                <small>{html.escape(result.engine_version or "version unknown")}</small>
+              </td>
+              <td>{status_pill(result.status)}</td>
+              <td>{detected_pill(result.detected)}</td>
+              <td>{severity_pill(result.severity)}</td>
+              <td>{result.confidence}%</td>
+              <td>{html.escape(signature)}</td>
+              <td>{html.escape(str(result.duration_ms))} ms</td>
+            </tr>
+            <tr class="raw-output-row">
+              <td colspan="7">
+                <details>
+                  <summary>Raw output</summary>
+                  <pre>{html.escape(result.raw_output)}</pre>
+                  <small>{html.escape(error)}</small>
+                </details>
+              </td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_scan_result(scan: ScanRecord, engine_results: list[EngineResultRecord]) -> str:
     body = f"""
+    <section class="notice success-notice">
+      <div>
+        <strong>Sample accepted</strong>
+        <span>{html.escape(scan.original_filename)} was uploaded and stored successfully.</span>
+      </div>
+      <a class="row-action" href="/">Back to dashboard</a>
+    </section>
+
     <section class="result-layout">
       <div class="panel">
         <div class="panel-header">
@@ -181,22 +342,35 @@ def render_scan_result(scan: ScanRecord) -> str:
           <span class="pill neutral">Static metadata</span>
         </div>
         <dl class="hash-list">
-          <div><dt>MD5</dt><dd><code>{html.escape(scan.md5)}</code></dd></div>
-          <div><dt>SHA1</dt><dd><code>{html.escape(scan.sha1)}</code></dd></div>
-          <div><dt>SHA256</dt><dd><code>{html.escape(scan.sha256)}</code></dd></div>
+          <div><dt>MD5</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.md5)}" aria-label="Copy MD5" title="Copy MD5">{html.escape(scan.md5)}</code></dd></div>
+          <div><dt>SHA1</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.sha1)}" aria-label="Copy SHA1" title="Copy SHA1">{html.escape(scan.sha1)}</code></dd></div>
+          <div><dt>SHA256</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{html.escape(scan.sha256)}</code></dd></div>
         </dl>
       </div>
 
       <div class="panel wide">
         <div class="panel-header compact">
-          <h2>Next pipeline stage</h2>
-          <span class="pill warning">Not scanned yet</span>
+          <h2>Engine results</h2>
+          <span class="pill neutral">{len(engine_results)} results</span>
         </div>
-        <ol class="step-list">
-          <li><span>1</span><strong>Worker queue</strong><small>Persist scan jobs and dispatch adapters</small></li>
-          <li><span>2</span><strong>Engine adapters</strong><small>Run ClamAV and static analyzers</small></li>
-          <li><span>3</span><strong>Risk scoring</strong><small>Calculate explainable analyst verdicts</small></li>
-        </ol>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Engine</th>
+                <th>Status</th>
+                <th>Verdict</th>
+                <th>Severity</th>
+                <th>Confidence</th>
+                <th>Signature</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_engine_result_rows(engine_results)}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
     """
@@ -227,12 +401,21 @@ def dashboard() -> str:
             <h2>Recent scans</h2>
             <p>Latest submitted samples will appear here.</p>
           </div>
-          <span class="pill neutral">MVP</span>
+          <div class="panel-actions">
+            <form id="bulk-delete-form" action="/scans/delete" method="post"></form>
+            <button class="toolbar-delete" type="submit" form="bulk-delete-form" data-bulk-delete hidden>Delete selected</button>
+          </div>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
+                <th class="select-cell">
+                  <label class="select-all">
+                    <input class="row-checkbox" type="checkbox" data-select-all>
+                    <span>Select</span>
+                  </label>
+                </th>
                 <th>File</th>
                 <th>SHA256</th>
                 <th>Status</th>
@@ -269,7 +452,7 @@ def dashboard() -> str:
 def new_scan() -> str:
     body = """
     <section class="scan-layout">
-      <form class="panel upload-panel" action="/scans" method="post" enctype="multipart/form-data">
+      <form class="panel upload-panel" action="/scans" method="post" enctype="multipart/form-data" data-upload-form>
         <div class="panel-header">
           <div>
             <h2>Submit sample</h2>
@@ -282,7 +465,8 @@ def new_scan() -> str:
           <span class="dropzone-icon">+</span>
           <strong>Select file</strong>
           <small>Maximum size policy will be enforced by the ingest service.</small>
-          <input id="sample-file" name="sample" type="file">
+          <span class="selected-file" data-selected-file>No file selected</span>
+          <input id="sample-file" name="sample" type="file" data-file-input required>
         </label>
 
         <div class="field-grid">
@@ -307,7 +491,7 @@ def new_scan() -> str:
 
         <div class="form-actions">
           <a class="secondary-action" href="/">Cancel</a>
-          <button class="primary-action" type="submit">Create Scan</button>
+          <button class="primary-action" type="submit" data-submit-button>Create Scan</button>
         </div>
       </form>
 
@@ -357,8 +541,31 @@ async def create_scan(
         priority=priority,
         note=note.strip(),
     )
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=500, detail="Scan could not be loaded.")
+    create_engine_result(scan_id, run_static_metadata_engine(scan))
 
     return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
+
+
+def delete_scan_record(scan_id: int) -> None:
+    deleted_scan = delete_scan(scan_id)
+    if deleted_scan is not None:
+        delete_sample_file(deleted_scan)
+
+
+@app.post("/scans/delete")
+async def delete_selected_scans(scan_ids: list[int] = Form(default=[])) -> RedirectResponse:
+    for scan_id in scan_ids:
+        delete_scan_record(scan_id)
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/scans/{scan_id}/delete")
+async def delete_single_scan(scan_id: int) -> RedirectResponse:
+    delete_scan_record(scan_id)
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/scans/{scan_id}", response_class=HTMLResponse)
@@ -366,7 +573,8 @@ def scan_detail(scan_id: int) -> str:
     scan = get_scan(scan_id)
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
-    return render_scan_result(scan)
+    engine_results = list_engine_results(scan.id)
+    return render_scan_result(scan, engine_results)
 
 
 @app.get("/engines", response_class=HTMLResponse)
