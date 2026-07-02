@@ -15,32 +15,62 @@ DEFAULT_CLAMD_PORT = 3310
 STREAM_CHUNK_SIZE = 1024 * 1024
 
 
-def get_clamav_config() -> dict[str, str | int | bool]:
-    clamd_host = os.getenv("MASP_CLAMD_HOST", "").strip()
+def get_clamav_config(
+    config_override: dict[str, str] | None = None,
+) -> dict[str, str | int | bool]:
+    override = config_override or {}
+    clamd_host = setting_value(
+        override,
+        "host",
+        engine_setting("clamav.host", os.getenv("MASP_CLAMD_HOST", "")),
+    ).strip()
     if clamd_host:
         return {
             "mode": "clamd",
             "host": clamd_host,
-            "port": int(os.getenv("MASP_CLAMD_PORT", str(DEFAULT_CLAMD_PORT))),
-            "timeout_seconds": int(
-                os.getenv("MASP_CLAMD_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
+            "port": setting_int(
+                override,
+                "port",
+                engine_setting("clamav.port", os.getenv("MASP_CLAMD_PORT", str(DEFAULT_CLAMD_PORT))),
+                DEFAULT_CLAMD_PORT,
+            ),
+            "timeout_seconds": setting_int(
+                override,
+                "timeout_seconds",
+                engine_setting(
+                    "clamav.timeout_seconds",
+                    os.getenv("MASP_CLAMD_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
+                ),
+                DEFAULT_TIMEOUT_SECONDS,
             ),
             "enabled": True,
         }
 
-    command = os.getenv("MASP_CLAMAV_COMMAND", "clamscan")
+    command = setting_value(
+        override,
+        "command",
+        engine_setting("clamav.command", os.getenv("MASP_CLAMAV_COMMAND", "clamscan")),
+    )
     return {
         "mode": "cli",
         "command": command,
-        "timeout_seconds": int(
-            os.getenv("MASP_CLAMAV_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
+        "timeout_seconds": setting_int(
+            override,
+            "timeout_seconds",
+            engine_setting(
+                "clamav.timeout_seconds",
+                os.getenv("MASP_CLAMAV_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
+            ),
+            DEFAULT_TIMEOUT_SECONDS,
         ),
         "enabled": shutil.which(command) is not None,
     }
 
 
-def check_clamav_health() -> dict[str, str | bool]:
-    config = get_clamav_config()
+def check_clamav_health(
+    config_override: dict[str, str] | None = None,
+) -> dict[str, str | bool]:
+    config = get_clamav_config(config_override)
     if config["mode"] == "clamd":
         host = str(config["host"])
         port = int(config["port"])
@@ -76,16 +106,22 @@ def check_clamav_health() -> dict[str, str | bool]:
     }
 
 
-def run_clamav_engine(scan: ScanRecord) -> EngineResultInput:
-    clamd_host = os.getenv("MASP_CLAMD_HOST")
-    if clamd_host:
-        return run_clamd_scan(scan, clamd_host)
-    return run_cli_scan(scan)
+def run_clamav_engine(
+    scan: ScanRecord,
+    config_override: dict[str, str] | None = None,
+) -> EngineResultInput:
+    config = get_clamav_config(config_override)
+    if config["mode"] == "clamd":
+        return run_clamd_scan(
+            scan,
+            str(config["host"]),
+            int(config["port"]),
+            int(config["timeout_seconds"]),
+        )
+    return run_cli_scan(scan, str(config["command"]), int(config["timeout_seconds"]))
 
 
-def run_clamd_scan(scan: ScanRecord, host: str) -> EngineResultInput:
-    port = int(os.getenv("MASP_CLAMD_PORT", str(DEFAULT_CLAMD_PORT)))
-    timeout = int(os.getenv("MASP_CLAMD_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))
+def run_clamd_scan(scan: ScanRecord, host: str, port: int, timeout: int) -> EngineResultInput:
     started_at = perf_counter()
 
     sample_path = Path(scan.storage_path)
@@ -157,9 +193,7 @@ def run_clamd_scan(scan: ScanRecord, host: str) -> EngineResultInput:
     )
 
 
-def run_cli_scan(scan: ScanRecord) -> EngineResultInput:
-    command = os.getenv("MASP_CLAMAV_COMMAND", "clamscan")
-    timeout = int(os.getenv("MASP_CLAMAV_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))
+def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultInput:
     started_at = perf_counter()
 
     if shutil.which(command) is None:
@@ -338,3 +372,36 @@ def build_result(
 
 def elapsed_ms(started_at: float) -> int:
     return max(1, int((perf_counter() - started_at) * 1000))
+
+
+def engine_setting(key: str, fallback: str) -> str:
+    from app.database import get_setting
+
+    value = get_setting(key, fallback)
+    return fallback if value is None else value
+
+
+def engine_setting_int(key: str, fallback: str, default: int) -> int:
+    try:
+        return int(engine_setting(key, fallback))
+    except ValueError:
+        return default
+
+
+def setting_value(config_override: dict[str, str], key: str, fallback: str) -> str:
+    value = config_override.get(key)
+    if value is None:
+        return fallback
+    return value
+
+
+def setting_int(
+    config_override: dict[str, str],
+    key: str,
+    fallback: str,
+    default: int,
+) -> int:
+    try:
+        return int(setting_value(config_override, key, fallback))
+    except ValueError:
+        return default

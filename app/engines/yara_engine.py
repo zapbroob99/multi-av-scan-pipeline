@@ -14,24 +14,45 @@ DEFAULT_RULES_DIR = ROOT_DIR / "rules"
 DEFAULT_TIMEOUT_SECONDS = 30
 
 
-def get_yara_config() -> dict[str, str | int | bool]:
-    command = os.getenv("MASP_YARA_COMMAND", "yara")
-    rules_dir = Path(os.getenv("MASP_YARA_RULES_DIR", str(DEFAULT_RULES_DIR)))
+def get_yara_config(
+    config_override: dict[str, str] | None = None,
+) -> dict[str, str | int | bool]:
+    override = config_override or {}
+    command = setting_value(
+        override,
+        "command",
+        engine_setting("yara.command", os.getenv("MASP_YARA_COMMAND", "yara")),
+    )
+    rules_dir = Path(
+        setting_value(
+            override,
+            "rules_dir",
+            engine_setting("yara.rules_dir", os.getenv("MASP_YARA_RULES_DIR", str(DEFAULT_RULES_DIR))),
+        )
+    )
     rule_files = list_rule_files(rules_dir)
 
     return {
         "command": command,
         "rules_dir": str(rules_dir),
         "rule_count": len(rule_files),
-        "timeout_seconds": int(
-            os.getenv("MASP_YARA_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
+        "timeout_seconds": setting_int(
+            override,
+            "timeout_seconds",
+            engine_setting(
+                "yara.timeout_seconds",
+                os.getenv("MASP_YARA_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
+            ),
+            DEFAULT_TIMEOUT_SECONDS,
         ),
         "enabled": shutil.which(command) is not None and bool(rule_files),
     }
 
 
-def check_yara_health() -> dict[str, str | bool]:
-    config = get_yara_config()
+def check_yara_health(
+    config_override: dict[str, str] | None = None,
+) -> dict[str, str | bool]:
+    config = get_yara_config(config_override)
     command = str(config["command"])
     path = shutil.which(command)
     if path is None:
@@ -78,8 +99,11 @@ def check_yara_health() -> dict[str, str | bool]:
     }
 
 
-def run_yara_engine(scan: ScanRecord) -> EngineResultInput:
-    config = get_yara_config()
+def run_yara_engine(
+    scan: ScanRecord,
+    config_override: dict[str, str] | None = None,
+) -> EngineResultInput:
+    config = get_yara_config(config_override)
     started_at = perf_counter()
     command = str(config["command"])
     timeout = int(config["timeout_seconds"])
@@ -231,7 +255,7 @@ def list_rule_files(rules_dir: Path) -> list[Path]:
         path
         for pattern in ("*.yar", "*.yara")
         for path in rules_dir.rglob(pattern)
-        if path.is_file()
+        if path.is_file() and not path.name.endswith(".disabled")
     )
 
 
@@ -275,3 +299,36 @@ def build_result(
 
 def elapsed_ms(started_at: float) -> int:
     return max(1, int((perf_counter() - started_at) * 1000))
+
+
+def engine_setting(key: str, fallback: str) -> str:
+    from app.database import get_setting
+
+    value = get_setting(key, fallback)
+    return fallback if value is None else value
+
+
+def engine_setting_int(key: str, fallback: str, default: int) -> int:
+    try:
+        return int(engine_setting(key, fallback))
+    except ValueError:
+        return default
+
+
+def setting_value(config_override: dict[str, str], key: str, fallback: str) -> str:
+    value = config_override.get(key)
+    if value is None:
+        return fallback
+    return value
+
+
+def setting_int(
+    config_override: dict[str, str],
+    key: str,
+    fallback: str,
+    default: int,
+) -> int:
+    try:
+        return int(setting_value(config_override, key, fallback))
+    except ValueError:
+        return default

@@ -66,3 +66,24 @@ class EngineResultRecord:
     error_message: str | None
     duration_ms: int
     created_at: str
+
+
+@dataclass(frozen=True)
+class EngineInstanceRecord:
+    id: int
+    adapter_key: str
+    display_name: str
+    enabled: bool
+    config_json: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class UserRecord:
+    id: int
+    username: str
+    password_hash: str
+    role: str
+    created_at: str
+    updated_at: str

@@ -2,7 +2,14 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-from app.models import EngineResultInput, EngineResultRecord, ScanRecord, StoredSample
+from app.models import (
+    EngineInstanceRecord,
+    EngineResultInput,
+    EngineResultRecord,
+    ScanRecord,
+    StoredSample,
+    UserRecord,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -33,6 +40,18 @@ def fetch_count(connection: sqlite3.Connection, query: str) -> int:
 
 def row_value(row: sqlite3.Row, key: str) -> Any:
     return row[key]
+
+
+def is_missing_settings_table(exc: sqlite3.OperationalError) -> bool:
+    return "no such table: app_settings" in str(exc)
+
+
+def is_missing_engine_instances_table(exc: sqlite3.OperationalError) -> bool:
+    return "no such table: engine_instances" in str(exc)
+
+
+def is_missing_users_table(exc: sqlite3.OperationalError) -> bool:
+    return "no such table: users" in str(exc) or "no such table: auth_sessions" in str(exc)
 
 
 def init_db() -> None:
@@ -83,8 +102,471 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS engine_instances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                adapter_key TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                config_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('admin', 'analyst')),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                expires_at INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            );
             """
         )
+
+
+def create_user(username: str, password_hash: str, role: str) -> int:
+    try:
+        with connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO users (username, password_hash, role)
+                VALUES (?, ?, ?)
+                """,
+                (username, password_hash, role),
+            )
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+        return create_user(username, password_hash, role)
+    return require_lastrowid(cursor)
+
+
+def list_users() -> list[UserRecord]:
+    try:
+        with connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, username, password_hash, role, created_at, updated_at
+                FROM users
+                ORDER BY username ASC
+                """
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+        return []
+    return [row_to_user_record(row) for row in rows]
+
+
+def get_user_by_username(username: str) -> UserRecord | None:
+    try:
+        with connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, username, password_hash, role, created_at, updated_at
+                FROM users
+                WHERE username = ?
+                """,
+                (username,),
+            ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+        return None
+    return row_to_user_record(row) if row is not None else None
+
+
+def get_user_by_id(user_id: int) -> UserRecord | None:
+    try:
+        with connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, username, password_hash, role, created_at, updated_at
+                FROM users
+                WHERE id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+        return None
+    return row_to_user_record(row) if row is not None else None
+
+
+def update_user(
+    user_id: int,
+    role: str,
+    password_hash: str | None = None,
+) -> None:
+    try:
+        with connect() as connection:
+            if password_hash is None:
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET role = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (role, user_id),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET role = ?, password_hash = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (role, password_hash, user_id),
+                )
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+
+
+def delete_user(user_id: int) -> None:
+    try:
+        with connect() as connection:
+            connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+
+
+def create_auth_session(user_id: int, token_hash: str, expires_at: int) -> int:
+    try:
+        with connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO auth_sessions (user_id, token_hash, expires_at)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, token_hash, expires_at),
+            )
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+        return create_auth_session(user_id, token_hash, expires_at)
+    return require_lastrowid(cursor)
+
+
+def get_user_by_session(token_hash: str, now: int) -> UserRecord | None:
+    try:
+        with connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    users.id,
+                    users.username,
+                    users.password_hash,
+                    users.role,
+                    users.created_at,
+                    users.updated_at
+                FROM auth_sessions
+                JOIN users ON users.id = auth_sessions.user_id
+                WHERE auth_sessions.token_hash = ?
+                  AND auth_sessions.expires_at > ?
+                """,
+                (token_hash, now),
+            ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+        return None
+    return row_to_user_record(row) if row is not None else None
+
+
+def delete_auth_session(token_hash: str) -> None:
+    try:
+        with connect() as connection:
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE token_hash = ?",
+                (token_hash,),
+            )
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+
+
+def delete_expired_auth_sessions(now: int) -> None:
+    try:
+        with connect() as connection:
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE expires_at <= ?",
+                (now,),
+            )
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    try:
+        with connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM app_settings WHERE key = ?",
+                (key,),
+            ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if not is_missing_settings_table(exc):
+            raise
+        init_db()
+        with connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM app_settings WHERE key = ?",
+                (key,),
+            ).fetchone()
+    if row is None:
+        return default
+    return str(row_value(row, "value"))
+
+
+def get_settings(defaults: dict[str, str]) -> dict[str, str]:
+    values = dict(defaults)
+    if not defaults:
+        return values
+
+    placeholders = ",".join("?" for _ in defaults)
+    try:
+        with connect() as connection:
+            rows = connection.execute(
+                f"SELECT key, value FROM app_settings WHERE key IN ({placeholders})",
+                tuple(defaults.keys()),
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if not is_missing_settings_table(exc):
+            raise
+        init_db()
+        with connect() as connection:
+            rows = connection.execute(
+                f"SELECT key, value FROM app_settings WHERE key IN ({placeholders})",
+                tuple(defaults.keys()),
+            ).fetchall()
+
+    for row in rows:
+        values[str(row_value(row, "key"))] = str(row_value(row, "value"))
+    return values
+
+
+def set_setting(key: str, value: str) -> None:
+    try:
+        with connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, value),
+            )
+    except sqlite3.OperationalError as exc:
+        if not is_missing_settings_table(exc):
+            raise
+        init_db()
+        with connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, value),
+            )
+
+
+def list_engine_instances() -> list[EngineInstanceRecord]:
+    try:
+        with connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    id,
+                    adapter_key,
+                    display_name,
+                    enabled,
+                    config_json,
+                    created_at,
+                    updated_at
+                FROM engine_instances
+                ORDER BY created_at ASC, id ASC
+                """
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if not is_missing_engine_instances_table(exc):
+            raise
+        init_db()
+        with connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    id,
+                    adapter_key,
+                    display_name,
+                    enabled,
+                    config_json,
+                    created_at,
+                    updated_at
+                FROM engine_instances
+                ORDER BY created_at ASC, id ASC
+                """
+            ).fetchall()
+    return [row_to_engine_instance_record(row) for row in rows]
+
+
+def get_engine_instance(adapter_key: str) -> EngineInstanceRecord | None:
+    try:
+        with connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    id,
+                    adapter_key,
+                    display_name,
+                    enabled,
+                    config_json,
+                    created_at,
+                    updated_at
+                FROM engine_instances
+                WHERE adapter_key = ?
+                """,
+                (adapter_key,),
+            ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if not is_missing_engine_instances_table(exc):
+            raise
+        init_db()
+        with connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    id,
+                    adapter_key,
+                    display_name,
+                    enabled,
+                    config_json,
+                    created_at,
+                    updated_at
+                FROM engine_instances
+                WHERE adapter_key = ?
+                """,
+                (adapter_key,),
+            ).fetchone()
+    if row is None:
+        return None
+    return row_to_engine_instance_record(row)
+
+
+def create_engine_instance(
+    adapter_key: str,
+    display_name: str,
+    enabled: bool = True,
+    config_json: str = "{}",
+) -> int:
+    try:
+        with connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO engine_instances (
+                    adapter_key,
+                    display_name,
+                    enabled,
+                    config_json,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (adapter_key, display_name, 1 if enabled else 0, config_json),
+            )
+            return require_lastrowid(cursor)
+    except sqlite3.OperationalError as exc:
+        if not is_missing_engine_instances_table(exc):
+            raise
+        init_db()
+        return create_engine_instance(adapter_key, display_name, enabled, config_json)
+
+
+def update_engine_instance(
+    adapter_key: str,
+    display_name: str | None = None,
+    enabled: bool | None = None,
+    config_json: str | None = None,
+) -> None:
+    instance = get_engine_instance(adapter_key)
+    if instance is None:
+        return
+
+    try:
+        with connect() as connection:
+            connection.execute(
+                """
+                UPDATE engine_instances
+                SET
+                    display_name = ?,
+                    enabled = ?,
+                    config_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE adapter_key = ?
+                """,
+                (
+                    display_name if display_name is not None else instance.display_name,
+                    1 if enabled else 0 if enabled is not None else 1 if instance.enabled else 0,
+                    config_json if config_json is not None else instance.config_json,
+                    adapter_key,
+                ),
+            )
+    except sqlite3.OperationalError as exc:
+        if not is_missing_engine_instances_table(exc):
+            raise
+        init_db()
+        update_engine_instance(adapter_key, display_name, enabled, config_json)
+
+
+def delete_engine_instance(adapter_key: str) -> None:
+    try:
+        with connect() as connection:
+            connection.execute(
+                "DELETE FROM engine_instances WHERE adapter_key = ?",
+                (adapter_key,),
+            )
+    except sqlite3.OperationalError as exc:
+        if not is_missing_engine_instances_table(exc):
+            raise
+        init_db()
+        with connect() as connection:
+            connection.execute(
+                "DELETE FROM engine_instances WHERE adapter_key = ?",
+                (adapter_key,),
+            )
 
 
 def create_sample(sample: StoredSample) -> int:
@@ -467,4 +949,27 @@ def row_to_engine_result_record(row: sqlite3.Row) -> EngineResultRecord:
         else str(row_value(row, "error_message")),
         duration_ms=int(row_value(row, "duration_ms")),
         created_at=str(row_value(row, "created_at")),
+    )
+
+
+def row_to_engine_instance_record(row: sqlite3.Row) -> EngineInstanceRecord:
+    return EngineInstanceRecord(
+        id=int(row_value(row, "id")),
+        adapter_key=str(row_value(row, "adapter_key")),
+        display_name=str(row_value(row, "display_name")),
+        enabled=bool(int(row_value(row, "enabled"))),
+        config_json=str(row_value(row, "config_json")),
+        created_at=str(row_value(row, "created_at")),
+        updated_at=str(row_value(row, "updated_at")),
+    )
+
+
+def row_to_user_record(row: sqlite3.Row) -> UserRecord:
+    return UserRecord(
+        id=int(row_value(row, "id")),
+        username=str(row_value(row, "username")),
+        password_hash=str(row_value(row, "password_hash")),
+        role=str(row_value(row, "role")),
+        created_at=str(row_value(row, "created_at")),
+        updated_at=str(row_value(row, "updated_at")),
     )
