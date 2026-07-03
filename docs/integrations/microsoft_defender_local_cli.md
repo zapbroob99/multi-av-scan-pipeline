@@ -26,7 +26,7 @@
   `https://learn.microsoft.com/en-us/powershell/module/defender/start-mpscan`
   `https://learn.microsoft.com/en-us/powershell/module/defender/get-mpcomputerstatus`
 - Vendor notes: none yet.
-- Internal lab notes: none yet.
+- Internal lab notes: local validation on 2026-07-03 confirmed `Get-MpComputerStatus` exists on the target Windows host but can return `Access denied` without sufficient privilege.
 - Last reviewed: 2026-07-03
 
 ## Product Notes From Documentation
