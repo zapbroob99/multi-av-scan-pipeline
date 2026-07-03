@@ -7,12 +7,13 @@ shows analyst-friendly scan results.
 ## Current capabilities
 
 - Web UI for file intake and scan history
-- SQLite persistence for samples, scan jobs, and engine results
+- PostgreSQL persistence for samples, scan jobs, and engine results in Docker
+- SQLite fallback for lightweight local development
 - Static Metadata engine
 - ClamAV integration via clamd TCP when configured
 - Local `clamscan` fallback when clamd is not configured
 - YARA integration via local CLI and rules in `rules/`
-- SQLite-backed scan queue with a separate worker process
+- Database-backed scan queue with separate worker processes
 - Bulk scan deletion with stored sample cleanup
 
 ## Local development
@@ -37,6 +38,7 @@ docker compose up --build
 The default compose stack starts:
 
 - `app`: MASP web application
+- `postgres`: shared PostgreSQL database exposed on port `5432`
 - `clamav`: ClamAV daemon exposed on port `3310`
 
 The Linux container worker is available behind an explicit profile:
@@ -53,19 +55,36 @@ The app image installs the `yara` CLI. Docker Compose mounts the local `rules/`
 directory into `/app/rules`, so rule edits can be picked up without rebuilding
 the image.
 
+Docker uses PostgreSQL for shared state. This lets the web app, Linux worker,
+and Windows Defender worker all read and write the same scan queue. SQLite is
+still available when `MASP_DATABASE_URL` is not set, but do not use SQLite for a
+hybrid Docker + Windows worker deployment.
+
 The app uses these environment variables in Docker:
 
 ```text
+MASP_DATABASE_URL=postgresql://masp:masp_dev_password@postgres:5432/masp
 MASP_CLAMD_HOST=clamav
 MASP_CLAMD_PORT=3310
-MASP_CLAMD_TIMEOUT_SECONDS=60
+MASP_CLAMD_TIMEOUT_SECONDS=180
+MASP_CLAMD_READY_TIMEOUT_SECONDS=30
+MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS=120
 MASP_YARA_RULES_DIR=/app/rules
 MASP_WORKER_POLL_SECONDS=2
 ```
 
 ClamAV may take time to initialize and download/update signatures on first
-startup. Until clamd is reachable, MASP records the ClamAV result as skipped
-instead of failing the upload.
+startup. MASP waits briefly for clamd to accept TCP connections before recording
+the ClamAV result. If clamd is still unreachable after that readiness window,
+MASP records the ClamAV result as skipped instead of failing the upload.
+The Docker ClamAV service raises `StreamMaxLength`, `MaxFileSize`, and
+`MaxScanSize` to `512M` so larger samples can be streamed to clamd. If clamd
+still closes the stream during a scan, MASP records a failed ClamAV result with
+a limit/timeout hint instead of reporting it as a generic connection failure.
+
+If one or more enabled engines never report back, MASP does not leave the scan
+running forever. After the orchestration wait window expires, missing engines
+are recorded as `skipped` and the scan completes with partial coverage.
 
 For local development without Docker, run the web app and worker in separate
 terminals:
@@ -87,6 +106,7 @@ In a separate Windows terminal:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
+$env:MASP_DATABASE_URL="postgresql://masp:masp_dev_password@127.0.0.1:5432/masp"
 $env:MASP_CLAMD_HOST="127.0.0.1"
 $env:MASP_CLAMD_PORT="3310"
 $env:MASP_WORKER_ENGINE_KEYS="microsoft_defender"

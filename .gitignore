@@ -4,3 +4,5 @@ __pycache__/
 
 data/
 storage/samples/
+
+agent.md

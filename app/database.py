@@ -1,6 +1,15 @@
 from pathlib import Path
+import os
 import sqlite3
-from typing import Any
+import time
+from typing import Any, Iterable
+
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:  # pragma: no cover - exercised only when Postgres is configured.
+    psycopg = None  # type: ignore[assignment]
+    dict_row = None  # type: ignore[assignment]
 
 from app.models import (
     EngineInstanceRecord,
@@ -15,31 +24,148 @@ from app.models import (
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "app.db"
+DATABASE_URL = os.getenv("MASP_DATABASE_URL", "").strip()
+SQLITE_TIMEOUT_SECONDS = float(os.getenv("MASP_SQLITE_TIMEOUT_SECONDS", "30"))
+SQLITE_CONNECT_ATTEMPTS = int(os.getenv("MASP_SQLITE_CONNECT_ATTEMPTS", "5"))
+SQLITE_RETRY_DELAY_SECONDS = float(os.getenv("MASP_SQLITE_RETRY_DELAY_SECONDS", "0.25"))
+DATABASE_CONNECT_ATTEMPTS = int(os.getenv("MASP_DATABASE_CONNECT_ATTEMPTS", "20"))
+DATABASE_RETRY_DELAY_SECONDS = float(os.getenv("MASP_DATABASE_RETRY_DELAY_SECONDS", "1"))
 
 
-def connect() -> sqlite3.Connection:
+if psycopg is None:
+    DatabaseOperationalError = (sqlite3.Error,)
+else:
+    DatabaseOperationalError = (sqlite3.Error, psycopg.Error)
+
+
+class PostgresConnection:
+    def __init__(self, connection: Any):
+        self.connection = connection
+
+    def __enter__(self) -> "PostgresConnection":
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> object:
+        return self.connection.__exit__(exc_type, exc, traceback)
+
+    def execute(self, query: str, params: Iterable[object] | None = None) -> Any:
+        return self.connection.execute(postgres_query(query), tuple(params or ()))
+
+    def executescript(self, script: str) -> None:
+        for statement in split_sql_script(script):
+            self.execute(statement)
+
+
+def using_postgres() -> bool:
+    return bool(DATABASE_URL)
+
+
+def connect() -> Any:
+    if using_postgres():
+        return connect_postgres()
+    return connect_sqlite()
+
+
+def connect_postgres() -> PostgresConnection:
+    if psycopg is None or dict_row is None:
+        raise RuntimeError(
+            "MASP_DATABASE_URL is set, but psycopg is not installed. "
+            "Install requirements.txt before using PostgreSQL."
+        )
+
+    last_error: Exception | None = None
+    for attempt in range(max(1, DATABASE_CONNECT_ATTEMPTS)):
+        try:
+            connection = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+            return PostgresConnection(connection)
+        except psycopg.OperationalError as exc:
+            last_error = exc
+            if attempt >= DATABASE_CONNECT_ATTEMPTS - 1:
+                raise
+            time.sleep(DATABASE_RETRY_DELAY_SECONDS)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("PostgreSQL connection could not be opened.")
+
+
+def connect_sqlite() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(str(DB_PATH))
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    last_error: sqlite3.OperationalError | None = None
+    for attempt in range(max(1, SQLITE_CONNECT_ATTEMPTS)):
+        try:
+            connection = sqlite3.connect(str(DB_PATH), timeout=SQLITE_TIMEOUT_SECONDS)
+            connection.row_factory = sqlite3.Row
+            connection.execute(f"PRAGMA busy_timeout = {int(SQLITE_TIMEOUT_SECONDS * 1000)}")
+            connection.execute("PRAGMA foreign_keys = ON")
+            return connection
+        except sqlite3.OperationalError as exc:
+            last_error = exc
+            if not is_transient_sqlite_error(exc) or attempt >= SQLITE_CONNECT_ATTEMPTS - 1:
+                raise
+            time.sleep(SQLITE_RETRY_DELAY_SECONDS * (attempt + 1))
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("SQLite connection could not be opened.")
 
 
-def require_lastrowid(cursor: sqlite3.Cursor) -> int:
+def postgres_query(query: str) -> str:
+    return query.replace("?", "%s").replace("BEGIN IMMEDIATE", "BEGIN")
+
+
+def split_sql_script(script: str) -> list[str]:
+    return [
+        statement.strip()
+        for statement in script.split(";")
+        if statement.strip()
+    ]
+
+
+def is_transient_sqlite_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "database is locked",
+            "database is busy",
+            "disk i/o error",
+            "unable to open database file",
+        )
+    )
+
+
+def require_lastrowid(cursor: Any) -> int:
+    if using_postgres():
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("Database insert did not return a row id.")
+        return int(row_value(row, "id"))
     if cursor.lastrowid is None:
         raise RuntimeError("Database insert did not return a row id.")
-    return cursor.lastrowid
+    return int(cursor.lastrowid)
 
 
-def fetch_count(connection: sqlite3.Connection, query: str) -> int:
+def fetch_count(connection: Any, query: str) -> int:
     row = connection.execute(query).fetchone()
     if row is None:
         return 0
+    if isinstance(row, dict):
+        return int(next(iter(row.values())))
     return int(row[0])
 
 
-def row_value(row: sqlite3.Row, key: str) -> Any:
+def row_value(row: Any, key: str) -> Any:
     return row[key]
+
+
+def returning_id_clause() -> str:
+    return "RETURNING id" if using_postgres() else ""
+
+
+def db_bool(value: bool) -> bool | int:
+    return value if using_postgres() else 1 if value else 0
 
 
 def is_missing_settings_table(exc: sqlite3.OperationalError) -> bool:
@@ -55,6 +181,13 @@ def is_missing_users_table(exc: sqlite3.OperationalError) -> bool:
 
 
 def init_db() -> None:
+    if using_postgres():
+        init_postgres_db()
+        return
+    init_sqlite_db()
+
+
+def init_sqlite_db() -> None:
     with connect() as connection:
         connection.executescript(
             """
@@ -144,6 +277,12 @@ def init_db() -> None:
             );
             """
         )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_results_scan_engine
+            ON engine_results (scan_job_id, engine_name)
+            """
+        )
         ensure_column(connection, "scan_jobs", "started_at", "TEXT")
         ensure_column(connection, "scan_jobs", "failed_at", "TEXT")
         ensure_column(connection, "scan_jobs", "attempt_count", "INTEGER NOT NULL DEFAULT 0")
@@ -152,16 +291,129 @@ def init_db() -> None:
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
 
 
+def init_postgres_db() -> None:
+    with connect() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS samples (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                original_filename TEXT NOT NULL,
+                stored_filename TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                md5 TEXT NOT NULL,
+                sha1 TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS scan_jobs (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                sample_id INTEGER NOT NULL,
+                case_name TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                note TEXT NOT NULL,
+                status TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                risk_score INTEGER,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                failed_at TIMESTAMPTZ,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                FOREIGN KEY (sample_id) REFERENCES samples (id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS engine_results (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                scan_job_id INTEGER NOT NULL,
+                engine_name TEXT NOT NULL,
+                engine_version TEXT,
+                signature_version TEXT,
+                status TEXT NOT NULL,
+                detected BOOLEAN NOT NULL,
+                signature TEXT,
+                severity TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                raw_output TEXT NOT NULL,
+                error_message TEXT,
+                duration_ms INTEGER NOT NULL,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                findings_json TEXT NOT NULL DEFAULT '[]',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_results_scan_engine
+            ON engine_results (scan_job_id, engine_name);
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS engine_instances (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                adapter_key TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                config_json TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('admin', 'analyst')),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                expires_at INTEGER NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            );
+            """
+        )
+        ensure_column(connection, "scan_jobs", "started_at", "TIMESTAMPTZ")
+        ensure_column(connection, "scan_jobs", "failed_at", "TIMESTAMPTZ")
+        ensure_column(connection, "scan_jobs", "attempt_count", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(connection, "scan_jobs", "last_error", "TEXT")
+        ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
+
+
 def ensure_column(
-    connection: sqlite3.Connection,
+    connection: Any,
     table_name: str,
     column_name: str,
     definition: str,
 ) -> None:
-    columns = {
-        str(row_value(row, "name"))
-        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
-    }
+    if using_postgres():
+        rows = connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = ?
+            """,
+            (table_name,),
+        ).fetchall()
+        columns = {str(row_value(row, "column_name")) for row in rows}
+    else:
+        columns = {
+            str(row_value(row, "name"))
+            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
     if column_name not in columns:
         connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
@@ -170,9 +422,10 @@ def create_user(username: str, password_hash: str, role: str) -> int:
     try:
         with connect() as connection:
             cursor = connection.execute(
-                """
+                f"""
                 INSERT INTO users (username, password_hash, role)
                 VALUES (?, ?, ?)
+                {returning_id_clause()}
                 """,
                 (username, password_hash, role),
             )
@@ -302,9 +555,10 @@ def create_auth_session(user_id: int, token_hash: str, expires_at: int) -> int:
     try:
         with connect() as connection:
             cursor = connection.execute(
-                """
+                f"""
                 INSERT INTO auth_sessions (user_id, token_hash, expires_at)
                 VALUES (?, ?, ?)
+                {returning_id_clause()}
                 """,
                 (user_id, token_hash, expires_at),
             )
@@ -551,7 +805,7 @@ def create_engine_instance(
     try:
         with connect() as connection:
             cursor = connection.execute(
-                """
+                f"""
                 INSERT INTO engine_instances (
                     adapter_key,
                     display_name,
@@ -560,8 +814,9 @@ def create_engine_instance(
                     updated_at
                 )
                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                {returning_id_clause()}
                 """,
-                (adapter_key, display_name, 1 if enabled else 0, config_json),
+                (adapter_key, display_name, db_bool(enabled), config_json),
             )
             return require_lastrowid(cursor)
     except sqlite3.OperationalError as exc:
@@ -595,7 +850,7 @@ def update_engine_instance(
                 """,
                 (
                     display_name if display_name is not None else instance.display_name,
-                    1 if enabled else 0 if enabled is not None else 1 if instance.enabled else 0,
+                    db_bool(enabled if enabled is not None else instance.enabled),
                     config_json if config_json is not None else instance.config_json,
                     adapter_key,
                 ),
@@ -628,7 +883,7 @@ def delete_engine_instance(adapter_key: str) -> None:
 def create_sample(sample: StoredSample) -> int:
     with connect() as connection:
         cursor = connection.execute(
-            """
+            f"""
             INSERT INTO samples (
                 original_filename,
                 stored_filename,
@@ -640,6 +895,7 @@ def create_sample(sample: StoredSample) -> int:
                 sha256
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            {returning_id_clause()}
             """,
             (
                 sample.original_filename,
@@ -666,7 +922,7 @@ def create_scan_job(
 ) -> int:
     with connect() as connection:
         cursor = connection.execute(
-            """
+            f"""
             INSERT INTO scan_jobs (
                 sample_id,
                 case_name,
@@ -685,6 +941,7 @@ def create_scan_job(
                     ELSE NULL
                 END
             )
+            {returning_id_clause()}
             """,
             (
                 sample_id,
@@ -703,7 +960,7 @@ def create_scan_job(
 def create_engine_result(scan_job_id: int, result: EngineResultInput) -> int:
     with connect() as connection:
         cursor = connection.execute(
-            """
+            f"""
             INSERT INTO engine_results (
                 scan_job_id,
                 engine_name,
@@ -721,6 +978,7 @@ def create_engine_result(scan_job_id: int, result: EngineResultInput) -> int:
                 findings_json
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            {returning_id_clause()}
             """,
             (
                 scan_job_id,
@@ -728,7 +986,7 @@ def create_engine_result(scan_job_id: int, result: EngineResultInput) -> int:
                 result.engine_version,
                 result.signature_version,
                 result.status,
-                1 if result.detected else 0,
+                db_bool(result.detected),
                 result.signature,
                 result.severity,
                 result.confidence,
@@ -744,6 +1002,51 @@ def create_engine_result(scan_job_id: int, result: EngineResultInput) -> int:
 
 def create_engine_result_if_missing(scan_job_id: int, result: EngineResultInput) -> int | None:
     with connect() as connection:
+        if using_postgres():
+            cursor = connection.execute(
+                """
+                INSERT INTO engine_results (
+                    scan_job_id,
+                    engine_name,
+                    engine_version,
+                    signature_version,
+                    status,
+                    detected,
+                    signature,
+                    severity,
+                    confidence,
+                    raw_output,
+                    error_message,
+                    duration_ms,
+                    details_json,
+                    findings_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (scan_job_id, engine_name) DO NOTHING
+                RETURNING id
+                """,
+                (
+                    scan_job_id,
+                    result.engine_name,
+                    result.engine_version,
+                    result.signature_version,
+                    result.status,
+                    result.detected,
+                    result.signature,
+                    result.severity,
+                    result.confidence,
+                    result.raw_output,
+                    result.error_message,
+                    result.duration_ms,
+                    result.details_json,
+                    result.findings_json,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return int(row_value(row, "id"))
+
         connection.execute("BEGIN IMMEDIATE")
         existing_row = connection.execute(
             """
@@ -758,7 +1061,7 @@ def create_engine_result_if_missing(scan_job_id: int, result: EngineResultInput)
             return None
 
         cursor = connection.execute(
-            """
+            f"""
             INSERT INTO engine_results (
                 scan_job_id,
                 engine_name,
@@ -776,6 +1079,7 @@ def create_engine_result_if_missing(scan_job_id: int, result: EngineResultInput)
                 findings_json
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            {returning_id_clause()}
             """,
             (
                 scan_job_id,
@@ -783,7 +1087,7 @@ def create_engine_result_if_missing(scan_job_id: int, result: EngineResultInput)
                 result.engine_version,
                 result.signature_version,
                 result.status,
-                1 if result.detected else 0,
+                db_bool(result.detected),
                 result.signature,
                 result.severity,
                 result.confidence,
@@ -993,20 +1297,20 @@ def update_scan_status(scan_id: int, status: str, last_error: str | None = None)
             SET
                 status = ?,
                 last_error = CASE
-                    WHEN ? IS NOT NULL THEN ?
-                    WHEN ? = 'completed' THEN NULL
+                    WHEN CAST(? AS TEXT) IS NOT NULL THEN CAST(? AS TEXT)
+                    WHEN CAST(? AS TEXT) = 'completed' THEN NULL
                     ELSE last_error
                 END,
                 started_at = CASE
-                    WHEN ? = 'queued' THEN NULL
+                    WHEN CAST(? AS TEXT) = 'queued' THEN NULL
                     ELSE started_at
                 END,
                 completed_at = CASE
-                    WHEN ? IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
+                    WHEN CAST(? AS TEXT) IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
                     ELSE NULL
                 END,
                 failed_at = CASE
-                    WHEN ? = 'failed' THEN CURRENT_TIMESTAMP
+                    WHEN CAST(? AS TEXT) = 'failed' THEN CURRENT_TIMESTAMP
                     ELSE NULL
                 END
             WHERE id = ?
@@ -1026,14 +1330,16 @@ def update_scan_status(scan_id: int, status: str, last_error: str | None = None)
 
 def claim_next_scan_job() -> ScanRecord | None:
     with connect() as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        if not using_postgres():
+            connection.execute("BEGIN IMMEDIATE")
         queued_row = connection.execute(
-            """
+            f"""
             SELECT id
             FROM scan_jobs
             WHERE status = 'queued'
             ORDER BY created_at ASC, id ASC
             LIMIT 1
+            {"FOR UPDATE SKIP LOCKED" if using_postgres() else ""}
             """
         ).fetchone()
 
@@ -1113,6 +1419,74 @@ def get_scan_counts() -> dict[str, int]:
         "running": running,
         "high_risk": high_risk,
     }
+
+
+def get_queue_metrics() -> dict[str, int]:
+    with connect() as connection:
+        queued = fetch_count(
+            connection,
+            "SELECT COUNT(*) FROM scan_jobs WHERE status = 'queued'",
+        )
+        running = fetch_count(
+            connection,
+            "SELECT COUNT(*) FROM scan_jobs WHERE status = 'running'",
+        )
+        completed = fetch_count(
+            connection,
+            "SELECT COUNT(*) FROM scan_jobs WHERE status = 'completed'",
+        )
+        failed = fetch_count(
+            connection,
+            "SELECT COUNT(*) FROM scan_jobs WHERE status = 'failed'",
+        )
+        total = fetch_count(connection, "SELECT COUNT(*) FROM scan_jobs")
+
+    return {
+        "queued": queued,
+        "running": running,
+        "active": queued + running,
+        "completed": completed,
+        "failed": failed,
+        "total": total,
+    }
+
+
+def list_engine_result_metrics() -> list[dict[str, object]]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                engine_name,
+                COUNT(*) AS total_results,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_results,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_results,
+                SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped_results,
+                SUM(CASE WHEN detected THEN 1 ELSE 0 END) AS detections,
+                AVG(duration_ms) AS avg_duration_ms,
+                MAX(duration_ms) AS max_duration_ms,
+                MAX(created_at) AS last_result_at
+            FROM engine_results
+            GROUP BY engine_name
+            ORDER BY engine_name ASC
+            """
+        ).fetchall()
+
+    return [
+        {
+            "engine_name": str(row_value(row, "engine_name")),
+            "total_results": int(row_value(row, "total_results") or 0),
+            "completed_results": int(row_value(row, "completed_results") or 0),
+            "failed_results": int(row_value(row, "failed_results") or 0),
+            "skipped_results": int(row_value(row, "skipped_results") or 0),
+            "detections": int(row_value(row, "detections") or 0),
+            "avg_duration_ms": int(float(row_value(row, "avg_duration_ms") or 0)),
+            "max_duration_ms": int(row_value(row, "max_duration_ms") or 0),
+            "last_result_at": None
+            if row_value(row, "last_result_at") is None
+            else str(row_value(row, "last_result_at")),
+        }
+        for row in rows
+    ]
 
 
 def retry_scan_job(scan_id: int) -> bool:

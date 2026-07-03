@@ -18,10 +18,13 @@ from app.database import (
     delete_scan,
     delete_user,
     get_scan,
+    get_queue_metrics,
     get_scan_counts,
     get_user_by_id,
     get_user_by_username,
     init_db,
+    list_active_scans,
+    list_engine_result_metrics,
     list_engine_results,
     list_recent_scans,
     list_users,
@@ -109,15 +112,21 @@ def nav_icon(icon_key: str) -> str:
         """,
         "new_scan": """
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M10 3v14"></path>
-          <path d="M3 10h14"></path>
-          <rect x="3" y="3" width="14" height="14" rx="3"></rect>
+          <circle cx="8.5" cy="8.5" r="4.5"></circle>
+          <path d="M12 12l4.5 4.5"></path>
         </svg>
         """,
         "account": """
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="10" cy="6.5" r="3"></circle>
           <path d="M4 16c1.2-2.7 3.2-4 6-4s4.8 1.3 6 4"></path>
+        </svg>
+        """,
+        "logout": """
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"></path>
+          <path d="M12 6l4 4-4 4"></path>
+          <path d="M7 10h9"></path>
         </svg>
         """,
         "engines": """
@@ -127,6 +136,13 @@ def nav_icon(icon_key: str) -> str:
           <circle cx="14" cy="14" r="2.2"></circle>
           <path d="M7.9 8.9 12.1 7.1"></path>
           <path d="M7.9 11.1 12.1 12.9"></path>
+        </svg>
+        """,
+        "system": """
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 13.5h3l2-7 4 9 2-6h3"></path>
+          <path d="M3 4.5h14"></path>
+          <path d="M3 17h14"></path>
         </svg>
         """,
         "users": """
@@ -161,6 +177,7 @@ def page_shell(
     ]
     if user.role == ROLE_ADMIN:
         nav_items.append(("engines", "/engines", "Engines"))
+        nav_items.append(("system", "/system", "System"))
         nav_items.append(("users", "/users", "Users"))
     nav_html = "\n".join(
         f'<a class="nav-link {"is-active" if key == active else ""}" href="{href}">'
@@ -168,6 +185,14 @@ def page_shell(
         f'<span class="nav-label">{label}</span></a>'
         for key, href, label in nav_items
     )
+    logout_nav_html = f"""
+    <form class="nav-form" action="/logout" method="post">
+      <button class="nav-link nav-button" type="submit">
+        <span class="nav-icon">{nav_icon("logout")}</span>
+        <span class="nav-label">Logout</span>
+      </button>
+    </form>
+    """
     username = html.escape(getattr(user, "username", ""))
     role = html.escape(str(getattr(user, "role", "")).title())
 
@@ -209,6 +234,9 @@ def page_shell(
             <nav class="nav-list" aria-label="Main navigation">
               {nav_html}
             </nav>
+            <div class="nav-utility">
+              {logout_nav_html}
+            </div>
             <div class="side-status">
               <span class="status-dot"></span>
               <span>Local node online</span>
@@ -227,10 +255,6 @@ def page_shell(
                     <strong>{username}</strong>
                     <small>{role}</small>
                   </span>
-                  <a class="secondary-action compact-action" href="/account">Account</a>
-                  <form action="/logout" method="post">
-                    <button class="secondary-action compact-action" type="submit">Logout</button>
-                  </form>
                 </div>
                 <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark theme" title="Toggle dark theme">
                   <span class="theme-toggle-icon" aria-hidden="true"></span>
@@ -718,37 +742,295 @@ def worker_status_detail(worker_status: dict[str, object]) -> str:
     return "Heartbeat is healthy."
 
 
-def render_pipeline_panel(worker_status: dict[str, object]) -> str:
+def render_worker_status_panel(worker_status: dict[str, object]) -> str:
     active_scan_id = worker_status.get("active_scan_id")
-    active_scan_html = (
-        f'<li><span>4</span><strong>Active job</strong><small>Scan #{html.escape(str(active_scan_id))}</small></li>'
-        if active_scan_id
-        else '<li><span>4</span><strong>Worker</strong><small>Waiting for the next queued job</small></li>'
-    )
+    worker_count = f'{int(worker_status.get("online_count", 0) or 0)} online'
+    queue_state = f"Processing scan #{active_scan_id}" if active_scan_id else "Idle"
+    last_seen_at = str(worker_status.get("last_seen_at") or "-")
+    hostname = str(worker_status.get("hostname") or "-")
     return f"""
-      <div class="panel">
+      <div class="panel status-panel">
         <div class="panel-header compact">
-          <h2>Pipeline</h2>
+          <div>
+            <h2>System status</h2>
+            <p>Worker readiness and queue state.</p>
+          </div>
           {worker_status_pill(worker_status)}
         </div>
-        <ol class="step-list">
-          <li><span>1</span><strong>Ingest</strong><small>Store sample and metadata</small></li>
-          <li><span>2</span><strong>Analyze</strong><small>Run configured engines</small></li>
-          <li><span>3</span><strong>Normalize</strong><small>Unify engine outputs</small></li>
-          {active_scan_html}
-        </ol>
-        <div class="engine-health">
+        <div class="status-summary-grid">
           <div>
-            <span>Worker status</span>
-            <strong>{html.escape(worker_status_detail(worker_status))}</strong>
+            <span>Workers</span>
+            <strong>{html.escape(worker_count)}</strong>
+          </div>
+          <div>
+            <span>Queue</span>
+            <strong>{html.escape(queue_state)}</strong>
+          </div>
+          <div>
+            <span>Last heartbeat</span>
+            <strong>{html.escape(last_seen_at)}</strong>
           </div>
           <div>
             <span>Node</span>
-            <strong>{html.escape(str(worker_status.get("hostname") or "-"))}</strong>
+            <strong>{html.escape(hostname)}</strong>
           </div>
         </div>
       </div>
     """
+
+
+def format_duration_ms(duration_ms: int | float | None) -> str:
+    if duration_ms is None:
+        return "-"
+    value = int(duration_ms)
+    if value < 1000:
+        return f"{value} ms"
+    seconds = value / 1000
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    remaining_seconds = int(seconds % 60)
+    return f"{minutes}m {remaining_seconds}s"
+
+
+def engine_metric_tone(engine: EngineInstanceRecord, supported_engine_keys: set[str]) -> str:
+    if not engine.enabled:
+        return "neutral"
+    if engine.adapter_key not in supported_engine_keys:
+        return "danger"
+    return "success"
+
+
+def engine_metric_status(engine: EngineInstanceRecord, supported_engine_keys: set[str]) -> str:
+    if not engine.enabled:
+        return "Disabled"
+    if engine.adapter_key not in supported_engine_keys:
+        return "No online worker"
+    return "Worker covered"
+
+
+def render_system_worker_rows(worker_status: dict[str, object]) -> str:
+    workers = worker_status.get("workers")
+    if not isinstance(workers, list) or not workers:
+        return """
+        <tr>
+          <td class="empty-cell" colspan="6">No worker heartbeat has been recorded yet.</td>
+        </tr>
+        """
+
+    rows = []
+    for worker in workers:
+        if not isinstance(worker, dict):
+            continue
+        online = bool(worker.get("online"))
+        state = str(worker.get("state") or "offline")
+        engine_keys = ", ".join(str(item) for item in worker.get("engine_keys", [])) or "-"
+        active_scan_id = worker.get("active_scan_id")
+        active_scan = f"#{active_scan_id}" if active_scan_id else "-"
+        rows.append(
+            f"""
+            <tr>
+              <td>{status_pill(state if online else "offline")}</td>
+              <td>
+                <strong>{html.escape(str(worker.get("hostname") or "-"))}</strong>
+                <small>PID {html.escape(str(worker.get("pid") or "-"))}</small>
+              </td>
+              <td>{html.escape(engine_keys)}</td>
+              <td>{html.escape(active_scan)}</td>
+              <td>{html.escape(str(worker.get("last_seen_at") or "-"))}</td>
+              <td>{html.escape(str(worker.get("age_seconds") if worker.get("age_seconds") is not None else "-"))}s</td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_system_engine_rows(
+    engines: list[EngineInstanceRecord],
+    metrics: list[dict[str, object]],
+    worker_status: dict[str, object],
+) -> str:
+    metrics_by_engine = {str(metric["engine_name"]): metric for metric in metrics}
+    supported_engine_keys = set(str(item) for item in worker_status.get("engine_keys", []))
+    if not engines:
+        return '<tr><td class="empty-cell" colspan="9">No engines are configured.</td></tr>'
+
+    rows = []
+    for engine in engines:
+        metric = metrics_by_engine.get(engine.display_name, {})
+        tone = engine_metric_tone(engine, supported_engine_keys)
+        runtime = runtime_config(engine)
+        timeout = runtime.get("timeout_seconds")
+        rows.append(
+            f"""
+            <tr>
+              <td>
+                <div class="engine-mini">
+                  {render_engine_logo(adapter_definition(engine.adapter_key).short_label, engine.adapter_key)}
+                  <div>
+                    <strong>{html.escape(engine.display_name)}</strong>
+                    <small>{html.escape(adapter_definition(engine.adapter_key).integration_method)}</small>
+                  </div>
+                </div>
+              </td>
+              <td><span class="pill {tone}">{html.escape(engine_metric_status(engine, supported_engine_keys))}</span></td>
+              <td>{html.escape(str(metric.get("total_results", 0)))}</td>
+              <td>{html.escape(str(metric.get("completed_results", 0)))}</td>
+              <td>{html.escape(str(metric.get("failed_results", 0)))}</td>
+              <td>{html.escape(str(metric.get("skipped_results", 0)))}</td>
+              <td>{format_duration_ms(int(metric.get("avg_duration_ms", 0) or 0))}</td>
+              <td>{format_duration_ms(int(metric.get("max_duration_ms", 0) or 0))}</td>
+              <td>
+                {html.escape(str(metric.get("last_result_at") or "-"))}
+                <small>Timeout {html.escape(str(timeout if timeout is not None else "-"))}s</small>
+              </td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_system_queue_rows(active_scans: list[ScanRecord]) -> str:
+    if not active_scans:
+        return '<tr><td class="empty-cell" colspan="6">No queued or running scans.</td></tr>'
+
+    rows = []
+    for scan in active_scans:
+        marker_label, marker_value = scan_runtime_marker(scan)
+        rows.append(
+            f"""
+            <tr>
+              <td><a class="table-link" href="/scans/{scan.id}"><strong>#{scan.id}</strong><small>{html.escape(scan.original_filename)}</small></a></td>
+              <td>{status_pill(scan.status)}</td>
+              <td>{html.escape(scan.case_name)}</td>
+              <td>{html.escape(format_bytes(scan.size_bytes))}</td>
+              <td>{html.escape(marker_label)}</td>
+              <td>{html.escape(marker_value)}</td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_system_page(user: UserRecord) -> str:
+    worker_status = get_worker_status()
+    queue_metrics = get_queue_metrics()
+    engine_metrics = list_engine_result_metrics()
+    engines = configured_engines()
+    active_scans = list_active_scans(limit=50)
+    supported_engine_count = len(set(str(item) for item in worker_status.get("engine_keys", [])))
+
+    body = f"""
+    <section class="metric-grid">
+      {metric_card("Workers", str(worker_status.get("online_count", 0)), "Online worker processes")}
+      {metric_card("Queue", str(queue_metrics["queued"]), "Waiting scan jobs", "tone-blue")}
+      {metric_card("Running", str(queue_metrics["running"]), "Currently active jobs", "tone-green")}
+      {metric_card("Failures", str(queue_metrics["failed"]), "Failed scan jobs", "tone-red")}
+    </section>
+
+    <section class="system-layout">
+      <div class="panel">
+        <div class="panel-header compact">
+          <div>
+            <h2>Worker runtime</h2>
+            <p>Heartbeat, node identity, supported engines, and active work.</p>
+          </div>
+          {worker_status_pill(worker_status)}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Node</th>
+                <th>Engines</th>
+                <th>Active scan</th>
+                <th>Last heartbeat</th>
+                <th>Age</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_system_worker_rows(worker_status)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header compact">
+          <div>
+            <h2>Queue health</h2>
+            <p>{queue_metrics["active"]} active of {queue_metrics["total"]} total scan jobs.</p>
+          </div>
+          <span class="pill neutral">{supported_engine_count} worker engine keys</span>
+        </div>
+        <div class="status-summary-grid">
+          <div><span>Completed</span><strong>{queue_metrics["completed"]}</strong></div>
+          <div><span>Failed</span><strong>{queue_metrics["failed"]}</strong></div>
+          <div><span>Queued</span><strong>{queue_metrics["queued"]}</strong></div>
+          <div><span>Running</span><strong>{queue_metrics["running"]}</strong></div>
+        </div>
+      </div>
+
+      <div class="panel system-wide">
+        <div class="panel-header compact">
+          <div>
+            <h2>Engine metrics</h2>
+            <p>Coverage, throughput, failures, skips, and latency from recorded results.</p>
+          </div>
+          <span class="pill neutral">{len(engines)} configured</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Engine</th>
+                <th>Worker coverage</th>
+                <th>Total</th>
+                <th>Completed</th>
+                <th>Failed</th>
+                <th>Skipped</th>
+                <th>Avg latency</th>
+                <th>Max latency</th>
+                <th>Last result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_system_engine_rows(engines, engine_metrics, worker_status)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel system-wide">
+        <div class="panel-header compact">
+          <div>
+            <h2>Active queue</h2>
+            <p>Queued and running scans in processing order.</p>
+          </div>
+          <span class="pill neutral">{len(active_scans)} shown</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scan</th>
+                <th>Status</th>
+                <th>Case</th>
+                <th>Size</th>
+                <th>Marker</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_system_queue_rows(active_scans)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+    """
+    return page_shell("System", "system", body, user, refresh_seconds=10)
 
 
 def scan_runtime_marker(scan: ScanRecord) -> tuple[str, str]:
@@ -1523,6 +1805,10 @@ def status_pill(status: str) -> str:
         "completed": "success",
         "skipped": "neutral",
         "failed": "danger",
+        "offline": "danger",
+        "error": "danger",
+        "idle": "success",
+        "starting": "warning",
         "running": "warning",
         "partial": "warning",
     }
@@ -1760,7 +2046,7 @@ def coverage_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRe
     if scan.status == "queued":
         return "Required engines have not started yet."
     if scan.status == "running":
-        return "Required engines are being executed by the worker."
+        return "Required engines are being executed by the worker. Missing engines may be marked skipped after the orchestration wait window."
     return coverage_detail_text(results)
 
 
@@ -1820,16 +2106,136 @@ def detection_summary_card_class(results: list[EngineResultRecord]) -> str:
     return "summary-wide detection-summary-card success"
 
 
-def render_recent_scan_rows(scans: list[ScanRecord], can_select: bool) -> str:
-    if not scans:
-        colspan = 7 if can_select else 6
-        return f'<tr><td class="empty-cell" colspan="{colspan}">No scans submitted yet.</td></tr>'
+def dashboard_verdict_key(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status in {"queued", "running"}:
+        return "pending"
 
-    rows = []
+    detected, total = detection_summary(results)
+    if total == 0:
+        return "metadata_only"
+    if detected > 0:
+        return "malicious"
+    return "undetected"
+
+
+def scan_matches_recent_filters(
+    scan: ScanRecord,
+    results: list[EngineResultRecord],
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+) -> bool:
+    normalized_query = query.strip().lower()
+    if normalized_query:
+        search_blob = " ".join(
+            [
+                scan.original_filename,
+                scan.case_name,
+                scan.sha256,
+                scan.sha1,
+                scan.md5,
+                scan.priority,
+                scan.note,
+            ]
+        ).lower()
+        if normalized_query not in search_blob:
+            return False
+
+    if status_filter and status_filter != "all":
+        if status_filter == "active":
+            if scan.status not in {"queued", "running"}:
+                return False
+        elif scan.status != status_filter:
+            return False
+
+    if verdict_filter and verdict_filter != "all":
+        if dashboard_verdict_key(scan, results) != verdict_filter:
+            return False
+
+    return True
+
+
+def filter_recent_scans(
+    scans: list[ScanRecord],
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+) -> tuple[list[ScanRecord], dict[int, list[EngineResultRecord]]]:
+    results_by_scan: dict[int, list[EngineResultRecord]] = {}
+    filtered_scans = []
     for scan in scans:
         engine_results = list_engine_results(scan.id)
+        results_by_scan[scan.id] = engine_results
+        if scan_matches_recent_filters(scan, engine_results, query, status_filter, verdict_filter):
+            filtered_scans.append(scan)
+    return filtered_scans, results_by_scan
+
+
+def select_option(value: str, label: str, selected_value: str) -> str:
+    selected = " selected" if value == selected_value else ""
+    return f'<option value="{html.escape(value)}"{selected}>{html.escape(label)}</option>'
+
+
+def render_recent_scan_filters(query: str, status_filter: str, verdict_filter: str) -> str:
+    return f"""
+    <form class="scan-filter-bar" action="/" method="get">
+      <label class="scan-search-field">
+        <span>Search</span>
+        <input type="search" name="q" value="{html.escape(query)}" placeholder="File, case, hash">
+      </label>
+      <label>
+        <span>Status</span>
+        <select name="status">
+          {select_option("all", "All statuses", status_filter)}
+          {select_option("active", "Active", status_filter)}
+          {select_option("queued", "Queued", status_filter)}
+          {select_option("running", "Running", status_filter)}
+          {select_option("completed", "Completed", status_filter)}
+          {select_option("partial", "Partial", status_filter)}
+          {select_option("failed", "Failed", status_filter)}
+        </select>
+      </label>
+      <label>
+        <span>Verdict</span>
+        <select name="verdict">
+          {select_option("all", "All verdicts", verdict_filter)}
+          {select_option("pending", "Pending", verdict_filter)}
+          {select_option("malicious", "Malicious", verdict_filter)}
+          {select_option("undetected", "Undetected", verdict_filter)}
+          {select_option("metadata_only", "Metadata only", verdict_filter)}
+        </select>
+      </label>
+      <div class="scan-filter-actions">
+        <button class="secondary-action compact-action" type="submit">Apply</button>
+        <a class="secondary-action compact-action" href="/">Reset</a>
+      </div>
+    </form>
+    """
+
+
+def render_recent_scan_rows(
+    scans: list[ScanRecord],
+    can_select: bool,
+    results_by_scan: dict[int, list[EngineResultRecord]] | None = None,
+    empty_message: str = "No scans submitted yet.",
+) -> str:
+    if not scans:
+        colspan = 7 if can_select else 6
+        return f'<tr><td class="empty-cell" colspan="{colspan}">{html.escape(empty_message)}</td></tr>'
+
+    rows = []
+    cached_results = results_by_scan or {}
+    for scan in scans:
+        engine_results = cached_results.get(scan.id)
+        if engine_results is None:
+            engine_results = list_engine_results(scan.id)
         detection_tone = detection_summary_tone_for_scan(scan, engine_results)
         file_tone_class = "danger" if detection_tone == "danger" else ""
+        pending_icon = (
+            '<span class="scan-alert-icon" aria-hidden="true" title="Scan not completed">!</span>'
+            if scan.status != "completed"
+            else ""
+        )
         select_cell = (
             f"""
               <td class="select-cell">
@@ -1845,7 +2251,7 @@ def render_recent_scan_rows(scans: list[ScanRecord], can_select: bool) -> str:
               {select_cell}
               <td>
                 <div class="table-link {file_tone_class}">
-                  <strong>{html.escape(scan.original_filename)}</strong>
+                  <strong><span class="scan-file-label">{pending_icon}<span>{html.escape(scan.original_filename)}</span></span></strong>
                   <small>{html.escape(scan.case_name)}</small>
                 </div>
               </td>
@@ -2894,10 +3300,20 @@ def logout_route(request: Request) -> RedirectResponse:
 
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request) -> str:
+def dashboard(
+    request: Request,
+    q: str = "",
+    status: str = "all",
+    verdict: str = "all",
+) -> str:
     user = require_user(request)
     can_manage_scans = user.role == ROLE_ADMIN
     scans = list_recent_scans()
+    status_filter = status if status in {"all", "active", "queued", "running", "completed", "partial", "failed"} else "all"
+    verdict_filter = verdict if verdict in {"all", "pending", "malicious", "undetected", "metadata_only"} else "all"
+    filtered_scans, results_by_scan = filter_recent_scans(scans, q, status_filter, verdict_filter)
+    filters_active = bool(q.strip()) or status_filter != "all" or verdict_filter != "all"
+    empty_message = "No scans match the current filters." if filters_active else "No scans submitted yet."
     counts = get_scan_counts()
     worker_status = get_worker_status()
     configured_engine_count = len(configured_engines())
@@ -2931,12 +3347,13 @@ def dashboard(request: Request) -> str:
         <div class="panel-header">
           <div>
             <h2>Recent scans</h2>
-            <p>Latest submitted samples will appear here.</p>
+            <p>{len(filtered_scans)} of {len(scans)} latest samples shown.</p>
           </div>
           <div class="panel-actions">
             {delete_actions}
           </div>
         </div>
+        {render_recent_scan_filters(q, status_filter, verdict_filter)}
         <div class="table-wrap">
           <table>
             <thead>
@@ -2951,16 +3368,22 @@ def dashboard(request: Request) -> str:
               </tr>
             </thead>
             <tbody>
-              {render_recent_scan_rows(scans, can_select=can_manage_scans)}
+              {render_recent_scan_rows(filtered_scans, can_select=can_manage_scans, results_by_scan=results_by_scan, empty_message=empty_message)}
             </tbody>
           </table>
         </div>
       </div>
 
-      {render_pipeline_panel(worker_status)}
+      {render_worker_status_panel(worker_status)}
     </section>
     """
     return page_shell("Scan Dashboard", "dashboard", body, user)
+
+
+@app.get("/system", response_class=HTMLResponse)
+def system_page(request: Request) -> str:
+    user = require_admin(request)
+    return render_system_page(user)
 
 
 @app.get("/users", response_class=HTMLResponse)

@@ -171,6 +171,16 @@ textarea {
   gap: 6px;
 }
 
+.nav-utility {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.nav-form {
+  margin: 0;
+}
+
 .nav-link {
   position: relative;
   display: flex;
@@ -181,6 +191,15 @@ textarea {
   border-radius: var(--radius);
   color: #c9d8d7;
   font-size: 14px;
+}
+
+.nav-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
 }
 
 .nav-link:hover,
@@ -276,7 +295,7 @@ textarea {
   align-items: center;
   gap: 10px;
   min-height: 40px;
-  padding: 4px 5px 4px 6px;
+  padding: 4px 10px 4px 6px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
@@ -301,10 +320,6 @@ textarea {
   color: var(--muted);
   font-size: 11px;
   font-weight: 750;
-}
-
-.user-menu form {
-  margin: 0;
 }
 
 .user-avatar {
@@ -669,6 +684,116 @@ button.primary-action {
   font-size: 13px;
 }
 
+.scan-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 160px 170px auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.scan-filter-bar label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.scan-filter-bar input,
+.scan-filter-bar select {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-transform: none;
+}
+
+.scan-filter-bar input:focus,
+.scan-filter-bar select:focus {
+  outline: 2px solid rgba(15, 118, 110, 0.18);
+  border-color: var(--accent);
+}
+
+.scan-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-panel {
+  display: grid;
+}
+
+.status-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+
+.status-summary-grid div {
+  min-width: 0;
+  padding: 16px;
+  background: var(--surface);
+}
+
+.status-summary-grid span,
+.status-summary-grid strong {
+  display: block;
+}
+
+.status-summary-grid span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.status-summary-grid strong {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.system-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.system-wide {
+  grid-column: 1 / -1;
+}
+
+.engine-mini {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+
+.engine-mini strong,
+.engine-mini small {
+  display: block;
+}
+
+.engine-mini small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .scan-verdict-group {
   display: flex;
   flex-wrap: wrap;
@@ -858,6 +983,34 @@ td small {
   display: inline-grid;
   gap: 4px;
   max-width: 100%;
+}
+
+.scan-file-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.scan-file-label > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.scan-alert-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #fff1cf;
+  color: #c26b00;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  flex: 0 0 18px;
+  box-shadow: inset 0 0 0 1px rgba(194, 107, 0, 0.18);
 }
 
 .table-link:hover strong {
@@ -2868,9 +3021,18 @@ textarea:focus {
 
   .metric-grid,
   .dashboard-grid,
+  .system-layout,
   .scan-layout,
   .result-layout {
     grid-template-columns: 1fr;
+  }
+
+  .system-wide {
+    grid-column: auto;
+  }
+
+  .scan-filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .report-shell {
@@ -3044,6 +3206,15 @@ textarea:focus {
   .primary-action,
   .secondary-action,
   .danger-action {
+    width: 100%;
+  }
+
+  .scan-filter-bar,
+  .status-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scan-filter-actions {
     width: 100%;
   }
 }
