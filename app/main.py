@@ -1,11 +1,13 @@
 import html
+import csv
+import io
 import json
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.database import (
@@ -789,7 +791,7 @@ def render_add_engine_panel() -> str:
               {render_engine_logo(definition.short_label, definition.key)}
               <span>
                 <strong>{html.escape(definition.label)}</strong>
-                <small>{html.escape(definition.description)}</small>
+                <small>{html.escape(definition.integration_method)} · {html.escape(definition.description)}</small>
               </span>
             </label>
             """
@@ -890,6 +892,7 @@ def render_engine_summary(
       <span class="engine-summary-copy">
         <strong>{html.escape(instance.display_name)}</strong>
         <small>{html.escape(definition.description)}</small>
+        <small class="engine-definition-meta">{html.escape(definition.vendor)} · {html.escape(definition.integration_method)} · {html.escape(definition.support_state.title())}</small>
         {disabled_note}
       </span>
       <span class="engine-summary-meta">{html.escape(meta)}</span>
@@ -1760,6 +1763,12 @@ def parse_json_value(value: str, fallback: object) -> object:
     return parsed
 
 
+def report_filename_base(scan: ScanRecord) -> str:
+    stem = Path(scan.original_filename).stem or f"scan-{scan.id}"
+    clean = "".join(char if char.isalnum() else "-" for char in stem).strip("-")
+    return clean or f"scan-{scan.id}"
+
+
 def result_findings(result: EngineResultRecord) -> list[dict[str, object]]:
     parsed = parse_json_value(result.findings_json, [])
     if not isinstance(parsed, list):
@@ -1899,6 +1908,17 @@ def finding_classification_html(finding: dict[str, object]) -> str:
         f'<span class="finding-tag">{html.escape(chip)}</span>'
         for chip in chips[:6]
     ) + "</div>"
+
+
+def finding_classification_values(finding: dict[str, object]) -> list[str]:
+    category = str(finding.get("category") or finding.get("type") or "")
+    tags = finding.get("tags")
+    clean_tags = [str(tag) for tag in tags if str(tag)] if isinstance(tags, list) else []
+    values = []
+    if category:
+        values.append(category.replace("_", " ").title())
+    values.extend(tag for tag in clean_tags if tag.lower() != category.lower())
+    return unique_values(values, limit=6)
 
 
 def unique_values(values: list[str], limit: int = 4) -> list[str]:
@@ -2116,6 +2136,399 @@ def render_coverage_notice(scan: ScanRecord, results: list[EngineResultRecord]) 
         """
 
 
+def report_finding_rows(results: list[EngineResultRecord]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for result in results:
+        for finding in result_findings(result):
+            source = str(finding.get("source") or result.engine_name)
+            title = str(finding.get("title") or result.signature or "Detection")
+            finding_type = str(finding.get("type") or "finding").replace("_", " ").title()
+            severity = str(finding.get("severity") or result.severity)
+            confidence = int(finding.get("confidence") or result.confidence or 0)
+            action = str(finding.get("action") or "detected").replace("_", " ").title()
+            matched = matched_evidence_for_finding(finding, result)
+            rows.append(
+                {
+                    "engine": source,
+                    "status": result.status,
+                    "title": title,
+                    "finding": finding_type,
+                    "severity": severity,
+                    "confidence": confidence,
+                    "action": action,
+                    "matched_evidence": matched if isinstance(matched, list) else [str(matched)],
+                    "classification": finding_classification_values(finding),
+                    "evidence": fallback_finding_detail_payload(finding, result),
+                }
+            )
+    return rows
+
+
+def build_scan_report_payload(
+    scan: ScanRecord,
+    engine_results: list[EngineResultRecord],
+) -> dict[str, object]:
+    assessment = calculate_risk(engine_results)
+    verdict = scan.verdict if scan.risk_score is not None else assessment.verdict
+    risk_score = scan.risk_score if scan.risk_score is not None else assessment.score
+    findings = report_finding_rows(engine_results)
+    coverage_ran, coverage_total, coverage_unavailable = required_engine_coverage(engine_results)
+
+    return {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "scan": {
+            "id": scan.id,
+            "filename": scan.original_filename,
+            "case_name": scan.case_name,
+            "priority": scan.priority,
+            "status": scan.status,
+            "verdict": verdict,
+            "risk_score": risk_score,
+            "created_at": scan.created_at,
+            "started_at": scan.started_at,
+            "completed_at": scan.completed_at,
+            "failed_at": scan.failed_at,
+            "attempt_count": scan.attempt_count,
+            "last_error": scan.last_error,
+            "note": scan.note,
+            "content_type": scan.content_type,
+            "size_bytes": scan.size_bytes,
+            "hashes": {
+                "md5": scan.md5,
+                "sha1": scan.sha1,
+                "sha256": scan.sha256,
+            },
+        },
+        "summary": {
+            "detection": {
+                "label": detection_summary_text_for_scan(scan, engine_results),
+                "detail": detection_detail_text_for_scan(scan, engine_results),
+                "detected_engines": detected_engine_names(engine_results),
+            },
+            "coverage": {
+                "label": coverage_summary_text_for_scan(scan, engine_results),
+                "detail": coverage_detail_text_for_scan(scan, engine_results),
+                "ran": coverage_ran,
+                "total": coverage_total,
+                "unavailable": coverage_unavailable,
+            },
+            "assessment": {
+                "score": risk_score,
+                "verdict": verdict,
+                "reasons": assessment.reasons,
+            },
+        },
+        "findings": findings,
+        "engine_results": [
+            {
+                "engine_name": result.engine_name,
+                "engine_version": result.engine_version,
+                "signature_version": result.signature_version,
+                "status": result.status,
+                "detected": result.detected,
+                "signature": result.signature,
+                "severity": result.severity,
+                "confidence": result.confidence,
+                "duration_ms": result.duration_ms,
+                "error_message": result.error_message,
+                "raw_output": result.raw_output,
+                "details": parse_json_value(result.details_json, {}),
+                "findings": result_findings(result),
+                "created_at": result.created_at,
+            }
+            for result in engine_results
+        ],
+    }
+
+
+def csv_cell(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (list, tuple, set)):
+        return "; ".join(csv_cell(item) for item in value)
+    if isinstance(value, dict):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return " ".join(str(value).split())
+
+
+def build_scan_report_csv(scan: ScanRecord, engine_results: list[EngineResultRecord]) -> str:
+    payload = build_scan_report_payload(scan, engine_results)
+    summary = payload["summary"]
+    findings = payload["findings"]
+    assessment = summary["assessment"]
+    detection = summary["detection"]
+    coverage = summary["coverage"]
+    output = io.StringIO(newline="")
+    fieldnames = [
+        "section",
+        "scan_id",
+        "filename",
+        "sha256",
+        "status",
+        "verdict",
+        "risk_score",
+        "engine",
+        "detected",
+        "severity",
+        "confidence",
+        "finding",
+        "signature",
+        "matched_evidence",
+        "duration_ms",
+        "error_message",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+
+    def write_row(**values: object) -> None:
+        base = {
+            "scan_id": scan.id,
+            "filename": scan.original_filename,
+            "sha256": scan.sha256,
+            "status": scan.status,
+            "verdict": assessment["verdict"],
+            "risk_score": assessment["score"],
+        }
+        base.update(values)
+        writer.writerow({key: csv_cell(base.get(key)) for key in fieldnames})
+
+    write_row(
+        section="summary",
+        finding=detection["label"],
+        matched_evidence=", ".join(detection["detected_engines"]),
+        error_message="" if not coverage["unavailable"] else coverage["detail"],
+    )
+
+    for finding in findings:
+        write_row(
+            section="finding",
+            engine=finding["engine"],
+            detected=finding["status"] == "completed",
+            severity=finding["severity"],
+            confidence=finding["confidence"],
+            finding=finding["finding"],
+            signature=finding["title"],
+            matched_evidence=finding["matched_evidence"],
+        )
+
+    for result in engine_results:
+        write_row(
+            section="engine_result",
+            engine=result.engine_name,
+            detected=result.detected,
+            severity=result.severity,
+            confidence=result.confidence,
+            signature=result.signature,
+            duration_ms=result.duration_ms,
+            error_message=result.error_message,
+        )
+
+    return output.getvalue()
+
+
+def report_shell(title: str, body: str) -> str:
+    css_version = int(CSS_PATH.stat().st_mtime) if CSS_PATH.exists() else 1
+    return f"""
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>{title} | MASP Report</title>
+        <link rel="stylesheet" href="/static/css/app.css?v={css_version}">
+      </head>
+      <body class="report-body">
+        {body}
+        <script>
+          function printReport() {{
+            window.print();
+          }}
+        </script>
+      </body>
+    </html>
+    """
+
+
+def render_report_page(scan: ScanRecord, engine_results: list[EngineResultRecord]) -> str:
+    payload = build_scan_report_payload(scan, engine_results)
+    summary = payload["summary"]
+    findings = payload["findings"]
+    assessment = summary["assessment"]
+    detection = summary["detection"]
+    coverage = summary["coverage"]
+    report_title = f"Scan report #{scan.id}"
+    finding_rows = "\n".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(str(item['engine']))}</strong></td>
+          <td>{severity_pill(str(item['severity']))}</td>
+          <td>{html.escape(str(item['finding']))}</td>
+          <td>{html.escape(str(item['title']))}</td>
+          <td>{html.escape(', '.join(str(value) for value in item['matched_evidence']))}</td>
+          <td>{html.escape(', '.join(str(value) for value in item['classification'])) or '-'}</td>
+        </tr>
+        """
+        for item in findings
+    ) or """
+        <tr><td class="empty-cell" colspan="6">No normalized findings were produced for this scan.</td></tr>
+    """
+    engine_rows = "\n".join(
+        f"""
+        <tr{' class="engine-detected-row"' if result.detected and result.status == 'completed' else ''}>
+          <td><strong>{html.escape(result.engine_name)}</strong></td>
+          <td>{status_pill(result.status)}</td>
+          <td>{detected_pill(result.status, result.detected)}</td>
+          <td>{severity_pill(result.severity)}</td>
+          <td>{result.confidence}%</td>
+          <td>{html.escape(result.signature or '-')}</td>
+          <td>{html.escape(str(result.duration_ms))} ms</td>
+        </tr>
+        """
+        for result in engine_results
+    ) or """
+        <tr><td class="empty-cell" colspan="7">No engine results are available yet.</td></tr>
+    """
+    raw_output_blocks = "\n".join(
+        f"""
+        <section class="panel">
+          <div class="panel-header compact">
+            <h2>{html.escape(result.engine_name)}</h2>
+            {status_pill(result.status)}
+          </div>
+          <pre>{html.escape(result.raw_output)}</pre>
+        </section>
+        """
+        for result in engine_results
+    ) or """
+        <section class="panel">
+          <div class="panel-header compact">
+            <h2>Raw outputs</h2>
+            <span class="pill neutral">Empty</span>
+          </div>
+          <pre>No raw engine output is available for this scan yet.</pre>
+        </section>
+    """
+
+    body = f"""
+    <main class="report-shell">
+      <section class="report-header">
+        <div>
+          <p class="eyebrow">MASP analyst report</p>
+          <h1>{html.escape(scan.original_filename)}</h1>
+          <span>Generated {html.escape(str(payload['generated_at']))}</span>
+        </div>
+        <div class="row-actions">
+          <a class="secondary-action" href="/scans/{scan.id}/export.json">Export JSON</a>
+          <a class="secondary-action" href="/scans/{scan.id}/export.csv">Export CSV</a>
+          <button class="secondary-action" type="button" onclick="printReport()">Print</button>
+          <a class="row-action" href="/scans/{scan.id}">Open scan</a>
+        </div>
+      </section>
+
+      <section class="report-grid">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Assessment</h2>
+              <p>Analyst-facing summary of the completed scan.</p>
+            </div>
+            <div class="scan-verdict-group">
+              {verdict_pill(str(assessment['verdict']))}
+              {detection_meter_for_scan(scan, engine_results)}
+            </div>
+          </div>
+          <div class="summary-grid">
+            <div><span>Case</span><strong>{html.escape(scan.case_name)}</strong></div>
+            <div><span>Priority</span><strong>{html.escape(scan.priority)}</strong></div>
+            <div><span>Status</span><strong>{html.escape(display_verdict(scan.status))}</strong></div>
+            <div><span>Risk score</span><strong>{assessment['score']} / 100</strong></div>
+            <div><span>Detection</span><strong>{html.escape(str(detection['label']))}</strong></div>
+            <div><span>Coverage</span><strong>{html.escape(str(coverage['label']))}</strong></div>
+            <div><span>Attempts</span><strong>{scan.attempt_count}</strong></div>
+            <div><span>Completed</span><strong>{html.escape(scan.completed_at or scan.created_at)}</strong></div>
+          </div>
+          <div class="reason-block">
+            <span>Reasons</span>
+            <ul>{render_risk_reasons(list(assessment['reasons']))}</ul>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header compact">
+            <h2>Sample</h2>
+            <span class="pill neutral">{format_bytes(scan.size_bytes)}</span>
+          </div>
+          <dl class="hash-list">
+            <div><dt>Filename</dt><dd>{html.escape(scan.original_filename)}</dd></div>
+            <div><dt>Content type</dt><dd>{html.escape(scan.content_type)}</dd></div>
+            <div><dt>MD5</dt><dd><code>{html.escape(scan.md5)}</code></dd></div>
+            <div><dt>SHA1</dt><dd><code>{html.escape(scan.sha1)}</code></dd></div>
+            <div><dt>SHA256</dt><dd><code>{html.escape(scan.sha256)}</code></dd></div>
+          </dl>
+        </div>
+
+        <div class="panel wide">
+          <div class="panel-header compact">
+            <h2>Normalized findings</h2>
+            <span class="pill neutral">{len(findings)} rows</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Engine</th>
+                  <th>Severity</th>
+                  <th>Finding</th>
+                  <th>Summary</th>
+                  <th>Matched evidence</th>
+                  <th>Classification</th>
+                </tr>
+              </thead>
+              <tbody>{finding_rows}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel wide">
+          <div class="panel-header compact">
+            <h2>Engine results</h2>
+            <span class="pill neutral">{len(engine_results)} results</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Engine</th>
+                  <th>Status</th>
+                  <th>Verdict</th>
+                  <th>Severity</th>
+                  <th>Confidence</th>
+                  <th>Signature</th>
+                  <th>Duration</th>
+                </tr>
+              </thead>
+              <tbody>{engine_rows}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel wide report-raw-grid">
+          <div class="panel-header compact">
+            <h2>Raw outputs</h2>
+            <span class="pill neutral">Engine debug trail</span>
+          </div>
+          <div class="report-raw-list">
+            {raw_output_blocks}
+          </div>
+        </div>
+      </section>
+    </main>
+    """
+    return report_shell(report_title, body)
+
+
 def render_scan_result(
     scan: ScanRecord,
     engine_results: list[EngineResultRecord],
@@ -2135,6 +2548,15 @@ def render_scan_result(
         if scan.status not in {"queued", "running"}
         else ""
     )
+    report_actions = (
+        f"""
+        <a class="secondary-action compact-action" href="/scans/{scan.id}/report">View report</a>
+        <a class="secondary-action compact-action" href="/scans/{scan.id}/export.json">Export JSON</a>
+        <a class="secondary-action compact-action" href="/scans/{scan.id}/export.csv">Export CSV</a>
+        """
+        if scan.status not in {"queued", "running"}
+        else ""
+    )
     runtime_notice = ""
     if scan.last_error:
         runtime_notice = page_notice("Last worker error", scan.last_error, "danger")
@@ -2146,13 +2568,14 @@ def render_scan_result(
         )
     body = f"""
     <section class="notice success-notice">
-      <div>
+      <div class="notice-copy">
         <strong>Sample accepted</strong>
         <span>{html.escape(scan.original_filename)} was uploaded and stored successfully.</span>
       </div>
-      <div class="row-actions">
+      <div class="row-actions notice-actions">
+        {report_actions}
         {retry_action}
-        <a class="row-action" href="/">Back to dashboard</a>
+        <a class="secondary-action compact-action" href="/">Back to dashboard</a>
       </div>
     </section>
     {render_coverage_notice(scan, engine_results)}
@@ -2609,6 +3032,47 @@ async def retry_single_scan(request: Request, scan_id: int) -> RedirectResponse:
     return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
 
 
+@app.get("/scans/{scan_id}/report", response_class=HTMLResponse)
+def scan_report(request: Request, scan_id: int) -> str:
+    require_user(request)
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    engine_results = list_engine_results(scan.id)
+    return render_report_page(scan, engine_results)
+
+
+@app.get("/scans/{scan_id}/export.json")
+def scan_export_json(request: Request, scan_id: int) -> JSONResponse:
+    require_user(request)
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    engine_results = list_engine_results(scan.id)
+    payload = build_scan_report_payload(scan, engine_results)
+    filename = f"{report_filename_base(scan)}-scan-{scan.id}.json"
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/scans/{scan_id}/export.csv")
+def scan_export_csv(request: Request, scan_id: int) -> Response:
+    require_user(request)
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    engine_results = list_engine_results(scan.id)
+    csv_body = build_scan_report_csv(scan, engine_results)
+    filename = f"{report_filename_base(scan)}-scan-{scan.id}.csv"
+    return Response(
+        csv_body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/scans/{scan_id}", response_class=HTMLResponse)
 def scan_detail(request: Request, scan_id: int) -> str:
     user = require_user(request)
@@ -2756,9 +3220,13 @@ def render_engines_page(
     roadmap_rows_html = "\n".join(
         f"""
         <div class="engine-row muted">
-          {render_engine_logo(str(item["short_label"]), str(item["label"]).lower().replace(" ", "_"))}
-          <div><strong>{html.escape(item["label"])}</strong><small>{html.escape(item["description"])}</small></div>
-          <span class="pill neutral">{html.escape(item["status"])}</span>
+          {render_engine_logo(item.short_label, item.label.lower().replace(" ", "_"))}
+          <div>
+            <strong>{html.escape(item.label)}</strong>
+            <small>{html.escape(item.vendor)} · {html.escape(item.product)} · {html.escape(item.integration_method)}</small>
+            <small>{html.escape(item.blocker)}</small>
+          </div>
+          <span class="pill neutral">{html.escape(item.status.title())}</span>
         </div>
         """
         for item in ROADMAP_ADAPTERS

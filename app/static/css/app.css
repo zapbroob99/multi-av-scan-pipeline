@@ -992,9 +992,16 @@ td small {
   box-shadow: var(--shadow);
 }
 
-.notice div {
+.notice-copy {
   display: grid;
   gap: 4px;
+}
+
+.notice-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  align-self: stretch;
 }
 
 .notice strong {
@@ -1186,6 +1193,57 @@ pre {
 
 .result-layout .wide {
   grid-column: 1 / -1;
+}
+
+.report-body {
+  margin: 0;
+  background:
+    linear-gradient(180deg, rgba(15, 118, 110, 0.08), transparent 220px),
+    var(--bg);
+}
+
+.report-shell {
+  width: min(1200px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 40px;
+}
+
+.report-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.report-header h1 {
+  margin: 6px 0 4px;
+  font-size: 34px;
+  line-height: 1;
+}
+
+.report-header span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.report-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.report-grid > .wide {
+  grid-column: 1 / -1;
+}
+
+.report-raw-list {
+  display: grid;
+  gap: 14px;
+  padding: 0 18px 18px;
+}
+
+.report-raw-list .panel {
+  margin: 0;
 }
 
 .upload-panel {
@@ -2748,6 +2806,16 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
+  .report-shell {
+    width: min(100%, calc(100% - 24px));
+    padding-top: 20px;
+  }
+
+  .report-header {
+    align-items: start;
+    flex-direction: column;
+  }
+
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2847,6 +2915,11 @@ textarea:focus {
     flex-wrap: wrap;
   }
 
+  .notice-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
   .add-engine-form {
     grid-template-columns: 1fr;
   }
@@ -2888,5 +2961,49 @@ textarea:focus {
   .secondary-action,
   .danger-action {
     width: 100%;
+  }
+}
+
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  body,
+  .report-body {
+    background: #ffffff !important;
+  }
+
+  .report-shell {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  .report-header {
+    margin-bottom: 12px;
+  }
+
+  .report-header .row-actions,
+  .topbar,
+  .sidebar {
+    display: none !important;
+  }
+
+  .panel,
+  .metric-card,
+  .report-raw-list .panel {
+    box-shadow: none;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .table-wrap {
+    overflow: visible;
+  }
+
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 }

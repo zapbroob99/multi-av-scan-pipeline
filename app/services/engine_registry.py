@@ -20,14 +20,43 @@ from app.models import EngineInstanceRecord, EngineResultInput, ScanRecord
 
 
 @dataclass(frozen=True)
+class EngineConfigField:
+    key: str
+    label: str
+    field_type: str
+    required: bool
+    default: str = ""
+    secret: bool = False
+    help_text: str = ""
+
+
+@dataclass(frozen=True)
 class EngineAdapterDefinition:
     key: str
     label: str
     short_label: str
     description: str
+    vendor: str
+    product: str
+    integration_method: str
+    support_state: str
     detection: bool
     configurable: bool
     supports_rules: bool = False
+    docs_path: str = ""
+    config_fields: tuple[EngineConfigField, ...] = ()
+
+
+@dataclass(frozen=True)
+class RoadmapAdapterDefinition:
+    label: str
+    short_label: str
+    vendor: str
+    product: str
+    integration_method: str
+    description: str
+    status: str
+    blocker: str
 
 
 ADAPTERS: dict[str, EngineAdapterDefinition] = {
@@ -36,32 +65,105 @@ ADAPTERS: dict[str, EngineAdapterDefinition] = {
         label=STATIC_METADATA_NAME,
         short_label="ST",
         description="Built-in metadata analyzer.",
+        vendor="MASP",
+        product="Built-in metadata analyzer",
+        integration_method="local",
+        support_state="supported",
         detection=False,
         configurable=False,
+        docs_path="docs/integrations/SUPPORT_MATRIX.md",
     ),
     "clamav": EngineAdapterDefinition(
         key="clamav",
         label="ClamAV",
         short_label="CL",
         description="clamd TCP adapter with local CLI fallback.",
+        vendor="Cisco Talos",
+        product="ClamAV",
+        integration_method="clamd TCP / local CLI",
+        support_state="supported",
         detection=True,
         configurable=True,
+        docs_path="docs/integrations/SUPPORT_MATRIX.md",
+        config_fields=(
+            EngineConfigField("host", "clamd host", "text", False, help_text="Set to use clamd TCP; leave empty for CLI fallback."),
+            EngineConfigField("port", "clamd port", "number", False, "3310"),
+            EngineConfigField("command", "CLI command", "text", False, "clamscan"),
+            EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "60"),
+        ),
     ),
     "yara": EngineAdapterDefinition(
         key="yara",
         label="YARA",
         short_label="YR",
         description="Local rule engine adapter for pattern-based detection.",
+        vendor="YARA",
+        product="YARA CLI",
+        integration_method="local CLI",
+        support_state="supported",
         detection=True,
         configurable=True,
         supports_rules=True,
+        docs_path="docs/integrations/SUPPORT_MATRIX.md",
+        config_fields=(
+            EngineConfigField("command", "CLI command", "text", False, "yara"),
+            EngineConfigField("rules_dir", "rules directory", "text", False, "rules"),
+            EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "30"),
+        ),
     ),
 }
 
-ROADMAP_ADAPTERS = [
-    {"label": "ESET", "short_label": "ES", "description": "Commercial AV adapter", "status": "Planned"},
-    {"label": "ICAP", "short_label": "IC", "description": "Network AV gateway adapter", "status": "Planned"},
-    {"label": "REST AV", "short_label": "API", "description": "Vendor API adapter", "status": "Planned"},
+ROADMAP_ADAPTERS: list[RoadmapAdapterDefinition] = [
+    RoadmapAdapterDefinition(
+        label="Microsoft Defender via local CLI",
+        short_label="MD",
+        vendor="Microsoft",
+        product="Microsoft Defender Antivirus",
+        integration_method="PowerShell / CLI",
+        description="Windows local antivirus integration.",
+        status="research",
+        blocker="Spec is ready; next step is lab validation for exit codes, EICAR behavior, and post-scan detection semantics.",
+    ),
+    RoadmapAdapterDefinition(
+        label="ESET Server Security via ICAP",
+        short_label="ES",
+        vendor="ESET",
+        product="ESET Server Security or ICAP-capable gateway product",
+        integration_method="ICAP",
+        description="Commercial AV gateway integration.",
+        status="research",
+        blocker="Confirm exact product, ICAP service behavior, licensing, and response semantics.",
+    ),
+    RoadmapAdapterDefinition(
+        label="Trellix ATD via REST API",
+        short_label="TX",
+        vendor="Trellix",
+        product="Advanced Threat Defense / Malware Analysis",
+        integration_method="REST API",
+        description="Commercial sandbox submission and verdict integration.",
+        status="research",
+        blocker="Confirm submission flow, polling model, verdict schema, auth, and rate limits.",
+    ),
+    RoadmapAdapterDefinition(
+        label="Sophos via local CLI",
+        short_label="SP",
+        vendor="Sophos",
+        product="Sophos Protection for Linux or endpoint product",
+        integration_method="local CLI",
+        description="Endpoint CLI scan integration.",
+        status="research",
+        blocker="Confirm command availability, OS support, exit codes, and output format.",
+    ),
+    RoadmapAdapterDefinition(
+        label="Trend Micro via ICAP",
+        short_label="TM",
+        vendor="Trend Micro",
+        product="ICAP-capable gateway product",
+        integration_method="ICAP",
+        description="Commercial gateway AV integration.",
+        status="research",
+        blocker="Confirm product name, service names, status codes, and detection headers.",
+    ),
 ]
 
 
