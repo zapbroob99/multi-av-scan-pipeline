@@ -6,9 +6,9 @@
 - User-facing display name: `Microsoft Defender via local CLI`
 - Vendor: Microsoft
 - Product: Microsoft Defender Antivirus
-- Tested version: TBD in lab; documentation reviewed on 2026-07-03
+- Tested version: product `4.18.26050.15`, engine `1.1.26050.11`, signatures `1.453.401.0` on 2026-07-03
 - Integration method: local PowerShell + `MpCmdRun.exe`
-- Support state: `research`
+- Support state: `lab`
 
 ## Scope
 
@@ -26,7 +26,7 @@
   `https://learn.microsoft.com/en-us/powershell/module/defender/start-mpscan`
   `https://learn.microsoft.com/en-us/powershell/module/defender/get-mpcomputerstatus`
 - Vendor notes: none yet.
-- Internal lab notes: local validation on 2026-07-03 confirmed `Get-MpComputerStatus` exists on the target Windows host but can return `Access denied` without sufficient privilege.
+- Internal lab notes: local validation on 2026-07-03 confirmed `Get-MpComputerStatus` health output, `MpCmdRun.exe` clean scan output, and EICAR detection output. A non-elevated status check can return `Access denied`; elevated execution was required on the tested host.
 - Last reviewed: 2026-07-03
 
 ## Product Notes From Documentation
@@ -67,14 +67,14 @@ What the health check proves:
 
 - [x] Network connectivity
   Not applicable for local execution.
-- [ ] Authentication
-  Local process execution and required privileges still need lab validation.
+- [x] Authentication
+  Local process execution was validated with elevated Windows execution on the tested host.
 - [x] Correct service or endpoint
   `Get-MpComputerStatus` should confirm Defender service presence and active product state.
 - [x] Scan capability
   Health check should verify that Defender service is enabled and scan command is callable.
 - [ ] License or feature availability
-  Needs lab validation because local Defender behavior differs across Windows editions and management states.
+  Microsoft Defender Antivirus availability was validated on one host; broader Windows edition and managed-device behavior still needs validation.
 - [x] Version or signature state, if exposed
   `Get-MpComputerStatus` exposes engine/product/signature fields.
 
@@ -113,7 +113,7 @@ MpCmdRun.exe not found when execution_mode requires it
 
 ## Scan Flow
 
-Planned implementation path:
+Implemented scan path:
 
 1. Resolve local execution mode.
 2. For health/status, prefer `Get-MpComputerStatus`.
@@ -123,25 +123,24 @@ Planned implementation path:
 5. Treat return code `2` as detected only when command output contains clear detection evidence, such as a threat name.
 6. Treat return code `2` without clear detection evidence as failed, because Microsoft documents that code as also covering scanning errors.
 7. Treat return code `0` as clean only when `-DisableRemediation` was used and the output contains no detection indicators.
-8. Add a post-scan threat retrieval step only after lab validation proves it is needed and reliable.
+8. Add a post-scan threat retrieval step later only if another lab environment proves command output alone is insufficient.
 9. Normalize result into `EngineResultInput`.
 
-Important unresolved point:
+Remaining validation notes:
 
-- The safest detection source still needs lab confirmation.
 - `Start-MpScan` documentation confirms scan start semantics, but does not by itself document a simple detection-oriented return payload.
 - `MpCmdRun.exe` documentation confirms scan return codes, but a return code of `0` can mean either no malware found or malware found and successfully remediated.
-- MASP's first implementation uses `-DisableRemediation`, because Microsoft documents that detections from that custom scan mode are displayed in command output and actions are not applied.
+- MASP uses `-DisableRemediation`; lab validation confirmed EICAR remains in place and the command output includes the Microsoft threat name.
 - MASP must still keep ambiguous outputs as failed rather than guessing.
 
 ## Detection Semantics
 
-Current conservative mapping for research phase:
+Current conservative mapping for lab phase:
 
 | Vendor result | MASP status | MASP detected | Severity | Confidence | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Scan executed, no threat evidence, clean state confirmed by secondary evidence | completed | false | info | 100 | Requires verified clean interpretation path. |
-| Threat found and threat name/verdict available | completed | true | high | 90 | Threat name should populate `signature`. |
+| Scan executed, no threat evidence, clean output verified | completed | false | info | 100 | Verified with `MpCmdRun.exe` clean scan fixture. |
+| Threat found and threat name/verdict available | completed | true | high | 90 | Verified with EICAR fixture; threat name populates `signature`. |
 | Scan command returned ambiguous success without secondary evidence | failed | false | info | 0 | Do not misclassify as clean. |
 | Access denied / privilege failure | failed | false | info | 0 | Health check should also surface this. |
 | Timeout | failed or skipped | false | info | 0 | Final rule should match other local engine behavior. |
@@ -165,8 +164,9 @@ Expected finding fields:
 
 ## Required Fixtures
 
-- [ ] `clean.response`
-- [ ] `detected_eicar.response`
+- [x] `scan_clean_mpcmdrun.txt`
+- [x] `scan_detected_eicar_mpcmdrun.txt`
+- [x] `status_healthy.txt`
 - [ ] `auth_failure.response`
 - [ ] `unavailable.response`
 - [ ] `malformed.response`
@@ -197,11 +197,11 @@ Suggested fixture capture sources:
 ## Definition Of Done
 
 - [x] Spec completed.
-- [ ] Config schema implemented.
-- [ ] Health check implemented.
-- [ ] Scan flow implemented.
-- [ ] Parser fixtures added.
-- [ ] Parser tests added.
-- [ ] Secrets redacted.
+- [x] Config schema implemented.
+- [x] Health check implemented.
+- [x] Scan flow implemented.
+- [x] Parser fixtures added.
+- [x] Parser tests added.
+- [x] Secrets redacted.
 - [ ] Report/export output verified.
-- [ ] Support matrix updated.
+- [x] Support matrix updated.

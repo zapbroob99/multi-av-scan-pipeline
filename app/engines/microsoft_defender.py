@@ -7,6 +7,7 @@ from time import perf_counter
 
 from app.models import EngineResultInput, ScanRecord
 from app.services.findings import evidence_object, normalized_finding
+from app.services.sample_paths import resolve_sample_path, sample_path_error
 
 
 ENGINE_NAME = "Microsoft Defender"
@@ -153,7 +154,7 @@ def run_microsoft_defender_engine(
             details=base_details,
         )
 
-    sample_path = Path(scan.storage_path)
+    sample_path = resolve_sample_path(scan)
     if not sample_path.is_file():
         return build_result(
             status="failed",
@@ -161,7 +162,7 @@ def run_microsoft_defender_engine(
             signature=None,
             severity="info",
             confidence=0,
-            raw_output=f"Sample file not found: {scan.storage_path}",
+            raw_output=sample_path_error(scan, sample_path),
             error_message="Stored sample file is missing.",
             duration_ms=elapsed_ms(started_at),
             details=base_details,
@@ -394,19 +395,13 @@ def parse_mpcmdrun_signature(raw_output: str) -> str | None:
         lowered = stripped.lower()
         if "no threat" in lowered or "no malware" in lowered:
             continue
-        for marker in (
-            "threat name",
-            "threat",
-            "detected",
-            "malware",
-            "virus",
-        ):
-            if marker in lowered:
-                _, separator, value = stripped.partition(":")
-                if separator and value.strip():
-                    return value.strip()
-                if "eicar" in lowered:
-                    return stripped
+        key, separator, value = stripped.partition(":")
+        if separator and value.strip():
+            normalized_key = " ".join(key.lower().split())
+            if normalized_key in {"threat", "threat name", "malware", "virus"}:
+                return value.strip()
+        if lowered.startswith(("virus:", "trojan:", "worm:", "hacktool:", "pua:")):
+            return stripped
     return None
 
 

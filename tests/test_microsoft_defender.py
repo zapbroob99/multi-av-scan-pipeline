@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from app.engines.microsoft_defender import (
     classify_status_command_failure,
@@ -6,6 +7,23 @@ from app.engines.microsoft_defender import (
     normalize_mpcmdrun_scan_result,
     parse_mpcmdrun_signature,
 )
+
+
+FIXTURE_DIR = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "engines"
+    / "microsoft_defender_local_cli"
+)
+
+
+def fixture_output(name: str) -> tuple[int, str]:
+    content = (FIXTURE_DIR / name).read_text(encoding="utf-8")
+    _, _, after_code = content.partition("RETURNCODE=")
+    returncode_text, _, after_returncode = after_code.partition("\n")
+    _, _, after_begin = after_returncode.partition("OUTPUT_BEGIN\n")
+    output, _, _ = after_begin.partition("\nOUTPUT_END")
+    return int(returncode_text.strip()), output.strip()
 
 
 class MicrosoftDefenderHealthTests(unittest.TestCase):
@@ -108,6 +126,27 @@ class MicrosoftDefenderHealthTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertFalse(result.detected)
         self.assertIn("without a clear detection", str(result.error_message))
+
+    def test_normalizes_clean_fixture(self) -> None:
+        returncode, output = fixture_output("scan_clean_mpcmdrun.txt")
+        result = normalize_mpcmdrun_scan_result(
+            returncode=returncode,
+            raw_output=output,
+            duration_ms=12,
+        )
+        self.assertEqual(result.status, "completed")
+        self.assertFalse(result.detected)
+
+    def test_normalizes_eicar_fixture(self) -> None:
+        returncode, output = fixture_output("scan_detected_eicar_mpcmdrun.txt")
+        result = normalize_mpcmdrun_scan_result(
+            returncode=returncode,
+            raw_output=output,
+            duration_ms=12,
+        )
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.detected)
+        self.assertEqual(result.signature, "Virus:DOS/EICAR_Test_File")
 
 
 if __name__ == "__main__":

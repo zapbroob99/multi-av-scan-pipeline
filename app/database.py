@@ -742,6 +742,61 @@ def create_engine_result(scan_job_id: int, result: EngineResultInput) -> int:
         return require_lastrowid(cursor)
 
 
+def create_engine_result_if_missing(scan_job_id: int, result: EngineResultInput) -> int | None:
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        existing_row = connection.execute(
+            """
+            SELECT id
+            FROM engine_results
+            WHERE scan_job_id = ? AND engine_name = ?
+            LIMIT 1
+            """,
+            (scan_job_id, result.engine_name),
+        ).fetchone()
+        if existing_row is not None:
+            return None
+
+        cursor = connection.execute(
+            """
+            INSERT INTO engine_results (
+                scan_job_id,
+                engine_name,
+                engine_version,
+                signature_version,
+                status,
+                detected,
+                signature,
+                severity,
+                confidence,
+                raw_output,
+                error_message,
+                duration_ms,
+                details_json,
+                findings_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scan_job_id,
+                result.engine_name,
+                result.engine_version,
+                result.signature_version,
+                result.status,
+                1 if result.detected else 0,
+                result.signature,
+                result.severity,
+                result.confidence,
+                result.raw_output,
+                result.error_message,
+                result.duration_ms,
+                result.details_json,
+                result.findings_json,
+            ),
+        )
+        return require_lastrowid(cursor)
+
+
 def list_engine_results(scan_job_id: int) -> list[EngineResultRecord]:
     with connect() as connection:
         rows = connection.execute(
@@ -809,6 +864,44 @@ def list_recent_scans(limit: int = 20) -> list[ScanRecord]:
     return [row_to_scan_record(row) for row in rows]
 
 
+def list_active_scans(limit: int = 20) -> list[ScanRecord]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                scan_jobs.id,
+                scan_jobs.sample_id,
+                scan_jobs.case_name,
+                scan_jobs.priority,
+                scan_jobs.note,
+                scan_jobs.status,
+                scan_jobs.verdict,
+                scan_jobs.risk_score,
+                scan_jobs.created_at,
+                scan_jobs.started_at,
+                scan_jobs.completed_at,
+                scan_jobs.failed_at,
+                scan_jobs.attempt_count,
+                scan_jobs.last_error,
+                samples.original_filename,
+                samples.stored_filename,
+                samples.storage_path,
+                samples.content_type,
+                samples.size_bytes,
+                samples.md5,
+                samples.sha1,
+                samples.sha256
+            FROM scan_jobs
+            JOIN samples ON samples.id = scan_jobs.sample_id
+            WHERE scan_jobs.status IN ('queued', 'running')
+            ORDER BY scan_jobs.created_at ASC, scan_jobs.id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [row_to_scan_record(row) for row in rows]
+
+
 def get_scan(scan_id: int) -> ScanRecord | None:
     with connect() as connection:
         row = connection.execute(
@@ -846,6 +939,27 @@ def get_scan(scan_id: int) -> ScanRecord | None:
     if row is None:
         return None
     return row_to_scan_record(row)
+
+
+def mark_scan_running(scan_id: int) -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE scan_jobs
+            SET
+                status = 'running',
+                started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+                completed_at = NULL,
+                failed_at = NULL,
+                last_error = NULL,
+                attempt_count = CASE
+                    WHEN status = 'queued' THEN attempt_count + 1
+                    ELSE attempt_count
+                END
+            WHERE id = ? AND status IN ('queued', 'running')
+            """,
+            (scan_id,),
+        )
 
 
 def delete_scan(scan_id: int) -> ScanRecord | None:
@@ -1037,37 +1151,7 @@ def retry_scan_job(scan_id: int) -> bool:
 
 
 def recover_running_scan_jobs() -> int:
-    with connect() as connection:
-        rows = connection.execute(
-            "SELECT id FROM scan_jobs WHERE status = 'running'"
-        ).fetchall()
-        scan_ids = [int(row_value(row, "id")) for row in rows]
-        if not scan_ids:
-            return 0
-
-        placeholders = ",".join("?" for _ in scan_ids)
-        connection.execute(
-            f"DELETE FROM engine_results WHERE scan_job_id IN ({placeholders})",
-            tuple(scan_ids),
-        )
-        cursor = connection.execute(
-            """
-            UPDATE scan_jobs
-            SET
-                status = 'queued',
-                verdict = 'pending',
-                risk_score = NULL,
-                started_at = NULL,
-                completed_at = NULL,
-                failed_at = NULL,
-                last_error = COALESCE(
-                    last_error,
-                    'Worker restarted before the previous attempt completed.'
-                )
-            WHERE status = 'running'
-            """
-        )
-    return int(cursor.rowcount or 0)
+    return 0
 
 
 def row_to_scan_record(row: sqlite3.Row) -> ScanRecord:

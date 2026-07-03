@@ -9,6 +9,7 @@ from time import perf_counter
 
 from app.models import EngineResultInput, ScanRecord
 from app.services.findings import evidence_object, normalized_finding
+from app.services.sample_paths import resolve_sample_path, sample_path_error
 
 
 ENGINE_NAME = "ClamAV"
@@ -24,7 +25,7 @@ def get_clamav_config(
     clamd_host = setting_value(
         override,
         "host",
-        engine_setting("clamav.host", os.getenv("MASP_CLAMD_HOST", "")),
+        env_or_setting("MASP_CLAMD_HOST", "clamav.host", ""),
     ).strip()
     if clamd_host:
         return {
@@ -33,15 +34,16 @@ def get_clamav_config(
             "port": setting_int(
                 override,
                 "port",
-                engine_setting("clamav.port", os.getenv("MASP_CLAMD_PORT", str(DEFAULT_CLAMD_PORT))),
+                env_or_setting("MASP_CLAMD_PORT", "clamav.port", str(DEFAULT_CLAMD_PORT)),
                 DEFAULT_CLAMD_PORT,
             ),
             "timeout_seconds": setting_int(
                 override,
                 "timeout_seconds",
-                engine_setting(
+                env_or_setting(
+                    "MASP_CLAMD_TIMEOUT_SECONDS",
                     "clamav.timeout_seconds",
-                    os.getenv("MASP_CLAMD_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
+                    str(DEFAULT_TIMEOUT_SECONDS),
                 ),
                 DEFAULT_TIMEOUT_SECONDS,
             ),
@@ -51,7 +53,7 @@ def get_clamav_config(
     command = setting_value(
         override,
         "command",
-        engine_setting("clamav.command", os.getenv("MASP_CLAMAV_COMMAND", "clamscan")),
+        env_or_setting("MASP_CLAMAV_COMMAND", "clamav.command", "clamscan"),
     )
     return {
         "mode": "cli",
@@ -59,9 +61,10 @@ def get_clamav_config(
         "timeout_seconds": setting_int(
             override,
             "timeout_seconds",
-            engine_setting(
+            env_or_setting(
+                "MASP_CLAMAV_TIMEOUT_SECONDS",
                 "clamav.timeout_seconds",
-                os.getenv("MASP_CLAMAV_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
+                str(DEFAULT_TIMEOUT_SECONDS),
             ),
             DEFAULT_TIMEOUT_SECONDS,
         ),
@@ -126,7 +129,7 @@ def run_clamav_engine(
 def run_clamd_scan(scan: ScanRecord, host: str, port: int, timeout: int) -> EngineResultInput:
     started_at = perf_counter()
 
-    sample_path = Path(scan.storage_path)
+    sample_path = resolve_sample_path(scan)
     if not sample_path.is_file():
         return build_result(
             status="failed",
@@ -134,7 +137,7 @@ def run_clamd_scan(scan: ScanRecord, host: str, port: int, timeout: int) -> Engi
             signature=None,
             severity="info",
             confidence=0,
-            raw_output=f"Sample file not found: {scan.storage_path}",
+            raw_output=sample_path_error(scan, sample_path),
             error_message="Stored sample file is missing.",
             duration_ms=elapsed_ms(started_at),
             engine_version="clamd",
@@ -247,7 +250,7 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
             details=clamav_details("cli", scan, command=command, timeout=timeout),
         )
 
-    sample_path = Path(scan.storage_path)
+    sample_path = resolve_sample_path(scan)
     if not sample_path.is_file():
         return build_result(
             status="failed",
@@ -255,7 +258,7 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
             signature=None,
             severity="info",
             confidence=0,
-            raw_output=f"Sample file not found: {scan.storage_path}",
+            raw_output=sample_path_error(scan, sample_path),
             error_message="Stored sample file is missing.",
             duration_ms=elapsed_ms(started_at),
             engine_version="clamscan",
@@ -525,6 +528,13 @@ def engine_setting(key: str, fallback: str) -> str:
 
     value = get_setting(key, fallback)
     return fallback if value is None else value
+
+
+def env_or_setting(env_key: str, setting_key: str, fallback: str) -> str:
+    value = os.getenv(env_key)
+    if value is not None:
+        return value
+    return engine_setting(setting_key, fallback)
 
 
 def engine_setting_int(key: str, fallback: str, default: int) -> int:

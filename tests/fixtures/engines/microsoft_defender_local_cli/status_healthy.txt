@@ -1,0 +1,1 @@
+{"AMServiceEnabled":true,"AntivirusEnabled":true,"AMEngineVersion":"1.1.26050.11","AMProductVersion":"4.18.26050.15","AntivirusSignatureVersion":"1.453.401.0","AntivirusSignatureAge":0,"RealTimeProtectionEnabled":true}

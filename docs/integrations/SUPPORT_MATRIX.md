@@ -26,7 +26,7 @@ These are not supported yet. They require official documentation review and prod
 
 | Candidate | Vendor | Product | Likely Method | State | Required Before Implementation |
 | --- | --- | --- | --- | --- | --- |
-| Microsoft Defender via local CLI | Microsoft | Microsoft Defender Antivirus | PowerShell/CLI | research | Spec created in `docs/integrations/microsoft_defender_local_cli.md`; next step is lab validation for exit codes, EICAR behavior, and post-scan detection semantics. |
+| Microsoft Defender via local CLI | Microsoft | Microsoft Defender Antivirus | PowerShell/CLI | lab | Adapter implemented and locally validated with healthy status, clean scan, and EICAR detection fixtures. Still needs broader failure/timeout fixtures before `supported`. |
 | ESET Server Security via ICAP | ESET | ESET Server Security or ICAP-capable gateway product | ICAP | research | Confirm exact product, ICAP service behavior, clean/detected responses, headers, licensing, and file size limits. |
 | ESET PROTECT via API | ESET | ESET PROTECT | REST API | research | Confirm whether file submission/scanning is supported or only management/telemetry APIs are available. |
 | Trellix ATD via API | Trellix | Advanced Threat Defense / Malware Analysis | REST API | research | Confirm submission flow, polling model, verdict schema, auth, rate limits, and report retrieval. |

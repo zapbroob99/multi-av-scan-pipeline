@@ -2,16 +2,19 @@
 
 This directory holds fixture samples for the `Microsoft Defender via local CLI` integration.
 
-Planned files:
+Captured files:
 
 - `status_healthy.txt`
+- `scan_clean_mpcmdrun.txt`
+- `scan_detected_eicar_mpcmdrun.txt`
+
+Planned files:
+
 - `status_access_denied.txt`
 - `status_disabled.txt`
 - `status_signature_outdated.txt`
 - `scan_clean_start_mpscan.txt`
-- `scan_clean_mpcmdrun.txt`
 - `scan_detected_eicar_start_mpscan.txt`
-- `scan_detected_eicar_mpcmdrun.txt`
 - `scan_detected_eicar_postscan_status.txt`
 - `scan_ambiguous_success.txt`
 - `scan_access_denied.txt`

@@ -19,6 +19,8 @@ services:
 
   worker:
     build: .
+    profiles:
+      - linux-worker
     command: python -m app.workers.scan_worker
     environment:
       MASP_CLAMD_HOST: clamav
@@ -26,6 +28,7 @@ services:
       MASP_CLAMD_TIMEOUT_SECONDS: "60"
       MASP_YARA_RULES_DIR: /app/rules
       MASP_WORKER_POLL_SECONDS: "2"
+      MASP_WORKER_ENGINE_KEYS: static_metadata,clamav,yara
     volumes:
       - ./data:/app/data
       - ./storage:/app/storage

@@ -34,11 +34,20 @@ http://127.0.0.1:8000
 docker compose up --build
 ```
 
-The compose stack starts:
+The default compose stack starts:
 
 - `app`: MASP web application
-- `worker`: background scan worker that processes queued jobs
 - `clamav`: ClamAV daemon exposed on port `3310`
+
+The Linux container worker is available behind an explicit profile:
+
+```powershell
+docker compose --profile linux-worker up --build
+```
+
+Use the Linux worker for Linux-compatible engines such as ClamAV and YARA. Do
+not use it when you want Microsoft Defender via local CLI to process jobs,
+because Defender requires a Windows worker.
 
 The app image installs the `yara` CLI. Docker Compose mounts the local `rules/`
 directory into `/app/rules`, so rule edits can be picked up without rebuilding
@@ -65,3 +74,33 @@ terminals:
 uvicorn app.main:app --reload
 python -m app.workers.scan_worker
 ```
+
+For hybrid Docker + Windows Defender testing, run the web app, ClamAV, and the
+Linux worker in Docker, then run a second worker from the Windows virtual
+environment:
+
+```powershell
+docker compose --profile linux-worker up --build
+```
+
+In a separate Windows terminal:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+$env:MASP_CLAMD_HOST="127.0.0.1"
+$env:MASP_CLAMD_PORT="3310"
+$env:MASP_WORKER_ENGINE_KEYS="microsoft_defender"
+python -m app.workers.scan_worker
+```
+
+In this mode, uploaded samples are stored through the Docker bind mount and the
+Windows worker maps `/app/storage/...` paths back to the local `storage\...`
+directory before scanning.
+
+The worker capability split is:
+
+- Docker/Linux worker: `static_metadata`, `clamav`, `yara`
+- Windows worker: `microsoft_defender`
+
+Each worker only writes results for engines it can run. A scan stays `running`
+until every enabled engine has a result.
