@@ -6,6 +6,7 @@ import subprocess
 from time import perf_counter
 
 from app.models import EngineResultInput, ScanRecord
+from app.services.findings import evidence_object, normalized_finding
 
 
 ENGINE_NAME = "Microsoft Defender"
@@ -122,7 +123,7 @@ def run_microsoft_defender_engine(
     started_at = perf_counter()
     config = get_microsoft_defender_config(config_override)
     health = check_microsoft_defender_health(config_override)
-    details = {
+    base_details = {
         "adapter": "microsoft_defender_local_cli",
         "sample": {
             "filename": scan.original_filename,
@@ -138,20 +139,80 @@ def run_microsoft_defender_engine(
         },
         "health": health,
     }
-    return EngineResultInput(
-        engine_name=ENGINE_NAME,
-        engine_version=None,
-        signature_version=None,
-        status="skipped",
-        detected=False,
-        signature=None,
-        severity="info",
-        confidence=0,
-        raw_output="Microsoft Defender scan flow is not implemented yet on this branch.",
-        error_message="Microsoft Defender adapter is still in research phase.",
+
+    if not bool(health["ok"]):
+        return build_result(
+            status="skipped",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=str(health["detail"]),
+            error_message=f"Microsoft Defender is not ready: {health['status']}.",
+            duration_ms=elapsed_ms(started_at),
+            details=base_details,
+        )
+
+    sample_path = Path(scan.storage_path)
+    if not sample_path.is_file():
+        return build_result(
+            status="failed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=f"Sample file not found: {scan.storage_path}",
+            error_message="Stored sample file is missing.",
+            duration_ms=elapsed_ms(started_at),
+            details=base_details,
+        )
+
+    resolved_mpcmdrun = resolve_mpcmdrun_path(str(config["mpcmdrun_path"]))
+    if resolved_mpcmdrun is None:
+        return build_result(
+            status="skipped",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output="MpCmdRun.exe could not be resolved.",
+            error_message="Microsoft Defender MpCmdRun.exe is not configured.",
+            duration_ms=elapsed_ms(started_at),
+            details=base_details,
+        )
+
+    if bool(config["update_before_scan"]):
+        update_result = run_mpcmdrun_signature_update(
+            resolved_mpcmdrun,
+            int(config["timeout_seconds"]),
+        )
+        base_details["signature_update"] = update_result
+        if not bool(update_result["ok"]):
+            return build_result(
+                status="failed",
+                detected=False,
+                signature=None,
+                severity="info",
+                confidence=0,
+                raw_output=str(update_result["raw_output"]),
+                error_message=str(update_result["error_message"]),
+                duration_ms=elapsed_ms(started_at),
+                details=base_details,
+            )
+
+    scan_result = run_mpcmdrun_custom_scan(
+        resolved_mpcmdrun,
+        sample_path,
+        int(config["timeout_seconds"]),
+    )
+    base_details["scan_command"] = scan_result["command"]
+    base_details["scan_returncode"] = scan_result["returncode"]
+    base_details["scan_mode"] = "mpcmdrun_custom_disable_remediation"
+    return normalize_mpcmdrun_scan_result(
+        returncode=int(scan_result["returncode"]),
+        raw_output=str(scan_result["raw_output"]),
         duration_ms=elapsed_ms(started_at),
-        details_json=json.dumps(details, sort_keys=True),
-        findings_json="[]",
+        details=base_details,
     )
 
 
@@ -182,6 +243,253 @@ def resolve_mpcmdrun_path(configured_path: str) -> str | None:
         if candidate.is_file():
             return str(candidate)
     return None
+
+
+def run_mpcmdrun_signature_update(mpcmdrun_path: str, timeout_seconds: int) -> dict[str, object]:
+    command = [mpcmdrun_path, "-SignatureUpdate"]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "command": command,
+            "raw_output": "",
+            "error_message": f"MpCmdRun signature update timed out after {timeout_seconds} seconds.",
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "command": command,
+            "raw_output": str(exc),
+            "error_message": "MpCmdRun signature update could not be executed.",
+        }
+
+    raw_output = combined_output(completed.stdout, completed.stderr)
+    return {
+        "ok": completed.returncode == 0,
+        "command": command,
+        "returncode": completed.returncode,
+        "raw_output": raw_output,
+        "error_message": None
+        if completed.returncode == 0
+        else f"MpCmdRun signature update exited with code {completed.returncode}.",
+    }
+
+
+def run_mpcmdrun_custom_scan(
+    mpcmdrun_path: str,
+    sample_path: Path,
+    timeout_seconds: int,
+) -> dict[str, object]:
+    command = [
+        mpcmdrun_path,
+        "-Scan",
+        "-ScanType",
+        "3",
+        "-File",
+        str(sample_path),
+        "-DisableRemediation",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": command,
+            "returncode": -1,
+            "raw_output": combined_output(exc.stdout, exc.stderr),
+            "error_message": f"MpCmdRun custom scan timed out after {timeout_seconds} seconds.",
+        }
+    except OSError as exc:
+        return {
+            "command": command,
+            "returncode": -1,
+            "raw_output": str(exc),
+            "error_message": "MpCmdRun custom scan could not be executed.",
+        }
+
+    return {
+        "command": command,
+        "returncode": completed.returncode,
+        "raw_output": combined_output(completed.stdout, completed.stderr),
+        "error_message": None,
+    }
+
+
+def normalize_mpcmdrun_scan_result(
+    returncode: int,
+    raw_output: str,
+    duration_ms: int,
+    details: dict[str, object] | None = None,
+) -> EngineResultInput:
+    clean_raw = raw_output.strip() or "MpCmdRun produced no output."
+    signature = parse_mpcmdrun_signature(clean_raw)
+
+    if returncode == 0 and not signature and not has_detection_indicator(clean_raw):
+        return build_result(
+            status="completed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=100,
+            raw_output=clean_raw,
+            error_message=None,
+            duration_ms=duration_ms,
+            details=details,
+        )
+
+    if returncode == 2 and (signature or has_detection_indicator(clean_raw)):
+        signature = signature or "Microsoft Defender detection"
+        return build_result(
+            status="completed",
+            detected=True,
+            signature=signature,
+            severity="high",
+            confidence=90,
+            raw_output=clean_raw,
+            error_message=None,
+            duration_ms=duration_ms,
+            details=details,
+            findings=defender_findings(signature, clean_raw),
+        )
+
+    if returncode == -1:
+        error_message = "MpCmdRun custom scan could not complete."
+    elif returncode == 0:
+        error_message = "MpCmdRun returned success with possible detection indicators; MASP will not classify this as clean."
+    elif returncode == 2:
+        error_message = "MpCmdRun returned code 2 without a clear detection signature; this may be a scan error."
+    else:
+        error_message = f"MpCmdRun custom scan exited with code {returncode}."
+
+    return build_result(
+        status="failed",
+        detected=False,
+        signature=None,
+        severity="info",
+        confidence=0,
+        raw_output=clean_raw,
+        error_message=error_message,
+        duration_ms=duration_ms,
+        details=details,
+    )
+
+
+def parse_mpcmdrun_signature(raw_output: str) -> str | None:
+    for line in raw_output.splitlines():
+        stripped = line.strip(" \t:-")
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if "no threat" in lowered or "no malware" in lowered:
+            continue
+        for marker in (
+            "threat name",
+            "threat",
+            "detected",
+            "malware",
+            "virus",
+        ):
+            if marker in lowered:
+                _, separator, value = stripped.partition(":")
+                if separator and value.strip():
+                    return value.strip()
+                if "eicar" in lowered:
+                    return stripped
+    return None
+
+
+def has_detection_indicator(raw_output: str) -> bool:
+    for line in raw_output.splitlines():
+        lowered = line.strip().lower()
+        if not lowered:
+            continue
+        if "no threat" in lowered or "no malware" in lowered or "no threats" in lowered:
+            continue
+        if any(marker in lowered for marker in ("eicar", "threat detected", "malware detected")):
+            return True
+    return False
+
+
+def build_result(
+    status: str,
+    detected: bool,
+    signature: str | None,
+    severity: str,
+    confidence: int,
+    raw_output: str,
+    error_message: str | None,
+    duration_ms: int,
+    details: dict[str, object] | None = None,
+    findings: list[dict[str, object]] | None = None,
+) -> EngineResultInput:
+    return EngineResultInput(
+        engine_name=ENGINE_NAME,
+        engine_version=None,
+        signature_version=None,
+        status=status,
+        detected=detected,
+        signature=signature,
+        severity=severity,
+        confidence=confidence,
+        raw_output=raw_output,
+        error_message=error_message,
+        duration_ms=duration_ms,
+        details_json=json.dumps(details or {}, sort_keys=True),
+        findings_json=json.dumps(findings or [], sort_keys=True),
+    )
+
+
+def defender_findings(signature: str, raw_output: str) -> list[dict[str, object]]:
+    return [
+        normalized_finding(
+            title=signature,
+            finding_type="antivirus_signature",
+            source=ENGINE_NAME,
+            severity="high",
+            confidence=90,
+            action="detected",
+            category="test_file" if "eicar" in signature.lower() else "malware",
+            tags=["av", "signature", "microsoft_defender"],
+            evidence={
+                "objects": [
+                    evidence_object(
+                        kind="signature",
+                        value=signature,
+                        metadata={"raw_response": raw_output},
+                    )
+                ],
+                "raw_response": raw_output,
+            },
+            vendor_details={
+                "signature": signature,
+                "raw_response": raw_output,
+            },
+        )
+    ]
+
+
+def combined_output(stdout: str | bytes | None, stderr: str | bytes | None) -> str:
+    parts = []
+    for value in (stdout, stderr):
+        if isinstance(value, bytes):
+            text = value.decode("utf-8", errors="replace")
+        else:
+            text = value or ""
+        if text.strip():
+            parts.append(text.strip())
+    return "\n".join(parts)
 
 
 def get_mpcomputerstatus(powershell_path: str, timeout_seconds: int) -> dict[str, object]:

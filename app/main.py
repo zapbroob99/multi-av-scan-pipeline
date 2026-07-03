@@ -780,7 +780,17 @@ def render_engine_logo(label: str, key: str) -> str:
         return '<span class="engine-logo engine-logo-yara engine-logo-glyph" aria-hidden="true">&#123;</span>'
 
     if key == "microsoft_defender":
-        return '<span class="engine-logo engine-logo-text" aria-hidden="true">MD</span>'
+        return """
+        <span class="engine-logo engine-logo-defender" aria-hidden="true">
+          <svg viewBox="0 0 44 44" role="img" focusable="false">
+            <path d="M22 5.8c4.5 2.9 8.9 4.5 13.3 4.8v10.1c0 8.5-4.7 14.7-13.3 17.5-8.6-2.8-13.3-9-13.3-17.5V10.6c4.4-.3 8.8-1.9 13.3-4.8Z" fill="#2563eb"></path>
+            <path d="M22 10.1v23.3c-6-2.4-9.3-6.8-9.3-12.5v-6.3c3.2-.7 6.2-1.8 9.3-4.5Z" fill="#eaf3ff"></path>
+            <path d="M22 10.1c3.1 2.7 6.1 3.8 9.3 4.5v6.3c0 5.7-3.3 10.1-9.3 12.5V10.1Z" fill="#7dc4ff"></path>
+            <path d="M22 12.3v18.8" stroke="#1d4ed8" stroke-width="1.2" stroke-linecap="round"></path>
+            <path d="M14.5 20.7h15" stroke="#1d4ed8" stroke-width="1.2" stroke-linecap="round"></path>
+          </svg>
+        </span>
+        """
 
     return f'<span class="engine-logo engine-logo-text" aria-hidden="true">{safe_label}</span>'
 

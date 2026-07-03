@@ -117,21 +117,22 @@ Planned implementation path:
 
 1. Resolve local execution mode.
 2. For health/status, prefer `Get-MpComputerStatus`.
-3. For file scanning, start with one of these documented flows:
-   `Start-MpScan -ScanType CustomScan -ScanPath <sample-path>`
-   or
-   `MpCmdRun.exe -Scan -ScanType 3 -File <sample-path>`
-4. Record command duration and raw stdout/stderr or PowerShell error output.
-5. Determine whether Microsoft Defender exposes the detection result directly in command output or whether MASP must query post-scan threat state.
-6. If post-scan threat lookup is required, add a second documented retrieval step after lab validation.
-7. Normalize result into `EngineResultInput`.
+3. For initial file scanning, use:
+   `MpCmdRun.exe -Scan -ScanType 3 -File <sample-path> -DisableRemediation`
+4. Record command duration and raw stdout/stderr.
+5. Treat return code `2` as detected only when command output contains clear detection evidence, such as a threat name.
+6. Treat return code `2` without clear detection evidence as failed, because Microsoft documents that code as also covering scanning errors.
+7. Treat return code `0` as clean only when `-DisableRemediation` was used and the output contains no detection indicators.
+8. Add a post-scan threat retrieval step only after lab validation proves it is needed and reliable.
+9. Normalize result into `EngineResultInput`.
 
 Important unresolved point:
 
 - The safest detection source still needs lab confirmation.
 - `Start-MpScan` documentation confirms scan start semantics, but does not by itself document a simple detection-oriented return payload.
 - `MpCmdRun.exe` documentation confirms scan return codes, but a return code of `0` can mean either no malware found or malware found and successfully remediated.
-- Because of that ambiguity, MASP must not treat `returncode == 0` as clean without secondary evidence.
+- MASP's first implementation uses `-DisableRemediation`, because Microsoft documents that detections from that custom scan mode are displayed in command output and actions are not applied.
+- MASP must still keep ambiguous outputs as failed rather than guessing.
 
 ## Detection Semantics
 
