@@ -172,6 +172,7 @@ textarea {
 }
 
 .nav-link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -188,16 +189,43 @@ textarea {
   color: #ffffff;
 }
 
-.nav-mark {
-  width: 8px;
-  height: 8px;
-  border: 1px solid #5f737c;
+.nav-link::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
   border-radius: 999px;
+  background: transparent;
 }
 
-.nav-link.is-active .nav-mark {
+.nav-link.is-active::before {
   background: #2dd4bf;
-  border-color: #2dd4bf;
+}
+
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: #8eabb1;
+  flex: 0 0 18px;
+}
+
+.nav-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.nav-link:hover .nav-icon,
+.nav-link.is-active .nav-icon {
+  color: #dff8f4;
+}
+
+.nav-label {
+  line-height: 1;
 }
 
 .side-status {
@@ -1894,7 +1922,7 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 14px;
   padding: 13px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1903,6 +1931,8 @@ textarea:focus {
 .engine-health div {
   display: grid;
   gap: 5px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .engine-health form {
@@ -1917,14 +1947,37 @@ textarea:focus {
 }
 
 .engine-toolbar {
-  flex-wrap: wrap;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
   justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.engine-toolbar-secondary {
+  display: contents;
+}
+
+.engine-toolbar form {
+  display: inline-flex;
+  margin: 0;
 }
 
 .engine-toolbar .secondary-action,
 .engine-toolbar .danger-action {
-  min-height: 34px;
+  min-height: 32px;
   padding: 0 12px;
+  white-space: nowrap;
+}
+
+.engine-action-primary {
+  padding: 0 14px !important;
+}
+
+.engine-action-compact {
+  min-width: 0;
+  padding: 0 10px !important;
+  border-radius: 10px;
 }
 
 .add-engine-form {
@@ -2917,7 +2970,6 @@ textarea:focus {
   }
 
   .add-engine-form,
-  .engine-toolbar,
   .topbar-actions,
   .user-menu {
     width: 100%;
@@ -2936,6 +2988,24 @@ textarea:focus {
 
   .add-engine-form {
     grid-template-columns: 1fr;
+  }
+
+  .engine-health {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .engine-toolbar {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .engine-toolbar-secondary {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .adapter-scroll-list {

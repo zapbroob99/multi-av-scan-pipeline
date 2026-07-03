@@ -97,6 +97,50 @@ seed_default_engines()
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+def nav_icon(icon_key: str) -> str:
+    icons = {
+        "dashboard": """
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="6" height="6" rx="1.4"></rect>
+          <rect x="11" y="3" width="6" height="9" rx="1.4"></rect>
+          <rect x="3" y="11" width="6" height="6" rx="1.4"></rect>
+          <rect x="11" y="14" width="6" height="3" rx="1.4"></rect>
+        </svg>
+        """,
+        "new_scan": """
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M10 3v14"></path>
+          <path d="M3 10h14"></path>
+          <rect x="3" y="3" width="14" height="14" rx="3"></rect>
+        </svg>
+        """,
+        "account": """
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="10" cy="6.5" r="3"></circle>
+          <path d="M4 16c1.2-2.7 3.2-4 6-4s4.8 1.3 6 4"></path>
+        </svg>
+        """,
+        "engines": """
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="6" cy="10" r="2.2"></circle>
+          <circle cx="14" cy="6" r="2.2"></circle>
+          <circle cx="14" cy="14" r="2.2"></circle>
+          <path d="M7.9 8.9 12.1 7.1"></path>
+          <path d="M7.9 11.1 12.1 12.9"></path>
+        </svg>
+        """,
+        "users": """
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="7" cy="7" r="2.5"></circle>
+          <path d="M2.8 15c.9-2.1 2.4-3.2 4.2-3.2S10.3 12.9 11.2 15"></path>
+          <circle cx="14.5" cy="8" r="1.9"></circle>
+          <path d="M12.7 14.2c.5-1.4 1.5-2.2 3-2.2 1 0 1.8.4 2.5 1.2"></path>
+        </svg>
+        """,
+    }
+    return icons.get(icon_key, "")
+
+
 def page_shell(
     title: str,
     active: str,
@@ -120,7 +164,8 @@ def page_shell(
         nav_items.append(("users", "/users", "Users"))
     nav_html = "\n".join(
         f'<a class="nav-link {"is-active" if key == active else ""}" href="{href}">'
-        f'<span class="nav-mark"></span>{label}</a>'
+        f'<span class="nav-icon">{nav_icon(key)}</span>'
+        f'<span class="nav-label">{label}</span></a>'
         for key, href, label in nav_items
     )
     username = html.escape(getattr(user, "username", ""))
@@ -872,30 +917,32 @@ def health_tone_for(adapter_key: str, health: dict[str, str | bool]) -> str:
 
 
 def render_engine_actions(instance: EngineInstanceRecord, show_test: bool) -> str:
-    buttons = []
+    test_button = ""
     if show_test:
-        buttons.append(
-            f"""
-            <form action="/engines/{html.escape(instance.adapter_key)}/test" method="post">
-              <button class="secondary-action" type="submit">Test connection</button>
-            </form>
-            """
-        )
-    buttons.append(
-        f"""
-        <form action="/engines/{html.escape(instance.adapter_key)}/toggle" method="post">
-          <button class="secondary-action" type="submit">{"Disable" if instance.enabled else "Enable"}</button>
+        test_button = f"""
+        <form action="/engines/{html.escape(instance.adapter_key)}/test" method="post">
+          <button class="secondary-action engine-action-primary" type="submit">Test connection</button>
         </form>
         """
-    )
-    buttons.append(
-        f"""
-        <form action="/engines/{html.escape(instance.adapter_key)}/delete" method="post">
-          <button class="danger-action" type="submit">Remove</button>
-        </form>
-        """
-    )
-    return f'<div class="engine-toolbar">{"".join(buttons)}</div>'
+    toggle_button = f"""
+    <form action="/engines/{html.escape(instance.adapter_key)}/toggle" method="post">
+      <button class="secondary-action engine-action-compact" type="submit">{"Disable" if instance.enabled else "Enable"}</button>
+    </form>
+    """
+    remove_button = f"""
+    <form action="/engines/{html.escape(instance.adapter_key)}/delete" method="post">
+      <button class="danger-action engine-action-compact" type="submit">Remove</button>
+    </form>
+    """
+    return f"""
+    <div class="engine-toolbar">
+      {test_button}
+      <div class="engine-toolbar-secondary">
+        {toggle_button}
+        {remove_button}
+      </div>
+    </div>
+    """
 
 
 def render_engine_summary(
