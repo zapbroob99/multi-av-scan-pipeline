@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import shutil
@@ -7,6 +8,7 @@ import subprocess
 from time import perf_counter
 
 from app.models import EngineResultInput, ScanRecord
+from app.services.findings import evidence_object, normalized_finding
 
 
 ENGINE_NAME = "ClamAV"
@@ -136,6 +138,7 @@ def run_clamd_scan(scan: ScanRecord, host: str, port: int, timeout: int) -> Engi
             error_message="Stored sample file is missing.",
             duration_ms=elapsed_ms(started_at),
             engine_version="clamd",
+            details=clamav_details("clamd", scan, host=host, port=port, timeout=timeout),
         )
 
     try:
@@ -151,6 +154,14 @@ def run_clamd_scan(scan: ScanRecord, host: str, port: int, timeout: int) -> Engi
             error_message=f"Could not connect to clamd at {host}:{port}.",
             duration_ms=elapsed_ms(started_at),
             engine_version="clamd",
+            details=clamav_details(
+                "clamd",
+                scan,
+                host=host,
+                port=port,
+                timeout=timeout,
+                error=str(exc),
+            ),
         )
 
     signature = parse_clamd_signature(raw_response)
@@ -165,6 +176,14 @@ def run_clamd_scan(scan: ScanRecord, host: str, port: int, timeout: int) -> Engi
             error_message=None,
             duration_ms=elapsed_ms(started_at),
             engine_version="clamd",
+            details=clamav_details(
+                "clamd",
+                scan,
+                host=host,
+                port=port,
+                timeout=timeout,
+                response=raw_response,
+            ),
         )
 
     if raw_response.endswith(" FOUND"):
@@ -178,6 +197,16 @@ def run_clamd_scan(scan: ScanRecord, host: str, port: int, timeout: int) -> Engi
             error_message=None,
             duration_ms=elapsed_ms(started_at),
             engine_version="clamd",
+            details=clamav_details(
+                "clamd",
+                scan,
+                host=host,
+                port=port,
+                timeout=timeout,
+                response=raw_response,
+                signature=signature,
+            ),
+            findings=clamav_findings(signature, raw_response),
         )
 
     return build_result(
@@ -190,6 +219,14 @@ def run_clamd_scan(scan: ScanRecord, host: str, port: int, timeout: int) -> Engi
         error_message="clamd returned an unrecognized response.",
         duration_ms=elapsed_ms(started_at),
         engine_version="clamd",
+        details=clamav_details(
+            "clamd",
+            scan,
+            host=host,
+            port=port,
+            timeout=timeout,
+            response=raw_response,
+        ),
     )
 
 
@@ -207,6 +244,7 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
             error_message="ClamAV is not installed or not configured.",
             duration_ms=elapsed_ms(started_at),
             engine_version="clamscan",
+            details=clamav_details("cli", scan, command=command, timeout=timeout),
         )
 
     sample_path = Path(scan.storage_path)
@@ -221,6 +259,7 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
             error_message="Stored sample file is missing.",
             duration_ms=elapsed_ms(started_at),
             engine_version="clamscan",
+            details=clamav_details("cli", scan, command=command, timeout=timeout),
         )
 
     try:
@@ -242,6 +281,13 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
             error_message=f"ClamAV timed out after {timeout} seconds.",
             duration_ms=elapsed_ms(started_at),
             engine_version="clamscan",
+            details=clamav_details(
+                "cli",
+                scan,
+                command=command,
+                timeout=timeout,
+                error="timeout",
+            ),
         )
     except OSError as exc:
         return build_result(
@@ -254,6 +300,13 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
             error_message="ClamAV could not be executed.",
             duration_ms=elapsed_ms(started_at),
             engine_version="clamscan",
+            details=clamav_details(
+                "cli",
+                scan,
+                command=command,
+                timeout=timeout,
+                error=str(exc),
+            ),
         )
 
     raw_output = "\n".join(
@@ -272,6 +325,14 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
             error_message=None,
             duration_ms=elapsed_ms(started_at),
             engine_version="clamscan",
+            details=clamav_details(
+                "cli",
+                scan,
+                command=command,
+                timeout=timeout,
+                returncode=completed.returncode,
+                output=raw_output or "No threats found.",
+            ),
         )
 
     if completed.returncode == 1:
@@ -285,6 +346,16 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
             error_message=None,
             duration_ms=elapsed_ms(started_at),
             engine_version="clamscan",
+            details=clamav_details(
+                "cli",
+                scan,
+                command=command,
+                timeout=timeout,
+                returncode=completed.returncode,
+                output=raw_output,
+                signature=signature,
+            ),
+            findings=clamav_findings(signature, raw_output),
         )
 
     return build_result(
@@ -297,6 +368,14 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
         error_message=f"ClamAV exited with code {completed.returncode}.",
         duration_ms=elapsed_ms(started_at),
         engine_version="clamscan",
+        details=clamav_details(
+            "cli",
+            scan,
+            command=command,
+            timeout=timeout,
+            returncode=completed.returncode,
+            output=raw_output,
+        ),
     )
 
 
@@ -354,6 +433,8 @@ def build_result(
     error_message: str | None,
     duration_ms: int,
     engine_version: str | None,
+    details: dict[str, object] | None = None,
+    findings: list[dict[str, object]] | None = None,
 ) -> EngineResultInput:
     return EngineResultInput(
         engine_name=ENGINE_NAME,
@@ -367,7 +448,72 @@ def build_result(
         raw_output=raw_output,
         error_message=error_message,
         duration_ms=duration_ms,
+        details_json=json.dumps(details or {}, sort_keys=True),
+        findings_json=json.dumps(findings or [], sort_keys=True),
     )
+
+
+def clamav_details(
+    mode: str,
+    scan: ScanRecord,
+    **extra: object,
+) -> dict[str, object]:
+    details: dict[str, object] = {
+        "adapter": "clamav",
+        "mode": mode,
+        "sample": {
+            "filename": scan.original_filename,
+            "sha256": scan.sha256,
+            "size_bytes": scan.size_bytes,
+        },
+    }
+    details.update({key: value for key, value in extra.items() if value is not None})
+    return details
+
+
+def clamav_findings(
+    signature: str | None,
+    raw_output: str,
+) -> list[dict[str, object]]:
+    if not signature:
+        return []
+    return [
+        normalized_finding(
+            title=signature,
+            finding_type="antivirus_signature",
+            source=ENGINE_NAME,
+            severity="high",
+            confidence=90,
+            action="detected",
+            category=clamav_signature_category(signature),
+            tags=["av", "signature"],
+            evidence={
+                "objects": [
+                    evidence_object(
+                        kind="signature",
+                        value=signature,
+                        metadata={"raw_response": raw_output},
+                    )
+                ],
+                "raw_response": raw_output,
+            },
+            vendor_details={
+                "signature": signature,
+                "raw_response": raw_output,
+            },
+        )
+    ]
+
+
+def clamav_signature_category(signature: str) -> str:
+    lowered = signature.lower()
+    if "eicar" in lowered:
+        return "test_file"
+    if "phish" in lowered:
+        return "phishing"
+    if "trojan" in lowered:
+        return "trojan"
+    return "malware"
 
 
 def elapsed_ms(started_at: float) -> int:

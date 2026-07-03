@@ -37,4 +37,6 @@ def run_static_metadata_engine(scan: ScanRecord) -> EngineResultInput:
         raw_output=json.dumps(metadata, indent=2, sort_keys=True),
         error_message=None,
         duration_ms=duration_ms,
+        details_json=json.dumps(metadata, sort_keys=True),
+        findings_json="[]",
     )

@@ -6,6 +6,7 @@ import subprocess
 from time import perf_counter
 
 from app.models import EngineResultInput, ScanRecord
+from app.services.findings import evidence_object, normalized_finding
 
 
 ENGINE_NAME = "YARA"
@@ -121,6 +122,7 @@ def run_yara_engine(
             error_message="YARA is not installed or not configured.",
             duration_ms=elapsed_ms(started_at),
             signature_version=None,
+            details=yara_details(command, rules_dir, rule_files, scan),
         )
 
     if not rule_files:
@@ -134,6 +136,7 @@ def run_yara_engine(
             error_message="YARA rules directory is empty.",
             duration_ms=elapsed_ms(started_at),
             signature_version=str(rules_dir),
+            details=yara_details(command, rules_dir, rule_files, scan),
         )
 
     sample_path = Path(scan.storage_path)
@@ -148,6 +151,7 @@ def run_yara_engine(
             error_message="Stored sample file is missing.",
             duration_ms=elapsed_ms(started_at),
             signature_version=str(rules_dir),
+            details=yara_details(command, rules_dir, rule_files, scan),
         )
 
     outputs = []
@@ -178,6 +182,13 @@ def run_yara_engine(
                 error_message="YARA could not be executed.",
                 duration_ms=elapsed_ms(started_at),
                 signature_version=str(rules_dir),
+                details=yara_details(
+                    command,
+                    rules_dir,
+                    rule_files,
+                    scan,
+                    errors=[str(exc)],
+                ),
             )
 
         raw_output = "\n".join(
@@ -220,6 +231,16 @@ def run_yara_engine(
             error_message="; ".join(errors) if errors else None,
             duration_ms=elapsed_ms(started_at),
             signature_version=str(rules_dir),
+            details=yara_details(
+                command,
+                rules_dir,
+                rule_files,
+                scan,
+                matches=unique_matches,
+                output=outputs,
+                errors=errors,
+            ),
+            findings=yara_findings(unique_matches, rule_files),
         )
 
     if errors:
@@ -233,6 +254,15 @@ def run_yara_engine(
             error_message="; ".join(errors),
             duration_ms=elapsed_ms(started_at),
             signature_version=str(rules_dir),
+            details=yara_details(
+                command,
+                rules_dir,
+                rule_files,
+                scan,
+                matches=unique_matches,
+                output=outputs,
+                errors=errors,
+            ),
         )
 
     return build_result(
@@ -245,6 +275,15 @@ def run_yara_engine(
         error_message=None,
         duration_ms=elapsed_ms(started_at),
         signature_version=str(rules_dir),
+        details=yara_details(
+            command,
+            rules_dir,
+            rule_files,
+            scan,
+            matches=unique_matches,
+            output=outputs,
+            errors=errors,
+        ),
     )
 
 
@@ -281,6 +320,8 @@ def build_result(
     error_message: str | None,
     duration_ms: int,
     signature_version: str | None,
+    details: dict[str, object] | None = None,
+    findings: list[dict[str, object]] | None = None,
 ) -> EngineResultInput:
     return EngineResultInput(
         engine_name=ENGINE_NAME,
@@ -294,7 +335,69 @@ def build_result(
         raw_output=raw_output,
         error_message=error_message,
         duration_ms=duration_ms,
+        details_json=json.dumps(details or {}, sort_keys=True),
+        findings_json=json.dumps(findings or [], sort_keys=True),
     )
+
+
+def yara_details(
+    command: str,
+    rules_dir: Path,
+    rule_files: list[Path],
+    scan: ScanRecord,
+    matches: list[str] | None = None,
+    output: list[str] | None = None,
+    errors: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "adapter": "yara",
+        "command": command,
+        "rules_dir": str(rules_dir),
+        "rule_files": [str(rule_file) for rule_file in rule_files],
+        "matches": matches or [],
+        "output": output or [],
+        "errors": errors or [],
+        "sample": {
+            "filename": scan.original_filename,
+            "sha256": scan.sha256,
+            "size_bytes": scan.size_bytes,
+        },
+    }
+
+
+def yara_findings(
+    matches: list[str],
+    rule_files: list[Path],
+) -> list[dict[str, object]]:
+    rule_file_names = [rule_file.name for rule_file in rule_files]
+    return [
+        normalized_finding(
+            title=match,
+            finding_type="yara_rule_match",
+            source=ENGINE_NAME,
+            severity="high",
+            confidence=85,
+            action="matched",
+            category="rule_match",
+            tags=["yara", "rule"],
+            evidence={
+                "objects": [
+                    evidence_object(
+                        kind="yara_rule",
+                        value=match,
+                        metadata={"rule_files": rule_file_names},
+                    )
+                ],
+                "rule": match,
+                "rule_files": rule_file_names,
+            },
+            vendor_details={
+                "rule": match,
+                "rule_files": rule_file_names,
+            },
+        )
+        for match in matches
+    ]
 
 
 def elapsed_ms(started_at: float) -> int:

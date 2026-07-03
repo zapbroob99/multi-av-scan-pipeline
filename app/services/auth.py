@@ -15,6 +15,7 @@ from app.database import (
     create_auth_session,
     create_user,
     delete_auth_session,
+    delete_auth_sessions_for_user,
     delete_expired_auth_sessions,
     get_user_by_session,
     get_user_by_username,
@@ -54,6 +55,21 @@ def seed_default_users() -> None:
         if not username or get_user_by_username(username) is not None:
             continue
         create_user(username, hash_password(password), role)
+
+
+def dev_login_hint() -> str | None:
+    show_hint = os.getenv("MASP_SHOW_DEV_LOGIN_HINTS", "1").strip().lower()
+    if show_hint in {"0", "false", "no", "off"}:
+        return None
+
+    admin_username = os.getenv("MASP_ADMIN_USERNAME", "admin")
+    admin_password = os.getenv("MASP_ADMIN_PASSWORD", "admin123!")
+    analyst_username = os.getenv("MASP_ANALYST_USERNAME", "analyst")
+    analyst_password = os.getenv("MASP_ANALYST_PASSWORD", "analyst123!")
+    return (
+        f"{admin_username} / {admin_password} | "
+        f"{analyst_username} / {analyst_password}"
+    )
 
 
 def hash_password(password: str) -> str:
@@ -128,6 +144,10 @@ def logout(session_token: str | None) -> None:
         delete_auth_session(hash_session_token(session_token))
 
 
+def revoke_user_sessions(user_id: int) -> None:
+    delete_auth_sessions_for_user(user_id)
+
+
 def current_user(request: Request) -> UserRecord | None:
     session_token = request.cookies.get(SESSION_COOKIE)
     if not session_token:
@@ -157,3 +177,12 @@ def require_admin(request: Request) -> UserRecord:
 
 def hash_session_token(session_token: str) -> str:
     return hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+
+
+def session_cookie_secure(request: Request) -> bool:
+    configured = os.getenv("MASP_SESSION_SECURE", "").strip().lower()
+    if configured in {"1", "true", "yes", "on"}:
+        return True
+    if configured in {"0", "false", "no", "off"}:
+        return False
+    return request.url.scheme == "https"

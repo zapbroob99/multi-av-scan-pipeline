@@ -24,7 +24,11 @@ class ScanRecord:
     verdict: str
     risk_score: int | None
     created_at: str
+    started_at: str | None
     completed_at: str | None
+    failed_at: str | None
+    attempt_count: int
+    last_error: str | None
     original_filename: str
     stored_filename: str
     storage_path: str
@@ -48,6 +52,8 @@ class EngineResultInput:
     error_message: str | None = None
     engine_version: str | None = None
     signature_version: str | None = None
+    details_json: str = "{}"
+    findings_json: str = "[]"
 
 
 @dataclass(frozen=True)
@@ -66,6 +72,8 @@ class EngineResultRecord:
     error_message: str | None
     duration_ms: int
     created_at: str
+    details_json: str
+    findings_json: str
 
 
 @dataclass(frozen=True)

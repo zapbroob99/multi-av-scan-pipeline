@@ -1,4 +1,5 @@
 import html
+import json
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -8,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.database import (
+    count_users_by_role,
     create_sample,
     create_scan_job,
     create_user,
@@ -15,11 +17,13 @@ from app.database import (
     delete_user,
     get_scan,
     get_scan_counts,
+    get_user_by_id,
     get_user_by_username,
     init_db,
     list_engine_results,
     list_recent_scans,
     list_users,
+    retry_scan_job as retry_scan_job_record,
     update_scan_assessment,
     update_user,
 )
@@ -27,14 +31,19 @@ from app.models import EngineInstanceRecord, EngineResultRecord, ScanRecord, Use
 from app.services.cleanup import delete_sample_file
 from app.services.auth import (
     ROLE_ADMIN,
+    SESSION_TTL_SECONDS,
     SESSION_COOKIE,
     current_user,
+    dev_login_hint,
     hash_password,
     login,
     logout,
     require_admin,
     require_user,
+    revoke_user_sessions,
+    session_cookie_secure,
     seed_default_users,
+    verify_password,
 )
 from app.services.engine_registry import (
     ADAPTERS,
@@ -56,6 +65,7 @@ from app.services.engine_registry import (
 )
 from app.services.ingest import store_upload
 from app.services.scoring import calculate_risk
+from app.services.worker_runtime import get_worker_status
 from app.services.yara_rules import (
     delete_yara_rule,
     list_yara_rules,
@@ -100,6 +110,7 @@ def page_shell(
     nav_items = [
         ("dashboard", "/", "Dashboard"),
         ("new_scan", "/scans/new", "New Scan"),
+        ("account", "/account", "Account"),
     ]
     if user.role == ROLE_ADMIN:
         nav_items.append(("engines", "/engines", "Engines"))
@@ -168,6 +179,7 @@ def page_shell(
                     <strong>{username}</strong>
                     <small>{role}</small>
                   </span>
+                  <a class="secondary-action compact-action" href="/account">Account</a>
                   <form action="/logout" method="post">
                     <button class="secondary-action compact-action" type="submit">Logout</button>
                   </form>
@@ -194,6 +206,8 @@ def page_shell(
           const rowCheckboxes = document.querySelectorAll("[data-row-checkbox]");
           const selectAllCheckbox = document.querySelector("[data-select-all]");
           const copyTargets = document.querySelectorAll("[data-copy-value]");
+          const evidenceButtons = document.querySelectorAll("[data-evidence-button]");
+          const evidenceDrawer = document.querySelector("[data-evidence-drawer]");
           const themeToggle = document.querySelector("[data-theme-toggle]");
           const themeLabel = document.querySelector("[data-theme-label]");
           const selectedScanIds = new Set();
@@ -392,6 +406,43 @@ def page_shell(
               }});
             }});
           }}
+
+          if (evidenceButtons.length && evidenceDrawer) {{
+            const drawerTitle = evidenceDrawer.querySelector("[data-evidence-drawer-title]");
+            const drawerBody = evidenceDrawer.querySelector("[data-evidence-drawer-body]");
+            const drawerClose = evidenceDrawer.querySelector("[data-evidence-drawer-close]");
+
+            evidenceButtons.forEach((button) => {{
+              button.addEventListener("click", () => {{
+                const templateId = button.getAttribute("data-evidence-template");
+                const template = templateId ? document.getElementById(templateId) : null;
+                if (!template || !drawerBody || !drawerTitle) {{
+                  return;
+                }}
+
+                evidenceButtons.forEach((otherButton) => {{
+                  otherButton.classList.toggle("is-active", otherButton === button);
+                }});
+
+                drawerTitle.textContent = button.getAttribute("data-evidence-title") || "Details";
+                const templateText = template.content
+                  ? template.content.textContent
+                  : template.textContent;
+                const detailsText = templateText && templateText.trim() ? templateText.trim() : "";
+                drawerBody.textContent = detailsText && detailsText !== "{{}}"
+                  ? detailsText
+                  : "No structured details are available for this item.";
+                evidenceDrawer.hidden = false;
+              }});
+            }});
+
+            if (drawerClose) {{
+              drawerClose.addEventListener("click", () => {{
+                evidenceButtons.forEach((button) => button.classList.remove("is-active"));
+                evidenceDrawer.hidden = true;
+              }});
+            }}
+          }}
         </script>
       </body>
     </html>
@@ -429,7 +480,7 @@ def auth_shell(title: str, body: str) -> str:
     """
 
 
-def render_login_page(next_url: str = "/", error: str = "") -> str:
+def legacy_render_login_page(next_url: str = "/", error: str = "") -> str:
     error_html = (
         f'<div class="auth-error">{html.escape(error)}</div>'
         if error
@@ -490,6 +541,82 @@ def normalize_role(role: str) -> str:
     return normalized_role
 
 
+def page_notice(title: str, message: str, tone: str = "success") -> str:
+    if not message:
+        return ""
+    tone_class = {
+        "success": "success-notice",
+        "warning": "warning-notice",
+        "danger": "danger-notice",
+    }.get(tone, "success-notice")
+    return (
+        f'<section class="notice {tone_class}"><div>'
+        f"<strong>{html.escape(title)}</strong>"
+        f"<span>{html.escape(message)}</span>"
+        f"</div></section>"
+    )
+
+
+def render_login_page(next_url: str = "/", error: str = "", message: str = "") -> str:
+    error_html = (
+        f'<div class="auth-error">{html.escape(error)}</div>'
+        if error
+        else ""
+    )
+    message_html = (
+        f'<div class="auth-message">{html.escape(message)}</div>'
+        if message
+        else ""
+    )
+    login_hint = dev_login_hint()
+    login_hint_html = (
+        f"""
+        <div class="auth-hint">
+          <strong>Default dev users</strong>
+          <span>{html.escape(login_hint)}</span>
+        </div>
+        """
+        if login_hint
+        else ""
+    )
+    body = f"""
+    <main class="auth-layout">
+      <section class="auth-card">
+        <a class="brand auth-brand" href="/login">
+          <span class="brand-mark" aria-hidden="true">
+            <span class="brand-glyph"></span>
+          </span>
+          <span>
+            <strong>MASP</strong>
+            <small>Multi AV Scan Pipeline</small>
+          </span>
+        </a>
+        <div class="auth-heading">
+          <p class="eyebrow">Secure workspace</p>
+          <h1>Sign in</h1>
+          <span>Use an admin or analyst account to access local scan operations.</span>
+        </div>
+        {message_html}
+        {error_html}
+        <form class="auth-form" action="/login" method="post">
+          <input type="hidden" name="next_url" value="{html.escape(safe_next_url(next_url))}">
+          <label>
+            Username
+            <input type="text" name="username" autocomplete="username" required autofocus>
+          </label>
+          <label>
+            Password
+            <input type="password" name="password" autocomplete="current-password" required>
+          </label>
+          <button class="primary-action" type="submit">Sign in</button>
+        </form>
+        {login_hint_html}
+      </section>
+    </main>
+    """
+    return auth_shell("Sign in", body)
+
+
 def metric_card(label: str, value: str, meta: str, tone: str = "") -> str:
     return f"""
     <article class="metric-card {tone}">
@@ -512,6 +639,78 @@ def format_bytes(size: int) -> str:
 
 def format_unix_timestamp(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def worker_status_pill(worker_status: dict[str, object]) -> str:
+    state = str(worker_status.get("state") or "offline")
+    if not bool(worker_status.get("online")):
+        return '<span class="pill danger">Worker offline</span>'
+    if state == "running":
+        return '<span class="pill warning">Worker busy</span>'
+    if state == "starting":
+        return '<span class="pill warning">Worker starting</span>'
+    if state == "error":
+        return '<span class="pill danger">Worker error</span>'
+    return '<span class="pill success">Worker online</span>'
+
+
+def worker_status_detail(worker_status: dict[str, object]) -> str:
+    if not bool(worker_status.get("online")):
+        last_seen_at = worker_status.get("last_seen_at")
+        if last_seen_at:
+            return f"Last heartbeat {last_seen_at}"
+        return "No worker heartbeat recorded yet."
+
+    active_scan_id = worker_status.get("active_scan_id")
+    if active_scan_id:
+        return f"Processing scan #{active_scan_id}"
+    last_seen_at = worker_status.get("last_seen_at")
+    if last_seen_at:
+        return f"Heartbeat refreshed at {last_seen_at}"
+    return "Heartbeat is healthy."
+
+
+def render_pipeline_panel(worker_status: dict[str, object]) -> str:
+    active_scan_id = worker_status.get("active_scan_id")
+    active_scan_html = (
+        f'<li><span>4</span><strong>Active job</strong><small>Scan #{html.escape(str(active_scan_id))}</small></li>'
+        if active_scan_id
+        else '<li><span>4</span><strong>Worker</strong><small>Waiting for the next queued job</small></li>'
+    )
+    return f"""
+      <div class="panel">
+        <div class="panel-header compact">
+          <h2>Pipeline</h2>
+          {worker_status_pill(worker_status)}
+        </div>
+        <ol class="step-list">
+          <li><span>1</span><strong>Ingest</strong><small>Store sample and metadata</small></li>
+          <li><span>2</span><strong>Analyze</strong><small>Run configured engines</small></li>
+          <li><span>3</span><strong>Normalize</strong><small>Unify engine outputs</small></li>
+          {active_scan_html}
+        </ol>
+        <div class="engine-health">
+          <div>
+            <span>Worker status</span>
+            <strong>{html.escape(worker_status_detail(worker_status))}</strong>
+          </div>
+          <div>
+            <span>Node</span>
+            <strong>{html.escape(str(worker_status.get("hostname") or "-"))}</strong>
+          </div>
+        </div>
+      </div>
+    """
+
+
+def scan_runtime_marker(scan: ScanRecord) -> tuple[str, str]:
+    if scan.status == "failed" and scan.failed_at:
+        return "Failed at", scan.failed_at
+    if scan.completed_at:
+        return "Completed", scan.completed_at
+    if scan.started_at:
+        return "Started", scan.started_at
+    return "Created", scan.created_at
 
 
 def render_yara_rule_rows() -> str:
@@ -982,9 +1181,35 @@ def role_options(selected_role: str) -> str:
 def render_user_rows(current_admin: UserRecord) -> str:
     rows = []
     for user in list_users():
+        is_current_user = user.id == current_admin.id
+        admin_badge = '<span class="pill neutral">Current session</span>' if is_current_user else ""
+        management_html = (
+            f"""
+            <form class="user-inline-form" action="/users/{user.id}" method="post">
+              <label>
+                Role
+                <select name="role">
+                  {role_options(user.role)}
+                </select>
+              </label>
+              <label>
+                New password
+                <input type="password" name="password" placeholder="Leave unchanged" autocomplete="new-password">
+              </label>
+              <button class="secondary-action compact-action" type="submit">Save</button>
+            </form>
+            """
+            if not is_current_user
+            else """
+            <div class="user-inline-readonly">
+              <span class="pill neutral">Managed on account page</span>
+              <small>Use Account to change your own password or review your session.</small>
+            </div>
+            """
+        )
         delete_action = (
-            '<span class="pill neutral">Current session</span>'
-            if user.id == current_admin.id
+            ""
+            if is_current_user
             else f"""
             <form action="/users/{user.id}/delete" method="post">
               <button class="danger-action compact-action" type="submit">Delete</button>
@@ -997,20 +1222,9 @@ def render_user_rows(current_admin: UserRecord) -> str:
               <div>
                 <strong>{html.escape(user.username)}</strong>
                 <small>Created {html.escape(user.created_at)}</small>
+                {admin_badge}
               </div>
-              <form class="user-inline-form" action="/users/{user.id}" method="post">
-                <label>
-                  Role
-                  <select name="role">
-                    {role_options(user.role)}
-                  </select>
-                </label>
-                <label>
-                  New password
-                  <input type="password" name="password" placeholder="Leave unchanged" autocomplete="new-password">
-                </label>
-                <button class="secondary-action compact-action" type="submit">Save</button>
-              </form>
+              {management_html}
               <div class="user-actions">
                 {delete_action}
               </div>
@@ -1020,14 +1234,14 @@ def render_user_rows(current_admin: UserRecord) -> str:
     return "\n".join(rows)
 
 
-def render_users_page(user: UserRecord, message: str = "") -> str:
-    message_html = (
-        f'<section class="notice success-notice"><div><strong>Users updated</strong><span>{html.escape(message)}</span></div></section>'
-        if message
-        else ""
+def render_users_page(user: UserRecord, message: str = "", error: str = "") -> str:
+    notice_html = (
+        page_notice("Users updated", message, "success")
+        + page_notice("Action blocked", error, "danger")
     )
+    users = list_users()
     body = f"""
-    {message_html}
+    {notice_html}
     <section class="users-layout">
       <form class="panel user-create-panel" action="/users" method="post">
         <div class="panel-header">
@@ -1063,7 +1277,7 @@ def render_users_page(user: UserRecord, message: str = "") -> str:
       <section class="panel">
         <div class="panel-header compact">
           <h2>Local users</h2>
-          <span class="pill neutral">{len(list_users())} accounts</span>
+          <span class="pill neutral">{len(users)} accounts</span>
         </div>
         <div class="user-table">
           {render_user_rows(user)}
@@ -1072,6 +1286,62 @@ def render_users_page(user: UserRecord, message: str = "") -> str:
     </section>
     """
     return page_shell("Users", "users", body, user)
+
+
+def render_account_page(user: UserRecord, message: str = "", error: str = "") -> str:
+    ttl_hours = max(1, SESSION_TTL_SECONDS // 3600)
+    notice_html = (
+        page_notice("Account updated", message, "success")
+        + page_notice("Action blocked", error, "danger")
+    )
+    body = f"""
+    {notice_html}
+    <section class="users-layout">
+      <section class="panel">
+        <div class="panel-header compact">
+          <h2>Account</h2>
+          <span class="pill neutral">{html.escape(user.role.title())}</span>
+        </div>
+        <div class="config-grid">
+          <div><span>Username</span><strong>{html.escape(user.username)}</strong></div>
+          <div><span>Role</span><strong>{html.escape(user.role.title())}</strong></div>
+          <div><span>Created</span><strong>{html.escape(user.created_at)}</strong></div>
+          <div><span>Updated</span><strong>{html.escape(user.updated_at)}</strong></div>
+          <div><span>Session policy</span><strong>{ttl_hours}h login window</strong></div>
+        </div>
+      </section>
+
+      <form class="panel user-create-panel" action="/account/password" method="post">
+        <div class="panel-header">
+          <div>
+            <h2>Change password</h2>
+            <p>Updating your password signs out active sessions for this user.</p>
+          </div>
+          <span class="pill neutral">Self service</span>
+        </div>
+        <div class="settings-form embedded">
+          <div class="settings-grid three">
+            <label>
+              Current password
+              <input type="password" name="current_password" autocomplete="current-password" required>
+            </label>
+            <label>
+              New password
+              <input type="password" name="new_password" autocomplete="new-password" required>
+            </label>
+            <label>
+              Confirm password
+              <input type="password" name="confirm_password" autocomplete="new-password" required>
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button class="primary-action" type="submit">Update password</button>
+          </div>
+        </div>
+      </form>
+    </section>
+    """
+    return page_shell("Account", "account", body, user)
 
 
 def short_hash(value: str) -> str:
@@ -1393,6 +1663,8 @@ def render_recent_scan_rows(scans: list[ScanRecord], can_select: bool) -> str:
     rows = []
     for scan in scans:
         engine_results = list_engine_results(scan.id)
+        detection_tone = detection_summary_tone_for_scan(scan, engine_results)
+        file_tone_class = "danger" if detection_tone == "danger" else ""
         select_cell = (
             f"""
               <td class="select-cell">
@@ -1407,7 +1679,7 @@ def render_recent_scan_rows(scans: list[ScanRecord], can_select: bool) -> str:
             <tr class="dashboard-scan-row" data-scan-row data-scan-id="{scan.id}" data-scan-url="/scans/{scan.id}" tabindex="0" aria-selected="false">
               {select_cell}
               <td>
-                <div class="table-link">
+                <div class="table-link {file_tone_class}">
                   <strong>{html.escape(scan.original_filename)}</strong>
                   <small>{html.escape(scan.case_name)}</small>
                 </div>
@@ -1419,7 +1691,7 @@ def render_recent_scan_rows(scans: list[ScanRecord], can_select: bool) -> str:
               </td>
               <td>{dashboard_verdict_pill(scan, engine_results)}</td>
               <td>
-                <span class="detection-count {detection_summary_tone_for_scan(scan, engine_results)}">{html.escape(detection_summary_text_for_scan(scan, engine_results))}</span>
+                <span class="detection-count {detection_tone}">{html.escape(detection_summary_text_for_scan(scan, engine_results))}</span>
               </td>
               <td>{html.escape(scan.created_at)}</td>
             </tr>
@@ -1480,6 +1752,334 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
     return "\n".join(rows)
 
 
+def parse_json_value(value: str, fallback: object) -> object:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return fallback
+    return parsed
+
+
+def result_findings(result: EngineResultRecord) -> list[dict[str, object]]:
+    parsed = parse_json_value(result.findings_json, [])
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def render_value_list(values: object, empty_label: str = "-") -> str:
+    if isinstance(values, list):
+        clean_values = [str(value) for value in values if str(value)]
+    elif values:
+        clean_values = [str(values)]
+    else:
+        clean_values = []
+
+    if not clean_values:
+        return html.escape(empty_label)
+
+    return ", ".join(html.escape(value) for value in clean_values[:6])
+
+
+def clean_evidence_value(value: object) -> object:
+    raw_keys = {"raw_output", "raw_response"}
+    if isinstance(value, dict):
+        return {
+            key: clean_evidence_value(item)
+            for key, item in value.items()
+            if key not in raw_keys and item not in ({}, [], None, "")
+        }
+    if isinstance(value, list):
+        return [
+            clean_evidence_value(item)
+            for item in value
+            if item not in ({}, [], None, "")
+        ]
+    return value
+
+
+def finding_detail_payload(finding: dict[str, object]) -> dict[str, object]:
+    evidence = finding.get("evidence")
+    clean_evidence = {}
+    if isinstance(evidence, dict):
+        clean_evidence = {
+            key: clean_evidence_value(value)
+            for key, value in evidence.items()
+            if key not in {"raw_output", "raw_response"} and value not in ({}, [], None, "")
+        }
+
+    payload = {
+        "finding": {
+            "source": finding.get("source"),
+            "title": finding.get("title"),
+            "type": finding.get("type"),
+            "category": finding.get("category"),
+            "severity": finding.get("severity"),
+            "confidence": finding.get("confidence"),
+            "action": finding.get("action"),
+            "tags": finding.get("tags") or [],
+            "target": finding.get("target"),
+        },
+        "evidence": clean_evidence,
+        "enrichment": finding.get("enrichment") or [],
+    }
+    return {
+        key: value
+        for key, value in payload.items()
+        if value not in ({}, [], None, "")
+    }
+
+
+def fallback_finding_detail_payload(
+    finding: dict[str, object],
+    result: EngineResultRecord,
+) -> dict[str, object]:
+    payload = finding_detail_payload(finding)
+    if payload:
+        return payload
+
+    fallback: dict[str, object] = {}
+    if result.signature:
+        fallback["evidence"] = {
+            "signature": result.signature,
+            "source_engine": result.engine_name,
+        }
+    return fallback
+
+
+def render_evidence_button(
+    label: str,
+    title: str,
+    template_id: str,
+) -> str:
+    return f"""
+    <button class="evidence-button" type="button" data-evidence-button data-evidence-template="{html.escape(template_id)}" data-evidence-title="{html.escape(title)}">
+      <span aria-hidden="true">&gt;</span>
+      {html.escape(label)}
+    </button>
+    """
+
+
+def matched_evidence_for_finding(
+    finding: dict[str, object],
+    result: EngineResultRecord,
+) -> object:
+    values = []
+    evidence = finding.get("evidence")
+    if isinstance(evidence, dict):
+        objects = evidence.get("objects")
+        if isinstance(objects, list):
+            for item in objects:
+                if isinstance(item, dict) and item.get("value"):
+                    values.append(str(item["value"]))
+
+    if values:
+        return values
+    if finding.get("title"):
+        return str(finding["title"])
+    if result.signature:
+        return result.signature
+    return "-"
+
+
+def finding_classification_html(finding: dict[str, object]) -> str:
+    category = str(finding.get("category") or finding.get("type") or "")
+    tags = finding.get("tags")
+    clean_tags = [str(tag) for tag in tags if str(tag)] if isinstance(tags, list) else []
+
+    chips = []
+    if category:
+        chips.append(category.replace("_", " ").title())
+    chips.extend(tag for tag in clean_tags if tag.lower() != category.lower())
+
+    if not chips:
+        return "-"
+
+    return '<div class="finding-tags">' + "".join(
+        f'<span class="finding-tag">{html.escape(chip)}</span>'
+        for chip in chips[:6]
+    ) + "</div>"
+
+
+def unique_values(values: list[str], limit: int = 4) -> list[str]:
+    seen = set()
+    unique = []
+    for value in values:
+        normalized = value.strip()
+        if not normalized or normalized.lower() in seen:
+            continue
+        seen.add(normalized.lower())
+        unique.append(normalized)
+        if len(unique) == limit:
+            break
+    return unique
+
+
+def render_detection_summary_bar(
+    finding_count: int,
+    engine_names: list[str],
+    severities: list[str],
+    finding_titles: list[str],
+) -> str:
+    severity_rank = {
+        "info": 1,
+        "low": 2,
+        "medium": 3,
+        "high": 4,
+        "critical": 5,
+    }
+    top_severity = max(
+        severities or ["info"],
+        key=lambda value: severity_rank.get(value.lower(), 0),
+    )
+    summary_tone = "danger" if finding_count else "neutral"
+    finding_label = "finding" if finding_count == 1 else "findings"
+    engine_label = ", ".join(unique_values(engine_names)) if engine_names else "No engines"
+    title_label = ", ".join(unique_values(finding_titles)) if finding_titles else "No matched evidence"
+
+    return f"""
+    <div class="evidence-summary {summary_tone}">
+      <div>
+        <span>Findings</span>
+        <strong>{finding_count} {finding_label}</strong>
+      </div>
+      <div>
+        <span>Max severity</span>
+        <strong>{html.escape(top_severity.title())}</strong>
+      </div>
+      <div>
+        <span>Detected by</span>
+        <strong>{html.escape(engine_label)}</strong>
+      </div>
+      <div>
+        <span>Top evidence</span>
+        <strong>{html.escape(title_label)}</strong>
+      </div>
+    </div>
+    """
+
+
+def render_detection_evidence(results: list[EngineResultRecord]) -> str:
+    evidence_rows = []
+    detail_templates = []
+    detail_index = 0
+    engine_names = []
+    severities = []
+    finding_titles = []
+
+    for result in results:
+        for finding in result_findings(result):
+            detail_index += 1
+            template_id = f"evidence-detail-{detail_index}"
+            title = str(finding.get("title") or result.signature or "Detection")
+            finding_type = str(finding.get("type") or "finding").replace("_", " ").title()
+            severity = str(finding.get("severity") or result.severity)
+            confidence = str(finding.get("confidence") or result.confidence)
+            source = str(finding.get("source") or result.engine_name)
+            action = str(finding.get("action") or "detected")
+            category = str(finding.get("category") or finding_type)
+            target = finding.get("target")
+            detail_payload = fallback_finding_detail_payload(finding, result)
+            evidence_text = json.dumps(
+                detail_payload,
+                indent=2,
+                sort_keys=True,
+            )
+            evidence_button = ""
+            if detail_payload:
+                detail_templates.append(
+                    f'<template id="{template_id}">{html.escape(evidence_text)}</template>'
+                )
+                evidence_button = render_evidence_button(
+                    "Evidence",
+                    f"{source} evidence",
+                    template_id,
+                )
+            else:
+                detail_index -= 1
+                template_id = ""
+            engine_names.append(source)
+            severities.append(severity)
+            finding_titles.append(title)
+            finding_context = " / ".join(
+                value
+                for value in [
+                    category.replace("_", " ").title(),
+                    f"{confidence}% confidence",
+                    action.replace("_", " ").title(),
+                    str(target) if target else "",
+                ]
+                if value
+            )
+            evidence_rows.append(
+                f"""
+                <div class="evidence-row">
+                  <div>
+                    <strong>{html.escape(source)}</strong>
+                    <small>{html.escape(result.status.title())}</small>
+                  </div>
+                  <span>{severity_pill(severity)}</span>
+                  <span>{html.escape(finding_type)}</span>
+                  <div>
+                    <strong>{html.escape(title)}</strong>
+                    <small>{html.escape(finding_context)}</small>
+                  </div>
+                  <span>{render_value_list(matched_evidence_for_finding(finding, result))}</span>
+                  <div class="evidence-classification">{finding_classification_html(finding)}</div>
+                  {evidence_button or "<span>-</span>"}
+                </div>
+                """
+            )
+
+    summary_html = render_detection_summary_bar(
+        len(evidence_rows),
+        engine_names,
+        severities,
+        finding_titles,
+    )
+    evidence_html = "\n".join(evidence_rows) or """
+      <div class="evidence-empty">
+        <strong>No normalized evidence rows yet</strong>
+        <span>Detected engine findings will populate this comparison table.</span>
+      </div>
+    """
+
+    return f"""
+    <section class="panel wide">
+      <div class="panel-header compact">
+        <h2>Detection evidence</h2>
+        <span class="pill neutral">Offline-first</span>
+      </div>
+      <div class="evidence-layout">
+        {summary_html}
+        <div class="evidence-table">
+          <div class="evidence-row evidence-header">
+            <span>Engine</span>
+            <span>Severity</span>
+            <span>Finding</span>
+            <span>Summary</span>
+            <span>Matched evidence</span>
+            <span>Classification</span>
+            <span>Evidence</span>
+          </div>
+          {evidence_html}
+        </div>
+        <div class="evidence-drawer" data-evidence-drawer hidden>
+          <div class="evidence-drawer-header">
+            <strong data-evidence-drawer-title>Details</strong>
+            <div class="evidence-drawer-actions">
+              <span class="pill neutral">Structured JSON</span>
+              <button class="evidence-drawer-close" type="button" data-evidence-drawer-close aria-label="Close evidence details">x</button>
+            </div>
+          </div>
+          <pre data-evidence-drawer-body>No evidence selected.</pre>
+        </div>
+        {"".join(detail_templates)}
+      </div>
+    </section>
+    """
+
+
 def render_risk_reasons(reasons: list[str]) -> str:
     return "\n".join(
         f"<li>{html.escape(reason)}</li>"
@@ -1524,15 +2124,39 @@ def render_scan_result(
     assessment = calculate_risk(engine_results)
     score = scan.risk_score if scan.risk_score is not None else assessment.score
     verdict = scan.verdict if scan.risk_score is not None else assessment.verdict
+    worker_status = get_worker_status()
+    runtime_label, runtime_value = scan_runtime_marker(scan)
+    retry_action = (
+        f"""
+        <form action="/scans/{scan.id}/retry" method="post">
+          <button class="secondary-action compact-action" type="submit">Retry scan</button>
+        </form>
+        """
+        if scan.status not in {"queued", "running"}
+        else ""
+    )
+    runtime_notice = ""
+    if scan.last_error:
+        runtime_notice = page_notice("Last worker error", scan.last_error, "danger")
+    elif scan.status in {"queued", "running"} and not bool(worker_status.get("online")):
+        runtime_notice = page_notice(
+            "Worker heartbeat missing",
+            worker_status_detail(worker_status),
+            "warning",
+        )
     body = f"""
     <section class="notice success-notice">
       <div>
         <strong>Sample accepted</strong>
         <span>{html.escape(scan.original_filename)} was uploaded and stored successfully.</span>
       </div>
-      <a class="row-action" href="/">Back to dashboard</a>
+      <div class="row-actions">
+        {retry_action}
+        <a class="row-action" href="/">Back to dashboard</a>
+      </div>
     </section>
     {render_coverage_notice(scan, engine_results)}
+    {runtime_notice}
 
     <section class="result-layout">
       <div class="panel">
@@ -1553,6 +2177,8 @@ def render_scan_result(
           <div><span>Size</span><strong>{format_bytes(scan.size_bytes)}</strong></div>
           <div><span>Content type</span><strong>{html.escape(scan.content_type)}</strong></div>
           <div><span>Risk score</span><strong>{score} / 100</strong></div>
+          <div><span>Attempts</span><strong>{scan.attempt_count}</strong></div>
+          <div><span>{html.escape(runtime_label)}</span><strong>{html.escape(runtime_value)}</strong></div>
           <div class="{detection_summary_card_class(engine_results)}">
             <span>Engine detections</span>
             <strong>{html.escape(detection_summary_text_for_scan(scan, engine_results))}</strong>
@@ -1583,6 +2209,8 @@ def render_scan_result(
           <div><dt>SHA256</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{html.escape(scan.sha256)}</code></dd></div>
         </dl>
       </div>
+
+      {render_detection_evidence(engine_results)}
 
       <div class="panel wide">
         <div class="panel-header compact">
@@ -1635,14 +2263,15 @@ def health_check() -> dict[str, str]:
 
 
 @app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, next: str = "/"):
+def login_page(request: Request, next: str = "/", message: str = ""):
     if current_user(request) is not None:
         return RedirectResponse(url=safe_next_url(next), status_code=303)
-    return HTMLResponse(render_login_page(next_url=next))
+    return HTMLResponse(render_login_page(next_url=next, message=message))
 
 
 @app.post("/login", response_class=HTMLResponse)
 def login_route(
+    request: Request,
     username: str = Form(...),
     password: str = Form(...),
     next_url: str = Form("/"),
@@ -1661,8 +2290,11 @@ def login_route(
     response.set_cookie(
         SESSION_COOKIE,
         result.session_token,
+        expires=result.expires_at,
         max_age=result.expires_at - int(datetime.now().timestamp()),
         httponly=True,
+        path="/",
+        secure=session_cookie_secure(request),
         samesite="lax",
     )
     return response
@@ -1672,7 +2304,7 @@ def login_route(
 def logout_route(request: Request) -> RedirectResponse:
     logout(request.cookies.get(SESSION_COOKIE))
     response = RedirectResponse(url="/login", status_code=303)
-    response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(SESSION_COOKIE, path="/")
     return response
 
 
@@ -1682,6 +2314,7 @@ def dashboard(request: Request) -> str:
     can_manage_scans = user.role == ROLE_ADMIN
     scans = list_recent_scans()
     counts = get_scan_counts()
+    worker_status = get_worker_status()
     configured_engine_count = len(configured_engines())
     delete_actions = (
         """
@@ -1739,27 +2372,16 @@ def dashboard(request: Request) -> str:
         </div>
       </div>
 
-      <div class="panel">
-        <div class="panel-header compact">
-          <h2>Pipeline</h2>
-          <span class="pill success">Ready</span>
-        </div>
-        <ol class="step-list">
-          <li><span>1</span><strong>Ingest</strong><small>Store sample and metadata</small></li>
-          <li><span>2</span><strong>Analyze</strong><small>Run configured engines</small></li>
-          <li><span>3</span><strong>Normalize</strong><small>Unify engine outputs</small></li>
-          <li><span>4</span><strong>Report</strong><small>Score and summarize findings</small></li>
-        </ol>
-      </div>
+      {render_pipeline_panel(worker_status)}
     </section>
     """
     return page_shell("Scan Dashboard", "dashboard", body, user)
 
 
 @app.get("/users", response_class=HTMLResponse)
-def users(request: Request) -> str:
+def users(request: Request, message: str = "", error: str = "") -> str:
     user = require_admin(request)
-    return render_users_page(user)
+    return render_users_page(user, message=message, error=error)
 
 
 @app.post("/users")
@@ -1772,18 +2394,18 @@ def create_user_route(
     require_admin(request)
     clean_username = username.strip()
     if not clean_username:
-        raise HTTPException(status_code=400, detail="Username is required.")
+        return RedirectResponse(url="/users?error=Username%20is%20required.", status_code=303)
     if len(password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+        return RedirectResponse(url="/users?error=Password%20must%20be%20at%20least%208%20characters.", status_code=303)
     if get_user_by_username(clean_username) is not None:
-        raise HTTPException(status_code=400, detail="Username already exists.")
+        return RedirectResponse(url="/users?error=Username%20already%20exists.", status_code=303)
 
     create_user(
         username=clean_username,
         password_hash=hash_password(password),
         role=normalize_role(role),
     )
-    return RedirectResponse(url="/users", status_code=303)
+    return RedirectResponse(url=f"/users?message={quote(f'Created user {clean_username}.')}", status_code=303)
 
 
 @app.post("/users/{user_id}")
@@ -1793,21 +2415,77 @@ def update_user_route(
     role: str = Form("analyst"),
     password: str = Form(""),
 ) -> RedirectResponse:
-    require_admin(request)
-    new_password_hash = hash_password(password) if password else None
+    admin_user = require_admin(request)
+    target_user = get_user_by_id(user_id)
+    if target_user is None:
+        return RedirectResponse(url="/users?error=User%20not%20found.", status_code=303)
+    if admin_user.id == user_id:
+        return RedirectResponse(url="/users?error=Use%20Account%20to%20manage%20your%20own%20credentials.", status_code=303)
+
+    normalized_role = normalize_role(role)
     if password and len(password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
-    update_user(user_id, normalize_role(role), new_password_hash)
-    return RedirectResponse(url="/users", status_code=303)
+        return RedirectResponse(url="/users?error=Password%20must%20be%20at%20least%208%20characters.", status_code=303)
+    if target_user.role == ROLE_ADMIN and normalized_role != ROLE_ADMIN and count_users_by_role(ROLE_ADMIN) <= 1:
+        return RedirectResponse(url="/users?error=At%20least%20one%20admin%20must%20remain%20active.", status_code=303)
+
+    new_password_hash = hash_password(password) if password else None
+    update_user(user_id, normalized_role, new_password_hash)
+    if new_password_hash is not None:
+        revoke_user_sessions(user_id)
+    return RedirectResponse(
+        url=f"/users?message={quote(f'Updated user {target_user.username}.')}",
+        status_code=303,
+    )
 
 
 @app.post("/users/{user_id}/delete")
 def delete_user_route(request: Request, user_id: int) -> RedirectResponse:
     user = require_admin(request)
     if user.id == user_id:
-        raise HTTPException(status_code=400, detail="You cannot delete your current user.")
+        return RedirectResponse(url="/users?error=You%20cannot%20delete%20your%20current%20user.", status_code=303)
+    target_user = get_user_by_id(user_id)
+    if target_user is None:
+        return RedirectResponse(url="/users?error=User%20not%20found.", status_code=303)
+    if target_user.role == ROLE_ADMIN and count_users_by_role(ROLE_ADMIN) <= 1:
+        return RedirectResponse(url="/users?error=At%20least%20one%20admin%20must%20remain%20active.", status_code=303)
     delete_user(user_id)
-    return RedirectResponse(url="/users", status_code=303)
+    return RedirectResponse(
+        url=f"/users?message={quote(f'Deleted user {target_user.username}.')}",
+        status_code=303,
+    )
+
+
+@app.get("/account", response_class=HTMLResponse)
+def account_page(request: Request, message: str = "", error: str = "") -> str:
+    user = require_user(request)
+    return render_account_page(user, message=message, error=error)
+
+
+@app.post("/account/password")
+def update_account_password_route(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+) -> RedirectResponse:
+    user = require_user(request)
+    if not verify_password(current_password, user.password_hash):
+        return RedirectResponse(url="/account?error=Current%20password%20is%20incorrect.", status_code=303)
+    if len(new_password) < 8:
+        return RedirectResponse(url="/account?error=Password%20must%20be%20at%20least%208%20characters.", status_code=303)
+    if new_password != confirm_password:
+        return RedirectResponse(url="/account?error=New%20password%20and%20confirmation%20must%20match.", status_code=303)
+    if verify_password(new_password, user.password_hash):
+        return RedirectResponse(url="/account?error=Choose%20a%20different%20password%20than%20your%20current%20one.", status_code=303)
+
+    update_user(user.id, user.role, hash_password(new_password))
+    revoke_user_sessions(user.id)
+    response = RedirectResponse(
+        url="/login?message=Password%20updated.%20Please%20sign%20in%20again.",
+        status_code=303,
+    )
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
 
 
 @app.get("/scans/new", response_class=HTMLResponse)
@@ -1921,6 +2599,14 @@ async def delete_single_scan(request: Request, scan_id: int) -> RedirectResponse
     require_admin(request)
     delete_scan_record(scan_id)
     return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/scans/{scan_id}/retry")
+async def retry_single_scan(request: Request, scan_id: int) -> RedirectResponse:
+    require_user(request)
+    if not retry_scan_job_record(scan_id):
+        raise HTTPException(status_code=400, detail="Only completed or failed scans can be retried.")
+    return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
 
 
 @app.get("/scans/{scan_id}", response_class=HTMLResponse)

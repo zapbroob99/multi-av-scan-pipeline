@@ -81,7 +81,11 @@ def init_db() -> None:
                 verdict TEXT NOT NULL,
                 risk_score INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                started_at TEXT,
                 completed_at TEXT,
+                failed_at TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
                 FOREIGN KEY (sample_id) REFERENCES samples (id) ON DELETE CASCADE
             );
 
@@ -99,6 +103,8 @@ def init_db() -> None:
                 raw_output TEXT NOT NULL,
                 error_message TEXT,
                 duration_ms INTEGER NOT NULL,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                findings_json TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE
             );
@@ -138,6 +144,26 @@ def init_db() -> None:
             );
             """
         )
+        ensure_column(connection, "scan_jobs", "started_at", "TEXT")
+        ensure_column(connection, "scan_jobs", "failed_at", "TEXT")
+        ensure_column(connection, "scan_jobs", "attempt_count", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(connection, "scan_jobs", "last_error", "TEXT")
+        ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
+
+
+def ensure_column(
+    connection: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    definition: str,
+) -> None:
+    columns = {
+        str(row_value(row, "name"))
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name not in columns:
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
 
 def create_user(username: str, password_hash: str, role: str) -> int:
@@ -255,6 +281,23 @@ def delete_user(user_id: int) -> None:
         init_db()
 
 
+def count_users_by_role(role: str) -> int:
+    try:
+        with connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM users WHERE role = ?",
+                (role,),
+            ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+        return 0
+    if row is None:
+        return 0
+    return int(row[0])
+
+
 def create_auth_session(user_id: int, token_hash: str, expires_at: int) -> int:
     try:
         with connect() as connection:
@@ -306,6 +349,19 @@ def delete_auth_session(token_hash: str) -> None:
             connection.execute(
                 "DELETE FROM auth_sessions WHERE token_hash = ?",
                 (token_hash,),
+            )
+    except sqlite3.OperationalError as exc:
+        if not is_missing_users_table(exc):
+            raise
+        init_db()
+
+
+def delete_auth_sessions_for_user(user_id: int) -> None:
+    try:
+        with connect() as connection:
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE user_id = ?",
+                (user_id,),
             )
     except sqlite3.OperationalError as exc:
         if not is_missing_users_table(exc):
@@ -619,10 +675,11 @@ def create_scan_job(
                 status,
                 verdict,
                 risk_score,
+                started_at,
                 completed_at
             )
             VALUES (
-                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, NULL,
                 CASE
                     WHEN ? IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
                     ELSE NULL
@@ -659,9 +716,11 @@ def create_engine_result(scan_job_id: int, result: EngineResultInput) -> int:
                 confidence,
                 raw_output,
                 error_message,
-                duration_ms
+                duration_ms,
+                details_json,
+                findings_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 scan_job_id,
@@ -676,6 +735,8 @@ def create_engine_result(scan_job_id: int, result: EngineResultInput) -> int:
                 result.raw_output,
                 result.error_message,
                 result.duration_ms,
+                result.details_json,
+                result.findings_json,
             ),
         )
         return require_lastrowid(cursor)
@@ -699,6 +760,8 @@ def list_engine_results(scan_job_id: int) -> list[EngineResultRecord]:
                 raw_output,
                 error_message,
                 duration_ms,
+                details_json,
+                findings_json,
                 created_at
             FROM engine_results
             WHERE scan_job_id = ?
@@ -723,7 +786,11 @@ def list_recent_scans(limit: int = 20) -> list[ScanRecord]:
                 scan_jobs.verdict,
                 scan_jobs.risk_score,
                 scan_jobs.created_at,
+                scan_jobs.started_at,
                 scan_jobs.completed_at,
+                scan_jobs.failed_at,
+                scan_jobs.attempt_count,
+                scan_jobs.last_error,
                 samples.original_filename,
                 samples.stored_filename,
                 samples.storage_path,
@@ -756,7 +823,11 @@ def get_scan(scan_id: int) -> ScanRecord | None:
                 scan_jobs.verdict,
                 scan_jobs.risk_score,
                 scan_jobs.created_at,
+                scan_jobs.started_at,
                 scan_jobs.completed_at,
+                scan_jobs.failed_at,
+                scan_jobs.attempt_count,
+                scan_jobs.last_error,
                 samples.original_filename,
                 samples.stored_filename,
                 samples.storage_path,
@@ -800,20 +871,42 @@ def update_scan_assessment(scan_id: int, verdict: str, risk_score: int) -> None:
         )
 
 
-def update_scan_status(scan_id: int, status: str) -> None:
+def update_scan_status(scan_id: int, status: str, last_error: str | None = None) -> None:
     with connect() as connection:
         connection.execute(
             """
             UPDATE scan_jobs
             SET
                 status = ?,
+                last_error = CASE
+                    WHEN ? IS NOT NULL THEN ?
+                    WHEN ? = 'completed' THEN NULL
+                    ELSE last_error
+                END,
+                started_at = CASE
+                    WHEN ? = 'queued' THEN NULL
+                    ELSE started_at
+                END,
                 completed_at = CASE
                     WHEN ? IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
+                    ELSE NULL
+                END,
+                failed_at = CASE
+                    WHEN ? = 'failed' THEN CURRENT_TIMESTAMP
                     ELSE NULL
                 END
             WHERE id = ?
             """,
-            (status, status, scan_id),
+            (
+                status,
+                last_error,
+                last_error,
+                status,
+                status,
+                status,
+                status,
+                scan_id,
+            ),
         )
 
 
@@ -837,7 +930,13 @@ def claim_next_scan_job() -> ScanRecord | None:
         connection.execute(
             """
             UPDATE scan_jobs
-            SET status = 'running', completed_at = NULL
+            SET
+                status = 'running',
+                started_at = CURRENT_TIMESTAMP,
+                completed_at = NULL,
+                failed_at = NULL,
+                last_error = NULL,
+                attempt_count = attempt_count + 1
             WHERE id = ?
             """,
             (scan_id,),
@@ -854,7 +953,11 @@ def claim_next_scan_job() -> ScanRecord | None:
                 scan_jobs.verdict,
                 scan_jobs.risk_score,
                 scan_jobs.created_at,
+                scan_jobs.started_at,
                 scan_jobs.completed_at,
+                scan_jobs.failed_at,
+                scan_jobs.attempt_count,
+                scan_jobs.last_error,
                 samples.original_filename,
                 samples.stored_filename,
                 samples.storage_path,
@@ -898,6 +1001,75 @@ def get_scan_counts() -> dict[str, int]:
     }
 
 
+def retry_scan_job(scan_id: int) -> bool:
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT status FROM scan_jobs WHERE id = ?",
+            (scan_id,),
+        ).fetchone()
+        if row is None:
+            return False
+
+        status = str(row_value(row, "status"))
+        if status in {"queued", "running"}:
+            return False
+
+        connection.execute(
+            "DELETE FROM engine_results WHERE scan_job_id = ?",
+            (scan_id,),
+        )
+        connection.execute(
+            """
+            UPDATE scan_jobs
+            SET
+                status = 'queued',
+                verdict = 'pending',
+                risk_score = NULL,
+                started_at = NULL,
+                completed_at = NULL,
+                failed_at = NULL,
+                last_error = NULL
+            WHERE id = ?
+            """,
+            (scan_id,),
+        )
+    return True
+
+
+def recover_running_scan_jobs() -> int:
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT id FROM scan_jobs WHERE status = 'running'"
+        ).fetchall()
+        scan_ids = [int(row_value(row, "id")) for row in rows]
+        if not scan_ids:
+            return 0
+
+        placeholders = ",".join("?" for _ in scan_ids)
+        connection.execute(
+            f"DELETE FROM engine_results WHERE scan_job_id IN ({placeholders})",
+            tuple(scan_ids),
+        )
+        cursor = connection.execute(
+            """
+            UPDATE scan_jobs
+            SET
+                status = 'queued',
+                verdict = 'pending',
+                risk_score = NULL,
+                started_at = NULL,
+                completed_at = NULL,
+                failed_at = NULL,
+                last_error = COALESCE(
+                    last_error,
+                    'Worker restarted before the previous attempt completed.'
+                )
+            WHERE status = 'running'
+            """
+        )
+    return int(cursor.rowcount or 0)
+
+
 def row_to_scan_record(row: sqlite3.Row) -> ScanRecord:
     return ScanRecord(
         id=int(row_value(row, "id")),
@@ -911,9 +1083,19 @@ def row_to_scan_record(row: sqlite3.Row) -> ScanRecord:
         if row_value(row, "risk_score") is None
         else int(row_value(row, "risk_score")),
         created_at=str(row_value(row, "created_at")),
+        started_at=None
+        if row_value(row, "started_at") is None
+        else str(row_value(row, "started_at")),
         completed_at=None
         if row_value(row, "completed_at") is None
         else str(row_value(row, "completed_at")),
+        failed_at=None
+        if row_value(row, "failed_at") is None
+        else str(row_value(row, "failed_at")),
+        attempt_count=int(row_value(row, "attempt_count")),
+        last_error=None
+        if row_value(row, "last_error") is None
+        else str(row_value(row, "last_error")),
         original_filename=str(row_value(row, "original_filename")),
         stored_filename=str(row_value(row, "stored_filename")),
         storage_path=str(row_value(row, "storage_path")),
@@ -949,6 +1131,8 @@ def row_to_engine_result_record(row: sqlite3.Row) -> EngineResultRecord:
         else str(row_value(row, "error_message")),
         duration_ms=int(row_value(row, "duration_ms")),
         created_at=str(row_value(row, "created_at")),
+        details_json=str(row_value(row, "details_json")),
+        findings_json=str(row_value(row, "findings_json")),
     )
 
 
