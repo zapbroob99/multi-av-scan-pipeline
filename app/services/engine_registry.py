@@ -13,6 +13,11 @@ from app.database import (
     update_engine_instance,
 )
 from app.engines.clamav import check_clamav_health, get_clamav_config, run_clamav_engine
+from app.engines.microsoft_defender import (
+    check_microsoft_defender_health,
+    get_microsoft_defender_config,
+    run_microsoft_defender_engine,
+)
 from app.engines.static_metadata import ENGINE_NAME as STATIC_METADATA_NAME
 from app.engines.static_metadata import run_static_metadata_engine
 from app.engines.yara_engine import check_yara_health, get_yara_config, run_yara_engine
@@ -111,19 +116,31 @@ ADAPTERS: dict[str, EngineAdapterDefinition] = {
             EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "30"),
         ),
     ),
-}
-
-ROADMAP_ADAPTERS: list[RoadmapAdapterDefinition] = [
-    RoadmapAdapterDefinition(
-        label="Microsoft Defender via local CLI",
+    "microsoft_defender": EngineAdapterDefinition(
+        key="microsoft_defender",
+        label="Microsoft Defender",
         short_label="MD",
+        description="Windows local antivirus integration in research phase.",
         vendor="Microsoft",
         product="Microsoft Defender Antivirus",
         integration_method="PowerShell / CLI",
-        description="Windows local antivirus integration.",
-        status="research",
-        blocker="Spec is ready; next step is lab validation for exit codes, EICAR behavior, and post-scan detection semantics.",
+        support_state="research",
+        detection=True,
+        configurable=True,
+        docs_path="docs/integrations/microsoft_defender_local_cli.md",
+        config_fields=(
+            EngineConfigField("execution_mode", "execution mode", "text", False, "powershell"),
+            EngineConfigField("powershell_path", "PowerShell path", "text", False, "powershell.exe"),
+            EngineConfigField("mpcmdrun_path", "MpCmdRun path", "text", False, "auto"),
+            EngineConfigField("default_scan_type", "default scan type", "text", False, "custom"),
+            EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "900"),
+            EngineConfigField("update_before_scan", "update before scan", "checkbox", False, "false"),
+            EngineConfigField("require_real_time_enabled", "require real-time protection", "checkbox", False, "true"),
+        ),
     ),
+}
+
+ROADMAP_ADAPTERS: list[RoadmapAdapterDefinition] = [
     RoadmapAdapterDefinition(
         label="ESET Server Security via ICAP",
         short_label="ES",
@@ -271,6 +288,8 @@ def runtime_config(instance: EngineInstanceRecord) -> dict[str, str | int | bool
         return get_clamav_config(config)
     if instance.adapter_key == "yara":
         return get_yara_config(config)
+    if instance.adapter_key == "microsoft_defender":
+        return get_microsoft_defender_config(config)
     return {"mode": "builtin", "enabled": True}
 
 
@@ -280,6 +299,8 @@ def engine_health(instance: EngineInstanceRecord) -> dict[str, str | bool]:
         return check_clamav_health(config)
     if instance.adapter_key == "yara":
         return check_yara_health(config)
+    if instance.adapter_key == "microsoft_defender":
+        return check_microsoft_defender_health(config)
     return {
         "ok": True,
         "status": "available",
@@ -293,6 +314,8 @@ def run_engine(instance: EngineInstanceRecord, scan: ScanRecord) -> EngineResult
         return run_clamav_engine(scan, config)
     if instance.adapter_key == "yara":
         return run_yara_engine(scan, config)
+    if instance.adapter_key == "microsoft_defender":
+        return run_microsoft_defender_engine(scan, config)
     return run_static_metadata_engine(scan)
 
 
@@ -338,5 +361,46 @@ def yara_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
             config,
             "timeout_seconds",
             get_setting("yara.timeout_seconds", "30") or "30",
+        ),
+    }
+
+
+def microsoft_defender_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
+    config = engine_config(instance) if instance is not None else {}
+    return {
+        "execution_mode": config_value(
+            config,
+            "execution_mode",
+            get_setting("microsoft_defender.execution_mode", "powershell") or "powershell",
+        ),
+        "powershell_path": config_value(
+            config,
+            "powershell_path",
+            get_setting("microsoft_defender.powershell_path", "powershell.exe") or "powershell.exe",
+        ),
+        "mpcmdrun_path": config_value(
+            config,
+            "mpcmdrun_path",
+            get_setting("microsoft_defender.mpcmdrun_path", "auto") or "auto",
+        ),
+        "default_scan_type": config_value(
+            config,
+            "default_scan_type",
+            get_setting("microsoft_defender.default_scan_type", "custom") or "custom",
+        ),
+        "timeout_seconds": config_value(
+            config,
+            "timeout_seconds",
+            get_setting("microsoft_defender.timeout_seconds", "900") or "900",
+        ),
+        "update_before_scan": config_value(
+            config,
+            "update_before_scan",
+            get_setting("microsoft_defender.update_before_scan", "false") or "false",
+        ),
+        "require_real_time_enabled": config_value(
+            config,
+            "require_real_time_enabled",
+            get_setting("microsoft_defender.require_real_time_enabled", "true") or "true",
         ),
     }

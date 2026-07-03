@@ -58,6 +58,7 @@ from app.services.engine_registry import (
     detection_engine_names,
     enabled_engines,
     engine_health,
+    microsoft_defender_form_values,
     runtime_config,
     seed_default_engines,
     toggle_engine,
@@ -778,6 +779,9 @@ def render_engine_logo(label: str, key: str) -> str:
     if key == "yara":
         return '<span class="engine-logo engine-logo-yara engine-logo-glyph" aria-hidden="true">&#123;</span>'
 
+    if key == "microsoft_defender":
+        return '<span class="engine-logo engine-logo-text" aria-hidden="true">MD</span>'
+
     return f'<span class="engine-logo engine-logo-text" aria-hidden="true">{safe_label}</span>'
 
 
@@ -792,6 +796,7 @@ def render_add_engine_panel() -> str:
               <span>
                 <strong>{html.escape(definition.label)}</strong>
                 <small>{html.escape(definition.integration_method)} · {html.escape(definition.description)}</small>
+                <small>{html.escape(definition.vendor)} · {html.escape(definition.support_state.title())}</small>
               </span>
             </label>
             """
@@ -839,11 +844,19 @@ def render_add_engine_panel() -> str:
 def health_tone_for(adapter_key: str, health: dict[str, str | bool]) -> str:
     if str(health["status"]) == "disabled":
         return "neutral"
+    if str(health["status"]) == "degraded":
+        return "warning"
     if bool(health["ok"]):
         return "success"
     if adapter_key == "clamav" and health["status"] in {"unreachable", "unexpected"}:
         return "danger"
     if adapter_key == "yara" and health["status"] in {"not configured", "no rules", "unavailable"}:
+        return "danger"
+    if adapter_key == "microsoft_defender" and health["status"] in {
+        "permission denied",
+        "unexpected",
+        "unavailable",
+    }:
         return "danger"
     return "neutral"
 
@@ -1112,6 +1125,98 @@ def render_engine_card(
                 {render_yara_rule_rows()}
               </div>
             </div>
+        """
+        return render_engine_details_shell(
+            instance,
+            status_html=status_html,
+            meta=meta,
+            body=body,
+            health_overrides=health_overrides,
+        )
+
+    if instance.adapter_key == "microsoft_defender":
+        form_values = microsoft_defender_form_values(instance)
+        fields = [
+            ("Adapter", "local PowerShell / CLI"),
+            ("Execution mode", str(runtime["execution_mode"])),
+            ("Default scan", str(runtime["default_scan_type"])),
+            ("Timeout", f'{runtime["timeout_seconds"]}s'),
+            ("Support state", definition.support_state.title()),
+        ]
+        field_html = "\n".join(
+            f"""
+            <div>
+              <span>{html.escape(label)}</span>
+              <strong>{html.escape(value)}</strong>
+            </div>
+            """
+            for label, value in fields
+        )
+        update_checked = " checked" if str(form_values["update_before_scan"]).lower() in {"1", "true", "yes", "on"} else ""
+        realtime_checked = " checked" if str(form_values["require_real_time_enabled"]).lower() in {"1", "true", "yes", "on"} else ""
+        body = f"""
+            <div class="config-grid">{field_html}</div>
+            <div class="engine-health">
+              <div>
+                <span>Last check</span>
+                <strong>{html.escape(str(health["detail"]))}</strong>
+              </div>
+              {render_engine_actions(instance, show_test=instance.enabled)}
+            </div>
+            <details class="engine-settings-drawer">
+              <summary>
+                <span>Settings</span>
+                <span class="engine-expand-indicator" aria-hidden="true"></span>
+              </summary>
+              <form class="settings-form embedded" action="/engines/microsoft_defender/config" method="post">
+                <div class="settings-section">
+                  <div>
+                    <h3>Runtime settings</h3>
+                    <p>Research-phase local Windows integration. Health checks are supported; scan semantics still need lab validation.</p>
+                  </div>
+                  <div class="settings-grid">
+                    <label>
+                      execution mode
+                      <select name="microsoft_defender_execution_mode">
+                        <option value="powershell" {"selected" if form_values["execution_mode"] == "powershell" else ""}>powershell</option>
+                        <option value="mpcmdrun" {"selected" if form_values["execution_mode"] == "mpcmdrun" else ""}>mpcmdrun</option>
+                      </select>
+                    </label>
+                    <label>
+                      PowerShell path
+                      <input type="text" name="microsoft_defender_powershell_path" value="{html.escape(form_values["powershell_path"])}" placeholder="powershell.exe">
+                    </label>
+                    <label>
+                      MpCmdRun path
+                      <input type="text" name="microsoft_defender_mpcmdrun_path" value="{html.escape(form_values["mpcmdrun_path"])}" placeholder="auto">
+                    </label>
+                    <label>
+                      default scan type
+                      <select name="microsoft_defender_default_scan_type">
+                        <option value="custom" {"selected" if form_values["default_scan_type"] == "custom" else ""}>custom</option>
+                        <option value="quick" {"selected" if form_values["default_scan_type"] == "quick" else ""}>quick</option>
+                        <option value="full" {"selected" if form_values["default_scan_type"] == "full" else ""}>full</option>
+                      </select>
+                    </label>
+                    <label>
+                      timeout seconds
+                      <input type="number" name="microsoft_defender_timeout_seconds" value="{html.escape(form_values["timeout_seconds"])}" min="30" max="86400">
+                    </label>
+                    <label class="checkbox-field">
+                      <input type="checkbox" name="microsoft_defender_update_before_scan" value="true"{update_checked}>
+                      update signatures before scan
+                    </label>
+                    <label class="checkbox-field">
+                      <input type="checkbox" name="microsoft_defender_require_real_time_enabled" value="true"{realtime_checked}>
+                      require real-time protection
+                    </label>
+                  </div>
+                </div>
+                <div class="settings-actions">
+                  <button class="primary-action" type="submit">Save Defender settings</button>
+                </div>
+              </form>
+            </details>
         """
         return render_engine_details_shell(
             instance,
@@ -3160,6 +3265,33 @@ def save_yara_config(
             "command": yara_command.strip() or "yara",
             "rules_dir": yara_rules_dir.strip() or "rules",
             "timeout_seconds": yara_timeout_seconds.strip() or "30",
+        },
+    )
+    return RedirectResponse(url="/engines", status_code=303)
+
+
+@app.post("/engines/microsoft_defender/config")
+def save_microsoft_defender_config(
+    request: Request,
+    microsoft_defender_execution_mode: str = Form("powershell"),
+    microsoft_defender_powershell_path: str = Form("powershell.exe"),
+    microsoft_defender_mpcmdrun_path: str = Form("auto"),
+    microsoft_defender_default_scan_type: str = Form("custom"),
+    microsoft_defender_timeout_seconds: str = Form("900"),
+    microsoft_defender_update_before_scan: str = Form("false"),
+    microsoft_defender_require_real_time_enabled: str = Form("false"),
+) -> RedirectResponse:
+    require_admin(request)
+    update_engine_config(
+        "microsoft_defender",
+        {
+            "execution_mode": microsoft_defender_execution_mode.strip() or "powershell",
+            "powershell_path": microsoft_defender_powershell_path.strip() or "powershell.exe",
+            "mpcmdrun_path": microsoft_defender_mpcmdrun_path.strip() or "auto",
+            "default_scan_type": microsoft_defender_default_scan_type.strip() or "custom",
+            "timeout_seconds": microsoft_defender_timeout_seconds.strip() or "900",
+            "update_before_scan": "true" if microsoft_defender_update_before_scan.strip().lower() in {"1", "true", "yes", "on"} else "false",
+            "require_real_time_enabled": "true" if microsoft_defender_require_real_time_enabled.strip().lower() in {"1", "true", "yes", "on"} else "false",
         },
     )
     return RedirectResponse(url="/engines", status_code=303)
