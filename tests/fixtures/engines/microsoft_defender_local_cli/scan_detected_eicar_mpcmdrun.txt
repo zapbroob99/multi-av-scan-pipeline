@@ -1,0 +1,17 @@
+SAMPLE_PATH=<TEMP>\masp-defender-eicar.txt
+EXISTS_BEFORE=True
+EXISTS_AFTER=True
+COMMAND=<MpCmdRun.exe> -Scan -ScanType 3 -File <TEMP>\masp-defender-eicar.txt -DisableRemediation
+RETURNCODE=2
+OUTPUT_BEGIN
+Scan starting...
+Scan finished.
+Scanning <TEMP>\masp-defender-eicar.txt found 1 threats.
+
+<===========================LIST OF DETECTED THREATS==========================>
+----------------------------- Threat information ------------------------------
+Threat                  : Virus:DOS/EICAR_Test_File
+Resources               : 1 total
+    file                : <TEMP>\masp-defender-eicar.txt
+-------------------------------------------------------------------------------
+OUTPUT_END

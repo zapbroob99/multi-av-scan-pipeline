@@ -1,0 +1,2 @@
+Get-MpComputerStatus : Access denied
+HRESULT 0x80041003

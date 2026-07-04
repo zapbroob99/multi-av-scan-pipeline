@@ -13,10 +13,26 @@ from app.database import (
     update_engine_instance,
 )
 from app.engines.clamav import check_clamav_health, get_clamav_config, run_clamav_engine
+from app.engines.microsoft_defender import (
+    check_microsoft_defender_health,
+    get_microsoft_defender_config,
+    run_microsoft_defender_engine,
+)
 from app.engines.static_metadata import ENGINE_NAME as STATIC_METADATA_NAME
 from app.engines.static_metadata import run_static_metadata_engine
 from app.engines.yara_engine import check_yara_health, get_yara_config, run_yara_engine
 from app.models import EngineInstanceRecord, EngineResultInput, ScanRecord
+
+
+@dataclass(frozen=True)
+class EngineConfigField:
+    key: str
+    label: str
+    field_type: str
+    required: bool
+    default: str = ""
+    secret: bool = False
+    help_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -25,9 +41,27 @@ class EngineAdapterDefinition:
     label: str
     short_label: str
     description: str
+    vendor: str
+    product: str
+    integration_method: str
+    support_state: str
     detection: bool
     configurable: bool
     supports_rules: bool = False
+    docs_path: str = ""
+    config_fields: tuple[EngineConfigField, ...] = ()
+
+
+@dataclass(frozen=True)
+class RoadmapAdapterDefinition:
+    label: str
+    short_label: str
+    vendor: str
+    product: str
+    integration_method: str
+    description: str
+    status: str
+    blocker: str
 
 
 ADAPTERS: dict[str, EngineAdapterDefinition] = {
@@ -36,32 +70,117 @@ ADAPTERS: dict[str, EngineAdapterDefinition] = {
         label=STATIC_METADATA_NAME,
         short_label="ST",
         description="Built-in metadata analyzer.",
+        vendor="MASP",
+        product="Built-in metadata analyzer",
+        integration_method="local",
+        support_state="supported",
         detection=False,
         configurable=False,
+        docs_path="docs/integrations/SUPPORT_MATRIX.md",
     ),
     "clamav": EngineAdapterDefinition(
         key="clamav",
         label="ClamAV",
         short_label="CL",
         description="clamd TCP adapter with local CLI fallback.",
+        vendor="Cisco Talos",
+        product="ClamAV",
+        integration_method="clamd TCP / local CLI",
+        support_state="supported",
         detection=True,
         configurable=True,
+        docs_path="docs/integrations/SUPPORT_MATRIX.md",
+        config_fields=(
+            EngineConfigField("host", "clamd host", "text", False, help_text="Set to use clamd TCP; leave empty for CLI fallback."),
+            EngineConfigField("port", "clamd port", "number", False, "3310"),
+            EngineConfigField("command", "CLI command", "text", False, "clamscan"),
+            EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "60"),
+        ),
     ),
     "yara": EngineAdapterDefinition(
         key="yara",
         label="YARA",
         short_label="YR",
         description="Local rule engine adapter for pattern-based detection.",
+        vendor="YARA",
+        product="YARA CLI",
+        integration_method="local CLI",
+        support_state="supported",
         detection=True,
         configurable=True,
         supports_rules=True,
+        docs_path="docs/integrations/SUPPORT_MATRIX.md",
+        config_fields=(
+            EngineConfigField("command", "CLI command", "text", False, "yara"),
+            EngineConfigField("rules_dir", "rules directory", "text", False, "rules"),
+            EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "30"),
+        ),
+    ),
+    "microsoft_defender": EngineAdapterDefinition(
+        key="microsoft_defender",
+        label="Microsoft Defender",
+        short_label="MD",
+        description="Windows local antivirus integration validated in lab.",
+        vendor="Microsoft",
+        product="Microsoft Defender Antivirus",
+        integration_method="PowerShell / CLI",
+        support_state="lab",
+        detection=True,
+        configurable=True,
+        docs_path="docs/integrations/microsoft_defender_local_cli.md",
+        config_fields=(
+            EngineConfigField("execution_mode", "execution mode", "text", False, "powershell"),
+            EngineConfigField("powershell_path", "PowerShell path", "text", False, "powershell.exe"),
+            EngineConfigField("mpcmdrun_path", "MpCmdRun path", "text", False, "auto"),
+            EngineConfigField("default_scan_type", "default scan type", "text", False, "custom"),
+            EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "900"),
+            EngineConfigField("update_before_scan", "update before scan", "checkbox", False, "false"),
+            EngineConfigField("require_real_time_enabled", "require real-time protection", "checkbox", False, "true"),
+        ),
     ),
 }
 
-ROADMAP_ADAPTERS = [
-    {"label": "ESET", "short_label": "ES", "description": "Commercial AV adapter", "status": "Planned"},
-    {"label": "ICAP", "short_label": "IC", "description": "Network AV gateway adapter", "status": "Planned"},
-    {"label": "REST AV", "short_label": "API", "description": "Vendor API adapter", "status": "Planned"},
+ROADMAP_ADAPTERS: list[RoadmapAdapterDefinition] = [
+    RoadmapAdapterDefinition(
+        label="ESET Server Security via ICAP",
+        short_label="ES",
+        vendor="ESET",
+        product="ESET Server Security or ICAP-capable gateway product",
+        integration_method="ICAP",
+        description="Commercial AV gateway integration.",
+        status="research",
+        blocker="Confirm exact product, ICAP service behavior, licensing, and response semantics.",
+    ),
+    RoadmapAdapterDefinition(
+        label="Trellix ATD via REST API",
+        short_label="TX",
+        vendor="Trellix",
+        product="Advanced Threat Defense / Malware Analysis",
+        integration_method="REST API",
+        description="Commercial sandbox submission and verdict integration.",
+        status="research",
+        blocker="Confirm submission flow, polling model, verdict schema, auth, and rate limits.",
+    ),
+    RoadmapAdapterDefinition(
+        label="Sophos via local CLI",
+        short_label="SP",
+        vendor="Sophos",
+        product="Sophos Protection for Linux or endpoint product",
+        integration_method="local CLI",
+        description="Endpoint CLI scan integration.",
+        status="research",
+        blocker="Confirm command availability, OS support, exit codes, and output format.",
+    ),
+    RoadmapAdapterDefinition(
+        label="Trend Micro via ICAP",
+        short_label="TM",
+        vendor="Trend Micro",
+        product="ICAP-capable gateway product",
+        integration_method="ICAP",
+        description="Commercial gateway AV integration.",
+        status="research",
+        blocker="Confirm product name, service names, status codes, and detection headers.",
+    ),
 ]
 
 
@@ -169,6 +288,8 @@ def runtime_config(instance: EngineInstanceRecord) -> dict[str, str | int | bool
         return get_clamav_config(config)
     if instance.adapter_key == "yara":
         return get_yara_config(config)
+    if instance.adapter_key == "microsoft_defender":
+        return get_microsoft_defender_config(config)
     return {"mode": "builtin", "enabled": True}
 
 
@@ -178,6 +299,8 @@ def engine_health(instance: EngineInstanceRecord) -> dict[str, str | bool]:
         return check_clamav_health(config)
     if instance.adapter_key == "yara":
         return check_yara_health(config)
+    if instance.adapter_key == "microsoft_defender":
+        return check_microsoft_defender_health(config)
     return {
         "ok": True,
         "status": "available",
@@ -191,6 +314,8 @@ def run_engine(instance: EngineInstanceRecord, scan: ScanRecord) -> EngineResult
         return run_clamav_engine(scan, config)
     if instance.adapter_key == "yara":
         return run_yara_engine(scan, config)
+    if instance.adapter_key == "microsoft_defender":
+        return run_microsoft_defender_engine(scan, config)
     return run_static_metadata_engine(scan)
 
 
@@ -236,5 +361,46 @@ def yara_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
             config,
             "timeout_seconds",
             get_setting("yara.timeout_seconds", "30") or "30",
+        ),
+    }
+
+
+def microsoft_defender_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
+    config = engine_config(instance) if instance is not None else {}
+    return {
+        "execution_mode": config_value(
+            config,
+            "execution_mode",
+            get_setting("microsoft_defender.execution_mode", "powershell") or "powershell",
+        ),
+        "powershell_path": config_value(
+            config,
+            "powershell_path",
+            get_setting("microsoft_defender.powershell_path", "powershell.exe") or "powershell.exe",
+        ),
+        "mpcmdrun_path": config_value(
+            config,
+            "mpcmdrun_path",
+            get_setting("microsoft_defender.mpcmdrun_path", "auto") or "auto",
+        ),
+        "default_scan_type": config_value(
+            config,
+            "default_scan_type",
+            get_setting("microsoft_defender.default_scan_type", "custom") or "custom",
+        ),
+        "timeout_seconds": config_value(
+            config,
+            "timeout_seconds",
+            get_setting("microsoft_defender.timeout_seconds", "900") or "900",
+        ),
+        "update_before_scan": config_value(
+            config,
+            "update_before_scan",
+            get_setting("microsoft_defender.update_before_scan", "false") or "false",
+        ),
+        "require_real_time_enabled": config_value(
+            config,
+            "require_real_time_enabled",
+            get_setting("microsoft_defender.require_real_time_enabled", "true") or "true",
         ),
     }

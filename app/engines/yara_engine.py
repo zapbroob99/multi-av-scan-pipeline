@@ -7,6 +7,7 @@ from time import perf_counter
 
 from app.models import EngineResultInput, ScanRecord
 from app.services.findings import evidence_object, normalized_finding
+from app.services.sample_paths import resolve_sample_path, sample_path_error
 
 
 ENGINE_NAME = "YARA"
@@ -22,15 +23,16 @@ def get_yara_config(
     command = setting_value(
         override,
         "command",
-        engine_setting("yara.command", os.getenv("MASP_YARA_COMMAND", "yara")),
+        env_or_setting("MASP_YARA_COMMAND", "yara.command", "yara"),
     )
-    rules_dir = Path(
+    configured_rules_dir = Path(
         setting_value(
             override,
             "rules_dir",
-            engine_setting("yara.rules_dir", os.getenv("MASP_YARA_RULES_DIR", str(DEFAULT_RULES_DIR))),
+            env_or_setting("MASP_YARA_RULES_DIR", "yara.rules_dir", str(DEFAULT_RULES_DIR)),
         )
     )
+    rules_dir = resolve_rules_dir(configured_rules_dir)
     rule_files = list_rule_files(rules_dir)
 
     return {
@@ -139,7 +141,7 @@ def run_yara_engine(
             details=yara_details(command, rules_dir, rule_files, scan),
         )
 
-    sample_path = Path(scan.storage_path)
+    sample_path = resolve_sample_path(scan)
     if not sample_path.is_file():
         return build_result(
             status="failed",
@@ -147,7 +149,7 @@ def run_yara_engine(
             signature=None,
             severity="info",
             confidence=0,
-            raw_output=f"Sample file not found: {scan.storage_path}",
+            raw_output=sample_path_error(scan, sample_path),
             error_message="Stored sample file is missing.",
             duration_ms=elapsed_ms(started_at),
             signature_version=str(rules_dir),
@@ -298,6 +300,14 @@ def list_rule_files(rules_dir: Path) -> list[Path]:
     )
 
 
+def resolve_rules_dir(configured_rules_dir: Path) -> Path:
+    if configured_rules_dir.is_dir():
+        return configured_rules_dir
+    if DEFAULT_RULES_DIR.is_dir():
+        return DEFAULT_RULES_DIR
+    return configured_rules_dir
+
+
 def parse_matches(stdout: str) -> list[str]:
     matches = []
     for line in stdout.splitlines():
@@ -409,6 +419,13 @@ def engine_setting(key: str, fallback: str) -> str:
 
     value = get_setting(key, fallback)
     return fallback if value is None else value
+
+
+def env_or_setting(env_key: str, setting_key: str, fallback: str) -> str:
+    value = os.getenv(env_key)
+    if value is not None:
+        return value
+    return engine_setting(setting_key, fallback)
 
 
 def engine_setting_int(key: str, fallback: str, default: int) -> int:

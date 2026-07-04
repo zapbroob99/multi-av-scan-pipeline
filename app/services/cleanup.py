@@ -1,14 +1,9 @@
-from pathlib import Path
-
 from app.models import ScanRecord
-
-
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
-SAMPLES_DIR = ROOT_DIR / "storage" / "samples"
+from app.services.sample_paths import SAMPLES_DIR, resolve_sample_path
 
 
 def delete_sample_file(scan: ScanRecord) -> bool:
-    storage_path = Path(scan.storage_path)
+    storage_path = resolve_sample_path(scan)
 
     try:
         resolved_path = storage_path.resolve()

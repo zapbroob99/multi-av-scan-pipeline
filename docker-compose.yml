@@ -6,39 +6,73 @@ services:
     ports:
       - "8000:8000"
     environment:
+      MASP_DATABASE_URL: postgresql://masp:masp_dev_password@postgres:5432/masp
       MASP_CLAMD_HOST: clamav
       MASP_CLAMD_PORT: "3310"
-      MASP_CLAMD_TIMEOUT_SECONDS: "60"
+      MASP_CLAMD_TIMEOUT_SECONDS: "180"
+      MASP_CLAMD_READY_TIMEOUT_SECONDS: "30"
+      MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS: "120"
       MASP_YARA_RULES_DIR: /app/rules
     volumes:
-      - ./data:/app/data
       - ./storage:/app/storage
       - ./rules:/app/rules
     depends_on:
-      - clamav
+      postgres:
+        condition: service_healthy
+      clamav:
+        condition: service_started
 
   worker:
     build: .
+    profiles:
+      - linux-worker
     command: python -m app.workers.scan_worker
     environment:
+      MASP_DATABASE_URL: postgresql://masp:masp_dev_password@postgres:5432/masp
       MASP_CLAMD_HOST: clamav
       MASP_CLAMD_PORT: "3310"
-      MASP_CLAMD_TIMEOUT_SECONDS: "60"
+      MASP_CLAMD_TIMEOUT_SECONDS: "180"
+      MASP_CLAMD_READY_TIMEOUT_SECONDS: "30"
+      MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS: "120"
       MASP_YARA_RULES_DIR: /app/rules
       MASP_WORKER_POLL_SECONDS: "2"
+      MASP_WORKER_ENGINE_KEYS: static_metadata,clamav,yara
     volumes:
-      - ./data:/app/data
       - ./storage:/app/storage
       - ./rules:/app/rules
     depends_on:
-      - clamav
+      postgres:
+        condition: service_healthy
+      clamav:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: masp
+      POSTGRES_USER: masp
+      POSTGRES_PASSWORD: masp_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U masp -d masp"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   clamav:
     image: clamav/clamav:stable
+    environment:
+      CLAMD_CONF_StreamMaxLength: 512M
+      CLAMD_CONF_MaxFileSize: 512M
+      CLAMD_CONF_MaxScanSize: 512M
     ports:
       - "3310:3310"
     volumes:
       - clamav-db:/var/lib/clamav
 
 volumes:
+  postgres-data:
   clamav-db:

@@ -1,11 +1,13 @@
 import html
+import csv
+import io
 import json
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.database import (
@@ -16,10 +18,13 @@ from app.database import (
     delete_scan,
     delete_user,
     get_scan,
+    get_queue_metrics,
     get_scan_counts,
     get_user_by_id,
     get_user_by_username,
     init_db,
+    list_active_scans,
+    list_engine_result_metrics,
     list_engine_results,
     list_recent_scans,
     list_users,
@@ -56,6 +61,7 @@ from app.services.engine_registry import (
     detection_engine_names,
     enabled_engines,
     engine_health,
+    microsoft_defender_form_values,
     runtime_config,
     seed_default_engines,
     toggle_engine,
@@ -86,12 +92,67 @@ app = FastAPI(
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 CSS_PATH = STATIC_DIR / "css" / "app.css"
+LEGACY_CSS_PATH = STATIC_DIR / "css" / "legacy.css"
 
 init_db()
 seed_default_users()
 seed_default_engines()
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def nav_icon(icon_key: str) -> str:
+    icons = {
+        "dashboard": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="9" rx="1.5"></rect>
+          <rect x="14" y="3" width="7" height="5" rx="1.5"></rect>
+          <rect x="14" y="12" width="7" height="9" rx="1.5"></rect>
+          <rect x="3" y="16" width="7" height="5" rx="1.5"></rect>
+        </svg>
+        """,
+        "new_scan": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m21 21-4.35-4.35"></path>
+        </svg>
+        """,
+        "account": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"></circle>
+          <path d="M6 20c1.7-3.1 4-4.7 6-4.7s4.3 1.6 6 4.7"></path>
+        </svg>
+        """,
+        "logout": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"></path>
+          <path d="m16 17 5-5-5-5"></path>
+          <path d="M21 12H9"></path>
+        </svg>
+        """,
+        "engines": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 6V2"></path>
+          <path d="M15 11a3 3 0 1 0-6 0v3a3 3 0 1 0 6 0z"></path>
+          <path d="M12 18v4"></path>
+          <path d="M8 20h8"></path>
+        </svg>
+        """,
+        "system": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+        </svg>
+        """,
+        "users": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          <circle cx="8.5" cy="7" r="4"></circle>
+          <path d="M20 8v6"></path>
+          <path d="M23 11h-6"></path>
+        </svg>
+        """,
+    }
+    return icons.get(icon_key, "")
 
 
 def page_shell(
@@ -102,6 +163,7 @@ def page_shell(
     refresh_seconds: int | None = None,
 ) -> str:
     css_version = int(CSS_PATH.stat().st_mtime) if CSS_PATH.exists() else 1
+    legacy_css_version = int(LEGACY_CSS_PATH.stat().st_mtime) if LEGACY_CSS_PATH.exists() else 1
     refresh_html = (
         f'<meta http-equiv="refresh" content="{refresh_seconds}">'
         if refresh_seconds is not None
@@ -114,12 +176,22 @@ def page_shell(
     ]
     if user.role == ROLE_ADMIN:
         nav_items.append(("engines", "/engines", "Engines"))
+        nav_items.append(("system", "/system", "System"))
         nav_items.append(("users", "/users", "Users"))
     nav_html = "\n".join(
         f'<a class="nav-link {"is-active" if key == active else ""}" href="{href}">'
-        f'<span class="nav-mark"></span>{label}</a>'
+        f'<span class="nav-icon">{nav_icon(key)}</span>'
+        f'<span class="nav-label">{label}</span></a>'
         for key, href, label in nav_items
     )
+    logout_nav_html = f"""
+    <form class="nav-form" action="/logout" method="post">
+      <button class="nav-link nav-button" type="submit">
+        <span class="nav-icon">{nav_icon("logout")}</span>
+        <span class="nav-label">Logout</span>
+      </button>
+    </form>
+    """
     username = html.escape(getattr(user, "username", ""))
     role = html.escape(str(getattr(user, "role", "")).title())
 
@@ -139,11 +211,14 @@ def page_shell(
               const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
               const theme = savedTheme || (prefersDark ? "dark" : "light");
               document.documentElement.setAttribute("data-theme", theme);
+              document.documentElement.classList.toggle("dark", theme === "dark");
             }} catch (error) {{
               document.documentElement.setAttribute("data-theme", "light");
+              document.documentElement.classList.remove("dark");
             }}
           }})();
         </script>
+        <link rel="stylesheet" href="/static/css/legacy.css?v={legacy_css_version}">
         <link rel="stylesheet" href="/static/css/app.css?v={css_version}">
       </head>
       <body>
@@ -161,6 +236,9 @@ def page_shell(
             <nav class="nav-list" aria-label="Main navigation">
               {nav_html}
             </nav>
+            <div class="nav-utility">
+              {logout_nav_html}
+            </div>
             <div class="side-status">
               <span class="status-dot"></span>
               <span>Local node online</span>
@@ -179,10 +257,6 @@ def page_shell(
                     <strong>{username}</strong>
                     <small>{role}</small>
                   </span>
-                  <a class="secondary-action compact-action" href="/account">Account</a>
-                  <form action="/logout" method="post">
-                    <button class="secondary-action compact-action" type="submit">Logout</button>
-                  </form>
                 </div>
                 <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark theme" title="Toggle dark theme">
                   <span class="theme-toggle-icon" aria-hidden="true"></span>
@@ -210,11 +284,14 @@ def page_shell(
           const evidenceDrawer = document.querySelector("[data-evidence-drawer]");
           const themeToggle = document.querySelector("[data-theme-toggle]");
           const themeLabel = document.querySelector("[data-theme-label]");
+          const actionForms = document.querySelectorAll("form[data-action-form]");
           const selectedScanIds = new Set();
           const clickTimers = new Map();
+          const scrollRestoreKey = "masp-scroll-restore";
 
           const applyTheme = (theme) => {{
             document.documentElement.setAttribute("data-theme", theme);
+            document.documentElement.classList.toggle("dark", theme === "dark");
             try {{
               localStorage.setItem("masp-theme", theme);
             }} catch (error) {{
@@ -226,6 +303,20 @@ def page_shell(
           }};
 
           applyTheme(document.documentElement.getAttribute("data-theme") || "light");
+
+          try {{
+            const rawScrollState = window.sessionStorage.getItem(scrollRestoreKey);
+            if (rawScrollState && !window.location.hash) {{
+              const scrollState = JSON.parse(rawScrollState);
+              const isFresh = typeof scrollState.ts === "number" && (Date.now() - scrollState.ts) < 15000;
+              if (isFresh && scrollState.path === window.location.pathname && typeof scrollState.scrollY === "number") {{
+                window.scrollTo({{ top: scrollState.scrollY }});
+              }}
+            }}
+            window.sessionStorage.removeItem(scrollRestoreKey);
+          }} catch (error) {{
+            console.warn("Scroll state could not be restored", error);
+          }}
 
           if (themeToggle) {{
             themeToggle.addEventListener("click", () => {{
@@ -314,6 +405,40 @@ def page_shell(
             uploadForm.addEventListener("submit", () => {{
               submitButton.textContent = "Uploading...";
               submitButton.disabled = true;
+            }});
+          }}
+
+          if (actionForms.length) {{
+            actionForms.forEach((form) => {{
+              form.addEventListener("submit", (event) => {{
+                const submitter = event.submitter instanceof HTMLElement
+                  ? event.submitter
+                  : form.querySelector("button[type='submit'], input[type='submit']");
+                const busyLabel = submitter && submitter.getAttribute("data-busy-label");
+
+                if (form.hasAttribute("data-preserve-scroll")) {{
+                  try {{
+                    window.sessionStorage.setItem(scrollRestoreKey, JSON.stringify({{
+                      path: window.location.pathname,
+                      scrollY: window.scrollY,
+                      ts: Date.now(),
+                    }}));
+                  }} catch (error) {{
+                    console.warn("Scroll state could not be saved", error);
+                  }}
+                }}
+
+                form.querySelectorAll("button[type='submit'], input[type='submit']").forEach((button) => {{
+                  button.disabled = true;
+                }});
+
+                if (submitter) {{
+                  if (busyLabel) {{
+                    submitter.textContent = busyLabel;
+                  }}
+                  submitter.disabled = true;
+                }}
+              }});
             }});
           }}
 
@@ -451,6 +576,7 @@ def page_shell(
 
 def auth_shell(title: str, body: str) -> str:
     css_version = int(CSS_PATH.stat().st_mtime) if CSS_PATH.exists() else 1
+    legacy_css_version = int(LEGACY_CSS_PATH.stat().st_mtime) if LEGACY_CSS_PATH.exists() else 1
     return f"""
     <!doctype html>
     <html lang="en">
@@ -466,11 +592,14 @@ def auth_shell(title: str, body: str) -> str:
               const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
               const theme = savedTheme || (prefersDark ? "dark" : "light");
               document.documentElement.setAttribute("data-theme", theme);
+              document.documentElement.classList.toggle("dark", theme === "dark");
             }} catch (error) {{
               document.documentElement.setAttribute("data-theme", "light");
+              document.documentElement.classList.remove("dark");
             }}
           }})();
         </script>
+        <link rel="stylesheet" href="/static/css/legacy.css?v={legacy_css_version}">
         <link rel="stylesheet" href="/static/css/app.css?v={css_version}">
       </head>
       <body class="auth-body">
@@ -555,6 +684,28 @@ def page_notice(title: str, message: str, tone: str = "success") -> str:
         f"<span>{html.escape(message)}</span>"
         f"</div></section>"
     )
+
+
+def redirect_url(
+    path: str,
+    *,
+    message: str = "",
+    error: str = "",
+    target: str = "",
+) -> str:
+    query_params: dict[str, str] = {}
+    if message:
+        query_params["message"] = message
+    if error:
+        query_params["error"] = error
+    if target:
+        query_params["target"] = target
+
+    query = urlencode(query_params)
+    url = f"{path}?{query}" if query else path
+    if target:
+        url = f"{url}#engine-{quote(target, safe='')}"
+    return url
 
 
 def render_login_page(next_url: str = "/", error: str = "", message: str = "") -> str:
@@ -670,37 +821,295 @@ def worker_status_detail(worker_status: dict[str, object]) -> str:
     return "Heartbeat is healthy."
 
 
-def render_pipeline_panel(worker_status: dict[str, object]) -> str:
+def render_worker_status_panel(worker_status: dict[str, object]) -> str:
     active_scan_id = worker_status.get("active_scan_id")
-    active_scan_html = (
-        f'<li><span>4</span><strong>Active job</strong><small>Scan #{html.escape(str(active_scan_id))}</small></li>'
-        if active_scan_id
-        else '<li><span>4</span><strong>Worker</strong><small>Waiting for the next queued job</small></li>'
-    )
+    worker_count = f'{int(worker_status.get("online_count", 0) or 0)} online'
+    queue_state = f"Processing scan #{active_scan_id}" if active_scan_id else "Idle"
+    last_seen_at = str(worker_status.get("last_seen_at") or "-")
+    hostname = str(worker_status.get("hostname") or "-")
     return f"""
-      <div class="panel">
+      <div class="panel status-panel">
         <div class="panel-header compact">
-          <h2>Pipeline</h2>
+          <div>
+            <h2>System status</h2>
+            <p>Worker readiness and queue state.</p>
+          </div>
           {worker_status_pill(worker_status)}
         </div>
-        <ol class="step-list">
-          <li><span>1</span><strong>Ingest</strong><small>Store sample and metadata</small></li>
-          <li><span>2</span><strong>Analyze</strong><small>Run configured engines</small></li>
-          <li><span>3</span><strong>Normalize</strong><small>Unify engine outputs</small></li>
-          {active_scan_html}
-        </ol>
-        <div class="engine-health">
+        <div class="status-summary-grid">
           <div>
-            <span>Worker status</span>
-            <strong>{html.escape(worker_status_detail(worker_status))}</strong>
+            <span>Workers</span>
+            <strong>{html.escape(worker_count)}</strong>
+          </div>
+          <div>
+            <span>Queue</span>
+            <strong>{html.escape(queue_state)}</strong>
+          </div>
+          <div>
+            <span>Last heartbeat</span>
+            <strong>{html.escape(last_seen_at)}</strong>
           </div>
           <div>
             <span>Node</span>
-            <strong>{html.escape(str(worker_status.get("hostname") or "-"))}</strong>
+            <strong>{html.escape(hostname)}</strong>
           </div>
         </div>
       </div>
     """
+
+
+def format_duration_ms(duration_ms: int | float | None) -> str:
+    if duration_ms is None:
+        return "-"
+    value = int(duration_ms)
+    if value < 1000:
+        return f"{value} ms"
+    seconds = value / 1000
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    remaining_seconds = int(seconds % 60)
+    return f"{minutes}m {remaining_seconds}s"
+
+
+def engine_metric_tone(engine: EngineInstanceRecord, supported_engine_keys: set[str]) -> str:
+    if not engine.enabled:
+        return "neutral"
+    if engine.adapter_key not in supported_engine_keys:
+        return "danger"
+    return "success"
+
+
+def engine_metric_status(engine: EngineInstanceRecord, supported_engine_keys: set[str]) -> str:
+    if not engine.enabled:
+        return "Disabled"
+    if engine.adapter_key not in supported_engine_keys:
+        return "No online worker"
+    return "Worker covered"
+
+
+def render_system_worker_rows(worker_status: dict[str, object]) -> str:
+    workers = worker_status.get("workers")
+    if not isinstance(workers, list) or not workers:
+        return """
+        <tr>
+          <td class="empty-cell" colspan="6">No worker heartbeat has been recorded yet.</td>
+        </tr>
+        """
+
+    rows = []
+    for worker in workers:
+        if not isinstance(worker, dict):
+            continue
+        online = bool(worker.get("online"))
+        state = str(worker.get("state") or "offline")
+        engine_keys = ", ".join(str(item) for item in worker.get("engine_keys", [])) or "-"
+        active_scan_id = worker.get("active_scan_id")
+        active_scan = f"#{active_scan_id}" if active_scan_id else "-"
+        rows.append(
+            f"""
+            <tr>
+              <td>{status_pill(state if online else "offline")}</td>
+              <td>
+                <strong>{html.escape(str(worker.get("hostname") or "-"))}</strong>
+                <small>PID {html.escape(str(worker.get("pid") or "-"))}</small>
+              </td>
+              <td>{html.escape(engine_keys)}</td>
+              <td>{html.escape(active_scan)}</td>
+              <td>{html.escape(str(worker.get("last_seen_at") or "-"))}</td>
+              <td>{html.escape(str(worker.get("age_seconds") if worker.get("age_seconds") is not None else "-"))}s</td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_system_engine_rows(
+    engines: list[EngineInstanceRecord],
+    metrics: list[dict[str, object]],
+    worker_status: dict[str, object],
+) -> str:
+    metrics_by_engine = {str(metric["engine_name"]): metric for metric in metrics}
+    supported_engine_keys = set(str(item) for item in worker_status.get("engine_keys", []))
+    if not engines:
+        return '<tr><td class="empty-cell" colspan="9">No engines are configured.</td></tr>'
+
+    rows = []
+    for engine in engines:
+        metric = metrics_by_engine.get(engine.display_name, {})
+        tone = engine_metric_tone(engine, supported_engine_keys)
+        runtime = runtime_config(engine)
+        timeout = runtime.get("timeout_seconds")
+        rows.append(
+            f"""
+            <tr>
+              <td>
+                <div class="engine-mini">
+                  {render_engine_logo(adapter_definition(engine.adapter_key).short_label, engine.adapter_key)}
+                  <div>
+                    <strong>{html.escape(engine.display_name)}</strong>
+                    <small>{html.escape(adapter_definition(engine.adapter_key).integration_method)}</small>
+                  </div>
+                </div>
+              </td>
+              <td><span class="pill {tone}">{html.escape(engine_metric_status(engine, supported_engine_keys))}</span></td>
+              <td>{html.escape(str(metric.get("total_results", 0)))}</td>
+              <td>{html.escape(str(metric.get("completed_results", 0)))}</td>
+              <td>{html.escape(str(metric.get("failed_results", 0)))}</td>
+              <td>{html.escape(str(metric.get("skipped_results", 0)))}</td>
+              <td>{format_duration_ms(int(metric.get("avg_duration_ms", 0) or 0))}</td>
+              <td>{format_duration_ms(int(metric.get("max_duration_ms", 0) or 0))}</td>
+              <td>
+                {html.escape(str(metric.get("last_result_at") or "-"))}
+                <small>Timeout {html.escape(str(timeout if timeout is not None else "-"))}s</small>
+              </td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_system_queue_rows(active_scans: list[ScanRecord]) -> str:
+    if not active_scans:
+        return '<tr><td class="empty-cell" colspan="6">No queued or running scans.</td></tr>'
+
+    rows = []
+    for scan in active_scans:
+        marker_label, marker_value = scan_runtime_marker(scan)
+        rows.append(
+            f"""
+            <tr>
+              <td><a class="table-link" href="/scans/{scan.id}"><strong>#{scan.id}</strong><small>{html.escape(scan.original_filename)}</small></a></td>
+              <td>{status_pill(scan.status)}</td>
+              <td>{html.escape(scan.case_name)}</td>
+              <td>{html.escape(format_bytes(scan.size_bytes))}</td>
+              <td>{html.escape(marker_label)}</td>
+              <td>{html.escape(marker_value)}</td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_system_page(user: UserRecord) -> str:
+    worker_status = get_worker_status()
+    queue_metrics = get_queue_metrics()
+    engine_metrics = list_engine_result_metrics()
+    engines = configured_engines()
+    active_scans = list_active_scans(limit=50)
+    supported_engine_count = len(set(str(item) for item in worker_status.get("engine_keys", [])))
+
+    body = f"""
+    <section class="metric-grid">
+      {metric_card("Workers", str(worker_status.get("online_count", 0)), "Online worker processes")}
+      {metric_card("Queue", str(queue_metrics["queued"]), "Waiting scan jobs", "tone-blue")}
+      {metric_card("Running", str(queue_metrics["running"]), "Currently active jobs", "tone-green")}
+      {metric_card("Failures", str(queue_metrics["failed"]), "Failed scan jobs", "tone-red")}
+    </section>
+
+    <section class="system-layout">
+      <div class="panel">
+        <div class="panel-header compact">
+          <div>
+            <h2>Worker runtime</h2>
+            <p>Heartbeat, node identity, supported engines, and active work.</p>
+          </div>
+          {worker_status_pill(worker_status)}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Node</th>
+                <th>Engines</th>
+                <th>Active scan</th>
+                <th>Last heartbeat</th>
+                <th>Age</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_system_worker_rows(worker_status)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header compact">
+          <div>
+            <h2>Queue health</h2>
+            <p>{queue_metrics["active"]} active of {queue_metrics["total"]} total scan jobs.</p>
+          </div>
+          <span class="pill neutral">{supported_engine_count} worker engine keys</span>
+        </div>
+        <div class="status-summary-grid">
+          <div><span>Completed</span><strong>{queue_metrics["completed"]}</strong></div>
+          <div><span>Failed</span><strong>{queue_metrics["failed"]}</strong></div>
+          <div><span>Queued</span><strong>{queue_metrics["queued"]}</strong></div>
+          <div><span>Running</span><strong>{queue_metrics["running"]}</strong></div>
+        </div>
+      </div>
+
+      <div class="panel system-wide">
+        <div class="panel-header compact">
+          <div>
+            <h2>Engine metrics</h2>
+            <p>Coverage, throughput, failures, skips, and latency from recorded results.</p>
+          </div>
+          <span class="pill neutral">{len(engines)} configured</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Engine</th>
+                <th>Worker coverage</th>
+                <th>Total</th>
+                <th>Completed</th>
+                <th>Failed</th>
+                <th>Skipped</th>
+                <th>Avg latency</th>
+                <th>Max latency</th>
+                <th>Last result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_system_engine_rows(engines, engine_metrics, worker_status)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel system-wide">
+        <div class="panel-header compact">
+          <div>
+            <h2>Active queue</h2>
+            <p>Queued and running scans in processing order.</p>
+          </div>
+          <span class="pill neutral">{len(active_scans)} shown</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scan</th>
+                <th>Status</th>
+                <th>Case</th>
+                <th>Size</th>
+                <th>Marker</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_system_queue_rows(active_scans)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+    """
+    return page_shell("System", "system", body, user, refresh_seconds=10)
 
 
 def scan_runtime_marker(scan: ScanRecord) -> tuple[str, str]:
@@ -743,11 +1152,11 @@ def render_yara_rule_rows() -> str:
               <span>{format_bytes(int(rule["size_bytes"]))}</span>
               <span>{html.escape(format_unix_timestamp(int(rule["modified_at"])))}</span>
               <div class="rule-actions">
-                <form action="/engines/yara/rules/{encoded_name}/toggle" method="post">
-                  <button class="secondary-action compact-action" type="submit">{toggle_label}</button>
+                <form action="/engines/yara/rules/{encoded_name}/toggle" method="post" data-action-form data-preserve-scroll>
+                  <button class="secondary-action compact-action" type="submit" data-busy-label="{html.escape('Disabling...' if enabled else 'Enabling...')}">{toggle_label}</button>
                 </form>
-                <form action="/engines/yara/rules/{encoded_name}/delete" method="post">
-                  <button class="danger-action compact-action" type="submit">Delete</button>
+                <form action="/engines/yara/rules/{encoded_name}/delete" method="post" data-action-form data-preserve-scroll>
+                  <button class="danger-action compact-action" type="submit" data-busy-label="Deleting...">Delete</button>
                 </form>
               </div>
             </div>
@@ -776,12 +1185,31 @@ def render_engine_logo(label: str, key: str) -> str:
     if key == "yara":
         return '<span class="engine-logo engine-logo-yara engine-logo-glyph" aria-hidden="true">&#123;</span>'
 
+    if key == "microsoft_defender":
+        return """
+        <span class="engine-logo engine-logo-defender" aria-hidden="true">
+          <svg viewBox="0 0 44 44" role="img" focusable="false">
+            <path d="M22 5.8c4.5 2.9 8.9 4.5 13.3 4.8v10.1c0 8.5-4.7 14.7-13.3 17.5-8.6-2.8-13.3-9-13.3-17.5V10.6c4.4-.3 8.8-1.9 13.3-4.8Z" fill="#2563eb"></path>
+            <path d="M22 10.1v23.3c-6-2.4-9.3-6.8-9.3-12.5v-6.3c3.2-.7 6.2-1.8 9.3-4.5Z" fill="#eaf3ff"></path>
+            <path d="M22 10.1c3.1 2.7 6.1 3.8 9.3 4.5v6.3c0 5.7-3.3 10.1-9.3 12.5V10.1Z" fill="#7dc4ff"></path>
+            <path d="M22 12.3v18.8" stroke="#1d4ed8" stroke-width="1.2" stroke-linecap="round"></path>
+            <path d="M14.5 20.7h15" stroke="#1d4ed8" stroke-width="1.2" stroke-linecap="round"></path>
+          </svg>
+        </span>
+        """
+
     return f'<span class="engine-logo engine-logo-text" aria-hidden="true">{safe_label}</span>'
 
 
 def render_add_engine_panel() -> str:
     available_adapters = available_adapter_definitions()
     if available_adapters:
+        available_count = len(available_adapters)
+        available_label = (
+            f"{available_count} adapter available"
+            if available_count == 1
+            else f"{available_count} adapters available"
+        )
         adapter_rows_html = "\n".join(
             f"""
             <label class="adapter-option">
@@ -789,25 +1217,64 @@ def render_add_engine_panel() -> str:
               {render_engine_logo(definition.short_label, definition.key)}
               <span>
                 <strong>{html.escape(definition.label)}</strong>
-                <small>{html.escape(definition.description)}</small>
+                <small>{html.escape(definition.integration_method)} · {html.escape(definition.description)}</small>
+                <small>{html.escape(definition.vendor)} · {html.escape(definition.support_state.title())}</small>
               </span>
             </label>
             """
             for index, definition in enumerate(available_adapters)
         )
         description = "Add adapters from the supported engine catalog, then configure them per node."
-        button_disabled = ""
         pill = '<span class="pill success">Catalog ready</span>'
+        registry_body = f"""
+      <details class="add-engine-drawer">
+        <summary class="add-engine-summary">
+          <div class="add-engine-summary-copy">
+            <span class="add-engine-summary-eyebrow">Adapter catalog</span>
+            <strong>Add engine adapter</strong>
+            <small>{available_label}. Register it here, then configure health checks and runtime settings below.</small>
+          </div>
+          <div class="add-engine-summary-actions">
+            <span class="add-engine-trigger">
+              <span class="add-engine-trigger-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 5v14"></path>
+                  <path d="M5 12h14"></path>
+                </svg>
+              </span>
+              <span>Browse catalog</span>
+            </span>
+            <span class="engine-expand-indicator" aria-hidden="true"></span>
+          </div>
+        </summary>
+        <form class="add-engine-form" action="/engines/add" method="post" data-action-form data-preserve-scroll>
+          <div class="adapter-scroll-list">
+            {adapter_rows_html}
+          </div>
+          <div class="add-engine-form-footer">
+            <div class="add-engine-form-note">
+              <strong>Register selected adapter</strong>
+              <span>The engine is added to this node first. Connection tests and runtime overrides stay editable afterward.</span>
+            </div>
+            <button class="primary-action add-engine-submit" type="submit" data-busy-label="Adding...">Add selected engine</button>
+          </div>
+        </form>
+      </details>
+        """
     else:
-        adapter_rows_html = """
+        empty_state_html = """
         <div class="adapter-empty">
           <strong>All implemented adapters are configured</strong>
           <span>Remove an adapter to add it again, or implement a new adapter to expose it here.</span>
         </div>
         """
         description = "All implemented adapters are already configured on this node."
-        button_disabled = " disabled"
         pill = '<span class="pill neutral">No adapters left</span>'
+        registry_body = f"""
+      <div class="add-engine-empty-state">
+        {empty_state_html}
+      </div>
+        """
 
     return f"""
     <section class="panel">
@@ -818,18 +1285,7 @@ def render_add_engine_panel() -> str:
         </div>
         {pill}
       </div>
-      <details class="add-engine-drawer">
-        <summary>
-          <span class="add-engine-trigger">Add new engine</span>
-          <span class="engine-expand-indicator" aria-hidden="true"></span>
-        </summary>
-        <form class="add-engine-form" action="/engines/add" method="post">
-          <div class="adapter-scroll-list">
-            {adapter_rows_html}
-          </div>
-          <button class="primary-action" type="submit"{button_disabled}>Add selected engine</button>
-        </form>
-      </details>
+      {registry_body}
     </section>
     """
 
@@ -837,40 +1293,49 @@ def render_add_engine_panel() -> str:
 def health_tone_for(adapter_key: str, health: dict[str, str | bool]) -> str:
     if str(health["status"]) == "disabled":
         return "neutral"
+    if str(health["status"]) == "degraded":
+        return "warning"
     if bool(health["ok"]):
         return "success"
     if adapter_key == "clamav" and health["status"] in {"unreachable", "unexpected"}:
         return "danger"
     if adapter_key == "yara" and health["status"] in {"not configured", "no rules", "unavailable"}:
         return "danger"
+    if adapter_key == "microsoft_defender" and health["status"] in {
+        "permission denied",
+        "unexpected",
+        "unavailable",
+    }:
+        return "danger"
     return "neutral"
 
 
 def render_engine_actions(instance: EngineInstanceRecord, show_test: bool) -> str:
-    buttons = []
+    test_button = ""
+    toggle_busy_label = "Disabling..." if instance.enabled else "Enabling..."
     if show_test:
-        buttons.append(
-            f"""
-            <form action="/engines/{html.escape(instance.adapter_key)}/test" method="post">
-              <button class="secondary-action" type="submit">Test connection</button>
-            </form>
-            """
-        )
-    buttons.append(
-        f"""
-        <form action="/engines/{html.escape(instance.adapter_key)}/toggle" method="post">
-          <button class="secondary-action" type="submit">{"Disable" if instance.enabled else "Enable"}</button>
+        test_button = f"""
+        <form action="/engines/{html.escape(instance.adapter_key)}/test" method="post" data-action-form data-preserve-scroll>
+          <button class="secondary-action engine-action-primary" type="submit" data-busy-label="Testing...">Test connection</button>
         </form>
         """
-    )
-    buttons.append(
-        f"""
-        <form action="/engines/{html.escape(instance.adapter_key)}/delete" method="post">
-          <button class="danger-action" type="submit">Remove</button>
-        </form>
-        """
-    )
-    return f'<div class="engine-toolbar">{"".join(buttons)}</div>'
+    toggle_button = f"""
+    <form action="/engines/{html.escape(instance.adapter_key)}/toggle" method="post" data-action-form data-preserve-scroll>
+      <button class="secondary-action engine-action-compact" type="submit" data-busy-label="{toggle_busy_label}">{"Disable" if instance.enabled else "Enable"}</button>
+    </form>
+    """
+    remove_button = f"""
+    <form action="/engines/{html.escape(instance.adapter_key)}/delete" method="post" data-action-form data-preserve-scroll>
+      <button class="danger-action engine-action-compact" type="submit" data-busy-label="Removing...">Remove</button>
+    </form>
+    """
+    return f"""
+    <div class="engine-toolbar">
+      {test_button}
+      {toggle_button}
+      {remove_button}
+    </div>
+    """
 
 
 def render_engine_summary(
@@ -890,6 +1355,7 @@ def render_engine_summary(
       <span class="engine-summary-copy">
         <strong>{html.escape(instance.display_name)}</strong>
         <small>{html.escape(definition.description)}</small>
+        <small class="engine-definition-meta">{html.escape(definition.vendor)} · {html.escape(definition.integration_method)} · {html.escape(definition.support_state.title())}</small>
         {disabled_note}
       </span>
       <span class="engine-summary-meta">{html.escape(meta)}</span>
@@ -905,11 +1371,12 @@ def render_engine_details_shell(
     meta: str,
     body: str,
     health_overrides: dict[str, dict[str, str | bool]],
+    focus_adapter_key: str = "",
 ) -> str:
     disabled_class = " is-disabled" if not instance.enabled else ""
-    open_attr = " open" if instance.adapter_key in health_overrides else ""
+    open_attr = " open" if instance.adapter_key in health_overrides or instance.adapter_key == focus_adapter_key else ""
     return f"""
-    <details class="panel engine-secondary engine-card{disabled_class}"{open_attr}>
+    <details id="engine-{html.escape(instance.adapter_key)}" class="panel engine-secondary engine-card{disabled_class}"{open_attr}>
       {render_engine_summary(instance, status_html, meta)}
       <div class="engine-config">
         {body}
@@ -921,6 +1388,7 @@ def render_engine_details_shell(
 def render_engine_card(
     instance: EngineInstanceRecord,
     health_overrides: dict[str, dict[str, str | bool]],
+    focus_adapter_key: str = "",
 ) -> str:
     definition = adapter_definition(instance.adapter_key)
     runtime = runtime_config(instance)
@@ -975,7 +1443,7 @@ def render_engine_card(
                 <span>Settings</span>
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
               </summary>
-              <form class="settings-form embedded" action="/engines/clamav/config" method="post">
+              <form class="settings-form embedded" action="/engines/clamav/config" method="post" data-action-form data-preserve-scroll>
                 <div class="settings-section">
                   <div>
                     <h3>Connection settings</h3>
@@ -1001,7 +1469,7 @@ def render_engine_card(
                   </div>
                 </div>
                 <div class="settings-actions">
-                  <button class="primary-action" type="submit">Save ClamAV settings</button>
+                  <button class="primary-action" type="submit" data-busy-label="Saving...">Save ClamAV settings</button>
                 </div>
               </form>
             </details>
@@ -1012,6 +1480,7 @@ def render_engine_card(
             meta=meta,
             body=body,
             health_overrides=health_overrides,
+            focus_adapter_key=focus_adapter_key,
         )
 
     if instance.adapter_key == "yara":
@@ -1046,7 +1515,7 @@ def render_engine_card(
                 <span>Settings</span>
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
               </summary>
-              <form class="settings-form embedded" action="/engines/yara/config" method="post">
+              <form class="settings-form embedded" action="/engines/yara/config" method="post" data-action-form data-preserve-scroll>
                 <div class="settings-section">
                   <div>
                     <h3>Runtime settings</h3>
@@ -1068,7 +1537,7 @@ def render_engine_card(
                   </div>
                 </div>
                 <div class="settings-actions">
-                  <button class="primary-action" type="submit">Save YARA settings</button>
+                  <button class="primary-action" type="submit" data-busy-label="Saving...">Save YARA settings</button>
                 </div>
               </form>
             </details>
@@ -1080,7 +1549,7 @@ def render_engine_card(
                 </div>
                 <span class="pill neutral">{html.escape(str(runtime["rule_count"]))} enabled</span>
               </div>
-              <form class="rule-upload" action="/engines/yara/rules" method="post" enctype="multipart/form-data">
+              <form class="rule-upload" action="/engines/yara/rules" method="post" enctype="multipart/form-data" data-action-form data-preserve-scroll>
                 <label>
                   Upload rule file
                   <input type="file" name="rule_file" accept=".yar,.yara">
@@ -1095,7 +1564,7 @@ def render_engine_card(
                   <textarea name="rule_body" rows="7" placeholder="rule sample_rule {{ condition: true }}"></textarea>
                 </label>
                 <div class="settings-actions">
-                  <button class="primary-action" type="submit">Add rule</button>
+                  <button class="primary-action" type="submit" data-busy-label="Saving...">Add rule</button>
                 </div>
               </form>
               <div class="rule-table">
@@ -1116,6 +1585,100 @@ def render_engine_card(
             meta=meta,
             body=body,
             health_overrides=health_overrides,
+            focus_adapter_key=focus_adapter_key,
+        )
+
+    if instance.adapter_key == "microsoft_defender":
+        form_values = microsoft_defender_form_values(instance)
+        fields = [
+            ("Adapter", "local PowerShell / CLI"),
+            ("Execution mode", str(runtime["execution_mode"])),
+            ("Default scan", str(runtime["default_scan_type"])),
+            ("Timeout", f'{runtime["timeout_seconds"]}s'),
+            ("Support state", definition.support_state.title()),
+        ]
+        field_html = "\n".join(
+            f"""
+            <div>
+              <span>{html.escape(label)}</span>
+              <strong>{html.escape(value)}</strong>
+            </div>
+            """
+            for label, value in fields
+        )
+        update_checked = " checked" if str(form_values["update_before_scan"]).lower() in {"1", "true", "yes", "on"} else ""
+        realtime_checked = " checked" if str(form_values["require_real_time_enabled"]).lower() in {"1", "true", "yes", "on"} else ""
+        body = f"""
+            <div class="config-grid">{field_html}</div>
+            <div class="engine-health">
+              <div>
+                <span>Last check</span>
+                <strong>{html.escape(str(health["detail"]))}</strong>
+              </div>
+              {render_engine_actions(instance, show_test=instance.enabled)}
+            </div>
+            <details class="engine-settings-drawer">
+              <summary>
+                <span>Settings</span>
+                <span class="engine-expand-indicator" aria-hidden="true"></span>
+              </summary>
+              <form class="settings-form embedded" action="/engines/microsoft_defender/config" method="post" data-action-form data-preserve-scroll>
+                <div class="settings-section">
+                  <div>
+                    <h3>Runtime settings</h3>
+                    <p>Research-phase local Windows integration. Health checks are supported; scan semantics still need lab validation.</p>
+                  </div>
+                  <div class="settings-grid">
+                    <label>
+                      execution mode
+                      <select name="microsoft_defender_execution_mode">
+                        <option value="powershell" {"selected" if form_values["execution_mode"] == "powershell" else ""}>powershell</option>
+                        <option value="mpcmdrun" {"selected" if form_values["execution_mode"] == "mpcmdrun" else ""}>mpcmdrun</option>
+                      </select>
+                    </label>
+                    <label>
+                      PowerShell path
+                      <input type="text" name="microsoft_defender_powershell_path" value="{html.escape(form_values["powershell_path"])}" placeholder="powershell.exe">
+                    </label>
+                    <label>
+                      MpCmdRun path
+                      <input type="text" name="microsoft_defender_mpcmdrun_path" value="{html.escape(form_values["mpcmdrun_path"])}" placeholder="auto">
+                    </label>
+                    <label>
+                      default scan type
+                      <select name="microsoft_defender_default_scan_type">
+                        <option value="custom" {"selected" if form_values["default_scan_type"] == "custom" else ""}>custom</option>
+                        <option value="quick" {"selected" if form_values["default_scan_type"] == "quick" else ""}>quick</option>
+                        <option value="full" {"selected" if form_values["default_scan_type"] == "full" else ""}>full</option>
+                      </select>
+                    </label>
+                    <label>
+                      timeout seconds
+                      <input type="number" name="microsoft_defender_timeout_seconds" value="{html.escape(form_values["timeout_seconds"])}" min="30" max="86400">
+                    </label>
+                    <label class="checkbox-field">
+                      <input type="checkbox" name="microsoft_defender_update_before_scan" value="true"{update_checked}>
+                      update signatures before scan
+                    </label>
+                    <label class="checkbox-field">
+                      <input type="checkbox" name="microsoft_defender_require_real_time_enabled" value="true"{realtime_checked}>
+                      require real-time protection
+                    </label>
+                  </div>
+                </div>
+                <div class="settings-actions">
+                  <button class="primary-action" type="submit" data-busy-label="Saving...">Save Defender settings</button>
+                </div>
+              </form>
+            </details>
+        """
+        return render_engine_details_shell(
+            instance,
+            status_html=status_html,
+            meta=meta,
+            body=body,
+            health_overrides=health_overrides,
+            focus_adapter_key=focus_adapter_key,
         )
 
     fields = [
@@ -1149,6 +1712,7 @@ def render_engine_card(
         meta=meta,
         body=body,
         health_overrides=health_overrides,
+        focus_adapter_key=focus_adapter_key,
     )
 
 
@@ -1358,6 +1922,10 @@ def status_pill(status: str) -> str:
         "completed": "success",
         "skipped": "neutral",
         "failed": "danger",
+        "offline": "danger",
+        "error": "danger",
+        "idle": "success",
+        "starting": "warning",
         "running": "warning",
         "partial": "warning",
     }
@@ -1595,7 +2163,7 @@ def coverage_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRe
     if scan.status == "queued":
         return "Required engines have not started yet."
     if scan.status == "running":
-        return "Required engines are being executed by the worker."
+        return "Required engines are being executed by the worker. Missing engines may be marked skipped after the orchestration wait window."
     return coverage_detail_text(results)
 
 
@@ -1655,16 +2223,136 @@ def detection_summary_card_class(results: list[EngineResultRecord]) -> str:
     return "summary-wide detection-summary-card success"
 
 
-def render_recent_scan_rows(scans: list[ScanRecord], can_select: bool) -> str:
-    if not scans:
-        colspan = 7 if can_select else 6
-        return f'<tr><td class="empty-cell" colspan="{colspan}">No scans submitted yet.</td></tr>'
+def dashboard_verdict_key(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
+    if scan.status in {"queued", "running"}:
+        return "pending"
 
-    rows = []
+    detected, total = detection_summary(results)
+    if total == 0:
+        return "metadata_only"
+    if detected > 0:
+        return "malicious"
+    return "undetected"
+
+
+def scan_matches_recent_filters(
+    scan: ScanRecord,
+    results: list[EngineResultRecord],
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+) -> bool:
+    normalized_query = query.strip().lower()
+    if normalized_query:
+        search_blob = " ".join(
+            [
+                scan.original_filename,
+                scan.case_name,
+                scan.sha256,
+                scan.sha1,
+                scan.md5,
+                scan.priority,
+                scan.note,
+            ]
+        ).lower()
+        if normalized_query not in search_blob:
+            return False
+
+    if status_filter and status_filter != "all":
+        if status_filter == "active":
+            if scan.status not in {"queued", "running"}:
+                return False
+        elif scan.status != status_filter:
+            return False
+
+    if verdict_filter and verdict_filter != "all":
+        if dashboard_verdict_key(scan, results) != verdict_filter:
+            return False
+
+    return True
+
+
+def filter_recent_scans(
+    scans: list[ScanRecord],
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+) -> tuple[list[ScanRecord], dict[int, list[EngineResultRecord]]]:
+    results_by_scan: dict[int, list[EngineResultRecord]] = {}
+    filtered_scans = []
     for scan in scans:
         engine_results = list_engine_results(scan.id)
+        results_by_scan[scan.id] = engine_results
+        if scan_matches_recent_filters(scan, engine_results, query, status_filter, verdict_filter):
+            filtered_scans.append(scan)
+    return filtered_scans, results_by_scan
+
+
+def select_option(value: str, label: str, selected_value: str) -> str:
+    selected = " selected" if value == selected_value else ""
+    return f'<option value="{html.escape(value)}"{selected}>{html.escape(label)}</option>'
+
+
+def render_recent_scan_filters(query: str, status_filter: str, verdict_filter: str) -> str:
+    return f"""
+    <form class="scan-filter-bar" action="/" method="get">
+      <label class="scan-search-field">
+        <span>Search</span>
+        <input type="search" name="q" value="{html.escape(query)}" placeholder="File, case, hash">
+      </label>
+      <label>
+        <span>Status</span>
+        <select name="status">
+          {select_option("all", "All statuses", status_filter)}
+          {select_option("active", "Active", status_filter)}
+          {select_option("queued", "Queued", status_filter)}
+          {select_option("running", "Running", status_filter)}
+          {select_option("completed", "Completed", status_filter)}
+          {select_option("partial", "Partial", status_filter)}
+          {select_option("failed", "Failed", status_filter)}
+        </select>
+      </label>
+      <label>
+        <span>Verdict</span>
+        <select name="verdict">
+          {select_option("all", "All verdicts", verdict_filter)}
+          {select_option("pending", "Pending", verdict_filter)}
+          {select_option("malicious", "Malicious", verdict_filter)}
+          {select_option("undetected", "Undetected", verdict_filter)}
+          {select_option("metadata_only", "Metadata only", verdict_filter)}
+        </select>
+      </label>
+      <div class="scan-filter-actions">
+        <button class="primary-action compact-action" type="submit">Apply</button>
+        <a class="secondary-action compact-action" href="/">Reset</a>
+      </div>
+    </form>
+    """
+
+
+def render_recent_scan_rows(
+    scans: list[ScanRecord],
+    can_select: bool,
+    results_by_scan: dict[int, list[EngineResultRecord]] | None = None,
+    empty_message: str = "No scans submitted yet.",
+) -> str:
+    if not scans:
+        colspan = 7 if can_select else 6
+        return f'<tr><td class="empty-cell" colspan="{colspan}">{html.escape(empty_message)}</td></tr>'
+
+    rows = []
+    cached_results = results_by_scan or {}
+    for scan in scans:
+        engine_results = cached_results.get(scan.id)
+        if engine_results is None:
+            engine_results = list_engine_results(scan.id)
         detection_tone = detection_summary_tone_for_scan(scan, engine_results)
         file_tone_class = "danger" if detection_tone == "danger" else ""
+        pending_icon = (
+            '<span class="scan-alert-icon" aria-hidden="true" title="Scan not completed">!</span>'
+            if scan.status != "completed"
+            else ""
+        )
         select_cell = (
             f"""
               <td class="select-cell">
@@ -1680,7 +2368,7 @@ def render_recent_scan_rows(scans: list[ScanRecord], can_select: bool) -> str:
               {select_cell}
               <td>
                 <div class="table-link {file_tone_class}">
-                  <strong>{html.escape(scan.original_filename)}</strong>
+                  <strong><span class="scan-file-label">{pending_icon}<span>{html.escape(scan.original_filename)}</span></span></strong>
                   <small>{html.escape(scan.case_name)}</small>
                 </div>
               </td>
@@ -1758,6 +2446,12 @@ def parse_json_value(value: str, fallback: object) -> object:
     except json.JSONDecodeError:
         return fallback
     return parsed
+
+
+def report_filename_base(scan: ScanRecord) -> str:
+    stem = Path(scan.original_filename).stem or f"scan-{scan.id}"
+    clean = "".join(char if char.isalnum() else "-" for char in stem).strip("-")
+    return clean or f"scan-{scan.id}"
 
 
 def result_findings(result: EngineResultRecord) -> list[dict[str, object]]:
@@ -1899,6 +2593,17 @@ def finding_classification_html(finding: dict[str, object]) -> str:
         f'<span class="finding-tag">{html.escape(chip)}</span>'
         for chip in chips[:6]
     ) + "</div>"
+
+
+def finding_classification_values(finding: dict[str, object]) -> list[str]:
+    category = str(finding.get("category") or finding.get("type") or "")
+    tags = finding.get("tags")
+    clean_tags = [str(tag) for tag in tags if str(tag)] if isinstance(tags, list) else []
+    values = []
+    if category:
+        values.append(category.replace("_", " ").title())
+    values.extend(tag for tag in clean_tags if tag.lower() != category.lower())
+    return unique_values(values, limit=6)
 
 
 def unique_values(values: list[str], limit: int = 4) -> list[str]:
@@ -2116,10 +2821,405 @@ def render_coverage_notice(scan: ScanRecord, results: list[EngineResultRecord]) 
         """
 
 
+def report_finding_rows(results: list[EngineResultRecord]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for result in results:
+        for finding in result_findings(result):
+            source = str(finding.get("source") or result.engine_name)
+            title = str(finding.get("title") or result.signature or "Detection")
+            finding_type = str(finding.get("type") or "finding").replace("_", " ").title()
+            severity = str(finding.get("severity") or result.severity)
+            confidence = int(finding.get("confidence") or result.confidence or 0)
+            action = str(finding.get("action") or "detected").replace("_", " ").title()
+            matched = matched_evidence_for_finding(finding, result)
+            rows.append(
+                {
+                    "engine": source,
+                    "status": result.status,
+                    "title": title,
+                    "finding": finding_type,
+                    "severity": severity,
+                    "confidence": confidence,
+                    "action": action,
+                    "matched_evidence": matched if isinstance(matched, list) else [str(matched)],
+                    "classification": finding_classification_values(finding),
+                    "evidence": fallback_finding_detail_payload(finding, result),
+                }
+            )
+    return rows
+
+
+def build_scan_report_payload(
+    scan: ScanRecord,
+    engine_results: list[EngineResultRecord],
+) -> dict[str, object]:
+    assessment = calculate_risk(engine_results)
+    verdict = scan.verdict if scan.risk_score is not None else assessment.verdict
+    risk_score = scan.risk_score if scan.risk_score is not None else assessment.score
+    findings = report_finding_rows(engine_results)
+    coverage_ran, coverage_total, coverage_unavailable = required_engine_coverage(engine_results)
+
+    return {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "scan": {
+            "id": scan.id,
+            "filename": scan.original_filename,
+            "case_name": scan.case_name,
+            "priority": scan.priority,
+            "status": scan.status,
+            "verdict": verdict,
+            "risk_score": risk_score,
+            "created_at": scan.created_at,
+            "started_at": scan.started_at,
+            "completed_at": scan.completed_at,
+            "failed_at": scan.failed_at,
+            "attempt_count": scan.attempt_count,
+            "last_error": scan.last_error,
+            "note": scan.note,
+            "content_type": scan.content_type,
+            "size_bytes": scan.size_bytes,
+            "hashes": {
+                "md5": scan.md5,
+                "sha1": scan.sha1,
+                "sha256": scan.sha256,
+            },
+        },
+        "summary": {
+            "detection": {
+                "label": detection_summary_text_for_scan(scan, engine_results),
+                "detail": detection_detail_text_for_scan(scan, engine_results),
+                "detected_engines": detected_engine_names(engine_results),
+            },
+            "coverage": {
+                "label": coverage_summary_text_for_scan(scan, engine_results),
+                "detail": coverage_detail_text_for_scan(scan, engine_results),
+                "ran": coverage_ran,
+                "total": coverage_total,
+                "unavailable": coverage_unavailable,
+            },
+            "assessment": {
+                "score": risk_score,
+                "verdict": verdict,
+                "reasons": assessment.reasons,
+            },
+        },
+        "findings": findings,
+        "engine_results": [
+            {
+                "engine_name": result.engine_name,
+                "engine_version": result.engine_version,
+                "signature_version": result.signature_version,
+                "status": result.status,
+                "detected": result.detected,
+                "signature": result.signature,
+                "severity": result.severity,
+                "confidence": result.confidence,
+                "duration_ms": result.duration_ms,
+                "error_message": result.error_message,
+                "raw_output": result.raw_output,
+                "details": parse_json_value(result.details_json, {}),
+                "findings": result_findings(result),
+                "created_at": result.created_at,
+            }
+            for result in engine_results
+        ],
+    }
+
+
+def csv_cell(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (list, tuple, set)):
+        return "; ".join(csv_cell(item) for item in value)
+    if isinstance(value, dict):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return " ".join(str(value).split())
+
+
+def build_scan_report_csv(scan: ScanRecord, engine_results: list[EngineResultRecord]) -> str:
+    payload = build_scan_report_payload(scan, engine_results)
+    summary = payload["summary"]
+    findings = payload["findings"]
+    assessment = summary["assessment"]
+    detection = summary["detection"]
+    coverage = summary["coverage"]
+    output = io.StringIO(newline="")
+    fieldnames = [
+        "section",
+        "scan_id",
+        "filename",
+        "sha256",
+        "status",
+        "verdict",
+        "risk_score",
+        "engine",
+        "detected",
+        "severity",
+        "confidence",
+        "finding",
+        "signature",
+        "matched_evidence",
+        "duration_ms",
+        "error_message",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+
+    def write_row(**values: object) -> None:
+        base = {
+            "scan_id": scan.id,
+            "filename": scan.original_filename,
+            "sha256": scan.sha256,
+            "status": scan.status,
+            "verdict": assessment["verdict"],
+            "risk_score": assessment["score"],
+        }
+        base.update(values)
+        writer.writerow({key: csv_cell(base.get(key)) for key in fieldnames})
+
+    write_row(
+        section="summary",
+        finding=detection["label"],
+        matched_evidence=", ".join(detection["detected_engines"]),
+        error_message="" if not coverage["unavailable"] else coverage["detail"],
+    )
+
+    for finding in findings:
+        write_row(
+            section="finding",
+            engine=finding["engine"],
+            detected=finding["status"] == "completed",
+            severity=finding["severity"],
+            confidence=finding["confidence"],
+            finding=finding["finding"],
+            signature=finding["title"],
+            matched_evidence=finding["matched_evidence"],
+        )
+
+    for result in engine_results:
+        write_row(
+            section="engine_result",
+            engine=result.engine_name,
+            detected=result.detected,
+            severity=result.severity,
+            confidence=result.confidence,
+            signature=result.signature,
+            duration_ms=result.duration_ms,
+            error_message=result.error_message,
+        )
+
+    return output.getvalue()
+
+
+def report_shell(title: str, body: str) -> str:
+    css_version = int(CSS_PATH.stat().st_mtime) if CSS_PATH.exists() else 1
+    return f"""
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>{title} | MASP Report</title>
+        <link rel="stylesheet" href="/static/css/app.css?v={css_version}">
+      </head>
+      <body class="report-body">
+        {body}
+        <script>
+          function printReport() {{
+            window.print();
+          }}
+        </script>
+      </body>
+    </html>
+    """
+
+
+def render_report_page(scan: ScanRecord, engine_results: list[EngineResultRecord]) -> str:
+    payload = build_scan_report_payload(scan, engine_results)
+    summary = payload["summary"]
+    findings = payload["findings"]
+    assessment = summary["assessment"]
+    detection = summary["detection"]
+    coverage = summary["coverage"]
+    report_title = f"Scan report #{scan.id}"
+    finding_rows = "\n".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(str(item['engine']))}</strong></td>
+          <td>{severity_pill(str(item['severity']))}</td>
+          <td>{html.escape(str(item['finding']))}</td>
+          <td>{html.escape(str(item['title']))}</td>
+          <td>{html.escape(', '.join(str(value) for value in item['matched_evidence']))}</td>
+          <td>{html.escape(', '.join(str(value) for value in item['classification'])) or '-'}</td>
+        </tr>
+        """
+        for item in findings
+    ) or """
+        <tr><td class="empty-cell" colspan="6">No normalized findings were produced for this scan.</td></tr>
+    """
+    engine_rows = "\n".join(
+        f"""
+        <tr{' class="engine-detected-row"' if result.detected and result.status == 'completed' else ''}>
+          <td><strong>{html.escape(result.engine_name)}</strong></td>
+          <td>{status_pill(result.status)}</td>
+          <td>{detected_pill(result.status, result.detected)}</td>
+          <td>{severity_pill(result.severity)}</td>
+          <td>{result.confidence}%</td>
+          <td>{html.escape(result.signature or '-')}</td>
+          <td>{html.escape(str(result.duration_ms))} ms</td>
+        </tr>
+        """
+        for result in engine_results
+    ) or """
+        <tr><td class="empty-cell" colspan="7">No engine results are available yet.</td></tr>
+    """
+    raw_output_blocks = "\n".join(
+        f"""
+        <section class="panel">
+          <div class="panel-header compact">
+            <h2>{html.escape(result.engine_name)}</h2>
+            {status_pill(result.status)}
+          </div>
+          <pre>{html.escape(result.raw_output)}</pre>
+        </section>
+        """
+        for result in engine_results
+    ) or """
+        <section class="panel">
+          <div class="panel-header compact">
+            <h2>Raw outputs</h2>
+            <span class="pill neutral">Empty</span>
+          </div>
+          <pre>No raw engine output is available for this scan yet.</pre>
+        </section>
+    """
+
+    body = f"""
+    <main class="report-shell">
+      <section class="report-header">
+        <div>
+          <p class="eyebrow">MASP analyst report</p>
+          <h1>{html.escape(scan.original_filename)}</h1>
+          <span>Generated {html.escape(str(payload['generated_at']))}</span>
+        </div>
+        <div class="row-actions">
+          <a class="secondary-action" href="/scans/{scan.id}/export.json">Export JSON</a>
+          <a class="secondary-action" href="/scans/{scan.id}/export.csv">Export CSV</a>
+          <button class="secondary-action" type="button" onclick="printReport()">Print</button>
+          <a class="row-action" href="/scans/{scan.id}">Open scan</a>
+        </div>
+      </section>
+
+      <section class="report-grid">
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Assessment</h2>
+              <p>Analyst-facing summary of the completed scan.</p>
+            </div>
+            <div class="scan-verdict-group">
+              {verdict_pill(str(assessment['verdict']))}
+              {detection_meter_for_scan(scan, engine_results)}
+            </div>
+          </div>
+          <div class="summary-grid">
+            <div><span>Case</span><strong>{html.escape(scan.case_name)}</strong></div>
+            <div><span>Priority</span><strong>{html.escape(scan.priority)}</strong></div>
+            <div><span>Status</span><strong>{html.escape(display_verdict(scan.status))}</strong></div>
+            <div><span>Risk score</span><strong>{assessment['score']} / 100</strong></div>
+            <div><span>Detection</span><strong>{html.escape(str(detection['label']))}</strong></div>
+            <div><span>Coverage</span><strong>{html.escape(str(coverage['label']))}</strong></div>
+            <div><span>Attempts</span><strong>{scan.attempt_count}</strong></div>
+            <div><span>Completed</span><strong>{html.escape(scan.completed_at or scan.created_at)}</strong></div>
+          </div>
+          <div class="reason-block">
+            <span>Reasons</span>
+            <ul>{render_risk_reasons(list(assessment['reasons']))}</ul>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header compact">
+            <h2>Sample</h2>
+            <span class="pill neutral">{format_bytes(scan.size_bytes)}</span>
+          </div>
+          <dl class="hash-list">
+            <div><dt>Filename</dt><dd>{html.escape(scan.original_filename)}</dd></div>
+            <div><dt>Content type</dt><dd>{html.escape(scan.content_type)}</dd></div>
+            <div><dt>MD5</dt><dd><code>{html.escape(scan.md5)}</code></dd></div>
+            <div><dt>SHA1</dt><dd><code>{html.escape(scan.sha1)}</code></dd></div>
+            <div><dt>SHA256</dt><dd><code>{html.escape(scan.sha256)}</code></dd></div>
+          </dl>
+        </div>
+
+        <div class="panel wide">
+          <div class="panel-header compact">
+            <h2>Normalized findings</h2>
+            <span class="pill neutral">{len(findings)} rows</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Engine</th>
+                  <th>Severity</th>
+                  <th>Finding</th>
+                  <th>Summary</th>
+                  <th>Matched evidence</th>
+                  <th>Classification</th>
+                </tr>
+              </thead>
+              <tbody>{finding_rows}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel wide">
+          <div class="panel-header compact">
+            <h2>Engine results</h2>
+            <span class="pill neutral">{len(engine_results)} results</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Engine</th>
+                  <th>Status</th>
+                  <th>Verdict</th>
+                  <th>Severity</th>
+                  <th>Confidence</th>
+                  <th>Signature</th>
+                  <th>Duration</th>
+                </tr>
+              </thead>
+              <tbody>{engine_rows}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel wide report-raw-grid">
+          <div class="panel-header compact">
+            <h2>Raw outputs</h2>
+            <span class="pill neutral">Engine debug trail</span>
+          </div>
+          <div class="report-raw-list">
+            {raw_output_blocks}
+          </div>
+        </div>
+      </section>
+    </main>
+    """
+    return report_shell(report_title, body)
+
+
 def render_scan_result(
     scan: ScanRecord,
     engine_results: list[EngineResultRecord],
     user: UserRecord,
+    message: str = "",
+    error: str = "",
 ) -> str:
     assessment = calculate_risk(engine_results)
     score = scan.risk_score if scan.risk_score is not None else assessment.score
@@ -2128,9 +3228,18 @@ def render_scan_result(
     runtime_label, runtime_value = scan_runtime_marker(scan)
     retry_action = (
         f"""
-        <form action="/scans/{scan.id}/retry" method="post">
-          <button class="secondary-action compact-action" type="submit">Retry scan</button>
+        <form action="/scans/{scan.id}/retry" method="post" data-action-form data-preserve-scroll>
+          <button class="secondary-action compact-action" type="submit" data-busy-label="Retrying...">Retry scan</button>
         </form>
+        """
+        if scan.status not in {"queued", "running"}
+        else ""
+    )
+    report_actions = (
+        f"""
+        <a class="secondary-action compact-action" href="/scans/{scan.id}/report">View report</a>
+        <a class="secondary-action compact-action" href="/scans/{scan.id}/export.json">Export JSON</a>
+        <a class="secondary-action compact-action" href="/scans/{scan.id}/export.csv">Export CSV</a>
         """
         if scan.status not in {"queued", "running"}
         else ""
@@ -2144,15 +3253,21 @@ def render_scan_result(
             worker_status_detail(worker_status),
             "warning",
         )
+    action_notice = (
+        page_notice("Scan updated", message, "success")
+        + page_notice("Action blocked", error, "danger")
+    )
     body = f"""
+    {action_notice}
     <section class="notice success-notice">
-      <div>
+      <div class="notice-copy">
         <strong>Sample accepted</strong>
         <span>{html.escape(scan.original_filename)} was uploaded and stored successfully.</span>
       </div>
-      <div class="row-actions">
+      <div class="row-actions notice-actions">
+        {report_actions}
         {retry_action}
-        <a class="row-action" href="/">Back to dashboard</a>
+        <a class="secondary-action compact-action" href="/">Back to dashboard</a>
       </div>
     </section>
     {render_coverage_notice(scan, engine_results)}
@@ -2309,17 +3424,29 @@ def logout_route(request: Request) -> RedirectResponse:
 
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request) -> str:
+def dashboard(
+    request: Request,
+    q: str = "",
+    status: str = "all",
+    verdict: str = "all",
+    message: str = "",
+    error: str = "",
+) -> str:
     user = require_user(request)
     can_manage_scans = user.role == ROLE_ADMIN
     scans = list_recent_scans()
+    status_filter = status if status in {"all", "active", "queued", "running", "completed", "partial", "failed"} else "all"
+    verdict_filter = verdict if verdict in {"all", "pending", "malicious", "undetected", "metadata_only"} else "all"
+    filtered_scans, results_by_scan = filter_recent_scans(scans, q, status_filter, verdict_filter)
+    filters_active = bool(q.strip()) or status_filter != "all" or verdict_filter != "all"
+    empty_message = "No scans match the current filters." if filters_active else "No scans submitted yet."
     counts = get_scan_counts()
     worker_status = get_worker_status()
     configured_engine_count = len(configured_engines())
     delete_actions = (
         """
-            <form id="bulk-delete-form" action="/scans/delete" method="post" data-bulk-delete-form></form>
-            <button class="toolbar-delete" type="submit" form="bulk-delete-form" data-bulk-delete hidden>Delete selected</button>
+            <form id="bulk-delete-form" action="/scans/delete" method="post" data-bulk-delete-form data-action-form data-preserve-scroll></form>
+            <button class="toolbar-delete" type="submit" form="bulk-delete-form" data-bulk-delete data-busy-label="Deleting..." hidden>Delete selected</button>
         """
         if can_manage_scans
         else '<span class="pill neutral">Read-only history</span>'
@@ -2333,7 +3460,12 @@ def dashboard(request: Request) -> str:
         if can_manage_scans
         else ""
     )
+    notice_html = (
+        page_notice("Scan queue updated", message, "success")
+        + page_notice("Action blocked", error, "danger")
+    )
     body = f"""
+    {notice_html}
     <section class="metric-grid">
       {metric_card("Samples", str(counts["total"]), "Persisted scan jobs")}
       {metric_card("Active", str(counts["running"]), "Queued or running jobs", "tone-blue")}
@@ -2346,12 +3478,13 @@ def dashboard(request: Request) -> str:
         <div class="panel-header">
           <div>
             <h2>Recent scans</h2>
-            <p>Latest submitted samples will appear here.</p>
+            <p>{len(filtered_scans)} of {len(scans)} latest samples shown.</p>
           </div>
           <div class="panel-actions">
             {delete_actions}
           </div>
         </div>
+        {render_recent_scan_filters(q, status_filter, verdict_filter)}
         <div class="table-wrap">
           <table>
             <thead>
@@ -2366,16 +3499,22 @@ def dashboard(request: Request) -> str:
               </tr>
             </thead>
             <tbody>
-              {render_recent_scan_rows(scans, can_select=can_manage_scans)}
+              {render_recent_scan_rows(filtered_scans, can_select=can_manage_scans, results_by_scan=results_by_scan, empty_message=empty_message)}
             </tbody>
           </table>
         </div>
       </div>
 
-      {render_pipeline_panel(worker_status)}
+      {render_worker_status_panel(worker_status)}
     </section>
     """
     return page_shell("Scan Dashboard", "dashboard", body, user)
+
+
+@app.get("/system", response_class=HTMLResponse)
+def system_page(request: Request) -> str:
+    user = require_admin(request)
+    return render_system_page(user)
 
 
 @app.get("/users", response_class=HTMLResponse)
@@ -2577,10 +3716,11 @@ async def create_scan(
     return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
 
 
-def delete_scan_record(scan_id: int) -> None:
+def delete_scan_record(scan_id: int) -> ScanRecord | None:
     deleted_scan = delete_scan(scan_id)
     if deleted_scan is not None:
         delete_sample_file(deleted_scan)
+    return deleted_scan
 
 
 @app.post("/scans/delete")
@@ -2589,40 +3729,97 @@ async def delete_selected_scans(
     scan_ids: list[int] = Form(default=[]),
 ) -> RedirectResponse:
     require_admin(request)
+    if not scan_ids:
+        return RedirectResponse(url=redirect_url("/", error="No scans were selected."), status_code=303)
+    deleted_count = 0
     for scan_id in scan_ids:
-        delete_scan_record(scan_id)
-    return RedirectResponse(url="/", status_code=303)
+        if delete_scan_record(scan_id) is not None:
+            deleted_count += 1
+    message = f"Deleted {deleted_count} scan." if deleted_count == 1 else f"Deleted {deleted_count} scans."
+    return RedirectResponse(url=redirect_url("/", message=message), status_code=303)
 
 
 @app.post("/scans/{scan_id}/delete")
 async def delete_single_scan(request: Request, scan_id: int) -> RedirectResponse:
     require_admin(request)
-    delete_scan_record(scan_id)
-    return RedirectResponse(url="/", status_code=303)
+    deleted_scan = delete_scan_record(scan_id)
+    if deleted_scan is None:
+        return RedirectResponse(url=redirect_url("/", error="Scan not found."), status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/", message=f"Deleted scan {deleted_scan.original_filename}."),
+        status_code=303,
+    )
 
 
 @app.post("/scans/{scan_id}/retry")
 async def retry_single_scan(request: Request, scan_id: int) -> RedirectResponse:
     require_user(request)
     if not retry_scan_job_record(scan_id):
-        raise HTTPException(status_code=400, detail="Only completed or failed scans can be retried.")
-    return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
+        return RedirectResponse(
+            url=redirect_url(f"/scans/{scan_id}", error="Only completed or failed scans can be retried."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=redirect_url(f"/scans/{scan_id}", message="Scan was queued for another run."),
+        status_code=303,
+    )
+
+
+@app.get("/scans/{scan_id}/report", response_class=HTMLResponse)
+def scan_report(request: Request, scan_id: int) -> str:
+    require_user(request)
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    engine_results = list_engine_results(scan.id)
+    return render_report_page(scan, engine_results)
+
+
+@app.get("/scans/{scan_id}/export.json")
+def scan_export_json(request: Request, scan_id: int) -> JSONResponse:
+    require_user(request)
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    engine_results = list_engine_results(scan.id)
+    payload = build_scan_report_payload(scan, engine_results)
+    filename = f"{report_filename_base(scan)}-scan-{scan.id}.json"
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/scans/{scan_id}/export.csv")
+def scan_export_csv(request: Request, scan_id: int) -> Response:
+    require_user(request)
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    engine_results = list_engine_results(scan.id)
+    csv_body = build_scan_report_csv(scan, engine_results)
+    filename = f"{report_filename_base(scan)}-scan-{scan.id}.csv"
+    return Response(
+        csv_body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/scans/{scan_id}", response_class=HTMLResponse)
-def scan_detail(request: Request, scan_id: int) -> str:
+def scan_detail(request: Request, scan_id: int, message: str = "", error: str = "") -> str:
     user = require_user(request)
     scan = get_scan(scan_id)
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
     engine_results = list_engine_results(scan.id)
-    return render_scan_result(scan, engine_results, user)
+    return render_scan_result(scan, engine_results, user, message=message, error=error)
 
 
 @app.get("/engines", response_class=HTMLResponse)
-def engines(request: Request) -> str:
+def engines(request: Request, message: str = "", error: str = "", target: str = "") -> str:
     user = require_admin(request)
-    return render_engines_page(user)
+    return render_engines_page(user, message=message, error=error, target=target)
 
 
 @app.post("/engines/add")
@@ -2631,22 +3828,47 @@ def add_engine_route(request: Request, adapter_key: str = Form(...)) -> Redirect
     try:
         add_engine(adapter_key)
     except KeyError as exc:
-        raise HTTPException(status_code=400, detail="Unknown engine adapter.") from exc
-    return RedirectResponse(url="/engines", status_code=303)
+        return RedirectResponse(
+            url=redirect_url("/engines", error="Unknown engine adapter."),
+            status_code=303,
+        )
+    definition = adapter_definition(adapter_key)
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"Added {definition.label}.", target=adapter_key),
+        status_code=303,
+    )
 
 
 @app.post("/engines/{adapter_key}/toggle")
 def toggle_engine_route(request: Request, adapter_key: str) -> RedirectResponse:
     require_admin(request)
     toggle_engine(adapter_key)
-    return RedirectResponse(url="/engines", status_code=303)
+    updated_instance = next(
+        (engine for engine in configured_engines() if engine.adapter_key == adapter_key),
+        None,
+    )
+    if updated_instance is None:
+        return RedirectResponse(url=redirect_url("/engines", error="Engine not found."), status_code=303)
+    state_label = "enabled" if updated_instance.enabled else "disabled"
+    return RedirectResponse(
+        url=redirect_url(
+            "/engines",
+            message=f"{updated_instance.display_name} {state_label}.",
+            target=adapter_key,
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/engines/{adapter_key}/delete")
 def delete_engine_route(request: Request, adapter_key: str) -> RedirectResponse:
     require_admin(request)
+    definition = adapter_definition(adapter_key)
     remove_engine(adapter_key)
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"Removed {definition.label}."),
+        status_code=303,
+    )
 
 
 @app.post("/engines/{adapter_key}/test", response_class=HTMLResponse)
@@ -2655,9 +3877,15 @@ def test_engine_route(request: Request, adapter_key: str) -> str:
     matches = [engine for engine in configured_engines() if engine.adapter_key == adapter_key]
     if not matches:
         raise HTTPException(status_code=404, detail="Engine not found.")
+    health = engine_health(matches[0])
+    tone = health_tone_for(adapter_key, health)
+    notice_tone = tone if tone in {"success", "warning", "danger"} else "success"
     return render_engines_page(
         user,
-        health_overrides={adapter_key: engine_health(matches[0])}
+        health_overrides={adapter_key: health},
+        message=str(health["detail"]),
+        target=adapter_key,
+        notice_tone=notice_tone,
     )
 
 
@@ -2679,7 +3907,10 @@ def save_clamav_config(
             "timeout_seconds": clamav_timeout_seconds.strip() or "60",
         },
     )
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message="Saved ClamAV settings.", target="clamav"),
+        status_code=303,
+    )
 
 
 @app.post("/engines/yara/config")
@@ -2698,7 +3929,44 @@ def save_yara_config(
             "timeout_seconds": yara_timeout_seconds.strip() or "30",
         },
     )
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message="Saved YARA settings.", target="yara"),
+        status_code=303,
+    )
+
+
+@app.post("/engines/microsoft_defender/config")
+def save_microsoft_defender_config(
+    request: Request,
+    microsoft_defender_execution_mode: str = Form("powershell"),
+    microsoft_defender_powershell_path: str = Form("powershell.exe"),
+    microsoft_defender_mpcmdrun_path: str = Form("auto"),
+    microsoft_defender_default_scan_type: str = Form("custom"),
+    microsoft_defender_timeout_seconds: str = Form("900"),
+    microsoft_defender_update_before_scan: str = Form("false"),
+    microsoft_defender_require_real_time_enabled: str = Form("false"),
+) -> RedirectResponse:
+    require_admin(request)
+    update_engine_config(
+        "microsoft_defender",
+        {
+            "execution_mode": microsoft_defender_execution_mode.strip() or "powershell",
+            "powershell_path": microsoft_defender_powershell_path.strip() or "powershell.exe",
+            "mpcmdrun_path": microsoft_defender_mpcmdrun_path.strip() or "auto",
+            "default_scan_type": microsoft_defender_default_scan_type.strip() or "custom",
+            "timeout_seconds": microsoft_defender_timeout_seconds.strip() or "900",
+            "update_before_scan": "true" if microsoft_defender_update_before_scan.strip().lower() in {"1", "true", "yes", "on"} else "false",
+            "require_real_time_enabled": "true" if microsoft_defender_require_real_time_enabled.strip().lower() in {"1", "true", "yes", "on"} else "false",
+        },
+    )
+    return RedirectResponse(
+        url=redirect_url(
+            "/engines",
+            message="Saved Microsoft Defender settings.",
+            target="microsoft_defender",
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/engines/yara/rules")
@@ -2713,24 +3981,33 @@ async def upload_yara_rule(
         if rule_file is not None and rule_file.filename:
             content = await rule_file.read()
             save_yara_rule(rule_file.filename, content)
+            saved_rule_name = rule_file.filename
         else:
             save_yara_rule(rule_name, rule_body.encode("utf-8"))
+            saved_rule_name = rule_name
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"Saved YARA rule {saved_rule_name}.", target="yara"),
+        status_code=303,
+    )
 
 
 @app.post("/engines/yara/rules/{rule_name}/toggle")
 def toggle_yara_rule_route(request: Request, rule_name: str) -> RedirectResponse:
     require_admin(request)
     try:
-        toggle_yara_rule(rule_name)
+        toggled_path = toggle_yara_rule(rule_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="YARA rule not found.") from exc
-    return RedirectResponse(url="/engines", status_code=303)
+    action = "Disabled" if str(toggled_path.name).endswith(".disabled") else "Enabled"
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"{action} YARA rule {rule_name}.", target="yara"),
+        status_code=303,
+    )
 
 
 @app.post("/engines/yara/rules/{rule_name}/delete")
@@ -2742,29 +4019,45 @@ def delete_yara_rule_route(request: Request, rule_name: str) -> RedirectResponse
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="YARA rule not found.") from exc
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"Deleted YARA rule {rule_name}.", target="yara"),
+        status_code=303,
+    )
 
 
 def render_engines_page(
     user: UserRecord,
     health_overrides: dict[str, dict[str, str | bool]] | None = None,
+    message: str = "",
+    error: str = "",
+    target: str = "",
+    notice_tone: str = "success",
 ) -> str:
     overrides = health_overrides or {}
+    notice_html = (
+        page_notice("Engine action complete", message, notice_tone)
+        + page_notice("Action blocked", error, "danger")
+    )
     engine_cards_html = "\n".join(
-        render_engine_card(instance, overrides) for instance in configured_engines()
+        render_engine_card(instance, overrides, focus_adapter_key=target) for instance in configured_engines()
     )
     roadmap_rows_html = "\n".join(
         f"""
         <div class="engine-row muted">
-          {render_engine_logo(str(item["short_label"]), str(item["label"]).lower().replace(" ", "_"))}
-          <div><strong>{html.escape(item["label"])}</strong><small>{html.escape(item["description"])}</small></div>
-          <span class="pill neutral">{html.escape(item["status"])}</span>
+          {render_engine_logo(item.short_label, item.label.lower().replace(" ", "_"))}
+          <div>
+            <strong>{html.escape(item.label)}</strong>
+            <small>{html.escape(item.vendor)} · {html.escape(item.product)} · {html.escape(item.integration_method)}</small>
+            <small>{html.escape(item.blocker)}</small>
+          </div>
+          <span class="pill neutral">{html.escape(item.status.title())}</span>
         </div>
         """
         for item in ROADMAP_ADAPTERS
     )
 
     body = f"""
+    {notice_html}
     {render_add_engine_panel()}
     {engine_cards_html}
     <section class="panel engine-secondary">

@@ -1,0 +1,8 @@
+SAMPLE_PATH=<TEMP>\masp-defender-clean.txt
+COMMAND=<MpCmdRun.exe> -Scan -ScanType 3 -File <TEMP>\masp-defender-clean.txt -DisableRemediation
+RETURNCODE=0
+OUTPUT_BEGIN
+Scan starting...
+Scan finished.
+Scanning <TEMP>\masp-defender-clean.txt found no threats.
+OUTPUT_END
