@@ -4,7 +4,7 @@ import io
 import json
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -92,6 +92,7 @@ app = FastAPI(
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 CSS_PATH = STATIC_DIR / "css" / "app.css"
+LEGACY_CSS_PATH = STATIC_DIR / "css" / "legacy.css"
 
 init_db()
 seed_default_users()
@@ -103,54 +104,51 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 def nav_icon(icon_key: str) -> str:
     icons = {
         "dashboard": """
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="3" width="6" height="6" rx="1.4"></rect>
-          <rect x="11" y="3" width="6" height="9" rx="1.4"></rect>
-          <rect x="3" y="11" width="6" height="6" rx="1.4"></rect>
-          <rect x="11" y="14" width="6" height="3" rx="1.4"></rect>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="9" rx="1.5"></rect>
+          <rect x="14" y="3" width="7" height="5" rx="1.5"></rect>
+          <rect x="14" y="12" width="7" height="9" rx="1.5"></rect>
+          <rect x="3" y="16" width="7" height="5" rx="1.5"></rect>
         </svg>
         """,
         "new_scan": """
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="8.5" cy="8.5" r="4.5"></circle>
-          <path d="M12 12l4.5 4.5"></path>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m21 21-4.35-4.35"></path>
         </svg>
         """,
         "account": """
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="10" cy="6.5" r="3"></circle>
-          <path d="M4 16c1.2-2.7 3.2-4 6-4s4.8 1.3 6 4"></path>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"></circle>
+          <path d="M6 20c1.7-3.1 4-4.7 6-4.7s4.3 1.6 6 4.7"></path>
         </svg>
         """,
         "logout": """
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"></path>
-          <path d="M12 6l4 4-4 4"></path>
-          <path d="M7 10h9"></path>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"></path>
+          <path d="m16 17 5-5-5-5"></path>
+          <path d="M21 12H9"></path>
         </svg>
         """,
         "engines": """
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="6" cy="10" r="2.2"></circle>
-          <circle cx="14" cy="6" r="2.2"></circle>
-          <circle cx="14" cy="14" r="2.2"></circle>
-          <path d="M7.9 8.9 12.1 7.1"></path>
-          <path d="M7.9 11.1 12.1 12.9"></path>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 6V2"></path>
+          <path d="M15 11a3 3 0 1 0-6 0v3a3 3 0 1 0 6 0z"></path>
+          <path d="M12 18v4"></path>
+          <path d="M8 20h8"></path>
         </svg>
         """,
         "system": """
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M3 13.5h3l2-7 4 9 2-6h3"></path>
-          <path d="M3 4.5h14"></path>
-          <path d="M3 17h14"></path>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
         </svg>
         """,
         "users": """
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="7" cy="7" r="2.5"></circle>
-          <path d="M2.8 15c.9-2.1 2.4-3.2 4.2-3.2S10.3 12.9 11.2 15"></path>
-          <circle cx="14.5" cy="8" r="1.9"></circle>
-          <path d="M12.7 14.2c.5-1.4 1.5-2.2 3-2.2 1 0 1.8.4 2.5 1.2"></path>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          <circle cx="8.5" cy="7" r="4"></circle>
+          <path d="M20 8v6"></path>
+          <path d="M23 11h-6"></path>
         </svg>
         """,
     }
@@ -165,6 +163,7 @@ def page_shell(
     refresh_seconds: int | None = None,
 ) -> str:
     css_version = int(CSS_PATH.stat().st_mtime) if CSS_PATH.exists() else 1
+    legacy_css_version = int(LEGACY_CSS_PATH.stat().st_mtime) if LEGACY_CSS_PATH.exists() else 1
     refresh_html = (
         f'<meta http-equiv="refresh" content="{refresh_seconds}">'
         if refresh_seconds is not None
@@ -212,11 +211,14 @@ def page_shell(
               const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
               const theme = savedTheme || (prefersDark ? "dark" : "light");
               document.documentElement.setAttribute("data-theme", theme);
+              document.documentElement.classList.toggle("dark", theme === "dark");
             }} catch (error) {{
               document.documentElement.setAttribute("data-theme", "light");
+              document.documentElement.classList.remove("dark");
             }}
           }})();
         </script>
+        <link rel="stylesheet" href="/static/css/legacy.css?v={legacy_css_version}">
         <link rel="stylesheet" href="/static/css/app.css?v={css_version}">
       </head>
       <body>
@@ -282,11 +284,14 @@ def page_shell(
           const evidenceDrawer = document.querySelector("[data-evidence-drawer]");
           const themeToggle = document.querySelector("[data-theme-toggle]");
           const themeLabel = document.querySelector("[data-theme-label]");
+          const actionForms = document.querySelectorAll("form[data-action-form]");
           const selectedScanIds = new Set();
           const clickTimers = new Map();
+          const scrollRestoreKey = "masp-scroll-restore";
 
           const applyTheme = (theme) => {{
             document.documentElement.setAttribute("data-theme", theme);
+            document.documentElement.classList.toggle("dark", theme === "dark");
             try {{
               localStorage.setItem("masp-theme", theme);
             }} catch (error) {{
@@ -298,6 +303,20 @@ def page_shell(
           }};
 
           applyTheme(document.documentElement.getAttribute("data-theme") || "light");
+
+          try {{
+            const rawScrollState = window.sessionStorage.getItem(scrollRestoreKey);
+            if (rawScrollState && !window.location.hash) {{
+              const scrollState = JSON.parse(rawScrollState);
+              const isFresh = typeof scrollState.ts === "number" && (Date.now() - scrollState.ts) < 15000;
+              if (isFresh && scrollState.path === window.location.pathname && typeof scrollState.scrollY === "number") {{
+                window.scrollTo({{ top: scrollState.scrollY }});
+              }}
+            }}
+            window.sessionStorage.removeItem(scrollRestoreKey);
+          }} catch (error) {{
+            console.warn("Scroll state could not be restored", error);
+          }}
 
           if (themeToggle) {{
             themeToggle.addEventListener("click", () => {{
@@ -386,6 +405,40 @@ def page_shell(
             uploadForm.addEventListener("submit", () => {{
               submitButton.textContent = "Uploading...";
               submitButton.disabled = true;
+            }});
+          }}
+
+          if (actionForms.length) {{
+            actionForms.forEach((form) => {{
+              form.addEventListener("submit", (event) => {{
+                const submitter = event.submitter instanceof HTMLElement
+                  ? event.submitter
+                  : form.querySelector("button[type='submit'], input[type='submit']");
+                const busyLabel = submitter && submitter.getAttribute("data-busy-label");
+
+                if (form.hasAttribute("data-preserve-scroll")) {{
+                  try {{
+                    window.sessionStorage.setItem(scrollRestoreKey, JSON.stringify({{
+                      path: window.location.pathname,
+                      scrollY: window.scrollY,
+                      ts: Date.now(),
+                    }}));
+                  }} catch (error) {{
+                    console.warn("Scroll state could not be saved", error);
+                  }}
+                }}
+
+                form.querySelectorAll("button[type='submit'], input[type='submit']").forEach((button) => {{
+                  button.disabled = true;
+                }});
+
+                if (submitter) {{
+                  if (busyLabel) {{
+                    submitter.textContent = busyLabel;
+                  }}
+                  submitter.disabled = true;
+                }}
+              }});
             }});
           }}
 
@@ -523,6 +576,7 @@ def page_shell(
 
 def auth_shell(title: str, body: str) -> str:
     css_version = int(CSS_PATH.stat().st_mtime) if CSS_PATH.exists() else 1
+    legacy_css_version = int(LEGACY_CSS_PATH.stat().st_mtime) if LEGACY_CSS_PATH.exists() else 1
     return f"""
     <!doctype html>
     <html lang="en">
@@ -538,11 +592,14 @@ def auth_shell(title: str, body: str) -> str:
               const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
               const theme = savedTheme || (prefersDark ? "dark" : "light");
               document.documentElement.setAttribute("data-theme", theme);
+              document.documentElement.classList.toggle("dark", theme === "dark");
             }} catch (error) {{
               document.documentElement.setAttribute("data-theme", "light");
+              document.documentElement.classList.remove("dark");
             }}
           }})();
         </script>
+        <link rel="stylesheet" href="/static/css/legacy.css?v={legacy_css_version}">
         <link rel="stylesheet" href="/static/css/app.css?v={css_version}">
       </head>
       <body class="auth-body">
@@ -627,6 +684,28 @@ def page_notice(title: str, message: str, tone: str = "success") -> str:
         f"<span>{html.escape(message)}</span>"
         f"</div></section>"
     )
+
+
+def redirect_url(
+    path: str,
+    *,
+    message: str = "",
+    error: str = "",
+    target: str = "",
+) -> str:
+    query_params: dict[str, str] = {}
+    if message:
+        query_params["message"] = message
+    if error:
+        query_params["error"] = error
+    if target:
+        query_params["target"] = target
+
+    query = urlencode(query_params)
+    url = f"{path}?{query}" if query else path
+    if target:
+        url = f"{url}#engine-{quote(target, safe='')}"
+    return url
 
 
 def render_login_page(next_url: str = "/", error: str = "", message: str = "") -> str:
@@ -1073,11 +1152,11 @@ def render_yara_rule_rows() -> str:
               <span>{format_bytes(int(rule["size_bytes"]))}</span>
               <span>{html.escape(format_unix_timestamp(int(rule["modified_at"])))}</span>
               <div class="rule-actions">
-                <form action="/engines/yara/rules/{encoded_name}/toggle" method="post">
-                  <button class="secondary-action compact-action" type="submit">{toggle_label}</button>
+                <form action="/engines/yara/rules/{encoded_name}/toggle" method="post" data-action-form data-preserve-scroll>
+                  <button class="secondary-action compact-action" type="submit" data-busy-label="{html.escape('Disabling...' if enabled else 'Enabling...')}">{toggle_label}</button>
                 </form>
-                <form action="/engines/yara/rules/{encoded_name}/delete" method="post">
-                  <button class="danger-action compact-action" type="submit">Delete</button>
+                <form action="/engines/yara/rules/{encoded_name}/delete" method="post" data-action-form data-preserve-scroll>
+                  <button class="danger-action compact-action" type="submit" data-busy-label="Deleting...">Delete</button>
                 </form>
               </div>
             </div>
@@ -1125,6 +1204,12 @@ def render_engine_logo(label: str, key: str) -> str:
 def render_add_engine_panel() -> str:
     available_adapters = available_adapter_definitions()
     if available_adapters:
+        available_count = len(available_adapters)
+        available_label = (
+            f"{available_count} adapter available"
+            if available_count == 1
+            else f"{available_count} adapters available"
+        )
         adapter_rows_html = "\n".join(
             f"""
             <label class="adapter-option">
@@ -1140,18 +1225,56 @@ def render_add_engine_panel() -> str:
             for index, definition in enumerate(available_adapters)
         )
         description = "Add adapters from the supported engine catalog, then configure them per node."
-        button_disabled = ""
         pill = '<span class="pill success">Catalog ready</span>'
+        registry_body = f"""
+      <details class="add-engine-drawer">
+        <summary class="add-engine-summary">
+          <div class="add-engine-summary-copy">
+            <span class="add-engine-summary-eyebrow">Adapter catalog</span>
+            <strong>Add engine adapter</strong>
+            <small>{available_label}. Register it here, then configure health checks and runtime settings below.</small>
+          </div>
+          <div class="add-engine-summary-actions">
+            <span class="add-engine-trigger">
+              <span class="add-engine-trigger-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 5v14"></path>
+                  <path d="M5 12h14"></path>
+                </svg>
+              </span>
+              <span>Browse catalog</span>
+            </span>
+            <span class="engine-expand-indicator" aria-hidden="true"></span>
+          </div>
+        </summary>
+        <form class="add-engine-form" action="/engines/add" method="post" data-action-form data-preserve-scroll>
+          <div class="adapter-scroll-list">
+            {adapter_rows_html}
+          </div>
+          <div class="add-engine-form-footer">
+            <div class="add-engine-form-note">
+              <strong>Register selected adapter</strong>
+              <span>The engine is added to this node first. Connection tests and runtime overrides stay editable afterward.</span>
+            </div>
+            <button class="primary-action add-engine-submit" type="submit" data-busy-label="Adding...">Add selected engine</button>
+          </div>
+        </form>
+      </details>
+        """
     else:
-        adapter_rows_html = """
+        empty_state_html = """
         <div class="adapter-empty">
           <strong>All implemented adapters are configured</strong>
           <span>Remove an adapter to add it again, or implement a new adapter to expose it here.</span>
         </div>
         """
         description = "All implemented adapters are already configured on this node."
-        button_disabled = " disabled"
         pill = '<span class="pill neutral">No adapters left</span>'
+        registry_body = f"""
+      <div class="add-engine-empty-state">
+        {empty_state_html}
+      </div>
+        """
 
     return f"""
     <section class="panel">
@@ -1162,18 +1285,7 @@ def render_add_engine_panel() -> str:
         </div>
         {pill}
       </div>
-      <details class="add-engine-drawer">
-        <summary>
-          <span class="add-engine-trigger">Add new engine</span>
-          <span class="engine-expand-indicator" aria-hidden="true"></span>
-        </summary>
-        <form class="add-engine-form" action="/engines/add" method="post">
-          <div class="adapter-scroll-list">
-            {adapter_rows_html}
-          </div>
-          <button class="primary-action" type="submit"{button_disabled}>Add selected engine</button>
-        </form>
-      </details>
+      {registry_body}
     </section>
     """
 
@@ -1200,29 +1312,28 @@ def health_tone_for(adapter_key: str, health: dict[str, str | bool]) -> str:
 
 def render_engine_actions(instance: EngineInstanceRecord, show_test: bool) -> str:
     test_button = ""
+    toggle_busy_label = "Disabling..." if instance.enabled else "Enabling..."
     if show_test:
         test_button = f"""
-        <form action="/engines/{html.escape(instance.adapter_key)}/test" method="post">
-          <button class="secondary-action engine-action-primary" type="submit">Test connection</button>
+        <form action="/engines/{html.escape(instance.adapter_key)}/test" method="post" data-action-form data-preserve-scroll>
+          <button class="secondary-action engine-action-primary" type="submit" data-busy-label="Testing...">Test connection</button>
         </form>
         """
     toggle_button = f"""
-    <form action="/engines/{html.escape(instance.adapter_key)}/toggle" method="post">
-      <button class="secondary-action engine-action-compact" type="submit">{"Disable" if instance.enabled else "Enable"}</button>
+    <form action="/engines/{html.escape(instance.adapter_key)}/toggle" method="post" data-action-form data-preserve-scroll>
+      <button class="secondary-action engine-action-compact" type="submit" data-busy-label="{toggle_busy_label}">{"Disable" if instance.enabled else "Enable"}</button>
     </form>
     """
     remove_button = f"""
-    <form action="/engines/{html.escape(instance.adapter_key)}/delete" method="post">
-      <button class="danger-action engine-action-compact" type="submit">Remove</button>
+    <form action="/engines/{html.escape(instance.adapter_key)}/delete" method="post" data-action-form data-preserve-scroll>
+      <button class="danger-action engine-action-compact" type="submit" data-busy-label="Removing...">Remove</button>
     </form>
     """
     return f"""
     <div class="engine-toolbar">
       {test_button}
-      <div class="engine-toolbar-secondary">
-        {toggle_button}
-        {remove_button}
-      </div>
+      {toggle_button}
+      {remove_button}
     </div>
     """
 
@@ -1260,11 +1371,12 @@ def render_engine_details_shell(
     meta: str,
     body: str,
     health_overrides: dict[str, dict[str, str | bool]],
+    focus_adapter_key: str = "",
 ) -> str:
     disabled_class = " is-disabled" if not instance.enabled else ""
-    open_attr = " open" if instance.adapter_key in health_overrides else ""
+    open_attr = " open" if instance.adapter_key in health_overrides or instance.adapter_key == focus_adapter_key else ""
     return f"""
-    <details class="panel engine-secondary engine-card{disabled_class}"{open_attr}>
+    <details id="engine-{html.escape(instance.adapter_key)}" class="panel engine-secondary engine-card{disabled_class}"{open_attr}>
       {render_engine_summary(instance, status_html, meta)}
       <div class="engine-config">
         {body}
@@ -1276,6 +1388,7 @@ def render_engine_details_shell(
 def render_engine_card(
     instance: EngineInstanceRecord,
     health_overrides: dict[str, dict[str, str | bool]],
+    focus_adapter_key: str = "",
 ) -> str:
     definition = adapter_definition(instance.adapter_key)
     runtime = runtime_config(instance)
@@ -1330,7 +1443,7 @@ def render_engine_card(
                 <span>Settings</span>
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
               </summary>
-              <form class="settings-form embedded" action="/engines/clamav/config" method="post">
+              <form class="settings-form embedded" action="/engines/clamav/config" method="post" data-action-form data-preserve-scroll>
                 <div class="settings-section">
                   <div>
                     <h3>Connection settings</h3>
@@ -1356,7 +1469,7 @@ def render_engine_card(
                   </div>
                 </div>
                 <div class="settings-actions">
-                  <button class="primary-action" type="submit">Save ClamAV settings</button>
+                  <button class="primary-action" type="submit" data-busy-label="Saving...">Save ClamAV settings</button>
                 </div>
               </form>
             </details>
@@ -1367,6 +1480,7 @@ def render_engine_card(
             meta=meta,
             body=body,
             health_overrides=health_overrides,
+            focus_adapter_key=focus_adapter_key,
         )
 
     if instance.adapter_key == "yara":
@@ -1401,7 +1515,7 @@ def render_engine_card(
                 <span>Settings</span>
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
               </summary>
-              <form class="settings-form embedded" action="/engines/yara/config" method="post">
+              <form class="settings-form embedded" action="/engines/yara/config" method="post" data-action-form data-preserve-scroll>
                 <div class="settings-section">
                   <div>
                     <h3>Runtime settings</h3>
@@ -1423,7 +1537,7 @@ def render_engine_card(
                   </div>
                 </div>
                 <div class="settings-actions">
-                  <button class="primary-action" type="submit">Save YARA settings</button>
+                  <button class="primary-action" type="submit" data-busy-label="Saving...">Save YARA settings</button>
                 </div>
               </form>
             </details>
@@ -1435,7 +1549,7 @@ def render_engine_card(
                 </div>
                 <span class="pill neutral">{html.escape(str(runtime["rule_count"]))} enabled</span>
               </div>
-              <form class="rule-upload" action="/engines/yara/rules" method="post" enctype="multipart/form-data">
+              <form class="rule-upload" action="/engines/yara/rules" method="post" enctype="multipart/form-data" data-action-form data-preserve-scroll>
                 <label>
                   Upload rule file
                   <input type="file" name="rule_file" accept=".yar,.yara">
@@ -1450,7 +1564,7 @@ def render_engine_card(
                   <textarea name="rule_body" rows="7" placeholder="rule sample_rule {{ condition: true }}"></textarea>
                 </label>
                 <div class="settings-actions">
-                  <button class="primary-action" type="submit">Add rule</button>
+                  <button class="primary-action" type="submit" data-busy-label="Saving...">Add rule</button>
                 </div>
               </form>
               <div class="rule-table">
@@ -1471,6 +1585,7 @@ def render_engine_card(
             meta=meta,
             body=body,
             health_overrides=health_overrides,
+            focus_adapter_key=focus_adapter_key,
         )
 
     if instance.adapter_key == "microsoft_defender":
@@ -1507,7 +1622,7 @@ def render_engine_card(
                 <span>Settings</span>
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
               </summary>
-              <form class="settings-form embedded" action="/engines/microsoft_defender/config" method="post">
+              <form class="settings-form embedded" action="/engines/microsoft_defender/config" method="post" data-action-form data-preserve-scroll>
                 <div class="settings-section">
                   <div>
                     <h3>Runtime settings</h3>
@@ -1552,7 +1667,7 @@ def render_engine_card(
                   </div>
                 </div>
                 <div class="settings-actions">
-                  <button class="primary-action" type="submit">Save Defender settings</button>
+                  <button class="primary-action" type="submit" data-busy-label="Saving...">Save Defender settings</button>
                 </div>
               </form>
             </details>
@@ -1563,6 +1678,7 @@ def render_engine_card(
             meta=meta,
             body=body,
             health_overrides=health_overrides,
+            focus_adapter_key=focus_adapter_key,
         )
 
     fields = [
@@ -1596,6 +1712,7 @@ def render_engine_card(
         meta=meta,
         body=body,
         health_overrides=health_overrides,
+        focus_adapter_key=focus_adapter_key,
     )
 
 
@@ -2206,7 +2323,7 @@ def render_recent_scan_filters(query: str, status_filter: str, verdict_filter: s
         </select>
       </label>
       <div class="scan-filter-actions">
-        <button class="secondary-action compact-action" type="submit">Apply</button>
+        <button class="primary-action compact-action" type="submit">Apply</button>
         <a class="secondary-action compact-action" href="/">Reset</a>
       </div>
     </form>
@@ -3101,6 +3218,8 @@ def render_scan_result(
     scan: ScanRecord,
     engine_results: list[EngineResultRecord],
     user: UserRecord,
+    message: str = "",
+    error: str = "",
 ) -> str:
     assessment = calculate_risk(engine_results)
     score = scan.risk_score if scan.risk_score is not None else assessment.score
@@ -3109,8 +3228,8 @@ def render_scan_result(
     runtime_label, runtime_value = scan_runtime_marker(scan)
     retry_action = (
         f"""
-        <form action="/scans/{scan.id}/retry" method="post">
-          <button class="secondary-action compact-action" type="submit">Retry scan</button>
+        <form action="/scans/{scan.id}/retry" method="post" data-action-form data-preserve-scroll>
+          <button class="secondary-action compact-action" type="submit" data-busy-label="Retrying...">Retry scan</button>
         </form>
         """
         if scan.status not in {"queued", "running"}
@@ -3134,7 +3253,12 @@ def render_scan_result(
             worker_status_detail(worker_status),
             "warning",
         )
+    action_notice = (
+        page_notice("Scan updated", message, "success")
+        + page_notice("Action blocked", error, "danger")
+    )
     body = f"""
+    {action_notice}
     <section class="notice success-notice">
       <div class="notice-copy">
         <strong>Sample accepted</strong>
@@ -3305,6 +3429,8 @@ def dashboard(
     q: str = "",
     status: str = "all",
     verdict: str = "all",
+    message: str = "",
+    error: str = "",
 ) -> str:
     user = require_user(request)
     can_manage_scans = user.role == ROLE_ADMIN
@@ -3319,8 +3445,8 @@ def dashboard(
     configured_engine_count = len(configured_engines())
     delete_actions = (
         """
-            <form id="bulk-delete-form" action="/scans/delete" method="post" data-bulk-delete-form></form>
-            <button class="toolbar-delete" type="submit" form="bulk-delete-form" data-bulk-delete hidden>Delete selected</button>
+            <form id="bulk-delete-form" action="/scans/delete" method="post" data-bulk-delete-form data-action-form data-preserve-scroll></form>
+            <button class="toolbar-delete" type="submit" form="bulk-delete-form" data-bulk-delete data-busy-label="Deleting..." hidden>Delete selected</button>
         """
         if can_manage_scans
         else '<span class="pill neutral">Read-only history</span>'
@@ -3334,7 +3460,12 @@ def dashboard(
         if can_manage_scans
         else ""
     )
+    notice_html = (
+        page_notice("Scan queue updated", message, "success")
+        + page_notice("Action blocked", error, "danger")
+    )
     body = f"""
+    {notice_html}
     <section class="metric-grid">
       {metric_card("Samples", str(counts["total"]), "Persisted scan jobs")}
       {metric_card("Active", str(counts["running"]), "Queued or running jobs", "tone-blue")}
@@ -3585,10 +3716,11 @@ async def create_scan(
     return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
 
 
-def delete_scan_record(scan_id: int) -> None:
+def delete_scan_record(scan_id: int) -> ScanRecord | None:
     deleted_scan = delete_scan(scan_id)
     if deleted_scan is not None:
         delete_sample_file(deleted_scan)
+    return deleted_scan
 
 
 @app.post("/scans/delete")
@@ -3597,24 +3729,40 @@ async def delete_selected_scans(
     scan_ids: list[int] = Form(default=[]),
 ) -> RedirectResponse:
     require_admin(request)
+    if not scan_ids:
+        return RedirectResponse(url=redirect_url("/", error="No scans were selected."), status_code=303)
+    deleted_count = 0
     for scan_id in scan_ids:
-        delete_scan_record(scan_id)
-    return RedirectResponse(url="/", status_code=303)
+        if delete_scan_record(scan_id) is not None:
+            deleted_count += 1
+    message = f"Deleted {deleted_count} scan." if deleted_count == 1 else f"Deleted {deleted_count} scans."
+    return RedirectResponse(url=redirect_url("/", message=message), status_code=303)
 
 
 @app.post("/scans/{scan_id}/delete")
 async def delete_single_scan(request: Request, scan_id: int) -> RedirectResponse:
     require_admin(request)
-    delete_scan_record(scan_id)
-    return RedirectResponse(url="/", status_code=303)
+    deleted_scan = delete_scan_record(scan_id)
+    if deleted_scan is None:
+        return RedirectResponse(url=redirect_url("/", error="Scan not found."), status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/", message=f"Deleted scan {deleted_scan.original_filename}."),
+        status_code=303,
+    )
 
 
 @app.post("/scans/{scan_id}/retry")
 async def retry_single_scan(request: Request, scan_id: int) -> RedirectResponse:
     require_user(request)
     if not retry_scan_job_record(scan_id):
-        raise HTTPException(status_code=400, detail="Only completed or failed scans can be retried.")
-    return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
+        return RedirectResponse(
+            url=redirect_url(f"/scans/{scan_id}", error="Only completed or failed scans can be retried."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=redirect_url(f"/scans/{scan_id}", message="Scan was queued for another run."),
+        status_code=303,
+    )
 
 
 @app.get("/scans/{scan_id}/report", response_class=HTMLResponse)
@@ -3659,19 +3807,19 @@ def scan_export_csv(request: Request, scan_id: int) -> Response:
 
 
 @app.get("/scans/{scan_id}", response_class=HTMLResponse)
-def scan_detail(request: Request, scan_id: int) -> str:
+def scan_detail(request: Request, scan_id: int, message: str = "", error: str = "") -> str:
     user = require_user(request)
     scan = get_scan(scan_id)
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
     engine_results = list_engine_results(scan.id)
-    return render_scan_result(scan, engine_results, user)
+    return render_scan_result(scan, engine_results, user, message=message, error=error)
 
 
 @app.get("/engines", response_class=HTMLResponse)
-def engines(request: Request) -> str:
+def engines(request: Request, message: str = "", error: str = "", target: str = "") -> str:
     user = require_admin(request)
-    return render_engines_page(user)
+    return render_engines_page(user, message=message, error=error, target=target)
 
 
 @app.post("/engines/add")
@@ -3680,22 +3828,47 @@ def add_engine_route(request: Request, adapter_key: str = Form(...)) -> Redirect
     try:
         add_engine(adapter_key)
     except KeyError as exc:
-        raise HTTPException(status_code=400, detail="Unknown engine adapter.") from exc
-    return RedirectResponse(url="/engines", status_code=303)
+        return RedirectResponse(
+            url=redirect_url("/engines", error="Unknown engine adapter."),
+            status_code=303,
+        )
+    definition = adapter_definition(adapter_key)
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"Added {definition.label}.", target=adapter_key),
+        status_code=303,
+    )
 
 
 @app.post("/engines/{adapter_key}/toggle")
 def toggle_engine_route(request: Request, adapter_key: str) -> RedirectResponse:
     require_admin(request)
     toggle_engine(adapter_key)
-    return RedirectResponse(url="/engines", status_code=303)
+    updated_instance = next(
+        (engine for engine in configured_engines() if engine.adapter_key == adapter_key),
+        None,
+    )
+    if updated_instance is None:
+        return RedirectResponse(url=redirect_url("/engines", error="Engine not found."), status_code=303)
+    state_label = "enabled" if updated_instance.enabled else "disabled"
+    return RedirectResponse(
+        url=redirect_url(
+            "/engines",
+            message=f"{updated_instance.display_name} {state_label}.",
+            target=adapter_key,
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/engines/{adapter_key}/delete")
 def delete_engine_route(request: Request, adapter_key: str) -> RedirectResponse:
     require_admin(request)
+    definition = adapter_definition(adapter_key)
     remove_engine(adapter_key)
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"Removed {definition.label}."),
+        status_code=303,
+    )
 
 
 @app.post("/engines/{adapter_key}/test", response_class=HTMLResponse)
@@ -3704,9 +3877,15 @@ def test_engine_route(request: Request, adapter_key: str) -> str:
     matches = [engine for engine in configured_engines() if engine.adapter_key == adapter_key]
     if not matches:
         raise HTTPException(status_code=404, detail="Engine not found.")
+    health = engine_health(matches[0])
+    tone = health_tone_for(adapter_key, health)
+    notice_tone = tone if tone in {"success", "warning", "danger"} else "success"
     return render_engines_page(
         user,
-        health_overrides={adapter_key: engine_health(matches[0])}
+        health_overrides={adapter_key: health},
+        message=str(health["detail"]),
+        target=adapter_key,
+        notice_tone=notice_tone,
     )
 
 
@@ -3728,7 +3907,10 @@ def save_clamav_config(
             "timeout_seconds": clamav_timeout_seconds.strip() or "60",
         },
     )
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message="Saved ClamAV settings.", target="clamav"),
+        status_code=303,
+    )
 
 
 @app.post("/engines/yara/config")
@@ -3747,7 +3929,10 @@ def save_yara_config(
             "timeout_seconds": yara_timeout_seconds.strip() or "30",
         },
     )
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message="Saved YARA settings.", target="yara"),
+        status_code=303,
+    )
 
 
 @app.post("/engines/microsoft_defender/config")
@@ -3774,7 +3959,14 @@ def save_microsoft_defender_config(
             "require_real_time_enabled": "true" if microsoft_defender_require_real_time_enabled.strip().lower() in {"1", "true", "yes", "on"} else "false",
         },
     )
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url(
+            "/engines",
+            message="Saved Microsoft Defender settings.",
+            target="microsoft_defender",
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/engines/yara/rules")
@@ -3789,24 +3981,33 @@ async def upload_yara_rule(
         if rule_file is not None and rule_file.filename:
             content = await rule_file.read()
             save_yara_rule(rule_file.filename, content)
+            saved_rule_name = rule_file.filename
         else:
             save_yara_rule(rule_name, rule_body.encode("utf-8"))
+            saved_rule_name = rule_name
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"Saved YARA rule {saved_rule_name}.", target="yara"),
+        status_code=303,
+    )
 
 
 @app.post("/engines/yara/rules/{rule_name}/toggle")
 def toggle_yara_rule_route(request: Request, rule_name: str) -> RedirectResponse:
     require_admin(request)
     try:
-        toggle_yara_rule(rule_name)
+        toggled_path = toggle_yara_rule(rule_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="YARA rule not found.") from exc
-    return RedirectResponse(url="/engines", status_code=303)
+    action = "Disabled" if str(toggled_path.name).endswith(".disabled") else "Enabled"
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"{action} YARA rule {rule_name}.", target="yara"),
+        status_code=303,
+    )
 
 
 @app.post("/engines/yara/rules/{rule_name}/delete")
@@ -3818,16 +4019,27 @@ def delete_yara_rule_route(request: Request, rule_name: str) -> RedirectResponse
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="YARA rule not found.") from exc
-    return RedirectResponse(url="/engines", status_code=303)
+    return RedirectResponse(
+        url=redirect_url("/engines", message=f"Deleted YARA rule {rule_name}.", target="yara"),
+        status_code=303,
+    )
 
 
 def render_engines_page(
     user: UserRecord,
     health_overrides: dict[str, dict[str, str | bool]] | None = None,
+    message: str = "",
+    error: str = "",
+    target: str = "",
+    notice_tone: str = "success",
 ) -> str:
     overrides = health_overrides or {}
+    notice_html = (
+        page_notice("Engine action complete", message, notice_tone)
+        + page_notice("Action blocked", error, "danger")
+    )
     engine_cards_html = "\n".join(
-        render_engine_card(instance, overrides) for instance in configured_engines()
+        render_engine_card(instance, overrides, focus_adapter_key=target) for instance in configured_engines()
     )
     roadmap_rows_html = "\n".join(
         f"""
@@ -3845,6 +4057,7 @@ def render_engines_page(
     )
 
     body = f"""
+    {notice_html}
     {render_add_engine_panel()}
     {engine_cards_html}
     <section class="panel engine-secondary">
