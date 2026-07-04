@@ -13,6 +13,10 @@ services:
       MASP_CLAMD_READY_TIMEOUT_SECONDS: "30"
       MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS: "120"
       MASP_YARA_RULES_DIR: /app/rules
+      MASP_API_TOKEN: ${MASP_API_TOKEN:-change-me}
+      MASP_API_MAX_WAIT_SECONDS: ${MASP_API_MAX_WAIT_SECONDS:-15}
+      MASP_API_RETRY_AFTER_SECONDS: ${MASP_API_RETRY_AFTER_SECONDS:-2}
+      MASP_UPLOAD_MAX_BYTES: ${MASP_UPLOAD_MAX_BYTES:-0}
     volumes:
       - ./storage:/app/storage
       - ./rules:/app/rules

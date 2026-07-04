@@ -7,6 +7,7 @@ shows analyst-friendly scan results.
 ## Current capabilities
 
 - Web UI for file intake and scan history
+- Bearer-token file scan API for service-to-service integrations
 - PostgreSQL persistence for samples, scan jobs, and engine results in Docker
 - SQLite fallback for lightweight local development
 - Static Metadata engine
@@ -70,8 +71,27 @@ MASP_CLAMD_TIMEOUT_SECONDS=180
 MASP_CLAMD_READY_TIMEOUT_SECONDS=30
 MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS=120
 MASP_YARA_RULES_DIR=/app/rules
+MASP_API_TOKEN=replace-with-a-long-random-token
+MASP_API_MAX_WAIT_SECONDS=15
+MASP_API_RETRY_AFTER_SECONDS=2
+MASP_UPLOAD_MAX_BYTES=0
 MASP_WORKER_POLL_SECONDS=2
 ```
+
+## API
+
+MASP's primary integration surface is the file scan API:
+
+- `POST /api/v1/scans`
+- `GET /api/v1/scans/{scan_id}`
+- `GET /api/v1/scans/{scan_id}/result`
+
+Use `POST /api/v1/scans` as an asynchronous submission endpoint. The response
+includes status and result links, `result_ready`, and a recommended polling
+interval when the scan is still running.
+
+Integration examples and response details live in
+[docs/integrations/API_SCAN_GATEWAY.md](docs/integrations/API_SCAN_GATEWAY.md).
 
 ClamAV may take time to initialize and download/update signatures on first
 startup. MASP waits briefly for clamd to accept TCP connections before recording

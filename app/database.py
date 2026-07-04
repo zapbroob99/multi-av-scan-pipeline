@@ -1131,10 +1131,9 @@ def list_engine_results(scan_job_id: int) -> list[EngineResultRecord]:
     return [row_to_engine_result_record(row) for row in rows]
 
 
-def list_recent_scans(limit: int = 20) -> list[ScanRecord]:
+def list_recent_scans(limit: int | None = 20, offset: int = 0) -> list[ScanRecord]:
     with connect() as connection:
-        rows = connection.execute(
-            """
+        query = """
             SELECT
                 scan_jobs.id,
                 scan_jobs.sample_id,
@@ -1161,10 +1160,12 @@ def list_recent_scans(limit: int = 20) -> list[ScanRecord]:
             FROM scan_jobs
             JOIN samples ON samples.id = scan_jobs.sample_id
             ORDER BY scan_jobs.created_at DESC, scan_jobs.id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+            """
+        params: list[object] = []
+        if limit is not None:
+            query += "\nLIMIT ?\nOFFSET ?"
+            params.extend([limit, max(0, offset)])
+        rows = connection.execute(query, tuple(params)).fetchall()
     return [row_to_scan_record(row) for row in rows]
 
 
@@ -1449,6 +1450,45 @@ def get_queue_metrics() -> dict[str, int]:
         "failed": failed,
         "total": total,
     }
+
+
+def get_scan_queue_position(scan_id: int) -> int | None:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, status, created_at
+            FROM scan_jobs
+            WHERE id = ?
+            """,
+            (scan_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        status = str(row_value(row, "status"))
+        if status == "running":
+            return 0
+        if status != "queued":
+            return None
+
+        created_at = row_value(row, "created_at")
+        queued_before_row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM scan_jobs
+            WHERE status = 'queued'
+              AND (
+                created_at < ?
+                OR (created_at = ? AND id < ?)
+              )
+            """,
+            (created_at, created_at, scan_id),
+        ).fetchone()
+    if queued_before_row is None:
+        return 1
+    if isinstance(queued_before_row, dict):
+        return int(next(iter(queued_before_row.values()))) + 1
+    return int(queued_before_row[0]) + 1
 
 
 def list_engine_result_metrics() -> list[dict[str, object]]:

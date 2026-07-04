@@ -4,6 +4,7 @@ MASP engine integrations are vendor/product-specific. Users should not be expect
 
 Start here:
 
+- [API Scan Gateway](API_SCAN_GATEWAY.md)
 - [Engine Integration Standard](ENGINE_INTEGRATION_STANDARD.md)
 - [Support Matrix](SUPPORT_MATRIX.md)
 - [Integration Spec Template](INTEGRATION_SPEC_TEMPLATE.md)

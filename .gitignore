@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 node_modules/
+.env
 
 data/
 storage/samples/

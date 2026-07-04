@@ -1,7 +1,9 @@
+import asyncio
 import html
 import csv
 import io
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -18,6 +20,7 @@ from app.database import (
     delete_scan,
     delete_user,
     get_scan,
+    get_scan_queue_position,
     get_queue_metrics,
     get_scan_counts,
     get_user_by_id,
@@ -43,6 +46,7 @@ from app.services.auth import (
     hash_password,
     login,
     logout,
+    require_api_token,
     require_admin,
     require_user,
     revoke_user_sessions,
@@ -69,7 +73,7 @@ from app.services.engine_registry import (
     yara_form_values,
     remove_engine,
 )
-from app.services.ingest import store_upload
+from app.services.ingest import UploadTooLargeError, store_upload
 from app.services.scoring import calculate_risk
 from app.services.worker_runtime import get_worker_status
 from app.services.yara_rules import (
@@ -93,6 +97,7 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 CSS_PATH = STATIC_DIR / "css" / "app.css"
 LEGACY_CSS_PATH = STATIC_DIR / "css" / "legacy.css"
+API_TERMINAL_SCAN_STATUSES = {"completed", "failed"}
 
 init_db()
 seed_default_users()
@@ -251,14 +256,14 @@ def page_shell(
                 <h1>{title}</h1>
               </div>
               <div class="topbar-actions">
-                <div class="user-menu">
+                <div class="user-menu topbar-user-card">
                   <span class="user-avatar" aria-hidden="true">{username[:1].upper()}</span>
-                  <span>
+                  <span class="topbar-user-copy">
                     <strong>{username}</strong>
-                    <small>{role}</small>
+                    <small class="topbar-user-role">{role}</small>
                   </span>
                 </div>
-                <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark theme" title="Toggle dark theme">
+                <button class="theme-toggle topbar-theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark theme" title="Toggle dark theme">
                   <span class="theme-toggle-icon" aria-hidden="true"></span>
                   <span data-theme-label>Dark</span>
                 </button>
@@ -706,6 +711,154 @@ def redirect_url(
     if target:
         url = f"{url}#engine-{quote(target, safe='')}"
     return url
+
+
+def scan_is_terminal(scan: ScanRecord) -> bool:
+    return scan.status in API_TERMINAL_SCAN_STATUSES
+
+
+def configured_api_max_wait_seconds() -> int:
+    raw_value = os.getenv("MASP_API_MAX_WAIT_SECONDS", "15").strip()
+    try:
+        wait_seconds = int(raw_value or "15")
+    except ValueError:
+        return 15
+    return max(0, min(wait_seconds, 300))
+
+
+def configured_api_retry_after_seconds() -> int:
+    raw_value = os.getenv("MASP_API_RETRY_AFTER_SECONDS", "2").strip()
+    try:
+        retry_seconds = int(raw_value or "2")
+    except ValueError:
+        return 2
+    return max(1, min(retry_seconds, 30))
+
+
+def normalized_api_wait_seconds(requested_wait_seconds: int) -> int:
+    return max(0, min(requested_wait_seconds, configured_api_max_wait_seconds()))
+
+
+def api_scan_links(request: Request, scan_id: int) -> dict[str, str]:
+    return {
+        "status": str(request.url_for("api_scan_status", scan_id=scan_id)),
+        "result": str(request.url_for("api_scan_result", scan_id=scan_id)),
+        "ui": str(request.base_url).rstrip("/") + f"/scans/{scan_id}",
+    }
+
+
+def build_scan_summary_payload(scan: ScanRecord) -> dict[str, object]:
+    return {
+        "id": scan.id,
+        "sample_id": scan.sample_id,
+        "filename": scan.original_filename,
+        "case_name": scan.case_name,
+        "priority": scan.priority,
+        "status": scan.status,
+        "verdict": scan.verdict,
+        "risk_score": scan.risk_score,
+        "created_at": scan.created_at,
+        "started_at": scan.started_at,
+        "completed_at": scan.completed_at,
+        "failed_at": scan.failed_at,
+        "attempt_count": scan.attempt_count,
+        "last_error": scan.last_error,
+        "note": scan.note,
+        "content_type": scan.content_type,
+        "size_bytes": scan.size_bytes,
+        "hashes": {
+            "md5": scan.md5,
+            "sha1": scan.sha1,
+            "sha256": scan.sha256,
+        },
+    }
+
+
+def build_api_scan_status_payload(
+    request: Request,
+    scan: ScanRecord,
+    engine_results: list[EngineResultRecord] | None = None,
+) -> dict[str, object]:
+    results = engine_results if engine_results is not None else list_engine_results(scan.id)
+    queue_metrics = get_queue_metrics()
+    queue_position = get_scan_queue_position(scan.id)
+    result_ready = scan_is_terminal(scan)
+
+    return {
+        "completed": result_ready,
+        "result_ready": result_ready,
+        "recommended_poll_seconds": None if result_ready else configured_api_retry_after_seconds(),
+        "scan": build_scan_summary_payload(scan),
+        "queue": {
+            **queue_metrics,
+            "position": queue_position,
+        },
+        "engines": {
+            "expected": len(enabled_engines()),
+            "reported": len(results),
+            "completed": sum(1 for result in results if result.status == "completed"),
+            "failed": sum(1 for result in results if result.status == "failed"),
+            "skipped": sum(1 for result in results if result.status == "skipped"),
+            "detections": sum(1 for result in results if result.detected),
+        },
+        "links": api_scan_links(request, scan.id),
+    }
+
+
+def build_api_scan_result_payload(
+    request: Request,
+    scan: ScanRecord,
+    engine_results: list[EngineResultRecord] | None = None,
+) -> dict[str, object]:
+    results = engine_results if engine_results is not None else list_engine_results(scan.id)
+    payload = build_scan_report_payload(scan, results)
+    payload["completed"] = scan_is_terminal(scan)
+    payload["result_ready"] = scan_is_terminal(scan)
+    payload["links"] = api_scan_links(request, scan.id)
+    return payload
+
+
+async def wait_for_terminal_scan(scan_id: int, wait_seconds: int) -> ScanRecord | None:
+    scan = get_scan(scan_id)
+    if scan is None or wait_seconds <= 0 or scan_is_terminal(scan):
+        return scan
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + wait_seconds
+    while loop.time() < deadline:
+        await asyncio.sleep(min(0.5, max(0.1, deadline - loop.time())))
+        scan = get_scan(scan_id)
+        if scan is None or scan_is_terminal(scan):
+            return scan
+    return get_scan(scan_id)
+
+
+async def enqueue_scan_from_upload(
+    sample: UploadFile,
+    *,
+    case_name: str,
+    priority: str,
+    note: str,
+) -> ScanRecord:
+    if not sample.filename:
+        raise HTTPException(status_code=400, detail="A file must be selected.")
+
+    try:
+        stored_sample = await store_upload(sample)
+    except UploadTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+
+    sample_id = create_sample(stored_sample)
+    scan_id = create_scan_job(
+        sample_id=sample_id,
+        case_name=case_name.strip() or "Unassigned",
+        priority=priority,
+        note=note.strip(),
+    )
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=500, detail="Scan could not be loaded.")
+    return scan
 
 
 def render_login_page(next_url: str = "/", error: str = "", message: str = "") -> str:
@@ -1173,11 +1326,17 @@ def render_engine_logo(label: str, key: str) -> str:
         return f"""
         <span class="engine-logo engine-logo-clamav" aria-hidden="true">
           <svg viewBox="0 0 44 44" role="img" focusable="false">
-            <path d="M11.2 14.4 16.7 7l3.8 5.5h3.1L27.3 7l5.5 7.4A14.7 14.7 0 0 1 36.5 24c0 8.1-6.5 14.5-14.5 14.5S7.5 32.1 7.5 24a14.7 14.7 0 0 1 3.7-9.6Z" fill="currentColor"></path>
-            <path d="M13.4 22.2c1.6-2.2 5.8-2.6 9-.5-1.7 3.7-5 5.8-8.5 5.6-.8-1.7-.9-3.5-.5-5.1Z" fill="#ffffff"></path>
-            <path d="M30.6 22.2c-1.6-2.2-5.8-2.6-9-.5 1.7 3.7 5 5.8 8.5 5.6.8-1.7.9-3.5.5-5.1Z" fill="#ffffff"></path>
-            <path d="M17.5 23.7c.8 1.2 2.3 2.6 4.2 3.4-2 .7-3.9.5-5.3-.4.1-1 .5-2 .9-3Z" fill="#202124"></path>
-            <path d="M26.5 23.7c-.8 1.2-2.3 2.6-4.2 3.4 2 .7 3.9.5 5.3-.4-.1-1-.5-2-.9-3Z" fill="#202124"></path>
+            <defs>
+              <linearGradient id="clamavBadge" x1="9" y1="8" x2="33" y2="36" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#ff6b6b"></stop>
+                <stop offset="1" stop-color="#dc2626"></stop>
+              </linearGradient>
+            </defs>
+            <path d="M11.2 14.4 16.7 7l3.8 5.5h3.1L27.3 7l5.5 7.4A14.7 14.7 0 0 1 36.5 24c0 8.1-6.5 14.5-14.5 14.5S7.5 32.1 7.5 24a14.7 14.7 0 0 1 3.7-9.6Z" fill="url(#clamavBadge)"></path>
+            <path d="M13.6 21.9c1.7-2.1 5.7-2.4 8.8-.5-1.6 3.6-4.8 5.7-8.1 5.5-.9-1.5-1.2-3.2-.7-5Z" fill="#fff7f7"></path>
+            <path d="M30.4 21.9c-1.7-2.1-5.7-2.4-8.8-.5 1.6 3.6 4.8 5.7 8.1 5.5.9-1.5 1.2-3.2.7-5Z" fill="#fff7f7"></path>
+            <path d="M17.7 23.5c.8 1.1 2.1 2.4 4 3.2-1.8.8-3.7.6-5.1-.2.1-1 .5-2 .9-3Z" fill="#1f2937"></path>
+            <path d="M26.3 23.5c-.8 1.1-2.1 2.4-4 3.2 1.8.8 3.7.6 5.1-.2-.1-1-.5-2-.9-3Z" fill="#1f2937"></path>
           </svg>
         </span>
         """
@@ -1189,11 +1348,18 @@ def render_engine_logo(label: str, key: str) -> str:
         return """
         <span class="engine-logo engine-logo-defender" aria-hidden="true">
           <svg viewBox="0 0 44 44" role="img" focusable="false">
-            <path d="M22 5.8c4.5 2.9 8.9 4.5 13.3 4.8v10.1c0 8.5-4.7 14.7-13.3 17.5-8.6-2.8-13.3-9-13.3-17.5V10.6c4.4-.3 8.8-1.9 13.3-4.8Z" fill="#2563eb"></path>
-            <path d="M22 10.1v23.3c-6-2.4-9.3-6.8-9.3-12.5v-6.3c3.2-.7 6.2-1.8 9.3-4.5Z" fill="#eaf3ff"></path>
-            <path d="M22 10.1c3.1 2.7 6.1 3.8 9.3 4.5v6.3c0 5.7-3.3 10.1-9.3 12.5V10.1Z" fill="#7dc4ff"></path>
-            <path d="M22 12.3v18.8" stroke="#1d4ed8" stroke-width="1.2" stroke-linecap="round"></path>
-            <path d="M14.5 20.7h15" stroke="#1d4ed8" stroke-width="1.2" stroke-linecap="round"></path>
+            <defs>
+              <linearGradient id="defenderShield" x1="10" y1="7" x2="34" y2="37" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#60a5fa"></stop>
+                <stop offset="1" stop-color="#2563eb"></stop>
+              </linearGradient>
+            </defs>
+            <path d="M22 5.6c4.5 2.7 8.9 4.2 13.1 4.6v10.2c0 8.2-4.6 14.8-13.1 18-8.5-3.2-13.1-9.8-13.1-18V10.2c4.2-.4 8.6-1.9 13.1-4.6Z" fill="url(#defenderShield)"></path>
+            <path d="M22 9.4v24.8c-6.2-2.7-9.8-7.3-9.8-13V15c3.2-.8 6.5-2.1 9.8-5.6Z" fill="#eff6ff"></path>
+            <path d="M22 9.4c3.3 3.5 6.6 4.8 9.8 5.6v6.2c0 5.7-3.6 10.3-9.8 13V9.4Z" fill="#93c5fd"></path>
+            <path d="M22 12.8v17" stroke="#1d4ed8" stroke-width="1.45" stroke-linecap="round"></path>
+            <path d="M15.7 18.9c2.6 1 4.7 1.2 6.3 1.2s3.7-.2 6.3-1.2" stroke="#1d4ed8" stroke-width="1.45" stroke-linecap="round"></path>
+            <path d="M17.7 24.6c1.5 1 2.9 1.4 4.3 1.4s2.8-.4 4.3-1.4" stroke="#1d4ed8" stroke-width="1.3" stroke-linecap="round"></path>
           </svg>
         </span>
         """
@@ -2288,6 +2454,44 @@ def filter_recent_scans(
     return filtered_scans, results_by_scan
 
 
+def normalize_dashboard_page(page: int) -> int:
+    return max(1, page)
+
+
+def paginate_scans(
+    scans: list[ScanRecord],
+    page: int,
+    page_size: int,
+) -> tuple[list[ScanRecord], int, int, int]:
+    total_items = len(scans)
+    if total_items == 0:
+        return [], 1, 0, 0
+
+    total_pages = max(1, (total_items + page_size - 1) // page_size)
+    current_page = min(normalize_dashboard_page(page), total_pages)
+    start_index = (current_page - 1) * page_size
+    end_index = start_index + page_size
+    return scans[start_index:end_index], current_page, total_pages, total_items
+
+
+def dashboard_query_url(
+    *,
+    page: int,
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+) -> str:
+    params: dict[str, str] = {"page": str(page)}
+    if query.strip():
+        params["q"] = query.strip()
+    if status_filter != "all":
+        params["status"] = status_filter
+    if verdict_filter != "all":
+        params["verdict"] = verdict_filter
+    query_string = urlencode(params)
+    return f"/?{query_string}" if query_string else "/"
+
+
 def select_option(value: str, label: str, selected_value: str) -> str:
     selected = " selected" if value == selected_value else ""
     return f'<option value="{html.escape(value)}"{selected}>{html.escape(label)}</option>'
@@ -2327,6 +2531,47 @@ def render_recent_scan_filters(query: str, status_filter: str, verdict_filter: s
         <a class="secondary-action compact-action" href="/">Reset</a>
       </div>
     </form>
+    """
+
+
+def render_recent_scan_pagination(
+    *,
+    page: int,
+    total_pages: int,
+    total_items: int,
+    page_size: int,
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+) -> str:
+    if total_items == 0:
+        return ""
+
+    start_item = ((page - 1) * page_size) + 1
+    end_item = min(page * page_size, total_items)
+    previous_link = (
+        f'<a class="secondary-action compact-action" href="{html.escape(dashboard_query_url(page=page - 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter))}">Previous</a>'
+        if page > 1
+        else '<span class="secondary-action compact-action is-disabled" aria-disabled="true">Previous</span>'
+    )
+    next_link = (
+        f'<a class="secondary-action compact-action" href="{html.escape(dashboard_query_url(page=page + 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter))}">Next</a>'
+        if page < total_pages
+        else '<span class="secondary-action compact-action is-disabled" aria-disabled="true">Next</span>'
+    )
+
+    return f"""
+    <div class="scan-pagination">
+      <div class="scan-pagination-copy">
+        <strong>{start_item}-{end_item}</strong>
+        <span>of {total_items} scans</span>
+      </div>
+      <div class="scan-pagination-actions">
+        {previous_link}
+        <span class="scan-pagination-page">Page {page} of {total_pages}</span>
+        {next_link}
+      </div>
+    </div>
     """
 
 
@@ -3429,15 +3674,22 @@ def dashboard(
     q: str = "",
     status: str = "all",
     verdict: str = "all",
+    page: int = 1,
     message: str = "",
     error: str = "",
 ) -> str:
     user = require_user(request)
     can_manage_scans = user.role == ROLE_ADMIN
-    scans = list_recent_scans()
+    scans = list_recent_scans(limit=None)
+    page_size = 20
     status_filter = status if status in {"all", "active", "queued", "running", "completed", "partial", "failed"} else "all"
     verdict_filter = verdict if verdict in {"all", "pending", "malicious", "undetected", "metadata_only"} else "all"
     filtered_scans, results_by_scan = filter_recent_scans(scans, q, status_filter, verdict_filter)
+    paginated_scans, current_page, total_pages, total_filtered_scans = paginate_scans(
+        filtered_scans,
+        page,
+        page_size,
+    )
     filters_active = bool(q.strip()) or status_filter != "all" or verdict_filter != "all"
     empty_message = "No scans match the current filters." if filters_active else "No scans submitted yet."
     counts = get_scan_counts()
@@ -3478,13 +3730,14 @@ def dashboard(
         <div class="panel-header">
           <div>
             <h2>Recent scans</h2>
-            <p>{len(filtered_scans)} of {len(scans)} latest samples shown.</p>
+            <p>{total_filtered_scans} matching scans across {len(scans)} total samples.</p>
           </div>
           <div class="panel-actions">
             {delete_actions}
           </div>
         </div>
         {render_recent_scan_filters(q, status_filter, verdict_filter)}
+        {render_recent_scan_pagination(page=current_page, total_pages=total_pages, total_items=total_filtered_scans, page_size=page_size, query=q, status_filter=status_filter, verdict_filter=verdict_filter)}
         <div class="table-wrap">
           <table>
             <thead>
@@ -3499,10 +3752,11 @@ def dashboard(
               </tr>
             </thead>
             <tbody>
-              {render_recent_scan_rows(filtered_scans, can_select=can_manage_scans, results_by_scan=results_by_scan, empty_message=empty_message)}
+              {render_recent_scan_rows(paginated_scans, can_select=can_manage_scans, results_by_scan=results_by_scan, empty_message=empty_message)}
             </tbody>
           </table>
         </div>
+        {render_recent_scan_pagination(page=current_page, total_pages=total_pages, total_items=total_filtered_scans, page_size=page_size, query=q, status_filter=status_filter, verdict_filter=verdict_filter)}
       </div>
 
       {render_worker_status_panel(worker_status)}
@@ -3628,9 +3882,14 @@ def update_account_password_route(
 
 
 @app.get("/scans/new", response_class=HTMLResponse)
-def new_scan(request: Request) -> str:
+def new_scan(request: Request, message: str = "", error: str = "") -> str:
     user = require_user(request)
+    notice_html = (
+        page_notice("Ready for review", message, "success")
+        + page_notice("Upload blocked", error, "danger")
+    )
     body = f"""
+    {notice_html}
     <section class="scan-layout">
       <form class="panel upload-panel" action="/scans" method="post" enctype="multipart/form-data" data-upload-form>
         <div class="panel-header">
@@ -3698,22 +3957,98 @@ async def create_scan(
     note: str = Form(""),
 ) -> RedirectResponse:
     require_user(request)
-    if not sample.filename:
-        raise HTTPException(status_code=400, detail="A file must be selected.")
+    try:
+        scan = await enqueue_scan_from_upload(
+            sample,
+            case_name=case_name,
+            priority=priority,
+            note=note,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 413:
+            return RedirectResponse(
+                url=redirect_url("/scans/new", error=str(exc.detail)),
+                status_code=303,
+            )
+        raise
 
-    stored_sample = await store_upload(sample)
-    sample_id = create_sample(stored_sample)
-    scan_id = create_scan_job(
-        sample_id=sample_id,
-        case_name=case_name.strip() or "Unassigned",
+    return RedirectResponse(url=f"/scans/{scan.id}", status_code=303)
+
+
+@app.post(
+    "/api/v1/scans",
+    summary="Submit a file scan",
+    description="Accepts a sample upload, creates a scan job, and optionally waits for completion.",
+)
+async def api_create_scan(
+    request: Request,
+    sample: UploadFile = File(...),
+    case_name: str = Form("Unassigned"),
+    priority: str = Form("Normal"),
+    note: str = Form(""),
+    wait_seconds: int = Form(0),
+) -> JSONResponse:
+    require_api_token(request)
+    scan = await enqueue_scan_from_upload(
+        sample,
+        case_name=case_name,
         priority=priority,
-        note=note.strip(),
+        note=note,
     )
-    scan = get_scan(scan_id)
-    if scan is None:
+    applied_wait_seconds = normalized_api_wait_seconds(wait_seconds)
+    current_scan = await wait_for_terminal_scan(scan.id, applied_wait_seconds)
+    if current_scan is None:
         raise HTTPException(status_code=500, detail="Scan could not be loaded.")
 
-    return RedirectResponse(url=f"/scans/{scan_id}", status_code=303)
+    headers = {"Location": str(request.url_for("api_scan_status", scan_id=scan.id))}
+    status_payload = build_api_scan_status_payload(request, current_scan)
+    status_payload["accepted"] = True
+    status_payload["wait_seconds_applied"] = applied_wait_seconds
+
+    if scan_is_terminal(current_scan):
+        status_payload["detail"] = "Scan completed within the requested wait window."
+        status_payload["result"] = build_api_scan_result_payload(request, current_scan)
+        return JSONResponse(status_payload, status_code=200, headers=headers)
+
+    headers["Retry-After"] = str(configured_api_retry_after_seconds())
+    status_payload["detail"] = "Scan accepted and still processing."
+    return JSONResponse(status_payload, status_code=202, headers=headers)
+
+
+@app.get(
+    "/api/v1/scans/{scan_id}",
+    name="api_scan_status",
+    summary="Fetch scan status",
+    description="Returns queue state, engine progress, and links for a previously submitted scan.",
+)
+def api_scan_status(request: Request, scan_id: int) -> JSONResponse:
+    require_api_token(request)
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    return JSONResponse(build_api_scan_status_payload(request, scan))
+
+
+@app.get(
+    "/api/v1/scans/{scan_id}/result",
+    name="api_scan_result",
+    summary="Fetch final scan result",
+    description="Returns the normalized result payload after a scan reaches a terminal state.",
+)
+def api_scan_result(request: Request, scan_id: int) -> JSONResponse:
+    require_api_token(request)
+    scan = get_scan(scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    if not scan_is_terminal(scan):
+        payload = build_api_scan_status_payload(request, scan)
+        payload["detail"] = "Scan result is not ready yet."
+        return JSONResponse(
+            payload,
+            status_code=409,
+            headers={"Retry-After": str(configured_api_retry_after_seconds())},
+        )
+    return JSONResponse(build_api_scan_result_payload(request, scan))
 
 
 def delete_scan_record(scan_id: int) -> ScanRecord | None:

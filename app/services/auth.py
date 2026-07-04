@@ -17,6 +17,7 @@ from app.database import (
     delete_auth_session,
     delete_auth_sessions_for_user,
     delete_expired_auth_sessions,
+    get_setting,
     get_user_by_session,
     get_user_by_username,
 )
@@ -28,6 +29,7 @@ ROLE_ANALYST = "analyst"
 SESSION_COOKIE = "masp_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
 PASSWORD_ITERATIONS = 260_000
+API_TOKENS_SETTING_KEY = "api.tokens"
 
 
 @dataclass(frozen=True)
@@ -186,3 +188,51 @@ def session_cookie_secure(request: Request) -> bool:
     if configured in {"0", "false", "no", "off"}:
         return False
     return request.url.scheme == "https"
+
+
+def configured_api_tokens() -> list[str]:
+    seen: set[str] = set()
+    tokens: list[str] = []
+    raw_values = [
+        os.getenv("MASP_API_TOKENS", ""),
+        os.getenv("MASP_API_TOKEN", ""),
+        get_setting(API_TOKENS_SETTING_KEY, "") or "",
+    ]
+    for raw_value in raw_values:
+        for candidate in raw_value.replace("\n", ",").split(","):
+            token = candidate.strip()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+    return tokens
+
+
+def bearer_token_from_request(request: Request) -> str | None:
+    authorization = request.headers.get("authorization", "").strip()
+    if not authorization:
+        return None
+    scheme, _, credentials = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = credentials.strip()
+    return token or None
+
+
+def require_api_token(request: Request) -> str:
+    tokens = configured_api_tokens()
+    if not tokens:
+        raise HTTPException(
+            status_code=503,
+            detail="API token authentication is not configured.",
+        )
+
+    provided_token = bearer_token_from_request(request)
+    if provided_token and any(hmac.compare_digest(provided_token, token) for token in tokens):
+        return provided_token
+
+    raise HTTPException(
+        status_code=401,
+        detail="Bearer token required.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
