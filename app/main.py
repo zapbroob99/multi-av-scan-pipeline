@@ -1,7 +1,5 @@
 import asyncio
 import html
-import csv
-import io
 import json
 import os
 from datetime import datetime
@@ -78,7 +76,19 @@ from app.services.engine_registry import (
     remove_engine,
 )
 from app.services.ingest import UploadTooLargeError, store_upload
+from app.services.api_payloads import (
+    create_api_scan_result_payload,
+    create_api_scan_status_payload,
+)
 from app.services.retention import RetentionPolicy, retention_cutoff_value, retention_policy_from_env
+from app.services.reports import (
+    build_report_finding_rows,
+    create_scan_report_csv,
+    create_scan_report_payload,
+    parse_json_value,
+    report_filename_base,
+    result_findings,
+)
 from app.services.scoring import calculate_risk
 from app.services.worker_runtime import get_worker_status
 from app.services.yara_rules import (
@@ -831,27 +841,18 @@ def build_api_scan_status_payload(
     queue_position = get_scan_queue_position(scan.id)
     result_ready = scan_is_terminal(scan)
     decision = scan_decision(scan, results)
-
-    return {
-        "completed": result_ready,
-        "result_ready": result_ready,
-        "recommended_poll_seconds": None if result_ready else configured_api_retry_after_seconds(),
-        "decision": scan_decision_payload(decision),
-        "scan": build_scan_summary_payload(scan),
-        "queue": {
-            **queue_metrics,
-            "position": queue_position,
-        },
-        "engines": {
-            "expected": len(enabled_engines()),
-            "reported": len(results),
-            "completed": sum(1 for result in results if result.status == "completed"),
-            "failed": sum(1 for result in results if result.status == "failed"),
-            "skipped": sum(1 for result in results if result.status == "skipped"),
-            "detections": sum(1 for result in results if result.detected),
-        },
-        "links": api_scan_links(request, scan.id),
-    }
+    return create_api_scan_status_payload(
+        scan=scan,
+        result_ready=result_ready,
+        recommended_poll_seconds=None if result_ready else configured_api_retry_after_seconds(),
+        decision_payload=scan_decision_payload(decision),
+        scan_payload=build_scan_summary_payload(scan),
+        queue_metrics=queue_metrics,
+        queue_position=queue_position,
+        expected_engines=len(enabled_engines()),
+        results=results,
+        links=api_scan_links(request, scan.id),
+    )
 
 
 def build_api_scan_result_payload(
@@ -861,11 +862,14 @@ def build_api_scan_result_payload(
 ) -> dict[str, object]:
     results = engine_results if engine_results is not None else list_engine_results(scan.id)
     payload = build_scan_report_payload(scan, results)
-    payload["completed"] = scan_is_terminal(scan)
-    payload["result_ready"] = scan_is_terminal(scan)
-    payload["decision"] = payload["summary"]["decision"]
-    payload["links"] = api_scan_links(request, scan.id)
-    return payload
+    result_ready = scan_is_terminal(scan)
+    return create_api_scan_result_payload(
+        report_payload=payload,
+        completed=result_ready,
+        result_ready=result_ready,
+        decision_payload=payload["summary"]["decision"],
+        links=api_scan_links(request, scan.id),
+    )
 
 
 async def wait_for_terminal_scan(scan_id: int, wait_seconds: int) -> ScanRecord | None:
@@ -2861,14 +2865,6 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
     return "\n".join(rows)
 
 
-def parse_json_value(value: str, fallback: object) -> object:
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return fallback
-    return parsed
-
-
 def engine_result_skip_reason_label(result: EngineResultRecord) -> str:
     if result.status != "skipped":
         return ""
@@ -2880,19 +2876,6 @@ def engine_result_skip_reason_label(result: EngineResultRecord) -> str:
         return ""
     reason = routing.get("reason")
     return str(reason) if reason else ""
-
-
-def report_filename_base(scan: ScanRecord) -> str:
-    stem = Path(scan.original_filename).stem or f"scan-{scan.id}"
-    clean = "".join(char if char.isalnum() else "-" for char in stem).strip("-")
-    return clean or f"scan-{scan.id}"
-
-
-def result_findings(result: EngineResultRecord) -> list[dict[str, object]]:
-    parsed = parse_json_value(result.findings_json, [])
-    if not isinstance(parsed, list):
-        return []
-    return [item for item in parsed if isinstance(item, dict)]
 
 
 def render_value_list(values: object, empty_label: str = "-") -> str:
@@ -3256,31 +3239,12 @@ def render_coverage_notice(scan: ScanRecord, results: list[EngineResultRecord]) 
 
 
 def report_finding_rows(results: list[EngineResultRecord]) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for result in results:
-        for finding in result_findings(result):
-            source = str(finding.get("source") or result.engine_name)
-            title = str(finding.get("title") or result.signature or "Detection")
-            finding_type = str(finding.get("type") or "finding").replace("_", " ").title()
-            severity = str(finding.get("severity") or result.severity)
-            confidence = int(finding.get("confidence") or result.confidence or 0)
-            action = str(finding.get("action") or "detected").replace("_", " ").title()
-            matched = matched_evidence_for_finding(finding, result)
-            rows.append(
-                {
-                    "engine": source,
-                    "status": result.status,
-                    "title": title,
-                    "finding": finding_type,
-                    "severity": severity,
-                    "confidence": confidence,
-                    "action": action,
-                    "matched_evidence": matched if isinstance(matched, list) else [str(matched)],
-                    "classification": finding_classification_values(finding),
-                    "evidence": fallback_finding_detail_payload(finding, result),
-                }
-            )
-    return rows
+    return build_report_finding_rows(
+        results,
+        matched_evidence_for_finding=matched_evidence_for_finding,
+        finding_classification_values=finding_classification_values,
+        fallback_finding_detail_payload=fallback_finding_detail_payload,
+    )
 
 
 def build_scan_report_payload(
@@ -3298,165 +3262,28 @@ def build_scan_report_payload(
         risk_score=risk_score,
         verdict=verdict,
     )
-
-    return {
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "scan": {
-            "id": scan.id,
-            "filename": scan.original_filename,
-            "case_name": scan.case_name,
-            "priority": scan.priority,
-            "status": scan.status,
-            "verdict": verdict,
-            "risk_score": risk_score,
-            "created_at": scan.created_at,
-            "started_at": scan.started_at,
-            "completed_at": scan.completed_at,
-            "failed_at": scan.failed_at,
-            "attempt_count": scan.attempt_count,
-            "last_error": scan.last_error,
-            "note": scan.note,
-            "content_type": scan.content_type,
-            "size_bytes": scan.size_bytes,
-            "hashes": {
-                "md5": scan.md5,
-                "sha1": scan.sha1,
-                "sha256": scan.sha256,
-            },
-        },
-        "summary": {
-            "detection": {
-                "label": detection_summary_text_for_scan(scan, engine_results),
-                "detail": detection_detail_text_for_scan(scan, engine_results),
-                "detected_engines": detected_engine_names(engine_results),
-            },
-            "coverage": {
-                "label": coverage_summary_text_for_scan(scan, engine_results),
-                "detail": coverage_detail_text_for_scan(scan, engine_results),
-                "ran": coverage_ran,
-                "total": coverage_total,
-                "unavailable": coverage_unavailable,
-            },
-            "assessment": {
-                "score": risk_score,
-                "verdict": verdict,
-                "reasons": assessment.reasons,
-            },
-            "decision": scan_decision_payload(decision),
-        },
-        "findings": findings,
-        "engine_results": [
-            {
-                "engine_name": result.engine_name,
-                "engine_version": result.engine_version,
-                "signature_version": result.signature_version,
-                "status": result.status,
-                "detected": result.detected,
-                "signature": result.signature,
-                "severity": result.severity,
-                "confidence": result.confidence,
-                "duration_ms": result.duration_ms,
-                "error_message": result.error_message,
-                "raw_output": result.raw_output,
-                "details": parse_json_value(result.details_json, {}),
-                "findings": result_findings(result),
-                "created_at": result.created_at,
-            }
-            for result in engine_results
-        ],
-    }
-
-
-def csv_cell(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "yes" if value else "no"
-    if isinstance(value, (list, tuple, set)):
-        return "; ".join(csv_cell(item) for item in value)
-    if isinstance(value, dict):
-        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
-    return " ".join(str(value).split())
+    return create_scan_report_payload(
+        scan,
+        engine_results,
+        verdict=verdict,
+        risk_score=risk_score,
+        findings=findings,
+        coverage_ran=coverage_ran,
+        coverage_total=coverage_total,
+        coverage_unavailable=coverage_unavailable,
+        decision_payload=scan_decision_payload(decision),
+        assessment_reasons=assessment.reasons,
+        detection_label=detection_summary_text_for_scan(scan, engine_results),
+        detection_detail=detection_detail_text_for_scan(scan, engine_results),
+        detected_engines=detected_engine_names(engine_results),
+        coverage_label=coverage_summary_text_for_scan(scan, engine_results),
+        coverage_detail=coverage_detail_text_for_scan(scan, engine_results),
+    )
 
 
 def build_scan_report_csv(scan: ScanRecord, engine_results: list[EngineResultRecord]) -> str:
     payload = build_scan_report_payload(scan, engine_results)
-    summary = payload["summary"]
-    findings = payload["findings"]
-    assessment = summary["assessment"]
-    detection = summary["detection"]
-    coverage = summary["coverage"]
-    decision = summary["decision"]
-    output = io.StringIO(newline="")
-    fieldnames = [
-        "section",
-        "scan_id",
-        "filename",
-        "sha256",
-        "status",
-        "verdict",
-        "risk_score",
-        "decision",
-        "decision_policy",
-        "engine",
-        "detected",
-        "severity",
-        "confidence",
-        "finding",
-        "signature",
-        "matched_evidence",
-        "duration_ms",
-        "error_message",
-    ]
-    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-
-    def write_row(**values: object) -> None:
-        base = {
-            "scan_id": scan.id,
-            "filename": scan.original_filename,
-            "sha256": scan.sha256,
-            "status": scan.status,
-            "verdict": assessment["verdict"],
-            "risk_score": assessment["score"],
-            "decision": decision["action"],
-            "decision_policy": decision["policy"],
-        }
-        base.update(values)
-        writer.writerow({key: csv_cell(base.get(key)) for key in fieldnames})
-
-    write_row(
-        section="summary",
-        finding=detection["label"],
-        matched_evidence=", ".join(detection["detected_engines"]),
-        error_message="" if not coverage["unavailable"] else coverage["detail"],
-    )
-
-    for finding in findings:
-        write_row(
-            section="finding",
-            engine=finding["engine"],
-            detected=finding["status"] == "completed",
-            severity=finding["severity"],
-            confidence=finding["confidence"],
-            finding=finding["finding"],
-            signature=finding["title"],
-            matched_evidence=finding["matched_evidence"],
-        )
-
-    for result in engine_results:
-        write_row(
-            section="engine_result",
-            engine=result.engine_name,
-            detected=result.detected,
-            severity=result.severity,
-            confidence=result.confidence,
-            signature=result.signature,
-            duration_ms=result.duration_ms,
-            error_message=result.error_message,
-        )
-
-    return output.getvalue()
+    return create_scan_report_csv(scan, engine_results, payload)
 
 
 def report_shell(title: str, body: str) -> str:
