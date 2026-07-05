@@ -6,5 +6,6 @@ node_modules/
 
 data/
 storage/samples/
+benchmark-results/
 
 agent.md

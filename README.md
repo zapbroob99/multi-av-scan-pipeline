@@ -100,6 +100,25 @@ interval when the scan is still running.
 Integration examples and response details live in
 [docs/integrations/API_SCAN_GATEWAY.md](docs/integrations/API_SCAN_GATEWAY.md).
 
+For local throughput testing, use the benchmark helper against the same public
+API instead of a private debug endpoint:
+
+```powershell
+python tools/benchmark_scans.py `
+  --base-url http://localhost:8000 `
+  --token $env:MASP_API_TOKEN `
+  --sample C:\path\to\eicar.com `
+  --requests 20 `
+  --concurrency 5 `
+  --poll-interval 1 `
+  --timeout 300 `
+  --output benchmark-results\latest.json
+```
+
+The script submits real scans through `POST /api/v1/scans`, polls
+`GET /api/v1/scans/{id}`, and prints aggregate latency plus partial-coverage
+summary data.
+
 ClamAV may take time to initialize and download/update signatures on first
 startup. MASP waits briefly for clamd to accept TCP connections before recording
 the ClamAV result. If clamd is still unreachable after that readiness window,
