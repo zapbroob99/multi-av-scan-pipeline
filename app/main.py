@@ -54,6 +54,7 @@ from app.services.auth import (
     seed_default_users,
     verify_password,
 )
+from app.services.decisions import ScanDecision, decide_scan_action
 from app.services.engine_registry import (
     ADAPTERS,
     ROADMAP_ADAPTERS,
@@ -774,6 +775,48 @@ def build_scan_summary_payload(scan: ScanRecord) -> dict[str, object]:
     }
 
 
+def scan_decision(
+    scan: ScanRecord,
+    engine_results: list[EngineResultRecord],
+    *,
+    risk_score: int | None = None,
+    verdict: str | None = None,
+) -> ScanDecision:
+    assessment = calculate_risk(engine_results)
+    effective_score = risk_score if risk_score is not None else scan.risk_score
+    effective_verdict = verdict if verdict is not None else scan.verdict
+    if effective_score is None:
+        effective_score = assessment.score
+    if effective_verdict == "pending":
+        effective_verdict = assessment.verdict
+    detected_count, detection_total = detection_summary(engine_results)
+    _, _, coverage_unavailable = required_engine_coverage(engine_results)
+    return decide_scan_action(
+        scan_status=scan.status,
+        verdict=effective_verdict,
+        risk_score=effective_score,
+        detected_engines=detected_count,
+        detection_engines=detection_total,
+        unavailable_engines=coverage_unavailable,
+    )
+
+
+def scan_decision_payload(decision: ScanDecision) -> dict[str, object]:
+    return {
+        "action": decision.action,
+        "label": decision.label,
+        "tone": decision.tone,
+        "confidence": decision.confidence,
+        "policy": decision.policy,
+        "reason": decision.reason,
+        "reasons": decision.reasons,
+    }
+
+
+def decision_pill(decision: ScanDecision) -> str:
+    return f'<span class="pill {html.escape(decision.tone)}">{html.escape(decision.label)}</span>'
+
+
 def build_api_scan_status_payload(
     request: Request,
     scan: ScanRecord,
@@ -783,11 +826,13 @@ def build_api_scan_status_payload(
     queue_metrics = get_queue_metrics()
     queue_position = get_scan_queue_position(scan.id)
     result_ready = scan_is_terminal(scan)
+    decision = scan_decision(scan, results)
 
     return {
         "completed": result_ready,
         "result_ready": result_ready,
         "recommended_poll_seconds": None if result_ready else configured_api_retry_after_seconds(),
+        "decision": scan_decision_payload(decision),
         "scan": build_scan_summary_payload(scan),
         "queue": {
             **queue_metrics,
@@ -814,6 +859,7 @@ def build_api_scan_result_payload(
     payload = build_scan_report_payload(scan, results)
     payload["completed"] = scan_is_terminal(scan)
     payload["result_ready"] = scan_is_terminal(scan)
+    payload["decision"] = payload["summary"]["decision"]
     payload["links"] = api_scan_links(request, scan.id)
     return payload
 
@@ -3103,6 +3149,12 @@ def build_scan_report_payload(
     risk_score = scan.risk_score if scan.risk_score is not None else assessment.score
     findings = report_finding_rows(engine_results)
     coverage_ran, coverage_total, coverage_unavailable = required_engine_coverage(engine_results)
+    decision = scan_decision(
+        scan,
+        engine_results,
+        risk_score=risk_score,
+        verdict=verdict,
+    )
 
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -3147,6 +3199,7 @@ def build_scan_report_payload(
                 "verdict": verdict,
                 "reasons": assessment.reasons,
             },
+            "decision": scan_decision_payload(decision),
         },
         "findings": findings,
         "engine_results": [
@@ -3190,6 +3243,7 @@ def build_scan_report_csv(scan: ScanRecord, engine_results: list[EngineResultRec
     assessment = summary["assessment"]
     detection = summary["detection"]
     coverage = summary["coverage"]
+    decision = summary["decision"]
     output = io.StringIO(newline="")
     fieldnames = [
         "section",
@@ -3199,6 +3253,8 @@ def build_scan_report_csv(scan: ScanRecord, engine_results: list[EngineResultRec
         "status",
         "verdict",
         "risk_score",
+        "decision",
+        "decision_policy",
         "engine",
         "detected",
         "severity",
@@ -3220,6 +3276,8 @@ def build_scan_report_csv(scan: ScanRecord, engine_results: list[EngineResultRec
             "status": scan.status,
             "verdict": assessment["verdict"],
             "risk_score": assessment["score"],
+            "decision": decision["action"],
+            "decision_policy": decision["policy"],
         }
         base.update(values)
         writer.writerow({key: csv_cell(base.get(key)) for key in fieldnames})
@@ -3288,6 +3346,7 @@ def render_report_page(scan: ScanRecord, engine_results: list[EngineResultRecord
     assessment = summary["assessment"]
     detection = summary["detection"]
     coverage = summary["coverage"]
+    decision = summary["decision"]
     report_title = f"Scan report #{scan.id}"
     finding_rows = "\n".join(
         f"""
@@ -3365,6 +3424,7 @@ def render_report_page(scan: ScanRecord, engine_results: list[EngineResultRecord
               <p>Analyst-facing summary of the completed scan.</p>
             </div>
             <div class="scan-verdict-group">
+              <span class="pill {html.escape(str(decision['tone']))}">{html.escape(str(decision['label']))}</span>
               {verdict_pill(str(assessment['verdict']))}
               {detection_meter_for_scan(scan, engine_results)}
             </div>
@@ -3374,14 +3434,16 @@ def render_report_page(scan: ScanRecord, engine_results: list[EngineResultRecord
             <div><span>Priority</span><strong>{html.escape(scan.priority)}</strong></div>
             <div><span>Status</span><strong>{html.escape(display_verdict(scan.status))}</strong></div>
             <div><span>Risk score</span><strong>{assessment['score']} / 100</strong></div>
+            <div><span>Decision</span><strong>{html.escape(str(decision['label']))}</strong></div>
+            <div><span>Policy</span><strong>{html.escape(display_verdict(str(decision['policy'])))}</strong></div>
             <div><span>Detection</span><strong>{html.escape(str(detection['label']))}</strong></div>
             <div><span>Coverage</span><strong>{html.escape(str(coverage['label']))}</strong></div>
             <div><span>Attempts</span><strong>{scan.attempt_count}</strong></div>
             <div><span>Completed</span><strong>{html.escape(scan.completed_at or scan.created_at)}</strong></div>
           </div>
           <div class="reason-block">
-            <span>Reasons</span>
-            <ul>{render_risk_reasons(list(assessment['reasons']))}</ul>
+            <span>Decision reasons</span>
+            <ul>{render_risk_reasons(list(decision['reasons']))}</ul>
           </div>
         </div>
 
@@ -3469,6 +3531,12 @@ def render_scan_result(
     assessment = calculate_risk(engine_results)
     score = scan.risk_score if scan.risk_score is not None else assessment.score
     verdict = scan.verdict if scan.risk_score is not None else assessment.verdict
+    decision = scan_decision(
+        scan,
+        engine_results,
+        risk_score=score,
+        verdict=verdict,
+    )
     worker_status = get_worker_status()
     runtime_label, runtime_value = scan_runtime_marker(scan)
     retry_action = (
@@ -3526,6 +3594,7 @@ def render_scan_result(
             <p>The sample was stored, analyzed by configured engines, and scored.</p>
           </div>
           <div class="scan-verdict-group">
+            {decision_pill(decision)}
             {verdict_pill(verdict)}
             {detection_meter_for_scan(scan, engine_results)}
           </div>
@@ -3537,6 +3606,8 @@ def render_scan_result(
           <div><span>Size</span><strong>{format_bytes(scan.size_bytes)}</strong></div>
           <div><span>Content type</span><strong>{html.escape(scan.content_type)}</strong></div>
           <div><span>Risk score</span><strong>{score} / 100</strong></div>
+          <div><span>Decision</span><strong>{html.escape(decision.label)}</strong></div>
+          <div><span>Policy</span><strong>{html.escape(display_verdict(decision.policy))}</strong></div>
           <div><span>Attempts</span><strong>{scan.attempt_count}</strong></div>
           <div><span>{html.escape(runtime_label)}</span><strong>{html.escape(runtime_value)}</strong></div>
           <div class="{detection_summary_card_class(engine_results)}">
@@ -3551,9 +3622,9 @@ def render_scan_result(
           </div>
         </div>
         <div class="reason-block">
-          <span>Reasons</span>
+          <span>Decision reasons</span>
           <ul>
-            {render_risk_reasons(assessment.reasons)}
+            {render_risk_reasons(decision.reasons)}
           </ul>
         </div>
       </div>

@@ -8,6 +8,7 @@ shows analyst-friendly scan results.
 
 - Web UI for file intake and scan history
 - Bearer-token file scan API for service-to-service integrations
+- Automation decision output: allow, block, review, or wait
 - PostgreSQL persistence for samples, scan jobs, and engine results in Docker
 - SQLite fallback for lightweight local development
 - Static Metadata engine

@@ -41,6 +41,7 @@ class ApiContractTests(unittest.TestCase):
 
         self.assertFalse(payload["completed"])
         self.assertFalse(payload["result_ready"])
+        self.assertEqual(payload["decision"]["action"], "wait")
         self.assertEqual(
             payload["recommended_poll_seconds"],
             configured_api_retry_after_seconds(),
@@ -56,6 +57,7 @@ class ApiContractTests(unittest.TestCase):
 
         self.assertTrue(payload["completed"])
         self.assertTrue(payload["result_ready"])
+        self.assertEqual(payload["decision"]["action"], "block")
         self.assertIn("links", payload)
 
 

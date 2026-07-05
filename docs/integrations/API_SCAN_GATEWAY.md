@@ -94,6 +94,7 @@ Status responses include:
 
 - `completed`
 - `result_ready`
+- `decision`
 - `recommended_poll_seconds`
 - `scan`
 - `queue`
@@ -101,6 +102,15 @@ Status responses include:
 - `links`
 
 `result_ready=true` means `GET /api/v1/scans/{id}/result` is expected to succeed.
+
+The `decision` object is the automation-friendly outcome:
+
+- `wait`: scan is still queued or running
+- `allow`: no detection and required engine coverage completed
+- `block`: one or more engines detected malicious content, or risk is high
+- `review`: result is partial, metadata-only, failed, or elevated but not blocking
+
+Use `decision.action` for workflow routing and `decision.reasons` for audit text.
 
 ## Read Final Result
 
