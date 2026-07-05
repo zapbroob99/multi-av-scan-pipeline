@@ -1,4 +1,3 @@
-import json
 import os
 import time
 import traceback
@@ -22,10 +21,17 @@ from app.services.engine_registry import (
     runtime_config,
     seed_default_engines,
 )
+from app.services.routing import (
+    EngineRouteDecision,
+    ROUTE_ACTION_RUN,
+    ROUTE_ACTION_SKIP,
+    ROUTE_REASON_WORKER_TIMEOUT,
+    build_skipped_engine_result,
+    route_engine_for_worker,
+)
 from app.services.scoring import calculate_risk
 from app.services.worker_capabilities import (
     all_enabled_engines_have_results,
-    missing_supported_engines,
     worker_engine_keys,
 )
 from app.services.worker_runtime import record_worker_heartbeat
@@ -50,22 +56,37 @@ def process_scan(scan: ScanRecord, engine_keys: set[str]) -> bool:
     engine_results = list_engine_results(scan.id)
     existing_engine_names = {result.engine_name for result in engine_results}
     missing_enabled_engines = missing_enabled_engine_instances(engines, existing_engine_names)
-    missing_supported = missing_supported_engines(
-        engines,
-        existing_engine_names,
-        engine_keys,
-    )
+    route_decisions = route_missing_engines(scan, missing_enabled_engines, engine_keys)
+    runnable_decisions = [decision for decision in route_decisions if decision.action == ROUTE_ACTION_RUN]
+    skipped_decisions = [decision for decision in route_decisions if decision.action == ROUTE_ACTION_SKIP]
 
-    if not missing_supported:
+    if skipped_decisions or runnable_decisions:
+        mark_scan_running(scan.id)
+        for decision in skipped_decisions:
+            create_engine_result_if_missing(
+                scan.id,
+                build_skipped_engine_result(
+                    decision,
+                    duration_ms=max(1, scan_elapsed_seconds(scan) * 1000),
+                ),
+            )
+
+    if skipped_decisions:
+        engine_results = list_engine_results(scan.id)
+        existing_engine_names = {result.engine_name for result in engine_results}
+        missing_enabled_engines = missing_enabled_engine_instances(engines, existing_engine_names)
+
+    if not runnable_decisions:
         finalize_scan_if_complete_or_timeout(
             scan,
             engines,
             missing_enabled_engines,
+            engine_keys=engine_keys,
         )
-        return False
+        return bool(skipped_decisions)
 
-    mark_scan_running(scan.id)
-    for engine in missing_supported:
+    for decision in runnable_decisions:
+        engine = decision.engine
         print(f"Running {engine.display_name} for scan job {scan.id}", flush=True)
         create_engine_result_if_missing(scan.id, run_engine(engine, scan))
 
@@ -75,6 +96,7 @@ def process_scan(scan: ScanRecord, engine_keys: set[str]) -> bool:
         scan,
         engines,
         missing_enabled_engine_instances(engines, existing_engine_names),
+        engine_keys=engine_keys,
     )
     return True
 
@@ -83,13 +105,14 @@ def finalize_scan_if_complete_or_timeout(
     scan: ScanRecord,
     engines: list[EngineInstanceRecord],
     missing_engines: list[EngineInstanceRecord],
+    engine_keys: set[str],
 ) -> bool:
     if missing_engines and should_finalize_scan_with_partial_results(scan, missing_engines):
         wait_seconds = partial_results_wait_seconds(missing_engines)
         for engine in missing_engines:
             create_engine_result_if_missing(
                 scan.id,
-                skipped_engine_result(scan, engine, wait_seconds),
+                skipped_engine_result(scan, engine, engine_keys, wait_seconds),
             )
 
     engine_results = list_engine_results(scan.id)
@@ -112,6 +135,17 @@ def missing_enabled_engine_instances(
         engine
         for engine in engines
         if engine.display_name not in existing_engine_names
+    ]
+
+
+def route_missing_engines(
+    scan: ScanRecord,
+    engines: list[EngineInstanceRecord],
+    engine_keys: set[str],
+) -> list[EngineRouteDecision]:
+    return [
+        route_engine_for_worker(engine, scan, engine_keys)
+        for engine in engines
     ]
 
 
@@ -164,6 +198,7 @@ def parse_scan_timestamp(value: str) -> datetime:
 def skipped_engine_result(
     scan: ScanRecord,
     engine: EngineInstanceRecord,
+    engine_keys: set[str],
     wait_seconds: int | None = None,
 ) -> EngineResultInput:
     effective_wait_seconds = (
@@ -171,33 +206,31 @@ def skipped_engine_result(
         if wait_seconds is None
         else wait_seconds
     )
+    deferred_decision = route_engine_for_worker(engine, scan, engine_keys)
     message = (
         "No compatible worker recorded a result before the orchestration wait window "
         f"expired ({effective_wait_seconds}s)."
     )
-    details = {
-        "adapter": engine.adapter_key,
-        "orchestration": {
-            "reason": "worker_timeout",
-            "wait_seconds": effective_wait_seconds,
+    timeout_decision = EngineRouteDecision(
+        engine=engine,
+        action=ROUTE_ACTION_SKIP,
+        reason_code=ROUTE_REASON_WORKER_TIMEOUT,
+        reason=message,
+        details={
+            **deferred_decision.details,
+            "orchestration": {
+                "reason": ROUTE_REASON_WORKER_TIMEOUT,
+                "wait_seconds": effective_wait_seconds,
+            },
+            "deferred_reason_code": deferred_decision.reason_code,
+            "deferred_reason": deferred_decision.reason,
         },
-        "sample": {
-            "filename": scan.original_filename,
-            "sha256": scan.sha256,
-            "size_bytes": scan.size_bytes,
-        },
-    }
-    return EngineResultInput(
-        engine_name=engine.display_name,
-        status="skipped",
-        detected=False,
-        severity="info",
-        confidence=0,
-        signature=None,
-        raw_output=message,
-        error_message=message,
+    )
+    return build_skipped_engine_result(
+        timeout_decision,
         duration_ms=max(1, scan_elapsed_seconds(scan) * 1000),
-        details_json=json.dumps(details, sort_keys=True),
+        error_message=message,
+        raw_output=message,
     )
 
 

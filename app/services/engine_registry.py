@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Callable
 
 from app.database import (
     create_engine_instance,
@@ -24,6 +25,11 @@ from app.engines.yara_engine import check_yara_health, get_yara_config, run_yara
 from app.models import EngineInstanceRecord, EngineResultInput, ScanRecord
 
 
+RuntimeConfigFactory = Callable[[dict[str, str] | None], dict[str, str | int | float | bool]]
+HealthCheckFunction = Callable[[dict[str, str] | None], dict[str, str | bool]]
+ScanFunction = Callable[[ScanRecord, dict[str, str] | None], EngineResultInput]
+
+
 @dataclass(frozen=True)
 class EngineConfigField:
     key: str
@@ -40,6 +46,7 @@ class EngineAdapterDefinition:
     key: str
     label: str
     short_label: str
+    category: str
     description: str
     vendor: str
     product: str
@@ -50,6 +57,45 @@ class EngineAdapterDefinition:
     supports_rules: bool = False
     docs_path: str = ""
     config_fields: tuple[EngineConfigField, ...] = ()
+
+
+@dataclass(frozen=True)
+class EngineCapabilityProfile:
+    input_modes: tuple[str, ...]
+    deployment: str
+    supported_platforms: tuple[str, ...]
+    execution_model: str
+    supports_file_upload: bool
+    supports_hash_lookup: bool
+    supports_rules: bool = False
+    supports_archives: bool = False
+    requires_network: bool = False
+    max_file_size_bytes: int | None = None
+
+
+@dataclass(frozen=True)
+class RegisteredEngineAdapter:
+    definition: EngineAdapterDefinition
+    capabilities: EngineCapabilityProfile
+    runtime_config_factory: RuntimeConfigFactory
+    health_check_function: HealthCheckFunction
+    scan_function: ScanFunction
+
+    @property
+    def key(self) -> str:
+        return self.definition.key
+
+    def runtime_config(self, config_override: dict[str, str] | None = None) -> dict[str, str | int | float | bool]:
+        return self.runtime_config_factory(config_override)
+
+    def health_check(self, config_override: dict[str, str] | None = None) -> dict[str, str | bool]:
+        return self.health_check_function(config_override)
+
+    def scan(self, scan: ScanRecord, config_override: dict[str, str] | None = None) -> EngineResultInput:
+        return self.scan_function(scan, config_override)
+
+    def supports_platform(self, platform_name: str) -> bool:
+        return platform_name in self.capabilities.supported_platforms
 
 
 @dataclass(frozen=True)
@@ -64,80 +110,177 @@ class RoadmapAdapterDefinition:
     blocker: str
 
 
+def static_metadata_runtime_config(
+    config_override: dict[str, str] | None = None,
+) -> dict[str, str | int | float | bool]:
+    return {
+        "mode": "builtin",
+        "enabled": True,
+        "timeout_seconds": 1,
+    }
+
+
+def static_metadata_health_check(
+    config_override: dict[str, str] | None = None,
+) -> dict[str, str | bool]:
+    return {
+        "ok": True,
+        "status": "available",
+        "detail": "Built-in analyzer is available.",
+    }
+
+
+def static_metadata_scan(
+    scan: ScanRecord,
+    config_override: dict[str, str] | None = None,
+) -> EngineResultInput:
+    return run_static_metadata_engine(scan)
+
+
+REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
+    "static_metadata": RegisteredEngineAdapter(
+        definition=EngineAdapterDefinition(
+            key="static_metadata",
+            label=STATIC_METADATA_NAME,
+            short_label="ST",
+            category="metadata",
+            description="Built-in metadata analyzer.",
+            vendor="MASP",
+            product="Built-in metadata analyzer",
+            integration_method="local",
+            support_state="supported",
+            detection=False,
+            configurable=False,
+            docs_path="docs/integrations/SUPPORT_MATRIX.md",
+        ),
+        capabilities=EngineCapabilityProfile(
+            input_modes=("metadata", "file", "hash"),
+            deployment="local",
+            supported_platforms=("linux", "windows"),
+            execution_model="sync",
+            supports_file_upload=True,
+            supports_hash_lookup=True,
+            supports_archives=False,
+            requires_network=False,
+        ),
+        runtime_config_factory=static_metadata_runtime_config,
+        health_check_function=static_metadata_health_check,
+        scan_function=static_metadata_scan,
+    ),
+    "clamav": RegisteredEngineAdapter(
+        definition=EngineAdapterDefinition(
+            key="clamav",
+            label="ClamAV",
+            short_label="CL",
+            category="detection",
+            description="clamd TCP adapter with local CLI fallback.",
+            vendor="Cisco Talos",
+            product="ClamAV",
+            integration_method="clamd TCP / local CLI",
+            support_state="supported",
+            detection=True,
+            configurable=True,
+            docs_path="docs/integrations/SUPPORT_MATRIX.md",
+            config_fields=(
+                EngineConfigField("host", "clamd host", "text", False, help_text="Set to use clamd TCP; leave empty for CLI fallback."),
+                EngineConfigField("port", "clamd port", "number", False, "3310"),
+                EngineConfigField("command", "CLI command", "text", False, "clamscan"),
+                EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "60"),
+                EngineConfigField("max_file_size_bytes", "max file size bytes", "number", False, "0"),
+            ),
+        ),
+        capabilities=EngineCapabilityProfile(
+            input_modes=("file", "path"),
+            deployment="worker",
+            supported_platforms=("linux",),
+            execution_model="sync",
+            supports_file_upload=True,
+            supports_hash_lookup=False,
+            supports_archives=True,
+            requires_network=True,
+        ),
+        runtime_config_factory=get_clamav_config,
+        health_check_function=check_clamav_health,
+        scan_function=run_clamav_engine,
+    ),
+    "yara": RegisteredEngineAdapter(
+        definition=EngineAdapterDefinition(
+            key="yara",
+            label="YARA",
+            short_label="YR",
+            category="detection",
+            description="Local rule engine adapter for pattern-based detection.",
+            vendor="YARA",
+            product="YARA CLI",
+            integration_method="local CLI",
+            support_state="supported",
+            detection=True,
+            configurable=True,
+            supports_rules=True,
+            docs_path="docs/integrations/SUPPORT_MATRIX.md",
+            config_fields=(
+                EngineConfigField("command", "CLI command", "text", False, "yara"),
+                EngineConfigField("rules_dir", "rules directory", "text", False, "rules"),
+                EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "30"),
+            ),
+        ),
+        capabilities=EngineCapabilityProfile(
+            input_modes=("file", "path"),
+            deployment="worker",
+            supported_platforms=("linux", "windows"),
+            execution_model="sync",
+            supports_file_upload=True,
+            supports_hash_lookup=False,
+            supports_rules=True,
+            supports_archives=False,
+            requires_network=False,
+        ),
+        runtime_config_factory=get_yara_config,
+        health_check_function=check_yara_health,
+        scan_function=run_yara_engine,
+    ),
+    "microsoft_defender": RegisteredEngineAdapter(
+        definition=EngineAdapterDefinition(
+            key="microsoft_defender",
+            label="Microsoft Defender",
+            short_label="MD",
+            category="detection",
+            description="Windows local antivirus integration validated in lab.",
+            vendor="Microsoft",
+            product="Microsoft Defender Antivirus",
+            integration_method="PowerShell / CLI",
+            support_state="lab",
+            detection=True,
+            configurable=True,
+            docs_path="docs/integrations/microsoft_defender_local_cli.md",
+            config_fields=(
+                EngineConfigField("execution_mode", "execution mode", "text", False, "powershell"),
+                EngineConfigField("powershell_path", "PowerShell path", "text", False, "powershell.exe"),
+                EngineConfigField("mpcmdrun_path", "MpCmdRun path", "text", False, "auto"),
+                EngineConfigField("default_scan_type", "default scan type", "text", False, "custom"),
+                EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "900"),
+                EngineConfigField("update_before_scan", "update before scan", "checkbox", False, "false"),
+                EngineConfigField("require_real_time_enabled", "require real-time protection", "checkbox", False, "true"),
+            ),
+        ),
+        capabilities=EngineCapabilityProfile(
+            input_modes=("file", "path"),
+            deployment="worker",
+            supported_platforms=("windows",),
+            execution_model="sync",
+            supports_file_upload=True,
+            supports_hash_lookup=False,
+            supports_archives=True,
+            requires_network=False,
+        ),
+        runtime_config_factory=get_microsoft_defender_config,
+        health_check_function=check_microsoft_defender_health,
+        scan_function=run_microsoft_defender_engine,
+    ),
+}
+
 ADAPTERS: dict[str, EngineAdapterDefinition] = {
-    "static_metadata": EngineAdapterDefinition(
-        key="static_metadata",
-        label=STATIC_METADATA_NAME,
-        short_label="ST",
-        description="Built-in metadata analyzer.",
-        vendor="MASP",
-        product="Built-in metadata analyzer",
-        integration_method="local",
-        support_state="supported",
-        detection=False,
-        configurable=False,
-        docs_path="docs/integrations/SUPPORT_MATRIX.md",
-    ),
-    "clamav": EngineAdapterDefinition(
-        key="clamav",
-        label="ClamAV",
-        short_label="CL",
-        description="clamd TCP adapter with local CLI fallback.",
-        vendor="Cisco Talos",
-        product="ClamAV",
-        integration_method="clamd TCP / local CLI",
-        support_state="supported",
-        detection=True,
-        configurable=True,
-        docs_path="docs/integrations/SUPPORT_MATRIX.md",
-        config_fields=(
-            EngineConfigField("host", "clamd host", "text", False, help_text="Set to use clamd TCP; leave empty for CLI fallback."),
-            EngineConfigField("port", "clamd port", "number", False, "3310"),
-            EngineConfigField("command", "CLI command", "text", False, "clamscan"),
-            EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "60"),
-        ),
-    ),
-    "yara": EngineAdapterDefinition(
-        key="yara",
-        label="YARA",
-        short_label="YR",
-        description="Local rule engine adapter for pattern-based detection.",
-        vendor="YARA",
-        product="YARA CLI",
-        integration_method="local CLI",
-        support_state="supported",
-        detection=True,
-        configurable=True,
-        supports_rules=True,
-        docs_path="docs/integrations/SUPPORT_MATRIX.md",
-        config_fields=(
-            EngineConfigField("command", "CLI command", "text", False, "yara"),
-            EngineConfigField("rules_dir", "rules directory", "text", False, "rules"),
-            EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "30"),
-        ),
-    ),
-    "microsoft_defender": EngineAdapterDefinition(
-        key="microsoft_defender",
-        label="Microsoft Defender",
-        short_label="MD",
-        description="Windows local antivirus integration validated in lab.",
-        vendor="Microsoft",
-        product="Microsoft Defender Antivirus",
-        integration_method="PowerShell / CLI",
-        support_state="lab",
-        detection=True,
-        configurable=True,
-        docs_path="docs/integrations/microsoft_defender_local_cli.md",
-        config_fields=(
-            EngineConfigField("execution_mode", "execution mode", "text", False, "powershell"),
-            EngineConfigField("powershell_path", "PowerShell path", "text", False, "powershell.exe"),
-            EngineConfigField("mpcmdrun_path", "MpCmdRun path", "text", False, "auto"),
-            EngineConfigField("default_scan_type", "default scan type", "text", False, "custom"),
-            EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "900"),
-            EngineConfigField("update_before_scan", "update before scan", "checkbox", False, "false"),
-            EngineConfigField("require_real_time_enabled", "require real-time protection", "checkbox", False, "true"),
-        ),
-    ),
+    key: adapter.definition for key, adapter in REGISTERED_ADAPTERS.items()
 }
 
 ROADMAP_ADAPTERS: list[RoadmapAdapterDefinition] = [
@@ -224,10 +367,21 @@ def detection_engine_names() -> list[str]:
 
 
 def adapter_definition(adapter_key: str) -> EngineAdapterDefinition:
-    definition = ADAPTERS.get(adapter_key)
-    if definition is None:
+    adapter = REGISTERED_ADAPTERS.get(adapter_key)
+    if adapter is None:
         raise KeyError(f"Unknown adapter: {adapter_key}")
-    return definition
+    return adapter.definition
+
+
+def adapter_registry_entry(adapter_key: str) -> RegisteredEngineAdapter:
+    adapter = REGISTERED_ADAPTERS.get(adapter_key)
+    if adapter is None:
+        raise KeyError(f"Unknown adapter: {adapter_key}")
+    return adapter
+
+
+def adapter_capabilities(adapter_key: str) -> EngineCapabilityProfile:
+    return adapter_registry_entry(adapter_key).capabilities
 
 
 def available_adapter_definitions() -> list[EngineAdapterDefinition]:
@@ -282,41 +436,19 @@ def engine_config(instance: EngineInstanceRecord) -> dict[str, str]:
     return {str(key): str(value) for key, value in config.items()}
 
 
-def runtime_config(instance: EngineInstanceRecord) -> dict[str, str | int | bool]:
+def runtime_config(instance: EngineInstanceRecord) -> dict[str, str | int | float | bool]:
     config = engine_config(instance)
-    if instance.adapter_key == "clamav":
-        return get_clamav_config(config)
-    if instance.adapter_key == "yara":
-        return get_yara_config(config)
-    if instance.adapter_key == "microsoft_defender":
-        return get_microsoft_defender_config(config)
-    return {"mode": "builtin", "enabled": True}
+    return adapter_registry_entry(instance.adapter_key).runtime_config(config)
 
 
 def engine_health(instance: EngineInstanceRecord) -> dict[str, str | bool]:
     config = engine_config(instance)
-    if instance.adapter_key == "clamav":
-        return check_clamav_health(config)
-    if instance.adapter_key == "yara":
-        return check_yara_health(config)
-    if instance.adapter_key == "microsoft_defender":
-        return check_microsoft_defender_health(config)
-    return {
-        "ok": True,
-        "status": "available",
-        "detail": "Built-in analyzer is available.",
-    }
+    return adapter_registry_entry(instance.adapter_key).health_check(config)
 
 
 def run_engine(instance: EngineInstanceRecord, scan: ScanRecord) -> EngineResultInput:
     config = engine_config(instance)
-    if instance.adapter_key == "clamav":
-        return run_clamav_engine(scan, config)
-    if instance.adapter_key == "yara":
-        return run_yara_engine(scan, config)
-    if instance.adapter_key == "microsoft_defender":
-        return run_microsoft_defender_engine(scan, config)
-    return run_static_metadata_engine(scan)
+    return adapter_registry_entry(instance.adapter_key).scan(scan, config)
 
 
 def config_value(config: dict[str, str], key: str, fallback: str) -> str:
@@ -340,6 +472,11 @@ def clamav_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
             config,
             "timeout_seconds",
             get_setting("clamav.timeout_seconds", "60") or "60",
+        ),
+        "max_file_size_bytes": config_value(
+            config,
+            "max_file_size_bytes",
+            get_setting("clamav.max_file_size_bytes", "0") or "0",
         ),
     }
 

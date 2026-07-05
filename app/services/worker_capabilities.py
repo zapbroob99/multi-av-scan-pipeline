@@ -1,23 +1,43 @@
 import os
 
 from app.models import EngineInstanceRecord
+from app.services.engine_registry import adapter_capabilities
 
 
 WINDOWS_DEFAULT_ENGINE_KEYS = ("static_metadata", "microsoft_defender")
 POSIX_DEFAULT_ENGINE_KEYS = ("static_metadata", "clamav", "yara")
 
 
+def worker_platform() -> str:
+    return "windows" if os.name == "nt" else "linux"
+
+
+def adapter_supported_on_platform(adapter_key: str, platform_name: str) -> bool:
+    try:
+        capabilities = adapter_capabilities(adapter_key)
+    except KeyError:
+        return False
+    return platform_name in capabilities.supported_platforms
+
+
 def worker_engine_keys() -> set[str]:
     configured = os.getenv("MASP_WORKER_ENGINE_KEYS", "").strip()
     if configured:
-        return {
+        raw_keys = {
             item.strip()
             for item in configured.split(",")
             if item.strip()
         }
-    if os.name == "nt":
-        return set(WINDOWS_DEFAULT_ENGINE_KEYS)
-    return set(POSIX_DEFAULT_ENGINE_KEYS)
+    elif os.name == "nt":
+        raw_keys = set(WINDOWS_DEFAULT_ENGINE_KEYS)
+    else:
+        raw_keys = set(POSIX_DEFAULT_ENGINE_KEYS)
+    platform_name = worker_platform()
+    return {
+        adapter_key
+        for adapter_key in raw_keys
+        if adapter_supported_on_platform(adapter_key, platform_name)
+    }
 
 
 def supported_engines(
@@ -25,7 +45,13 @@ def supported_engines(
     engine_keys: set[str] | None = None,
 ) -> list[EngineInstanceRecord]:
     keys = worker_engine_keys() if engine_keys is None else engine_keys
-    return [engine for engine in engines if engine.adapter_key in keys]
+    platform_name = worker_platform()
+    return [
+        engine
+        for engine in engines
+        if engine.adapter_key in keys
+        and adapter_supported_on_platform(engine.adapter_key, platform_name)
+    ]
 
 
 def missing_supported_engines(

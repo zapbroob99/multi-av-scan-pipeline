@@ -1,6 +1,7 @@
 import json
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from app.models import EngineInstanceRecord, ScanRecord
 from app.workers.scan_worker import (
@@ -51,13 +52,16 @@ class WorkerTimeoutTests(unittest.TestCase):
             '{"timeout_seconds":"30"}',
         )
         scan = make_scan(started_seconds_ago=40)
-        result = skipped_engine_result(scan, engine)
+        with patch("app.services.routing.worker_platform", return_value="linux"):
+            result = skipped_engine_result(scan, engine, {"clamav"})
 
         self.assertEqual(result.engine_name, "Microsoft Defender")
         self.assertEqual(result.status, "skipped")
         self.assertIn("expired", result.error_message or "")
         details = json.loads(result.details_json)
         self.assertEqual(details["orchestration"]["reason"], "worker_timeout")
+        self.assertEqual(details["routing"]["reason_code"], "worker_timeout")
+        self.assertEqual(details["routing"]["deferred_reason_code"], "unsupported_platform")
 
 
 def make_engine(adapter_key: str, display_name: str, config_json: str) -> EngineInstanceRecord:

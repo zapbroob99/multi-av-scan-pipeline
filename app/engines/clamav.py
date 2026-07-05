@@ -17,6 +17,7 @@ DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_CLAMD_PORT = 3310
 DEFAULT_CLAMD_READY_TIMEOUT_SECONDS = 30
 DEFAULT_CLAMD_RETRY_INTERVAL_SECONDS = 1.0
+DEFAULT_MAX_FILE_SIZE_BYTES = 0
 STREAM_CHUNK_SIZE = 1024 * 1024
 CLAMD_LIMIT_HINT = (
     "clamd closed the scan stream. Check StreamMaxLength, MaxFileSize, "
@@ -73,6 +74,16 @@ def get_clamav_config(
                 ),
                 DEFAULT_CLAMD_RETRY_INTERVAL_SECONDS,
             ),
+            "max_file_size_bytes": setting_int(
+                override,
+                "max_file_size_bytes",
+                env_or_setting(
+                    "MASP_CLAMAV_MAX_FILE_SIZE_BYTES",
+                    "clamav.max_file_size_bytes",
+                    str(DEFAULT_MAX_FILE_SIZE_BYTES),
+                ),
+                DEFAULT_MAX_FILE_SIZE_BYTES,
+            ),
             "enabled": True,
         }
 
@@ -93,6 +104,16 @@ def get_clamav_config(
                 str(DEFAULT_TIMEOUT_SECONDS),
             ),
             DEFAULT_TIMEOUT_SECONDS,
+        ),
+        "max_file_size_bytes": setting_int(
+            override,
+            "max_file_size_bytes",
+            env_or_setting(
+                "MASP_CLAMAV_MAX_FILE_SIZE_BYTES",
+                "clamav.max_file_size_bytes",
+                str(DEFAULT_MAX_FILE_SIZE_BYTES),
+            ),
+            DEFAULT_MAX_FILE_SIZE_BYTES,
         ),
         "enabled": shutil.which(command) is not None,
     }

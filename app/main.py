@@ -60,6 +60,7 @@ from app.services.decisions import ScanDecision, decide_scan_action
 from app.services.engine_registry import (
     ADAPTERS,
     ROADMAP_ADAPTERS,
+    adapter_capabilities,
     adapter_definition,
     add_engine,
     available_adapter_definitions,
@@ -1480,6 +1481,49 @@ def render_engine_logo(label: str, key: str) -> str:
     return f'<span class="engine-logo engine-logo-text" aria-hidden="true">{safe_label}</span>'
 
 
+def format_engine_capability_modes(modes: tuple[str, ...]) -> str:
+    labels = {
+        "metadata": "metadata",
+        "file": "file",
+        "path": "path",
+        "hash": "hash",
+    }
+    return ", ".join(labels.get(mode, mode) for mode in modes)
+
+
+def format_engine_platforms(platforms: tuple[str, ...]) -> str:
+    labels = {
+        "linux": "Linux",
+        "windows": "Windows",
+    }
+    return ", ".join(labels.get(platform, platform.title()) for platform in platforms)
+
+
+def format_max_file_size(max_file_size_bytes: int | None) -> str:
+    if max_file_size_bytes is None:
+        return "Inherited"
+    if max_file_size_bytes <= 0:
+        return "Unlimited"
+    return format_bytes(max_file_size_bytes)
+
+
+def append_capability_fields(
+    fields: list[tuple[str, str]],
+    adapter_key: str,
+) -> list[tuple[str, str]]:
+    capability = adapter_capabilities(adapter_key)
+    fields.extend(
+        [
+            ("Deployment", capability.deployment.title()),
+            ("Inputs", format_engine_capability_modes(capability.input_modes)),
+            ("Platforms", format_engine_platforms(capability.supported_platforms)),
+            ("Execution", capability.execution_model.title()),
+            ("Network", "Required" if capability.requires_network else "Local only"),
+        ]
+    )
+    return fields
+
+
 def render_add_engine_panel() -> str:
     available_adapters = available_adapter_definitions()
     if available_adapters:
@@ -1623,6 +1667,7 @@ def render_engine_summary(
     meta: str,
 ) -> str:
     definition = adapter_definition(instance.adapter_key)
+    capability = adapter_capabilities(instance.adapter_key)
     disabled_note = (
         '<small class="engine-disabled-note">Disabled engines are skipped by the worker.</small>'
         if not instance.enabled
@@ -1634,6 +1679,7 @@ def render_engine_summary(
       <span class="engine-summary-copy">
         <strong>{html.escape(instance.display_name)}</strong>
         <small>{html.escape(definition.description)}</small>
+        <small class="engine-definition-meta">Deployment: {html.escape(capability.deployment.title())} | Inputs: {html.escape(format_engine_capability_modes(capability.input_modes))}</small>
         <small class="engine-definition-meta">{html.escape(definition.vendor)} · {html.escape(definition.integration_method)} · {html.escape(definition.support_state.title())}</small>
         {disabled_note}
       </span>
@@ -1670,6 +1716,7 @@ def render_engine_card(
     focus_adapter_key: str = "",
 ) -> str:
     definition = adapter_definition(instance.adapter_key)
+    capability = adapter_capabilities(instance.adapter_key)
     runtime = runtime_config(instance)
 
     health = (
@@ -1679,7 +1726,11 @@ def render_engine_card(
     )
     tone = health_tone_for(instance.adapter_key, health)
     status_html = f'<span class="pill {tone}">{html.escape(str(health["status"]).title())}</span>'
-    meta = "Disabled" if not instance.enabled else "Detection" if definition.detection else "Metadata"
+    meta = (
+        "Disabled"
+        if not instance.enabled
+        else f'{definition.category.title()} | {capability.deployment.title()}'
+    )
 
     if instance.adapter_key == "clamav":
         form_values = clamav_form_values(instance)
@@ -1689,6 +1740,7 @@ def render_engine_card(
                 ("Host", str(runtime["host"])),
                 ("Port", str(runtime["port"])),
                 ("Timeout", f'{runtime["timeout_seconds"]}s'),
+                ("Max size", format_max_file_size(int(runtime.get("max_file_size_bytes", 0) or 0))),
                 ("Configured via", "engine registry"),
             ]
         else:
@@ -1696,8 +1748,10 @@ def render_engine_card(
                 ("Adapter", "local CLI"),
                 ("Command", str(runtime["command"])),
                 ("Timeout", f'{runtime["timeout_seconds"]}s'),
+                ("Max size", format_max_file_size(int(runtime.get("max_file_size_bytes", 0) or 0))),
                 ("Configured via", "engine registry"),
             ]
+        fields = append_capability_fields(fields, instance.adapter_key)
 
         field_html = "\n".join(
             f"""
@@ -1745,6 +1799,10 @@ def render_engine_card(
                       timeout seconds
                       <input type="number" name="clamav_timeout_seconds" value="{html.escape(form_values["timeout_seconds"])}" min="1" max="600">
                     </label>
+                    <label>
+                      max file size bytes
+                      <input type="number" name="clamav_max_file_size_bytes" value="{html.escape(form_values["max_file_size_bytes"])}" min="0" step="1">
+                    </label>
                   </div>
                 </div>
                 <div class="settings-actions">
@@ -1771,6 +1829,7 @@ def render_engine_card(
             ("Rule count", str(runtime["rule_count"])),
             ("Timeout", f'{runtime["timeout_seconds"]}s'),
         ]
+        fields = append_capability_fields(fields, instance.adapter_key)
         field_html = "\n".join(
             f"""
             <div>
@@ -1876,6 +1935,7 @@ def render_engine_card(
             ("Timeout", f'{runtime["timeout_seconds"]}s'),
             ("Support state", definition.support_state.title()),
         ]
+        fields = append_capability_fields(fields, instance.adapter_key)
         field_html = "\n".join(
             f"""
             <div>
@@ -1966,6 +2026,7 @@ def render_engine_card(
         ("Detection", "No"),
         ("Configured via", "engine registry"),
     ]
+    fields = append_capability_fields(fields, instance.adapter_key)
     field_html = "\n".join(
         f"""
         <div>
@@ -2760,6 +2821,7 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
     for result in results:
         signature = result.signature or "-"
         error = result.error_message or "-"
+        skip_reason = engine_result_skip_reason_label(result)
         row_class = (
             ' class="engine-detected-row"'
             if result.status == "completed" and result.detected
@@ -2789,6 +2851,7 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
                 <details>
                   <summary>Raw output</summary>
                   <pre>{html.escape(result.raw_output)}</pre>
+                  {f'<small>Skip reason: {html.escape(skip_reason)}</small>' if skip_reason else ''}
                   <small>{html.escape(error)}</small>
                 </details>
               </td>
@@ -2804,6 +2867,19 @@ def parse_json_value(value: str, fallback: object) -> object:
     except json.JSONDecodeError:
         return fallback
     return parsed
+
+
+def engine_result_skip_reason_label(result: EngineResultRecord) -> str:
+    if result.status != "skipped":
+        return ""
+    details = parse_json_value(result.details_json, {})
+    if not isinstance(details, dict):
+        return ""
+    routing = details.get("routing")
+    if not isinstance(routing, dict):
+        return ""
+    reason = routing.get("reason")
+    return str(reason) if reason else ""
 
 
 def report_filename_base(scan: ScanRecord) -> str:
@@ -4395,6 +4471,7 @@ def save_clamav_config(
     clamav_port: str = Form("3310"),
     clamav_command: str = Form("clamscan"),
     clamav_timeout_seconds: str = Form("60"),
+    clamav_max_file_size_bytes: str = Form("0"),
 ) -> RedirectResponse:
     require_admin(request)
     update_engine_config(
@@ -4404,6 +4481,7 @@ def save_clamav_config(
             "port": clamav_port.strip() or "3310",
             "command": clamav_command.strip() or "clamscan",
             "timeout_seconds": clamav_timeout_seconds.strip() or "60",
+            "max_file_size_bytes": clamav_max_file_size_bytes.strip() or "0",
         },
     )
     return RedirectResponse(
