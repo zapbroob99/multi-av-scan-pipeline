@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from app.database import (
+    count_scans_older_than,
     count_users_by_role,
     create_sample,
     create_scan_job,
@@ -30,6 +31,7 @@ from app.database import (
     list_engine_result_metrics,
     list_engine_results,
     list_recent_scans,
+    list_scans_older_than,
     list_users,
     retry_scan_job as retry_scan_job_record,
     update_scan_assessment,
@@ -75,6 +77,7 @@ from app.services.engine_registry import (
     remove_engine,
 )
 from app.services.ingest import UploadTooLargeError, store_upload
+from app.services.retention import RetentionPolicy, retention_cutoff_value, retention_policy_from_env
 from app.services.scoring import calculate_risk
 from app.services.worker_runtime import get_worker_status
 from app.services.yara_rules import (
@@ -1190,15 +1193,77 @@ def render_system_queue_rows(active_scans: list[ScanRecord]) -> str:
     return "\n".join(rows)
 
 
-def render_system_page(user: UserRecord) -> str:
+def retention_policy_badge(policy: RetentionPolicy) -> str:
+    if policy.enabled:
+        return '<span class="pill success">Retention enabled</span>'
+    return '<span class="pill neutral">Retention disabled</span>'
+
+
+def render_retention_panel(policy: RetentionPolicy) -> str:
+    cutoff_value = retention_cutoff_value(policy)
+    eligible_count = count_scans_older_than(cutoff_value) if cutoff_value else 0
+    action_disabled = "disabled" if not policy.enabled or eligible_count == 0 else ""
+    cutoff_label = cutoff_value or "Not configured"
+    helper_text = (
+        f"{eligible_count} scans are older than the retention window."
+        if policy.enabled
+        else "Set MASP_RETENTION_DAYS above 0 to enable manual cleanup."
+    )
+
+    return f"""
+      <div class="panel system-wide">
+        <div class="panel-header compact">
+          <div>
+            <h2>Retention cleanup</h2>
+            <p>Manual housekeeping for old scan records and stored sample files.</p>
+          </div>
+          {retention_policy_badge(policy)}
+        </div>
+        <div class="retention-grid">
+          <div>
+            <span>Policy window</span>
+            <strong>{html.escape(str(policy.days))} days</strong>
+          </div>
+          <div>
+            <span>Batch size</span>
+            <strong>{html.escape(str(policy.batch_size))} scans</strong>
+          </div>
+          <div>
+            <span>Cutoff</span>
+            <strong>{html.escape(cutoff_label)}</strong>
+          </div>
+          <div>
+            <span>Eligible</span>
+            <strong>{eligible_count}</strong>
+          </div>
+        </div>
+        <div class="retention-actions">
+          <p>{html.escape(helper_text)}</p>
+          <form action="/system/retention/run" method="post" data-action-form data-preserve-scroll>
+            <button class="danger-action" type="submit" data-busy-label="Cleaning old scans..." {action_disabled}>
+              Run cleanup
+            </button>
+          </form>
+        </div>
+      </div>
+    """
+
+
+def render_system_page(user: UserRecord, message: str = "", error: str = "") -> str:
     worker_status = get_worker_status()
     queue_metrics = get_queue_metrics()
     engine_metrics = list_engine_result_metrics()
     engines = configured_engines()
     active_scans = list_active_scans(limit=50)
     supported_engine_count = len(set(str(item) for item in worker_status.get("engine_keys", [])))
+    retention_policy = retention_policy_from_env()
+    notice_html = (
+        page_notice("System updated", message, "success")
+        + page_notice("Action blocked", error, "danger")
+    )
 
     body = f"""
+    {notice_html}
     <section class="metric-grid">
       {metric_card("Workers", str(worker_status.get("online_count", 0)), "Online worker processes")}
       {metric_card("Queue", str(queue_metrics["queued"]), "Waiting scan jobs", "tone-blue")}
@@ -1306,6 +1371,8 @@ def render_system_page(user: UserRecord) -> str:
           </table>
         </div>
       </div>
+
+      {render_retention_panel(retention_policy)}
     </section>
     """
     return page_shell("System", "system", body, user, refresh_seconds=10)
@@ -3837,9 +3904,35 @@ def dashboard(
 
 
 @app.get("/system", response_class=HTMLResponse)
-def system_page(request: Request) -> str:
+def system_page(request: Request, message: str = "", error: str = "") -> str:
     user = require_admin(request)
-    return render_system_page(user)
+    return render_system_page(user, message=message, error=error)
+
+
+@app.post("/system/retention/run")
+def run_retention_cleanup(request: Request) -> RedirectResponse:
+    require_admin(request)
+    policy = retention_policy_from_env()
+    cutoff_value = retention_cutoff_value(policy)
+    if cutoff_value is None:
+        return RedirectResponse(
+            url=redirect_url("/system", error="Retention cleanup is disabled."),
+            status_code=303,
+        )
+
+    expired_scans = list_scans_older_than(cutoff_value, limit=policy.batch_size)
+    deleted_count = 0
+    for scan in expired_scans:
+        if delete_scan_record(scan.id) is not None:
+            deleted_count += 1
+
+    message = (
+        "No scans matched the retention policy."
+        if deleted_count == 0
+        else f"Deleted {deleted_count} expired scan." if deleted_count == 1
+        else f"Deleted {deleted_count} expired scans."
+    )
+    return RedirectResponse(url=redirect_url("/system", message=message), status_code=303)
 
 
 @app.get("/users", response_class=HTMLResponse)

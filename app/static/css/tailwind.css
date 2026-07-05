@@ -403,6 +403,14 @@
     @apply border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100;
   }
 
+  .primary-action:disabled,
+  .secondary-action:disabled,
+  .danger-action:disabled,
+  .row-action:disabled,
+  .toolbar-delete:disabled {
+    @apply cursor-not-allowed opacity-50 shadow-none;
+  }
+
   html.dark .secondary-action,
   html.dark .row-action {
     @apply border-slate-700 bg-slate-900 text-slate-100 hover:border-slate-600 hover:bg-slate-800;
@@ -584,46 +592,76 @@
     @apply md:grid-cols-2;
   }
 
+  .retention-grid {
+    @apply grid gap-px bg-slate-200 md:grid-cols-4;
+  }
+
+  html.dark .retention-grid {
+    @apply bg-slate-800;
+  }
+
   .status-summary-grid > div,
   .summary-grid > div,
   .config-grid > div,
-  .hash-list > div {
+  .hash-list > div,
+  .retention-grid > div {
     @apply bg-white p-4;
   }
 
   html.dark .status-summary-grid > div,
   html.dark .summary-grid > div,
   html.dark .config-grid > div,
-  html.dark .hash-list > div {
+  html.dark .hash-list > div,
+  html.dark .retention-grid > div {
     @apply bg-slate-900;
   }
 
   .status-summary-grid span,
   .summary-grid span,
   .config-grid span,
-  .hash-list dt {
+  .hash-list dt,
+  .retention-grid span {
     @apply text-xs font-medium uppercase tracking-[0.12em] text-slate-500;
   }
 
   .status-summary-grid strong,
   .summary-grid strong,
   .config-grid strong,
-  .hash-list dd {
+  .hash-list dd,
+  .retention-grid strong {
     @apply mt-2 block text-sm font-medium text-slate-900;
   }
 
   html.dark .status-summary-grid span,
   html.dark .summary-grid span,
   html.dark .config-grid span,
-  html.dark .hash-list dt {
+  html.dark .hash-list dt,
+  html.dark .retention-grid span {
     @apply text-slate-400;
   }
 
   html.dark .status-summary-grid strong,
   html.dark .summary-grid strong,
   html.dark .config-grid strong,
-  html.dark .hash-list dd {
+  html.dark .hash-list dd,
+  html.dark .retention-grid strong {
     @apply text-slate-100;
+  }
+
+  .retention-actions {
+    @apply flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4;
+  }
+
+  html.dark .retention-actions {
+    @apply border-slate-800;
+  }
+
+  .retention-actions p {
+    @apply text-sm text-slate-600;
+  }
+
+  html.dark .retention-actions p {
+    @apply text-slate-400;
   }
 
   .notice {

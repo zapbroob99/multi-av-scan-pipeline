@@ -1169,6 +1169,57 @@ def list_recent_scans(limit: int | None = 20, offset: int = 0) -> list[ScanRecor
     return [row_to_scan_record(row) for row in rows]
 
 
+def count_scans_older_than(created_before: str) -> int:
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS total FROM scan_jobs WHERE created_at < ?",
+            (created_before,),
+        ).fetchone()
+    if row is None:
+        return 0
+    if isinstance(row, dict):
+        return int(row["total"])
+    return int(row[0])
+
+
+def list_scans_older_than(created_before: str, limit: int = 100) -> list[ScanRecord]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                scan_jobs.id,
+                scan_jobs.sample_id,
+                scan_jobs.case_name,
+                scan_jobs.priority,
+                scan_jobs.note,
+                scan_jobs.status,
+                scan_jobs.verdict,
+                scan_jobs.risk_score,
+                scan_jobs.created_at,
+                scan_jobs.started_at,
+                scan_jobs.completed_at,
+                scan_jobs.failed_at,
+                scan_jobs.attempt_count,
+                scan_jobs.last_error,
+                samples.original_filename,
+                samples.stored_filename,
+                samples.storage_path,
+                samples.content_type,
+                samples.size_bytes,
+                samples.md5,
+                samples.sha1,
+                samples.sha256
+            FROM scan_jobs
+            JOIN samples ON samples.id = scan_jobs.sample_id
+            WHERE scan_jobs.created_at < ?
+            ORDER BY scan_jobs.created_at ASC, scan_jobs.id ASC
+            LIMIT ?
+            """,
+            (created_before, max(1, limit)),
+        ).fetchall()
+    return [row_to_scan_record(row) for row in rows]
+
+
 def list_active_scans(limit: int = 20) -> list[ScanRecord]:
     with connect() as connection:
         rows = connection.execute(

@@ -76,8 +76,14 @@ MASP_API_TOKEN=replace-with-a-long-random-token
 MASP_API_MAX_WAIT_SECONDS=15
 MASP_API_RETRY_AFTER_SECONDS=2
 MASP_UPLOAD_MAX_BYTES=0
+MASP_RETENTION_DAYS=0
+MASP_RETENTION_BATCH_SIZE=100
 MASP_WORKER_POLL_SECONDS=2
 ```
+
+`MASP_RETENTION_DAYS=0` disables retention cleanup. Set it above `0` to enable
+manual old scan cleanup from the System page. Cleanup deletes both scan records
+and their stored sample files, up to `MASP_RETENTION_BATCH_SIZE` records per run.
 
 ## API
 
