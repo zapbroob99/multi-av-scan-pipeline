@@ -248,6 +248,8 @@ def submit_single_scan(
             accepted=False,
             completed=False,
             submit_duration_ms=elapsed_ms,
+            queue_wait_ms=None,
+            processing_duration_ms=None,
             total_duration_ms=None,
             polls=0,
             queue_position=None,
@@ -268,6 +270,8 @@ def submit_single_scan(
         request_index=request_index,
         payload=payload,
         submit_duration_ms=elapsed_ms,
+        queue_wait_ms=None,
+        processing_duration_ms=None,
         total_duration_ms=elapsed_ms if bool(payload.get("completed")) else None,
         polls=0,
         fallback_status=f"http_{status_code}",
@@ -322,6 +326,8 @@ def poll_until_terminal(
             accepted=run.accepted,
             completed=False,
             submit_duration_ms=run.submit_duration_ms,
+            queue_wait_ms=run.queue_wait_ms,
+            processing_duration_ms=run.processing_duration_ms,
             total_duration_ms=timeout_ms,
             polls=run.polls,
             queue_position=run.queue_position,
@@ -366,6 +372,8 @@ def poll_single_scan(
             accepted=previous_run.accepted,
             completed=False,
             submit_duration_ms=previous_run.submit_duration_ms,
+            queue_wait_ms=previous_run.queue_wait_ms,
+            processing_duration_ms=previous_run.processing_duration_ms,
             total_duration_ms=previous_run.total_duration_ms,
             polls=previous_run.polls + 1,
             queue_position=previous_run.queue_position,
@@ -394,6 +402,8 @@ def poll_single_scan(
         request_index=previous_run.request_index,
         payload=payload,
         submit_duration_ms=previous_run.submit_duration_ms,
+        queue_wait_ms=previous_run.queue_wait_ms,
+        processing_duration_ms=previous_run.processing_duration_ms,
         total_duration_ms=total_duration_ms,
         polls=previous_run.polls + 1,
         fallback_status="running",
@@ -405,6 +415,8 @@ def poll_single_scan(
             accepted=previous_run.accepted,
             completed=False,
             submit_duration_ms=previous_run.submit_duration_ms,
+            queue_wait_ms=previous_run.queue_wait_ms,
+            processing_duration_ms=previous_run.processing_duration_ms,
             total_duration_ms=previous_run.total_duration_ms,
             polls=previous_run.polls + 1,
             queue_position=previous_run.queue_position,
@@ -427,6 +439,8 @@ def run_from_payload(
     request_index: int,
     payload: dict[str, Any],
     submit_duration_ms: int,
+    queue_wait_ms: int | None,
+    processing_duration_ms: int | None,
     total_duration_ms: int | None,
     polls: int,
     fallback_status: str,
@@ -443,6 +457,13 @@ def run_from_payload(
         scan_id = safe_int(scan_payload.get("id"))
         final_status = str(scan_payload.get("status") or fallback_status)
         final_verdict = optional_string(scan_payload.get("verdict"))
+        timing_payload = scan_payload.get("timing")
+        if isinstance(timing_payload, dict):
+            queue_wait_ms = safe_int(timing_payload.get("queue_wait_ms"))
+            processing_duration_ms = safe_int(
+                timing_payload.get("processing_duration_ms")
+            )
+            total_duration_ms = safe_int(timing_payload.get("total_duration_ms")) or total_duration_ms
 
     queue_position = None
     if isinstance(queue_payload, dict):
@@ -472,6 +493,8 @@ def run_from_payload(
         accepted=bool(payload.get("accepted", True)),
         completed=bool(payload.get("completed")),
         submit_duration_ms=submit_duration_ms,
+        queue_wait_ms=queue_wait_ms,
+        processing_duration_ms=processing_duration_ms,
         total_duration_ms=total_duration_ms,
         polls=polls,
         queue_position=queue_position,
@@ -610,6 +633,14 @@ def print_summary(summary: dict[str, Any]) -> None:
     print(
         f"Submit latency avg/p95/p99: {format_ms(latency['submit_avg'])} / "
         f"{format_ms(latency['submit_p95'])} / {format_ms(latency['submit_p99'])}"
+    )
+    print(
+        f"Queue wait avg/p95/p99: {format_ms(latency['queue_wait_avg'])} / "
+        f"{format_ms(latency['queue_wait_p95'])} / {format_ms(latency['queue_wait_p99'])}"
+    )
+    print(
+        f"Processing avg/p95/p99: {format_ms(latency['processing_avg'])} / "
+        f"{format_ms(latency['processing_p95'])} / {format_ms(latency['processing_p99'])}"
     )
     print(
         f"Total latency avg/p95/p99: {format_ms(latency['total_avg'])} / "

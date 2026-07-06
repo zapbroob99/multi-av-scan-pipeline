@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.models import EngineResultRecord, ScanRecord
+from app.services.timing import build_scan_timing_payload
 
 
 def parse_json_value(value: str, fallback: object) -> object:
@@ -102,6 +103,7 @@ def create_scan_report_payload(
             "note": scan.note,
             "content_type": scan.content_type,
             "size_bytes": scan.size_bytes,
+            "timing": build_scan_timing_payload(scan),
             "hashes": {
                 "md5": scan.md5,
                 "sha1": scan.sha1,

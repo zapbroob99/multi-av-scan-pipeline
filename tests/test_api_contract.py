@@ -46,6 +46,8 @@ class ApiContractTests(unittest.TestCase):
             payload["recommended_poll_seconds"],
             configured_api_retry_after_seconds(),
         )
+        self.assertEqual(payload["scan"]["timing"]["queue_wait_ms"], 1000)
+        self.assertIsNone(payload["scan"]["timing"]["processing_duration_ms"])
 
     def test_result_payload_marks_completed_scans_as_ready(self) -> None:
         with patch("app.main.enabled_engines", return_value=[object()]):
@@ -59,6 +61,8 @@ class ApiContractTests(unittest.TestCase):
         self.assertTrue(payload["result_ready"])
         self.assertEqual(payload["decision"]["action"], "block")
         self.assertIn("links", payload)
+        self.assertEqual(payload["scan"]["timing"]["queue_wait_ms"], 1000)
+        self.assertEqual(payload["scan"]["timing"]["processing_duration_ms"], 1000)
 
 
 class FakeRouter:

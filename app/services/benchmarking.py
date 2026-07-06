@@ -12,6 +12,8 @@ class BenchmarkRun:
     accepted: bool
     completed: bool
     submit_duration_ms: int
+    queue_wait_ms: int | None
+    processing_duration_ms: int | None
     total_duration_ms: int | None
     polls: int
     queue_position: int | None
@@ -50,11 +52,19 @@ def summarize_benchmark(
     benchmark_duration_ms: int,
 ) -> dict[str, Any]:
     submit_durations = sorted(run.submit_duration_ms for run in runs)
+    completed_runs = [run for run in runs if run.completed]
+    errored_runs = [run for run in runs if run.error]
     total_durations = sorted(
         run.total_duration_ms for run in runs if run.total_duration_ms is not None
     )
-    completed_runs = [run for run in runs if run.completed]
-    errored_runs = [run for run in runs if run.error]
+    queue_wait_durations = sorted(
+        run.queue_wait_ms for run in completed_runs if run.queue_wait_ms is not None
+    )
+    processing_durations = sorted(
+        run.processing_duration_ms
+        for run in completed_runs
+        if run.processing_duration_ms is not None
+    )
 
     expected_engine_values = [
         run.expected_engines for run in completed_runs if run.expected_engines is not None
@@ -93,6 +103,14 @@ def summarize_benchmark(
             "submit_p50": percentile(submit_durations, 0.50),
             "submit_p95": percentile(submit_durations, 0.95),
             "submit_p99": percentile(submit_durations, 0.99),
+            "queue_wait_avg": safe_average(queue_wait_durations),
+            "queue_wait_p50": percentile(queue_wait_durations, 0.50),
+            "queue_wait_p95": percentile(queue_wait_durations, 0.95),
+            "queue_wait_p99": percentile(queue_wait_durations, 0.99),
+            "processing_avg": safe_average(processing_durations),
+            "processing_p50": percentile(processing_durations, 0.50),
+            "processing_p95": percentile(processing_durations, 0.95),
+            "processing_p99": percentile(processing_durations, 0.99),
             "total_avg": safe_average(total_durations),
             "total_p50": percentile(total_durations, 0.50),
             "total_p95": percentile(total_durations, 0.95),

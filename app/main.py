@@ -90,6 +90,7 @@ from app.services.reports import (
     result_findings,
 )
 from app.services.scoring import calculate_risk
+from app.services.timing import build_scan_timing_payload
 from app.services.worker_runtime import get_worker_status
 from app.services.yara_rules import (
     delete_yara_rule,
@@ -781,6 +782,7 @@ def build_scan_summary_payload(scan: ScanRecord) -> dict[str, object]:
         "note": scan.note,
         "content_type": scan.content_type,
         "size_bytes": scan.size_bytes,
+        "timing": build_scan_timing_payload(scan),
         "hashes": {
             "md5": scan.md5,
             "sha1": scan.sha1,

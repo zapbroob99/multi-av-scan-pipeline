@@ -16,6 +16,8 @@ class BenchmarkingTests(unittest.TestCase):
                 accepted=True,
                 completed=True,
                 submit_duration_ms=120,
+                queue_wait_ms=400,
+                processing_duration_ms=1400,
                 total_duration_ms=1800,
                 polls=2,
                 queue_position=0,
@@ -36,6 +38,8 @@ class BenchmarkingTests(unittest.TestCase):
                 accepted=True,
                 completed=True,
                 submit_duration_ms=140,
+                queue_wait_ms=600,
+                processing_duration_ms=1600,
                 total_duration_ms=2200,
                 polls=3,
                 queue_position=1,
@@ -56,6 +60,8 @@ class BenchmarkingTests(unittest.TestCase):
                 accepted=False,
                 completed=False,
                 submit_duration_ms=90,
+                queue_wait_ms=None,
+                processing_duration_ms=None,
                 total_duration_ms=None,
                 polls=0,
                 queue_position=None,
@@ -93,6 +99,8 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertEqual(summary["summary"]["decision_actions"]["review"], 1)
         self.assertEqual(summary["engines"]["partial_runs"], 1)
         self.assertEqual(summary["latency_ms"]["submit_p50"], 120)
+        self.assertEqual(summary["latency_ms"]["queue_wait_p50"], 400)
+        self.assertEqual(summary["latency_ms"]["processing_p50"], 1400)
 
 
 if __name__ == "__main__":
