@@ -31,6 +31,16 @@ def worker_stale_seconds() -> int:
     return max(15, int(worker_poll_seconds() * 6))
 
 
+def worker_retention_seconds() -> int:
+    configured = os.getenv("MASP_WORKER_RETENTION_SECONDS", "").strip()
+    if configured:
+        try:
+            return max(worker_stale_seconds(), int(configured))
+        except ValueError:
+            pass
+    return max(300, worker_stale_seconds() * 10)
+
+
 def record_worker_heartbeat(state: str, active_scan_id: int | None = None) -> None:
     hostname = socket.gethostname()
     pid = os.getpid()
@@ -159,6 +169,10 @@ def update_worker_heartbeats(payload: dict[str, object]) -> dict[str, object]:
     except json.JSONDecodeError:
         parsed = {}
     heartbeats = parsed if isinstance(parsed, dict) else {}
+    heartbeats = prune_worker_heartbeats(
+        heartbeats,
+        int(payload.get("timestamp", 0) or 0),
+    )
     worker_id = worker_identity(payload)
     heartbeats[worker_id] = payload
     return heartbeats
@@ -175,6 +189,7 @@ def get_worker_heartbeats(current_time: int) -> list[dict[str, object]]:
         parsed = {}
     if not isinstance(parsed, dict):
         return []
+    parsed = prune_worker_heartbeats(parsed, current_time)
 
     workers = []
     for worker_id, value in parsed.items():
@@ -203,6 +218,25 @@ def get_worker_heartbeats(current_time: int) -> list[dict[str, object]]:
         key=lambda worker: int(worker.get("timestamp", 0) or 0),
         reverse=True,
     )
+
+
+def prune_worker_heartbeats(
+    heartbeats: dict[str, object],
+    current_time: int,
+) -> dict[str, object]:
+    retention_seconds = worker_retention_seconds()
+    pruned: dict[str, object] = {}
+    for worker_id, value in heartbeats.items():
+        if not isinstance(value, dict):
+            continue
+        timestamp = int(value.get("timestamp", 0) or 0)
+        if timestamp <= 0:
+            continue
+        age_seconds = max(0, current_time - timestamp)
+        if age_seconds > retention_seconds:
+            continue
+        pruned[str(worker_id)] = value
+    return pruned
 
 
 def worker_is_running_scan_engine(
