@@ -91,6 +91,7 @@ def create_scan_report_payload(
             "filename": scan.original_filename,
             "case_name": scan.case_name,
             "priority": scan.priority,
+            "source": scan.source,
             "status": scan.status,
             "verdict": verdict,
             "risk_score": risk_score,
@@ -103,6 +104,12 @@ def create_scan_report_payload(
             "note": scan.note,
             "content_type": scan.content_type,
             "size_bytes": scan.size_bytes,
+            "batch": {
+                "id": scan.batch_id,
+                "parent_scan_id": scan.parent_scan_id,
+                "relative_path": scan.relative_path,
+                "role": scan.scan_role,
+            },
             "timing": build_scan_timing_payload(scan),
             "hashes": {
                 "md5": scan.md5,

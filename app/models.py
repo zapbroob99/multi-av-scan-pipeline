@@ -38,6 +38,31 @@ class ScanRecord:
     md5: str
     sha1: str
     sha256: str
+    batch_id: int | None = None
+    parent_scan_id: int | None = None
+    relative_path: str | None = None
+    scan_role: str = "standalone"
+
+
+@dataclass(frozen=True)
+class ScanBatchRecord:
+    id: int
+    source: str
+    original_filename: str
+    archive_mode: str
+    status: str
+    total_items: int
+    queued_items: int
+    running_items: int
+    completed_items: int
+    failed_items: int
+    malicious_items: int
+    skipped_items: int
+    metadata_json: str
+    created_at: str
+    updated_at: str
+    completed_at: str | None
+    last_error: str | None
 
 
 @dataclass(frozen=True)

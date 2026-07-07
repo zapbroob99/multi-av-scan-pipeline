@@ -127,8 +127,105 @@ class ScanEngineJobTests(unittest.TestCase):
         self.assertEqual(api_counts["total"], 1)
         self.assertEqual(api_counts["running"], 1)
 
+    def test_scan_batch_metadata_links_container_and_child_scans(self) -> None:
+        batch_id = database.create_scan_batch(
+            source="api",
+            original_filename="bundle.zip",
+            archive_mode="container_and_extracted",
+            total_items=2,
+        )
 
-def create_scan_with_two_engines(status: str = "queued", source: str = "manual") -> int:
+        container_scan_id = create_scan_with_two_engines(
+            source="api",
+            batch_id=batch_id,
+            scan_role="container",
+            relative_path="bundle.zip",
+        )
+        child_scan_id = create_scan_with_two_engines(
+            source="api",
+            batch_id=batch_id,
+            parent_scan_id=container_scan_id,
+            scan_role="child",
+            relative_path="docs/readme.txt",
+        )
+
+        batch = database.get_scan_batch(batch_id)
+        self.assertIsNotNone(batch)
+        assert batch is not None
+        self.assertEqual(batch.source, "api")
+        self.assertEqual(batch.archive_mode, "container_and_extracted")
+        self.assertEqual(batch.total_items, 2)
+
+        container_scan = database.get_scan(container_scan_id)
+        child_scan = database.get_scan(child_scan_id)
+        self.assertIsNotNone(container_scan)
+        self.assertIsNotNone(child_scan)
+        assert container_scan is not None
+        assert child_scan is not None
+        self.assertEqual(container_scan.scan_role, "container")
+        self.assertEqual(container_scan.batch_id, batch_id)
+        self.assertIsNone(container_scan.parent_scan_id)
+        self.assertEqual(child_scan.scan_role, "child")
+        self.assertEqual(child_scan.batch_id, batch_id)
+        self.assertEqual(child_scan.parent_scan_id, container_scan_id)
+        self.assertEqual(child_scan.relative_path, "docs/readme.txt")
+
+        batch_scans = database.list_scan_batch_scans(batch_id)
+        self.assertEqual([scan.id for scan in batch_scans], [container_scan_id, child_scan_id])
+
+        standalone_scan_id = create_scan_with_two_engines(source="api")
+        standalone_scan = database.get_scan(standalone_scan_id)
+        self.assertIsNotNone(standalone_scan)
+        assert standalone_scan is not None
+        self.assertEqual(standalone_scan.scan_role, "standalone")
+        self.assertIsNone(standalone_scan.batch_id)
+
+    def test_scan_history_can_exclude_child_scans(self) -> None:
+        batch_id = database.create_scan_batch(
+            source="api",
+            original_filename="bundle.zip",
+            archive_mode="lazy_extract_on_detection",
+            total_items=2,
+        )
+        container_scan_id = create_scan_with_two_engines(
+            source="api",
+            batch_id=batch_id,
+            scan_role="container",
+            relative_path="bundle.zip",
+        )
+        child_scan_id = create_scan_with_two_engines(
+            source="api",
+            batch_id=batch_id,
+            parent_scan_id=container_scan_id,
+            scan_role="child",
+            relative_path="bin/tool.exe",
+        )
+
+        all_api_scans = database.list_scan_history(source="api", include_child_scans=True)
+        ledger_scans = database.list_scan_history(source="api", include_child_scans=False)
+
+        self.assertIn(container_scan_id, [scan.id for scan in all_api_scans])
+        self.assertIn(child_scan_id, [scan.id for scan in all_api_scans])
+        self.assertIn(container_scan_id, [scan.id for scan in ledger_scans])
+        self.assertNotIn(child_scan_id, [scan.id for scan in ledger_scans])
+        self.assertEqual(
+            database.count_scan_history(source="api", include_child_scans=False),
+            1,
+        )
+        self.assertEqual(
+            database.get_scan_counts(source="api", include_child_scans=False)["total"],
+            1,
+        )
+
+
+def create_scan_with_two_engines(
+    status: str = "queued",
+    source: str = "manual",
+    batch_id: int | None = None,
+    parent_scan_id: int | None = None,
+    relative_path: str | None = None,
+    scan_role: str = "standalone",
+) -> int:
     sample_id = database.create_sample(
         StoredSample(
             original_filename="sample.bin",
@@ -152,6 +249,10 @@ def create_scan_with_two_engines(status: str = "queued", source: str = "manual")
         priority="Normal",
         note="",
         source=source,
+        batch_id=batch_id,
+        parent_scan_id=parent_scan_id,
+        relative_path=relative_path,
+        scan_role=scan_role,
         status=status,
         verdict="pending",
     )

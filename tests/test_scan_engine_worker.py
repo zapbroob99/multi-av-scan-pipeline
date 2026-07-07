@@ -1,15 +1,19 @@
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 from app.models import (
     EngineInstanceRecord,
     EngineResultInput,
     EngineResultRecord,
+    ScanBatchRecord,
     ScanEngineJobRecord,
     ScanRecord,
+    StoredSample,
 )
+from app.services.archive_extractor import ArchiveExtractionResult, ExtractedArchiveMember
 from app.services.routing import EngineRouteDecision, ROUTE_ACTION_RUN
 from app.workers.scan_worker import (
     finalize_scan_if_complete,
@@ -139,6 +143,148 @@ class ScanEngineWorkerTests(unittest.TestCase):
         update_assessment.assert_called_once_with(scan.id, "low", 10)
         update_status.assert_called_once_with(scan.id, "completed")
 
+    def test_finalize_scan_enqueues_lazy_archive_children_for_detected_container(self) -> None:
+        engine = make_engine("static_metadata", "Static Metadata")
+        existing_archive_path = Path(__file__).resolve()
+        scan = replace(
+            make_scan(),
+            source="api",
+            batch_id=42,
+            scan_role="container",
+            relative_path="bundle.zip",
+            storage_path="storage/samples/bundle.zip",
+        )
+        job = replace(make_job(scan.id, engine), status="completed")
+        result = make_engine_result(scan.id, engine.display_name, detected=True)
+        child_sample = StoredSample(
+            original_filename="tool.exe",
+            stored_filename="stored-tool.exe",
+            storage_path="storage/samples/stored-tool.exe",
+            content_type="application/octet-stream",
+            size_bytes=12,
+            md5="0" * 32,
+            sha1="0" * 40,
+            sha256="1" * 64,
+        )
+        extraction = ArchiveExtractionResult(
+            archive_path=scan.storage_path,
+            members=[
+                ExtractedArchiveMember(
+                    relative_path="bin/tool.exe",
+                    sample=child_sample,
+                )
+            ],
+            total_uncompressed_bytes=12,
+        )
+
+        with patch("app.workers.scan_worker.ENGINE_JOB_QUEUE_ENABLED", True), patch(
+            "app.workers.scan_worker.list_scan_engine_jobs",
+            return_value=[job],
+        ), patch(
+            "app.workers.scan_worker.list_engine_results",
+            return_value=[result],
+        ), patch(
+            "app.workers.scan_worker.update_scan_assessment",
+        ), patch(
+            "app.workers.scan_worker.update_scan_status",
+        ), patch(
+            "app.workers.scan_worker.get_scan_batch",
+            return_value=make_batch(42),
+        ), patch(
+            "app.workers.scan_worker.list_scan_batch_scans",
+            return_value=[scan],
+        ), patch(
+            "app.workers.scan_worker.resolve_sample_path",
+            return_value=existing_archive_path,
+        ), patch(
+            "app.workers.scan_worker.extract_zip_archive",
+            return_value=extraction,
+        ) as extract_archive, patch(
+            "app.workers.scan_worker.create_sample",
+            return_value=123,
+        ) as create_sample, patch(
+            "app.workers.scan_worker.create_scan_job",
+            return_value=456,
+        ) as create_scan, patch(
+            "app.workers.scan_worker.create_scan_engine_jobs",
+        ) as create_engine_jobs, patch(
+            "app.workers.scan_worker.refresh_scan_batch_counts",
+        ) as refresh_counts, patch(
+            "app.workers.scan_worker.record_worker_timing_event",
+        ):
+            finalized = finalize_scan_if_complete(scan, [engine])
+
+        self.assertTrue(finalized)
+        extract_archive.assert_called_once_with(existing_archive_path)
+        create_sample.assert_called_once_with(child_sample)
+        create_scan.assert_called_once_with(
+            sample_id=123,
+            case_name=scan.case_name,
+            priority=scan.priority,
+            note=scan.note,
+            source="api",
+            batch_id=42,
+            parent_scan_id=scan.id,
+            relative_path="bin/tool.exe",
+            scan_role="child",
+        )
+        create_engine_jobs.assert_called_once_with(456, [engine])
+        refresh_counts.assert_called_once_with(42)
+
+    def test_finalize_scan_records_failure_when_archive_path_cannot_be_resolved(self) -> None:
+        engine = make_engine("static_metadata", "Static Metadata")
+        scan = replace(
+            make_scan(),
+            source="api",
+            batch_id=42,
+            scan_role="container",
+            relative_path="bundle.zip",
+            storage_path="/app/storage/samples/bundle.zip",
+        )
+        job = replace(make_job(scan.id, engine), status="completed")
+        result = make_engine_result(scan.id, engine.display_name, detected=True)
+
+        with patch("app.workers.scan_worker.ENGINE_JOB_QUEUE_ENABLED", True), patch(
+            "app.workers.scan_worker.list_scan_engine_jobs",
+            return_value=[job],
+        ), patch(
+            "app.workers.scan_worker.list_engine_results",
+            return_value=[result],
+        ), patch(
+            "app.workers.scan_worker.update_scan_assessment",
+        ), patch(
+            "app.workers.scan_worker.update_scan_status",
+        ), patch(
+            "app.workers.scan_worker.get_scan_batch",
+            return_value=make_batch(42),
+        ), patch(
+            "app.workers.scan_worker.list_scan_batch_scans",
+            return_value=[scan],
+        ), patch(
+            "app.workers.scan_worker.resolve_sample_path",
+            return_value=Path("C:/missing/bundle.zip"),
+        ), patch(
+            "app.workers.scan_worker.extract_zip_archive",
+        ) as extract_archive, patch(
+            "app.workers.scan_worker.refresh_scan_batch_counts",
+        ) as refresh_counts, patch(
+            "app.workers.scan_worker.record_worker_timing_event",
+        ) as record_event:
+            finalized = finalize_scan_if_complete(scan, [engine])
+
+        self.assertTrue(finalized)
+        extract_archive.assert_not_called()
+        refresh_counts.assert_called_once_with(42)
+        record_event.assert_any_call(
+            scan.id,
+            "archive_lazy_extract_failed",
+            set(),
+            details={
+                "batch_id": 42,
+                "error": "Sample file not found: /app/storage/samples/bundle.zip (resolved locally as C:\\missing\\bundle.zip)",
+            },
+        )
+
 
 def make_engine(adapter_key: str, display_name: str) -> EngineInstanceRecord:
     return EngineInstanceRecord(
@@ -172,7 +318,12 @@ def make_job(scan_id: int, engine: EngineInstanceRecord) -> ScanEngineJobRecord:
     )
 
 
-def make_engine_result(scan_id: int, engine_name: str) -> EngineResultRecord:
+def make_engine_result(
+    scan_id: int,
+    engine_name: str,
+    *,
+    detected: bool = False,
+) -> EngineResultRecord:
     return EngineResultRecord(
         id=30,
         scan_job_id=scan_id,
@@ -180,9 +331,9 @@ def make_engine_result(scan_id: int, engine_name: str) -> EngineResultRecord:
         engine_version=None,
         signature_version=None,
         status="completed",
-        detected=False,
-        signature=None,
-        severity="info",
+        detected=detected,
+        signature="Test.Detection" if detected else None,
+        severity="high" if detected else "info",
         confidence=100,
         raw_output="ok",
         error_message=None,
@@ -190,6 +341,28 @@ def make_engine_result(scan_id: int, engine_name: str) -> EngineResultRecord:
         created_at="2026-07-06 00:00:00+00:00",
         details_json="{}",
         findings_json="[]",
+    )
+
+
+def make_batch(batch_id: int) -> ScanBatchRecord:
+    return ScanBatchRecord(
+        id=batch_id,
+        source="api",
+        original_filename="bundle.zip",
+        archive_mode="lazy_extract_on_detection",
+        status="queued",
+        total_items=1,
+        queued_items=1,
+        running_items=0,
+        completed_items=0,
+        failed_items=0,
+        malicious_items=0,
+        skipped_items=0,
+        metadata_json="{}",
+        created_at="2026-07-06 00:00:00+00:00",
+        updated_at="2026-07-06 00:00:00+00:00",
+        completed_at=None,
+        last_error=None,
     )
 
 

@@ -15,12 +15,14 @@ from app.database import (
     count_scans_older_than,
     count_users_by_role,
     create_sample,
+    create_scan_batch,
     create_scan_engine_jobs,
     create_scan_job,
     create_user,
     delete_scan,
     delete_user,
     get_scan,
+    get_scan_batch,
     get_scan_queue_position,
     get_queue_metrics,
     get_scan_counts,
@@ -32,17 +34,20 @@ from app.database import (
     list_engine_results,
     list_engine_results_by_scan_ids,
     list_recent_scans,
+    list_scan_batch_scans,
     list_scan_history,
     list_scan_worker_events,
     list_scans_older_than,
     list_users,
     retry_scan_job as retry_scan_job_record,
+    refresh_scan_batch_counts,
     update_scan_assessment,
     update_user,
 )
 from app.models import (
     EngineInstanceRecord,
     EngineResultRecord,
+    ScanBatchRecord,
     ScanRecord,
     ScanWorkerEventRecord,
     UserRecord,
@@ -87,6 +92,7 @@ from app.services.engine_registry import (
     remove_engine,
 )
 from app.services.ingest import UploadTooLargeError, store_upload
+from app.services.archive_extractor import is_zip_file
 from app.services.api_payloads import (
     create_api_scan_result_payload,
     create_api_scan_status_payload,
@@ -125,6 +131,8 @@ STATIC_DIR = BASE_DIR / "static"
 CSS_PATH = STATIC_DIR / "css" / "app.css"
 LEGACY_CSS_PATH = STATIC_DIR / "css" / "legacy.css"
 API_TERMINAL_SCAN_STATUSES = {"completed", "failed"}
+SUPPORTED_ARCHIVE_MODES = {"container", "lazy_extract_on_detection"}
+DEFAULT_ARCHIVE_MODE = "lazy_extract_on_detection"
 
 init_db()
 seed_default_users()
@@ -294,15 +302,23 @@ def page_shell(
               </div>
               <div class="topbar-actions">
                 <div class="user-menu topbar-user-card">
-                  <span class="user-avatar" aria-hidden="true">{username[:1].upper()}</span>
+                  <span class="user-avatar topbar-user-avatar" aria-hidden="true">{username[:1].upper()}</span>
                   <span class="topbar-user-copy">
+                    <small class="topbar-user-label">Signed in as</small>
                     <strong>{username}</strong>
+                  </span>
+                  <span class="topbar-user-role-badge">
                     <small class="topbar-user-role">{role}</small>
                   </span>
                 </div>
                 <button class="theme-toggle topbar-theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark theme" title="Toggle dark theme">
-                  <span class="theme-toggle-icon" aria-hidden="true"></span>
-                  <span data-theme-label>Dark</span>
+                  <span class="theme-toggle-track" aria-hidden="true">
+                    <span class="theme-toggle-sun">L</span>
+                    <span class="theme-toggle-thumb">
+                      <span class="theme-toggle-icon" aria-hidden="true"></span>
+                    </span>
+                    <span class="theme-toggle-moon">D</span>
+                  </span>
                 </button>
               </div>
             </header>
@@ -325,7 +341,6 @@ def page_shell(
           const evidenceButtons = document.querySelectorAll("[data-evidence-button]");
           const evidenceDrawer = document.querySelector("[data-evidence-drawer]");
           const themeToggle = document.querySelector("[data-theme-toggle]");
-          const themeLabel = document.querySelector("[data-theme-label]");
           const actionForms = document.querySelectorAll("form[data-action-form]");
           const selectedScanIds = new Set();
           const clickTimers = new Map();
@@ -339,8 +354,10 @@ def page_shell(
             }} catch (error) {{
               console.warn("Theme preference could not be saved", error);
             }}
-            if (themeLabel) {{
-              themeLabel.textContent = theme === "dark" ? "Light" : "Dark";
+            if (themeToggle) {{
+              const nextTheme = theme === "dark" ? "light" : "dark";
+              themeToggle.setAttribute("aria-label", `Switch to ${{nextTheme}} theme`);
+              themeToggle.setAttribute("title", `Switch to ${{nextTheme}} theme`);
             }}
           }};
 
@@ -728,6 +745,42 @@ def page_notice(title: str, message: str, tone: str = "success") -> str:
     )
 
 
+ARCHIVE_CHILD_REFRESH_GRACE_SECONDS = 30
+
+
+def scan_completed_seconds_ago(scan: ScanRecord) -> int | None:
+    if not scan.completed_at:
+        return None
+    normalized = scan.completed_at.replace("Z", "+00:00")
+    try:
+        completed_at = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    now = datetime.now(completed_at.tzinfo) if completed_at.tzinfo else datetime.now()
+    return max(0, int((now - completed_at).total_seconds()))
+
+
+def should_refresh_archive_children(
+    scan: ScanRecord,
+    engine_results: list[EngineResultRecord],
+    child_scans: list[ScanRecord],
+) -> bool:
+    if scan.scan_role != "container" or scan.batch_id is None:
+        return False
+    if scan.status in {"queued", "running"} or child_scans:
+        return False
+    detected = any(
+        result.status == "completed" and result.detected
+        for result in engine_results
+    )
+    if not detected and scan.verdict not in {"medium", "high", "critical"}:
+        return False
+    completed_seconds_ago = scan_completed_seconds_ago(scan)
+    if completed_seconds_ago is None:
+        return True
+    return completed_seconds_ago <= ARCHIVE_CHILD_REFRESH_GRACE_SECONDS
+
+
 def redirect_url(
     path: str,
     *,
@@ -776,11 +829,35 @@ def normalized_api_wait_seconds(requested_wait_seconds: int) -> int:
     return max(0, min(requested_wait_seconds, configured_api_max_wait_seconds()))
 
 
+def normalized_archive_mode(requested_archive_mode: str) -> str:
+    archive_mode = requested_archive_mode.strip().lower() or DEFAULT_ARCHIVE_MODE
+    aliases = {
+        "lazy": "lazy_extract_on_detection",
+        "lazy_extract": "lazy_extract_on_detection",
+    }
+    archive_mode = aliases.get(archive_mode, archive_mode)
+    if archive_mode not in SUPPORTED_ARCHIVE_MODES:
+        supported = ", ".join(sorted(SUPPORTED_ARCHIVE_MODES))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported archive_mode '{requested_archive_mode}'. Supported values: {supported}.",
+        )
+    return archive_mode
+
+
 def api_scan_links(request: Request, scan_id: int) -> dict[str, str]:
     return {
         "status": str(request.url_for("api_scan_status", scan_id=scan_id)),
         "result": str(request.url_for("api_scan_result", scan_id=scan_id)),
         "ui": str(request.base_url).rstrip("/") + f"/scans/{scan_id}",
+    }
+
+
+def api_batch_links(request: Request, batch_id: int) -> dict[str, str]:
+    return {
+        "status": str(request.url_for("api_batch_status", batch_id=batch_id)),
+        "result": str(request.url_for("api_batch_result", batch_id=batch_id)),
+        "ui": str(request.base_url).rstrip("/") + f"/api-ledger/batches/{batch_id}",
     }
 
 
@@ -804,12 +881,101 @@ def build_scan_summary_payload(scan: ScanRecord) -> dict[str, object]:
         "note": scan.note,
         "content_type": scan.content_type,
         "size_bytes": scan.size_bytes,
+        "batch": {
+            "id": scan.batch_id,
+            "parent_scan_id": scan.parent_scan_id,
+            "relative_path": scan.relative_path,
+            "role": scan.scan_role,
+        },
         "timing": build_scan_timing_payload(scan),
         "hashes": {
             "md5": scan.md5,
             "sha1": scan.sha1,
             "sha256": scan.sha256,
         },
+    }
+
+
+def scan_batch_is_terminal(batch: ScanBatchRecord) -> bool:
+    return batch.status == "completed"
+
+
+def build_scan_batch_summary_payload(
+    request: Request,
+    batch: ScanBatchRecord,
+    scans: list[ScanRecord],
+) -> dict[str, object]:
+    container_scan = next((scan for scan in scans if scan.scan_role == "container"), None)
+    child_count = sum(1 for scan in scans if scan.scan_role == "child")
+    return {
+        "id": batch.id,
+        "source": batch.source,
+        "original_filename": batch.original_filename,
+        "archive_mode": batch.archive_mode,
+        "status": batch.status,
+        "counts": {
+            "total_items": batch.total_items,
+            "queued_items": batch.queued_items,
+            "running_items": batch.running_items,
+            "completed_items": batch.completed_items,
+            "failed_items": batch.failed_items,
+            "malicious_items": batch.malicious_items,
+            "skipped_items": batch.skipped_items,
+            "child_items": child_count,
+        },
+        "container_scan_id": None if container_scan is None else container_scan.id,
+        "metadata": json.loads(batch.metadata_json) if batch.metadata_json.strip() else {},
+        "created_at": batch.created_at,
+        "updated_at": batch.updated_at,
+        "completed_at": batch.completed_at,
+        "last_error": batch.last_error,
+        "completed": scan_batch_is_terminal(batch),
+        "links": api_batch_links(request, batch.id),
+    }
+
+
+def build_scan_batch_status_payload(
+    request: Request,
+    batch: ScanBatchRecord,
+    scans: list[ScanRecord],
+) -> dict[str, object]:
+    return {
+        "completed": scan_batch_is_terminal(batch),
+        "result_ready": scan_batch_is_terminal(batch),
+        "batch": build_scan_batch_summary_payload(request, batch, scans),
+        "scans": [
+            {
+                **build_scan_summary_payload(scan),
+                "result_ready": scan_is_terminal(scan),
+                "links": api_scan_links(request, scan.id),
+            }
+            for scan in scans
+        ],
+        "links": api_batch_links(request, batch.id),
+    }
+
+
+def build_scan_batch_result_payload(
+    request: Request,
+    batch: ScanBatchRecord,
+    scans: list[ScanRecord],
+) -> dict[str, object]:
+    return {
+        "completed": scan_batch_is_terminal(batch),
+        "result_ready": scan_batch_is_terminal(batch),
+        "batch": build_scan_batch_summary_payload(request, batch, scans),
+        "scans": [
+            {
+                "id": scan.id,
+                "role": scan.scan_role,
+                "parent_scan_id": scan.parent_scan_id,
+                "relative_path": scan.relative_path,
+                "result": build_scan_report_payload(scan, list_engine_results(scan.id)),
+                "links": api_scan_links(request, scan.id),
+            }
+            for scan in scans
+        ],
+        "links": api_batch_links(request, batch.id),
     }
 
 
@@ -867,7 +1033,7 @@ def build_api_scan_status_payload(
     queue_position = get_scan_queue_position(scan.id)
     result_ready = scan_is_terminal(scan)
     decision = scan_decision(scan, results)
-    return create_api_scan_status_payload(
+    payload = create_api_scan_status_payload(
         scan=scan,
         result_ready=result_ready,
         recommended_poll_seconds=None if result_ready else configured_api_retry_after_seconds(),
@@ -880,6 +1046,9 @@ def build_api_scan_status_payload(
         worker_events=events,
         links=api_scan_links(request, scan.id),
     )
+    if scan.batch_id is not None:
+        payload["batch_links"] = api_batch_links(request, scan.batch_id)
+    return payload
 
 
 def build_api_scan_result_payload(
@@ -888,15 +1057,18 @@ def build_api_scan_result_payload(
     engine_results: list[EngineResultRecord] | None = None,
 ) -> dict[str, object]:
     results = engine_results if engine_results is not None else list_engine_results(scan.id)
-    payload = build_scan_report_payload(scan, results)
+    report_payload = build_scan_report_payload(scan, results)
     result_ready = scan_is_terminal(scan)
-    return create_api_scan_result_payload(
-        report_payload=payload,
+    payload = create_api_scan_result_payload(
+        report_payload=report_payload,
         completed=result_ready,
         result_ready=result_ready,
-        decision_payload=payload["summary"]["decision"],
+        decision_payload=report_payload["summary"]["decision"],
         links=api_scan_links(request, scan.id),
     )
+    if scan.batch_id is not None:
+        payload["batch_links"] = api_batch_links(request, scan.batch_id)
+    return payload
 
 
 async def wait_for_terminal_scan(scan_id: int, wait_seconds: int) -> ScanRecord | None:
@@ -921,22 +1093,46 @@ async def enqueue_scan_from_upload(
     priority: str,
     note: str,
     source: str,
+    archive_mode: str = DEFAULT_ARCHIVE_MODE,
 ) -> ScanRecord:
     if not sample.filename:
         raise HTTPException(status_code=400, detail="A file must be selected.")
 
+    effective_archive_mode = normalized_archive_mode(archive_mode)
     try:
         stored_sample = await store_upload(sample)
     except UploadTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
 
     sample_id = create_sample(stored_sample)
+    batch_id: int | None = None
+    relative_path: str | None = None
+    scan_role = "standalone"
+    if is_zip_file(stored_sample.storage_path):
+        batch_id = create_scan_batch(
+            source=source,
+            original_filename=stored_sample.original_filename,
+            archive_mode=effective_archive_mode,
+            total_items=1,
+            metadata_json=json.dumps(
+                {
+                    "container_sha256": stored_sample.sha256,
+                    "container_size_bytes": stored_sample.size_bytes,
+                }
+            ),
+        )
+        relative_path = stored_sample.original_filename
+        scan_role = "container"
+
     scan_id = create_scan_job(
         sample_id=sample_id,
         case_name=case_name.strip() or "Unassigned",
         priority=priority,
         note=note.strip(),
         source=source,
+        batch_id=batch_id,
+        relative_path=relative_path,
+        scan_role=scan_role,
     )
     create_scan_engine_jobs(scan_id, enabled_engines())
     scan = get_scan(scan_id)
@@ -2307,6 +2503,16 @@ def status_pill(status: str) -> str:
     return f'<span class="pill {tone}">{html.escape(display_verdict(status))}</span>'
 
 
+def scan_role_pill(scan_role: str) -> str:
+    tone_by_role = {
+        "standalone": "neutral",
+        "container": "warning",
+        "child": "neutral",
+    }
+    tone = tone_by_role.get(scan_role, "neutral")
+    return f'<span class="pill {tone}">{html.escape(display_verdict(scan_role))}</span>'
+
+
 def verdict_pill(verdict: str) -> str:
     tone_by_verdict = {
         "pending": "neutral",
@@ -2732,6 +2938,20 @@ def api_ledger_query_url(
     )
 
 
+def batch_query_url(
+    batch_id: int,
+    *,
+    page: int,
+) -> str:
+    return scan_query_url(
+        f"/batches/{batch_id}",
+        page=page,
+        query="",
+        status_filter="all",
+        verdict_filter="all",
+    )
+
+
 def select_option(value: str, label: str, selected_value: str) -> str:
     selected = " selected" if value == selected_value else ""
     return f'<option value="{html.escape(value)}"{selected}>{html.escape(label)}</option>'
@@ -2921,6 +3141,98 @@ def render_recent_scan_rows(
     return "\n".join(rows)
 
 
+def scan_type_label(scan: ScanRecord) -> str:
+    if scan.scan_role == "container":
+        return "Archive container"
+    if scan.scan_role == "child":
+        return "Archive member"
+    return "Standalone sample"
+
+
+def render_archive_member_rows(
+    scans: list[ScanRecord],
+    results_by_scan: dict[int, list[EngineResultRecord]],
+) -> str:
+    if not scans:
+        return '<tr><td class="empty-cell" colspan="5">No extracted child scans are attached to this archive.</td></tr>'
+
+    rows = []
+    for child_scan in scans:
+        child_results = results_by_scan.get(child_scan.id, [])
+        relative_path = child_scan.relative_path or child_scan.original_filename
+        detection_tone = detection_summary_tone_for_scan(child_scan, child_results)
+        rows.append(
+            f"""
+            <tr>
+              <td>
+                <div class="table-link {'danger' if detection_tone == 'danger' else ''}">
+                  <strong>{html.escape(relative_path)}</strong>
+                  <small>{html.escape(child_scan.original_filename)}</small>
+                </div>
+              </td>
+              <td>{status_pill(child_scan.status)}</td>
+              <td>{dashboard_verdict_pill(child_scan, child_results)}</td>
+              <td><span class="detection-count {detection_tone}">{html.escape(detection_summary_text_for_scan(child_scan, child_results))}</span></td>
+              <td>
+                <div class="table-actions">
+                  <a class="secondary-action compact-action" href="/scans/{child_scan.id}">Open</a>
+                </div>
+              </td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_archive_members_panel(
+    scan: ScanRecord,
+    child_scans: list[ScanRecord],
+    results_by_scan: dict[int, list[EngineResultRecord]],
+) -> str:
+    if scan.scan_role != "container":
+        return ""
+    if not child_scans:
+        return ""
+
+    malicious_child_count = sum(
+        1
+        for child_scan in child_scans
+        if detection_summary_tone_for_scan(child_scan, results_by_scan.get(child_scan.id, [])) == "danger"
+    )
+    subtitle = (
+        f"{len(child_scans)} extracted files | {malicious_child_count} detected"
+        if malicious_child_count
+        else f"{len(child_scans)} extracted files"
+    )
+    return f"""
+      <div class="panel archive-members-panel">
+        <div class="panel-header compact">
+          <div>
+            <h2>Archive contents</h2>
+            <p>{html.escape(subtitle)}</p>
+          </div>
+          <span class="pill {'danger' if malicious_child_count else 'neutral'}">{html.escape(display_verdict(scan.status))}</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Status</th>
+                <th>Verdict</th>
+                <th>Detections</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_archive_member_rows(child_scans, results_by_scan)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    """
+
+
 def api_scan_source_pill(scan: ScanRecord) -> str:
     tone = "warning" if scan.status in {"queued", "running"} else "neutral"
     return f'<span class="pill {tone}">{html.escape(scan.source.title())}</span>'
@@ -2945,6 +3257,16 @@ def render_api_ledger_rows(
         total_duration = format_duration_ms(timing["total_duration_ms"])
         detection_summary = detection_summary_text_for_scan(scan, engine_results)
         detail_summary = coverage_detail_text_for_scan(scan, engine_results) or detection_detail_text_for_scan(scan, engine_results)
+        batch_detail = (
+            f"Batch #{scan.batch_id} | {display_verdict(scan.scan_role)}"
+            if scan.batch_id is not None
+            else f"{scan.priority} priority | attempt {scan.attempt_count}"
+        )
+        batch_action = (
+            f'<a class="secondary-action compact-action" href="/api-ledger/batches/{scan.batch_id}">Batch</a>'
+            if scan.batch_id is not None
+            else ""
+        )
         delete_action = (
             f"""
                   <form action="/api-ledger/scans/{scan.id}/delete" method="post" data-action-form data-preserve-scroll>
@@ -2988,12 +3310,13 @@ def render_api_ledger_rows(
               </td>
               <td>
                 {api_scan_source_pill(scan)}
-                <small class="status-detail">{html.escape(scan.priority)} priority | attempt {scan.attempt_count}</small>
+                <small class="status-detail">{html.escape(batch_detail)}</small>
               </td>
               <td>{html.escape(scan.created_at)}</td>
               <td>
                 <div class="table-actions">
                   <a class="secondary-action compact-action" href="/scans/{scan.id}">Open</a>
+                  {batch_action}
                   <a class="secondary-action compact-action" href="/api-ledger/scans/{scan.id}/status">Status JSON</a>
                   <a class="secondary-action compact-action" href="/api-ledger/scans/{scan.id}/result">Result JSON</a>
                   {delete_action}
@@ -3046,8 +3369,8 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
             </tr>
             <tr class="{raw_row_class}">
               <td colspan="7">
-                <details>
-                  <summary>Raw output</summary>
+                <details class="engine-raw-output">
+                  <summary class="engine-raw-output-toggle">Raw output</summary>
                   <pre>{html.escape(result.raw_output)}</pre>
                   {f'<small>Skip reason: {html.escape(skip_reason)}</small>' if skip_reason else ''}
                   <small>{html.escape(error)}</small>
@@ -3703,6 +4026,21 @@ def render_scan_result(
     )
     worker_status = get_worker_status()
     runtime_label, runtime_value = scan_runtime_marker(scan)
+    child_scans: list[ScanRecord] = []
+    child_results_by_scan: dict[int, list[EngineResultRecord]] = {}
+    if scan.scan_role == "container" and scan.batch_id is not None:
+        child_scans = [
+            batch_scan
+            for batch_scan in list_scan_batch_scans(scan.batch_id, limit=5000)
+            if batch_scan.parent_scan_id == scan.id
+        ]
+        if child_scans:
+            child_results_by_scan = list_engine_results_by_scan_ids([child_scan.id for child_scan in child_scans])
+    archive_children_refresh_pending = should_refresh_archive_children(
+        scan,
+        engine_results,
+        child_scans,
+    )
     retry_action = (
         f"""
         <form action="/scans/{scan.id}/retry" method="post" data-action-form data-preserve-scroll>
@@ -3728,6 +4066,12 @@ def render_scan_result(
         runtime_notice = page_notice(
             "Worker heartbeat missing",
             worker_status_detail(worker_status),
+            "warning",
+        )
+    elif archive_children_refresh_pending:
+        runtime_notice = page_notice(
+            "Archive contents pending",
+            "Detected archive members are still being indexed. This page will refresh automatically.",
             "warning",
         )
     action_notice = (
@@ -3773,6 +4117,8 @@ def render_scan_result(
           <div><span>Decision</span><strong>{html.escape(decision.label)}</strong></div>
           <div><span>Policy</span><strong>{html.escape(display_verdict(decision.policy))}</strong></div>
           <div><span>Attempts</span><strong>{scan.attempt_count}</strong></div>
+          <div><span>Scan type</span><strong>{html.escape(scan_type_label(scan))}</strong></div>
+          <div><span>Path</span><strong>{html.escape(scan.relative_path or scan.original_filename)}</strong></div>
           <div><span>{html.escape(runtime_label)}</span><strong>{html.escape(runtime_value)}</strong></div>
           <div class="{detection_summary_card_class(engine_results)}">
             <span>Engine detections</span>
@@ -3793,16 +4139,20 @@ def render_scan_result(
         </div>
       </div>
 
-      <div class="panel">
-        <div class="panel-header compact">
-          <h2>Hashes</h2>
-          <span class="pill neutral">Static metadata</span>
+      <div class="result-side-column">
+        <div class="panel">
+          <div class="panel-header compact">
+            <h2>Hashes</h2>
+            <span class="pill neutral">Static metadata</span>
+          </div>
+          <dl class="hash-list">
+            <div><dt>MD5</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.md5)}" aria-label="Copy MD5" title="Copy MD5">{html.escape(scan.md5)}</code></dd></div>
+            <div><dt>SHA1</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.sha1)}" aria-label="Copy SHA1" title="Copy SHA1">{html.escape(scan.sha1)}</code></dd></div>
+            <div><dt>SHA256</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{html.escape(scan.sha256)}</code></dd></div>
+          </dl>
         </div>
-        <dl class="hash-list">
-          <div><dt>MD5</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.md5)}" aria-label="Copy MD5" title="Copy MD5">{html.escape(scan.md5)}</code></dd></div>
-          <div><dt>SHA1</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.sha1)}" aria-label="Copy SHA1" title="Copy SHA1">{html.escape(scan.sha1)}</code></dd></div>
-          <div><dt>SHA256</dt><dd><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{html.escape(scan.sha256)}</code></dd></div>
-        </dl>
+
+        {render_archive_members_panel(scan, child_scans, child_results_by_scan)}
       </div>
 
       {render_detection_evidence(engine_results)}
@@ -3833,7 +4183,11 @@ def render_scan_result(
       </div>
     </section>
     """
-    refresh_seconds = 5 if scan.status in {"queued", "running"} else None
+    archive_refresh_active = archive_children_refresh_pending or any(
+        child_scan.status in {"queued", "running"}
+        for child_scan in child_scans
+    )
+    refresh_seconds = 5 if scan.status in {"queued", "running"} or archive_refresh_active else None
     return page_shell("Scan Result", "dashboard", body, user, refresh_seconds=refresh_seconds)
 
 
@@ -3915,7 +4269,7 @@ def dashboard(
 ) -> str:
     user = require_user(request)
     can_manage_scans = user.role == ROLE_ADMIN
-    scans = list_recent_scans(limit=None, source="manual")
+    scans = list_recent_scans(limit=None, source="manual", include_child_scans=False)
     page_size = 20
     status_filter = status if status in {"all", "active", "queued", "running", "completed", "partial", "failed"} else "all"
     verdict_filter = verdict if verdict in {"all", "pending", "malicious", "undetected", "metadata_only"} else "all"
@@ -3927,7 +4281,7 @@ def dashboard(
     )
     filters_active = bool(q.strip()) or status_filter != "all" or verdict_filter != "all"
     empty_message = "No scans match the current filters." if filters_active else "No scans submitted yet."
-    counts = get_scan_counts(source="manual")
+    counts = get_scan_counts(source="manual", include_child_scans=False)
     worker_status = get_worker_status()
     configured_engine_count = len(configured_engines())
     delete_actions = (
@@ -4000,6 +4354,23 @@ def dashboard(
     return page_shell("Scan Dashboard", "dashboard", body, user)
 
 
+@app.get("/batches/{batch_id}", response_class=HTMLResponse)
+def batch_detail_page(request: Request, batch_id: int) -> str:
+    user = require_user(request)
+    batch = get_scan_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+    back_href = "/" if batch.source == "manual" else "/api-ledger"
+    active_nav = "dashboard" if batch.source == "manual" else "api_ledger"
+    return render_batch_detail_page(
+        request,
+        user,
+        batch,
+        active_nav=active_nav,
+        back_href=back_href,
+    )
+
+
 def render_api_payload_page(
     *,
     title: str,
@@ -4040,6 +4411,169 @@ def render_api_payload_page(
     return page_shell(title, active_nav, body, user)
 
 
+def render_api_batch_payload_page(
+    *,
+    title: str,
+    active_nav: str,
+    batch: ScanBatchRecord,
+    payload: dict[str, object],
+    user: UserRecord,
+) -> str:
+    pretty_payload = html.escape(json.dumps(payload, indent=2, ensure_ascii=True))
+    body = f"""
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>{html.escape(title)}</h2>
+          <p>Session-authenticated view of the normalized API payload for batch #{batch.id}.</p>
+        </div>
+        <div class="panel-actions">
+          <a class="secondary-action compact-action" href="/api-ledger">Back to ledger</a>
+          <a class="secondary-action compact-action" href="/api-ledger/batches/{batch.id}">Open batch</a>
+        </div>
+      </div>
+      <div class="report-raw-grid">
+        <section class="panel wide">
+          <div class="panel-header compact">
+            <div>
+              <h2>Payload</h2>
+              <p>{html.escape(batch.original_filename)} | mode {html.escape(batch.archive_mode)}</p>
+            </div>
+            {status_pill(batch.status)}
+          </div>
+          <div class="table-wrap">
+            <pre>{pretty_payload}</pre>
+          </div>
+        </section>
+      </div>
+    </section>
+    """
+    return page_shell(title, active_nav, body, user)
+
+
+def render_api_batch_rows(
+    scans: list[ScanRecord],
+    results_by_scan: dict[int, list[EngineResultRecord]],
+) -> str:
+    if not scans:
+        return '<tr><td class="empty-cell" colspan="7">No scans are attached to this batch yet.</td></tr>'
+
+    rows = []
+    for scan in scans:
+        engine_results = results_by_scan.get(scan.id, [])
+        timing = build_scan_timing_payload(scan)
+        queue_wait = format_duration_ms(timing["queue_wait_ms"])
+        processing_duration = format_duration_ms(timing["processing_duration_ms"])
+        total_duration = format_duration_ms(timing["total_duration_ms"])
+        relative_path = scan.relative_path or scan.original_filename
+        rows.append(
+            f"""
+            <tr>
+              <td>
+                <div class="table-link">
+                  <strong>{html.escape(relative_path)}</strong>
+                  <small>{html.escape(scan.original_filename)}</small>
+                </div>
+              </td>
+              <td>{scan_role_pill(scan.scan_role)}</td>
+              <td>{status_pill(scan.status)}</td>
+              <td>
+                {verdict_pill(scan.verdict)}
+                <small class="status-detail">{html.escape(detection_summary_text_for_scan(scan, engine_results))}</small>
+              </td>
+              <td>
+                <strong>Q {html.escape(queue_wait)}</strong>
+                <small>P {html.escape(processing_duration)} | T {html.escape(total_duration)}</small>
+              </td>
+              <td>{html.escape(scan.created_at)}</td>
+              <td>
+                <div class="table-actions">
+                  <a class="secondary-action compact-action" href="/scans/{scan.id}">Open</a>
+                  <a class="secondary-action compact-action" href="/api-ledger/scans/{scan.id}/status">Status JSON</a>
+                  <a class="secondary-action compact-action" href="/api-ledger/scans/{scan.id}/result">Result JSON</a>
+                </div>
+              </td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_batch_detail_page(
+    request: Request,
+    user: UserRecord,
+    batch: ScanBatchRecord,
+    *,
+    active_nav: str,
+    back_href: str,
+) -> str:
+    refresh_scan_batch_counts(batch.id)
+    batch = get_scan_batch(batch.id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+
+    all_scans = list_scan_batch_scans(batch.id, limit=5000)
+    page_items, current_page, total_pages, total_items = paginate_scans(all_scans, page=int(request.query_params.get("page", "1") or "1"), page_size=25)
+    results_by_scan = list_engine_results_by_scan_ids([scan.id for scan in page_items])
+    batch_summary = build_scan_batch_summary_payload(request, batch, all_scans)
+    pagination_base = f"/batches/{batch.id}" if active_nav == "dashboard" else f"/api-ledger/batches/{batch.id}"
+
+    body = f"""
+    <section class="metric-grid">
+      {metric_card("Batch items", str(batch.total_items), "Container plus extracted child scans")}
+      {metric_card("Running", str(batch.running_items), "Currently queued or running members", "tone-blue")}
+      {metric_card("Completed", str(batch.completed_items), "Terminal successful members", "tone-green")}
+      {metric_card("Malicious", str(batch.malicious_items), "Members with high or critical verdict", "tone-red")}
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="panel wide">
+        <div class="panel-header">
+          <div>
+            <h2>Batch #{batch.id}</h2>
+            <p>{html.escape(batch.original_filename)} | mode {html.escape(batch.archive_mode)} | {total_items} scans attached</p>
+          </div>
+          <div class="panel-actions">
+            <a class="secondary-action compact-action" href="{html.escape(back_href)}">Back</a>
+            <a class="secondary-action compact-action" href="/api-ledger/batches/{batch.id}/status">Status JSON</a>
+            <a class="secondary-action compact-action" href="/api-ledger/batches/{batch.id}/result">Result JSON</a>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <tbody>
+              <tr><th>Source</th><td>{html.escape(batch.source)}</td><th>Status</th><td>{status_pill(batch.status)}</td></tr>
+              <tr><th>Container scan</th><td>{html.escape(str(batch_summary["container_scan_id"] or "-"))}</td><th>Last update</th><td>{html.escape(batch.updated_at)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        {render_scan_pagination(base_path=pagination_base, page=current_page, total_pages=total_pages, total_items=total_items, page_size=25, query="", status_filter="all", verdict_filter="all")}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Verdict</th>
+                <th>Timing</th>
+                <th>Submitted</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_api_batch_rows(page_items, results_by_scan)}
+            </tbody>
+          </table>
+        </div>
+        {render_scan_pagination(base_path=pagination_base, page=current_page, total_pages=total_pages, total_items=total_items, page_size=25, query="", status_filter="all", verdict_filter="all")}
+      </div>
+      {render_worker_status_panel(get_worker_status())}
+    </section>
+    """
+    return page_shell(f"Batch #{batch.id}", active_nav, body, user)
+
+
 @app.get("/api-ledger", response_class=HTMLResponse)
 def api_ledger(
     request: Request,
@@ -4060,6 +4594,7 @@ def api_ledger(
         query=q,
         status_filter=status_filter,
         verdict_filter=verdict_filter,
+        include_child_scans=False,
     )
     total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items else 1
     current_page = min(normalize_dashboard_page(page), total_pages)
@@ -4070,9 +4605,10 @@ def api_ledger(
         verdict_filter=verdict_filter,
         limit=page_size,
         offset=(current_page - 1) * page_size,
+        include_child_scans=False,
     )
     results_by_scan = list_engine_results_by_scan_ids([scan.id for scan in scans])
-    counts = get_scan_counts(source="api")
+    counts = get_scan_counts(source="api", include_child_scans=False)
     queue_metrics = get_queue_metrics()
     empty_message = "No API scans match the current filters." if total_items else "No API scans have been submitted yet."
     notice_html = (
@@ -4161,6 +4697,67 @@ def api_ledger(
     </section>
     """
     return page_shell("API Ledger", "api_ledger", body, user)
+
+
+@app.get("/api-ledger/batches/{batch_id}", response_class=HTMLResponse)
+def api_ledger_batch_detail(
+    request: Request,
+    batch_id: int,
+    page: int = 1,
+) -> str:
+    user = require_user(request)
+    batch = get_scan_batch(batch_id)
+    if batch is None or batch.source != "api":
+        raise HTTPException(status_code=404, detail="API batch not found.")
+    return render_batch_detail_page(
+        request,
+        user,
+        batch,
+        active_nav="api_ledger",
+        back_href="/api-ledger",
+    )
+
+
+@app.get("/api-ledger/batches/{batch_id}/status", response_class=HTMLResponse)
+def api_ledger_batch_status_payload(request: Request, batch_id: int) -> str:
+    user = require_user(request)
+    batch = get_scan_batch(batch_id)
+    if batch is None or batch.source != "api":
+        raise HTTPException(status_code=404, detail="API batch not found.")
+    refresh_scan_batch_counts(batch_id)
+    batch = get_scan_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="API batch not found.")
+    scans = list_scan_batch_scans(batch_id, limit=5000)
+    payload = build_scan_batch_status_payload(request, batch, scans)
+    return render_api_batch_payload_page(
+        title=f"API Batch Status Payload #{batch.id}",
+        active_nav="api_ledger",
+        batch=batch,
+        payload=payload,
+        user=user,
+    )
+
+
+@app.get("/api-ledger/batches/{batch_id}/result", response_class=HTMLResponse)
+def api_ledger_batch_result_payload(request: Request, batch_id: int) -> str:
+    user = require_user(request)
+    batch = get_scan_batch(batch_id)
+    if batch is None or batch.source != "api":
+        raise HTTPException(status_code=404, detail="API batch not found.")
+    refresh_scan_batch_counts(batch_id)
+    batch = get_scan_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="API batch not found.")
+    scans = list_scan_batch_scans(batch_id, limit=5000)
+    payload = build_scan_batch_result_payload(request, batch, scans)
+    return render_api_batch_payload_page(
+        title=f"API Batch Result Payload #{batch.id}",
+        active_nav="api_ledger",
+        batch=batch,
+        payload=payload,
+        user=user,
+    )
 
 
 @app.get("/api-ledger/scans/{scan_id}/status", response_class=HTMLResponse)
@@ -4497,6 +5094,7 @@ async def api_create_scan(
     case_name: str = Form("Unassigned"),
     priority: str = Form("Normal"),
     note: str = Form(""),
+    archive_mode: str = Form(DEFAULT_ARCHIVE_MODE),
     wait_seconds: int = Form(0),
 ) -> JSONResponse:
     require_api_token(request)
@@ -4506,6 +5104,7 @@ async def api_create_scan(
         priority=priority,
         note=note,
         source="api",
+        archive_mode=archive_mode,
     )
     applied_wait_seconds = normalized_api_wait_seconds(wait_seconds)
     current_scan = await wait_for_terminal_scan(scan.id, applied_wait_seconds)
@@ -4561,6 +5160,46 @@ def api_scan_result(request: Request, scan_id: int) -> JSONResponse:
             headers={"Retry-After": str(configured_api_retry_after_seconds())},
         )
     return JSONResponse(build_api_scan_result_payload(request, scan))
+
+
+@app.get(
+    "/api/v1/batches/{batch_id}",
+    name="api_batch_status",
+    summary="Fetch batch status",
+    description="Returns batch-level queue state and per-scan status for an archive-backed API submission.",
+)
+def api_batch_status(request: Request, batch_id: int) -> JSONResponse:
+    require_api_token(request)
+    refresh_scan_batch_counts(batch_id)
+    batch = get_scan_batch(batch_id)
+    if batch is None or batch.source != "api":
+        raise HTTPException(status_code=404, detail="Batch not found.")
+    scans = list_scan_batch_scans(batch_id, limit=5000)
+    return JSONResponse(build_scan_batch_status_payload(request, batch, scans))
+
+
+@app.get(
+    "/api/v1/batches/{batch_id}/result",
+    name="api_batch_result",
+    summary="Fetch final batch result",
+    description="Returns per-scan normalized results for a completed archive-backed API submission.",
+)
+def api_batch_result(request: Request, batch_id: int) -> JSONResponse:
+    require_api_token(request)
+    refresh_scan_batch_counts(batch_id)
+    batch = get_scan_batch(batch_id)
+    if batch is None or batch.source != "api":
+        raise HTTPException(status_code=404, detail="Batch not found.")
+    scans = list_scan_batch_scans(batch_id, limit=5000)
+    if not scan_batch_is_terminal(batch):
+        payload = build_scan_batch_status_payload(request, batch, scans)
+        payload["detail"] = "Batch result is not ready yet."
+        return JSONResponse(
+            payload,
+            status_code=409,
+            headers={"Retry-After": str(configured_api_retry_after_seconds())},
+        )
+    return JSONResponse(build_scan_batch_result_payload(request, batch, scans))
 
 
 def delete_scan_record(scan_id: int) -> ScanRecord | None:

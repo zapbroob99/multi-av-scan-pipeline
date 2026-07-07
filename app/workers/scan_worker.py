@@ -7,21 +7,33 @@ from datetime import datetime, timezone
 from app.database import (
     DatabaseOperationalError,
     claim_next_scan_engine_job,
+    create_sample,
+    create_scan_engine_jobs,
+    create_scan_job,
     create_scan_worker_event,
     create_engine_result_if_missing,
+    get_scan_batch,
     get_scan,
     init_db,
     list_active_scans,
     list_engine_results,
+    list_scan_batch_scans,
     list_scan_engine_jobs,
     mark_scan_engine_job_running,
     mark_scan_engine_job_terminal,
     mark_scan_running,
+    refresh_scan_batch_counts,
     recover_running_scan_jobs,
     update_scan_assessment,
     update_scan_status,
 )
-from app.models import EngineInstanceRecord, EngineResultInput, ScanEngineJobRecord, ScanRecord
+from app.models import (
+    EngineInstanceRecord,
+    EngineResultInput,
+    EngineResultRecord,
+    ScanEngineJobRecord,
+    ScanRecord,
+)
 from app.services.engine_registry import (
     enabled_engines,
     run_engine,
@@ -36,7 +48,9 @@ from app.services.routing import (
     build_skipped_engine_result,
     route_engine_for_worker,
 )
-from app.services.scoring import calculate_risk
+from app.services.scoring import RiskAssessment, calculate_risk
+from app.services.archive_extractor import ArchiveExtractionError, extract_zip_archive
+from app.services.sample_paths import resolve_sample_path, sample_path_error
 from app.services.worker_capabilities import (
     all_enabled_engines_have_results,
     worker_engine_keys,
@@ -69,6 +83,7 @@ LEGACY_SCAN_WORKER_FALLBACK_ENABLED = os.getenv(
 ).strip().lower() in {"1", "true", "yes", "on"}
 ENGINE_JOB_LEASE_SECONDS = int(os.getenv("MASP_ENGINE_JOB_LEASE_SECONDS", "120"))
 ENGINE_JOB_TERMINAL_STATUSES = {"completed", "failed", "skipped"}
+LAZY_ARCHIVE_TRIGGER_VERDICTS = {"medium", "high", "critical"}
 WORKER_ID = (
     os.getenv("MASP_WORKER_ID")
     or os.getenv("HOSTNAME")
@@ -475,6 +490,7 @@ def finalize_scan_if_complete_or_timeout(
     assessment = calculate_risk(engine_results)
     update_scan_assessment(scan.id, assessment.verdict, assessment.score)
     update_scan_status(scan.id, "completed")
+    maybe_enqueue_lazy_archive_children(scan, assessment, engine_results, engines, engine_keys)
     print(f"Completed scan job {scan.id}", flush=True)
     return True
 
@@ -501,8 +517,98 @@ def finalize_scan_if_complete(
     assessment = calculate_risk(engine_results)
     update_scan_assessment(scan.id, assessment.verdict, assessment.score)
     update_scan_status(scan.id, "completed")
+    maybe_enqueue_lazy_archive_children(scan, assessment, engine_results, engines, set())
     print(f"Completed scan job {scan.id}", flush=True)
     return True
+
+
+def maybe_enqueue_lazy_archive_children(
+    scan: ScanRecord,
+    assessment: RiskAssessment,
+    engine_results: list[EngineResultRecord],
+    engines: list[EngineInstanceRecord],
+    engine_keys: set[str],
+) -> int:
+    if scan.scan_role != "container" or scan.batch_id is None:
+        return 0
+
+    batch = get_scan_batch(scan.batch_id)
+    if batch is None or batch.archive_mode != "lazy_extract_on_detection":
+        return 0
+
+    detected = any(
+        getattr(result, "status", "") == "completed"
+        and bool(getattr(result, "detected", False))
+        for result in engine_results
+    )
+    verdict = assessment.verdict
+    if not detected and verdict not in LAZY_ARCHIVE_TRIGGER_VERDICTS:
+        refresh_scan_batch_counts(batch.id)
+        return 0
+
+    existing_scans = list_scan_batch_scans(batch.id, limit=1000)
+    if any(existing_scan.scan_role == "child" for existing_scan in existing_scans):
+        refresh_scan_batch_counts(batch.id)
+        return 0
+
+    archive_path = resolve_sample_path(scan)
+    if not archive_path.is_file():
+        record_worker_timing_event(
+            scan.id,
+            "archive_lazy_extract_failed",
+            engine_keys,
+            details={
+                "batch_id": batch.id,
+                "error": sample_path_error(scan, archive_path),
+            },
+        )
+        refresh_scan_batch_counts(batch.id)
+        return 0
+
+    try:
+        extraction = extract_zip_archive(archive_path)
+    except ArchiveExtractionError as exc:
+        record_worker_timing_event(
+            scan.id,
+            "archive_lazy_extract_failed",
+            engine_keys,
+            details={
+                "batch_id": batch.id,
+                "error": str(exc),
+            },
+        )
+        refresh_scan_batch_counts(batch.id)
+        return 0
+
+    created_children = 0
+    for member in extraction.members:
+        sample_id = create_sample(member.sample)
+        child_scan_id = create_scan_job(
+            sample_id=sample_id,
+            case_name=scan.case_name,
+            priority=scan.priority,
+            note=scan.note,
+            source=scan.source,
+            batch_id=batch.id,
+            parent_scan_id=scan.id,
+            relative_path=member.relative_path,
+            scan_role="child",
+        )
+        create_scan_engine_jobs(child_scan_id, engines)
+        created_children += 1
+
+    refresh_scan_batch_counts(batch.id)
+    record_worker_timing_event(
+        scan.id,
+        "archive_lazy_extract",
+        engine_keys,
+        details={
+            "batch_id": batch.id,
+            "created_children": created_children,
+            "total_uncompressed_bytes": extraction.total_uncompressed_bytes,
+        },
+    )
+    return created_children
 
 
 def all_scan_engine_jobs_terminal(jobs: list[ScanEngineJobRecord]) -> bool:
