@@ -23,21 +23,27 @@ The current flow is spread across a few key modules:
 - Benchmark aggregation: [`app/services/benchmarking.py`](../../app/services/benchmarking.py)
 - Benchmark CLI: [`tools/benchmark_scans.py`](../../tools/benchmark_scans.py)
 
+For a focused throughput analysis and optimization plan, see
+[`WORKER_THROUGHPUT_OPTIMIZATION.md`](WORKER_THROUGHPUT_OPTIMIZATION.md).
+For the additive engine-level queue foundation, see
+[`ENGINE_JOB_QUEUE.md`](ENGINE_JOB_QUEUE.md).
+
 Useful line references at the time this document was written:
 
-- API create scan: [`app/main.py:4052`](../../app/main.py#L4052)
-- API status payload: [`app/main.py:836`](../../app/main.py#L836)
-- API result payload: [`app/main.py:860`](../../app/main.py#L860)
-- Upload storage and scan creation helper: [`app/main.py:892`](../../app/main.py#L892)
-- Scan summary payload including timing: [`app/main.py:766`](../../app/main.py#L766)
-- Scan row creation: [`app/database.py:914`](../../app/database.py#L914)
-- Active scan listing: [`app/database.py:1223`](../../app/database.py#L1223)
-- Mark scan running: [`app/database.py:1300`](../../app/database.py#L1300)
-- Update scan terminal status: [`app/database.py:1344`](../../app/database.py#L1344)
-- Worker scan processing: [`app/workers/scan_worker.py:53`](../../app/workers/scan_worker.py#L53)
-- Serial engine execution loop: [`app/workers/scan_worker.py:88`](../../app/workers/scan_worker.py#L88)
-- Scan finalization: [`app/workers/scan_worker.py:104`](../../app/workers/scan_worker.py#L104)
-- Worker outer loop: [`app/workers/scan_worker.py:237`](../../app/workers/scan_worker.py#L237)
+- API create scan: [`app/main.py:4062`](../../app/main.py#L4062)
+- API status payload: [`app/main.py:843`](../../app/main.py#L843)
+- API result payload: [`app/main.py:870`](../../app/main.py#L870)
+- Upload storage and scan creation helper: [`app/main.py:903`](../../app/main.py#L903)
+- Scan summary payload including timing: [`app/main.py:773`](../../app/main.py#L773)
+- Scan row creation: [`app/database.py:1009`](../../app/database.py#L1009)
+- Engine job creation: [`app/database.py:1290`](../../app/database.py#L1290)
+- Engine job claim: [`app/database.py:1376`](../../app/database.py#L1376)
+- Mark scan running: [`app/database.py:1656`](../../app/database.py#L1656)
+- Update scan terminal status: [`app/database.py:1700`](../../app/database.py#L1700)
+- Worker engine-job tick: [`app/workers/scan_worker.py:112`](../../app/workers/scan_worker.py#L112)
+- Worker engine-job processing: [`app/workers/scan_worker.py:150`](../../app/workers/scan_worker.py#L150)
+- Scan finalization: [`app/workers/scan_worker.py:480`](../../app/workers/scan_worker.py#L480)
+- Worker outer loop: [`app/workers/scan_worker.py:682`](../../app/workers/scan_worker.py#L682)
 - Worker default capability split: [`app/services/worker_capabilities.py:7`](../../app/services/worker_capabilities.py#L7)
 - Engine routing decisions: [`app/services/routing.py:31`](../../app/services/routing.py#L31)
 - Timing payload: [`app/services/timing.py:30`](../../app/services/timing.py#L30)
@@ -59,17 +65,18 @@ sequenceDiagram
     Client->>API: POST /api/v1/scans + file
     API->>DB: create sample
     API->>DB: create scan_job(status=queued)
+    API->>DB: create scan_engine_jobs(status=pending)
     API-->>Client: 202 + scan id + status/result links
 
     loop worker poll
-        LW->>DB: list active scans
-        WW->>DB: list active scans
-        LW->>LW: route engines it can run
-        WW->>WW: route engines it can run
-        LW->>Engines: run Linux engines
-        WW->>Engines: run Windows engines
-        LW->>DB: write engine_results
-        WW->>DB: write engine_results
+        LW->>DB: claim next Linux-compatible engine job
+        WW->>DB: claim next Windows-compatible engine job
+        LW->>DB: mark engine job running
+        WW->>DB: mark engine job running
+        LW->>Engines: run claimed Linux engine
+        WW->>Engines: run claimed Windows engine
+        LW->>DB: write engine_result + mark job terminal
+        WW->>DB: write engine_result + mark job terminal
     end
 
     API->>DB: GET scan status
@@ -98,8 +105,10 @@ The flow is:
 2. `store_upload()` persists the sample and computes hashes.
 3. `create_sample()` inserts the sample row.
 4. `create_scan_job()` inserts a `scan_jobs` row with `status='queued'`.
-5. The API returns a status payload.
-6. If `wait_seconds > 0`, the API briefly waits for terminal completion using
+5. `create_scan_engine_jobs()` inserts one `scan_engine_jobs` row for each
+   enabled engine at scan creation time.
+6. The API returns a status payload.
+7. If `wait_seconds > 0`, the API briefly waits for terminal completion using
    [`wait_for_terminal_scan`](../../app/main.py#L877). This is only a
    convenience. The primary model remains asynchronous polling.
 
@@ -145,37 +154,34 @@ See `API_TERMINAL_SCAN_STATUSES` in [`app/main.py`](../../app/main.py).
 
 ## Worker Execution Flow
 
-The worker process starts at [`run_forever`](../../app/workers/scan_worker.py#L263).
-Inside the loop it calls [`process_next_scan_job`](../../app/workers/scan_worker.py#L237).
+The worker process starts at [`run_forever`](../../app/workers/scan_worker.py#L682).
+Inside the loop it calls [`process_next_scan_job`](../../app/workers/scan_worker.py#L636).
 
 Current behavior:
 
 1. Worker discovers its engine keys via
    [`worker_engine_keys`](../../app/services/worker_capabilities.py#L23).
-2. Worker reads active scans through
-   [`list_active_scans`](../../app/database.py#L1223).
-3. Active scans include both `queued` and `running`.
-4. They are ordered by `created_at ASC, id ASC`, so the worker has a FIFO
-   tendency.
-5. Worker calls [`process_scan`](../../app/workers/scan_worker.py#L53).
-6. If any work was processed, the worker returns from that loop iteration.
+2. With `MASP_ENGINE_JOB_QUEUE_ENABLED=1`, worker claims one compatible engine
+   job through [`claim_next_scan_engine_job`](../../app/database.py#L1376).
+3. The claim is capability-specific: a Defender worker claims Defender jobs,
+   a ClamAV worker claims ClamAV jobs, and so on.
+4. Worker marks the scan `running`, marks the engine job `running`, executes the
+   adapter, writes an idempotent engine result, and marks the engine job
+   terminal.
+5. Worker then attempts scan finalization. Finalization currently still checks
+   `engine_results` coverage.
 
-Important nuance: there is a `claim_next_scan_job()` function in
-[`app/database.py:1383`](../../app/database.py#L1383), but the current worker
-flow does not use it as the main scheduling primitive. The current worker
-uses `list_active_scans()` and routes missing engine results per scan.
-
-That means the current scheduler is not a strict "claim one queued job and own
-it" model. It is more like:
+The scheduling model is now:
 
 ```text
-Look at active scans in oldest-first order.
-For the first scan where this worker can add or finalize something, do that.
+Claim the oldest engine job this worker can actually run.
+Run exactly that engine job.
 Then end this worker tick.
 ```
 
-This is simple and works for the hybrid Linux + Windows worker model, but it
-also creates performance tradeoffs described later in this document.
+The legacy scan-centric path still exists behind
+`MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED=1`, but it is disabled by default
+because it can reintroduce head-of-line and timeout/skipped races.
 
 ## Worker Capability Split
 
@@ -237,41 +243,48 @@ important because a completed scan can still have partial coverage. In that
 case, the scan is complete but the decision may be `review` instead of `allow`
 or `block`, depending on scoring and coverage.
 
+Skipped result `duration_ms` is synthetic and must not be interpreted as AV
+adapter runtime. Timeout and wait-window context belongs in result details and
+worker timing events.
+
 ## Engine Execution Inside One Worker
 
-Inside a single worker, runnable engines are currently executed serially:
+Inside the engine-job queue path, one worker tick handles one claimed engine
+job:
 
 ```python
-for decision in runnable_decisions:
-    engine = decision.engine
-    create_engine_result_if_missing(scan.id, run_engine(engine, scan))
+job = claim_next_scan_engine_job(engine_keys, worker_id)
+mark_scan_engine_job_running(job.id, worker_id)
+result = run_engine(engine, scan)
+create_engine_result_if_missing(scan.id, result)
+mark_scan_engine_job_terminal(job.id, result.status)
 ```
 
-Reference: [`app/workers/scan_worker.py:88`](../../app/workers/scan_worker.py#L88)
+Reference: [`app/workers/scan_worker.py:150`](../../app/workers/scan_worker.py#L150)
 
-This means if a Linux worker must run:
+This means a split Linux setup can claim these as separate jobs:
 
 - Static Metadata
 - ClamAV
 - YARA
 
-then that worker processes those engines one after another for the same scan.
-They are not parallel inside the same worker process.
+Each worker process still runs its claimed adapter call synchronously, but slow
+engines no longer force a single scan-centric loop to inspect unrelated missing
+engines before finding useful work.
 
-This design is simple and safer for local CLI engines, but it limits throughput.
-The scan processing time on that worker tends toward:
+The per-engine job runtime tends toward:
 
 ```text
-static metadata duration
-+ clamav duration
-+ yara duration
-+ database/result overhead
+adapter duration
++ result persistence
++ job terminal update
++ finalization check
 ```
 
 ## Completion Rules
 
-Scan finalization happens in
-[`finalize_scan_if_complete_or_timeout`](../../app/workers/scan_worker.py#L104).
+In the engine-job queue path, scan finalization happens in
+[`finalize_scan_if_complete`](../../app/workers/scan_worker.py#L480).
 
 A scan becomes `completed` when every enabled engine has a corresponding result
 record. That result can be:
@@ -283,12 +296,13 @@ record. That result can be:
 The exact helper is
 [`all_enabled_engines_have_results`](../../app/services/worker_capabilities.py#L69).
 
-Partial completion exists to prevent scans from staying `running` forever. If
-an enabled engine never reports, the worker can record a skipped result after
-the orchestration wait window expires.
+The legacy scan-centric path can still record timeout `skipped` results after
+the orchestration wait window expires. The engine-job queue path intentionally
+does not treat queue wait as engine execution timeout; that policy will move to
+explicit engine-job timeout/SLA handling.
 
-The wait window is computed by
-[`partial_results_wait_seconds`](../../app/workers/scan_worker.py#L161):
+For the legacy path, the wait window is computed by
+[`partial_results_wait_seconds`](../../app/workers/scan_worker.py#L542):
 
 - It checks missing engines' configured `timeout_seconds`.
 - It adds `MASP_ENGINE_TIMEOUT_GRACE_SECONDS`.
@@ -296,48 +310,50 @@ The wait window is computed by
   `MASP_SCAN_PARTIAL_RESULTS_MIN_WAIT_SECONDS` and
   `MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS`.
 
-This is the rule that lets the product warn about missing engines but still
-finish the scan.
+That legacy rule lets the product warn about missing engines but still finish
+the scan. In the queue path, missing-compatible-worker and overall scan SLA
+should be modeled at the engine-job layer instead.
 
 ## Concurrency Semantics
 
 This is the most important section for optimization.
 
-Current behavior is not fully serial, but it is not a true distributed parallel
-job scheduler either.
+Current behavior uses an engine-level distributed queue, but each worker process
+still executes one claimed adapter call at a time.
 
 ### What is serial today?
 
 Within one worker process:
 
 - The worker loop handles one useful unit of work per tick.
-- For one scan, runnable engines are executed serially.
-- The worker returns after processing a scan where it did work.
+- That unit is one claimed engine job.
+- Local adapter execution is blocking inside that worker process.
 
 ### What can be concurrent today?
 
 Across multiple worker processes:
 
 - Linux and Windows workers can work at the same time.
-- Different workers may contribute different engine results to the same scan.
-- Different workers may progress different scans if their capabilities and the
-  active scan list allow it.
+- Different workers can claim different engine jobs for the same scan.
+- Different workers can progress different scans without scanning the same
+  active scan window.
 
 ### Is upload order equal to completion order?
 
 No. Upload order is not a completion guarantee.
 
 Usually, older scans are considered first because
-[`list_active_scans`](../../app/database.py#L1223) orders active scans by
-`created_at ASC, id ASC`. But a later scan can finish first if:
+[`claim_next_scan_engine_job`](../../app/database.py#L1376) orders jobs by
+`scan_jobs.created_at ASC, scan_jobs.id ASC, scan_engine_jobs.id ASC`. But a
+later scan can finish first if:
 
 - an earlier scan waits for a slow or unavailable engine,
 - a later scan has faster engine coverage,
-- different workers pick up different missing engine results,
+- different workers claim different engine jobs,
 - one engine is skipped due to routing or timeout,
 - resource contention changes per-scan processing time.
 
-So the current model has FIFO tendency, not FIFO completion guarantee.
+So the current model has FIFO claim tendency, not FIFO completion guarantee.
 
 ## Timing Model
 
@@ -445,50 +461,63 @@ High total latency:
 Usually queue_wait + processing. Split them before optimizing.
 ```
 
-## What run-02 Showed
+## What The Local Benchmarks Showed
 
-The `run-02.json` benchmark used:
+The latest local benchmark runs used:
 
-- `requests = 5`
-- `concurrency = 2`
-- sample size `68 bytes`
+- sample: `0ebc0530f0804356a12f89b1298c8a51_main.py`
+- sample size: `13,858 bytes`
+- enabled engines: `static_metadata`, `clamav`, `yara`, `microsoft_defender`
 - all runs completed
 - no partial results
-- all scans returned `critical` and `block`
+- all scans returned `low` and `allow`
 
 Summary:
 
 ```text
-submit_avg:      301.6 ms
-queue_wait_avg:  1595.8 ms
-processing_avg:  5142.4 ms
-total_avg:       6738.8 ms
+local-run-01:
+requests:        5
+concurrency:     2
+submit_avg:      192 ms
+queue_wait_avg:  2460 ms
+processing_avg:  3973 ms
+total_avg:       6434 ms
+
+local-run-02:
+requests:        10
+concurrency:     3
+submit_avg:      272 ms
+queue_wait_avg:  3317 ms
+processing_avg:  4498 ms
+total_avg:       7815 ms
 ```
 
 This tells us:
 
 - API acceptance is fast.
-- Some queueing exists even at 5 requests.
-- The dominant cost in that run is processing, not upload.
-- Later scans had both higher queue wait and higher processing duration.
+- Queue wait grows as request volume and concurrency grow.
+- Processing also grows, which points at worker/engine execution pressure.
+- Correctness held under this light load: every scan completed with all four
+  engine results.
 
 That pattern suggests worker/engine execution is the main place to optimize
 next, but not blindly. We should compare benchmark runs while changing only one
-variable at a time.
+variable at a time. See
+[`WORKER_THROUGHPUT_OPTIMIZATION.md`](WORKER_THROUGHPUT_OPTIMIZATION.md) for the
+focused optimization plan.
 
 ## Current Bottlenecks and Risks
 
-### 1. Serial engine execution inside one worker
+### 1. Blocking adapter execution inside one worker
 
 Evidence:
 
-- [`app/workers/scan_worker.py:88`](../../app/workers/scan_worker.py#L88)
+- [`app/workers/scan_worker.py:150`](../../app/workers/scan_worker.py#L150)
 
 Impact:
 
-- A scan's processing time on one worker is the sum of that worker's engine
-  durations.
-- Slow engines delay the rest of the same scan.
+- A worker process cannot claim another engine job while a blocking adapter call
+  is running.
 - Worker throughput is limited when engines are local CLIs or blocking calls.
 
 Optimization options:
@@ -504,25 +533,27 @@ Risks:
 - CPU, disk, or socket pressure can make each scan slower even if concurrency
   increases.
 
-### 2. Active scan list instead of strict claim/lease scheduling
+### 2. Engine-job queue migration risk
 
 Evidence:
 
-- [`app/database.py:1223`](../../app/database.py#L1223)
-- [`app/workers/scan_worker.py:237`](../../app/workers/scan_worker.py#L237)
+- [`app/database.py:1376`](../../app/database.py#L1376)
+- [`app/workers/scan_worker.py:112`](../../app/workers/scan_worker.py#L112)
 
 Impact:
 
-- Workers revisit active scans in oldest-first order.
-- A scan waiting for another worker can remain near the front.
-- This can create head-of-line effects.
+- Workers now claim engine jobs directly, reducing active-scan head-of-line
+  behavior.
+- Lease expiry protects against worker crashes, but retry semantics must remain
+  conservative.
+- Finalization requires terminal `scan_engine_jobs` coverage plus matching
+  `engine_results` rows.
 
 Optimization options:
 
-- Move to explicit work items:
-  `scan_id + engine_instance_id`.
-- Add claim/lease fields for engine work.
-- Use `FOR UPDATE SKIP LOCKED` style claiming for each engine task.
+- Add explicit queue timeout, execution timeout, lease timeout, and scan SLA
+  policies.
+- Expose engine-job queue metrics in the API/status surface.
 
 Risks:
 
@@ -589,8 +620,10 @@ Do not jump straight to parallel engine execution. The safer order is:
 3. Scale only Linux workers and compare.
 4. Scale only Windows workers and compare.
 5. Identify which engine dominates `processing_duration_ms`.
-6. Add per-engine work-item claiming if FIFO/head-of-line behavior dominates.
-7. Consider parallel engine execution after idempotency and resource limits are
+6. Benchmark the engine-job queue path against the old scan-centric baseline.
+7. Add explicit queue timeout, execution timeout, lease timeout, and scan SLA
+   policies if benchmark behavior requires them.
+8. Consider parallel engine execution after idempotency and resource limits are
    explicit.
 
 The key discipline: change one variable per benchmark run.

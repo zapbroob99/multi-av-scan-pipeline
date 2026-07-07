@@ -16,6 +16,7 @@ def create_api_scan_status_payload(
     queue_position: int | None,
     expected_engines: int,
     results: list[Any],
+    worker_events: list[Any],
     links: dict[str, str],
 ) -> dict[str, object]:
     return {
@@ -36,6 +37,27 @@ def create_api_scan_status_payload(
             "skipped": sum(1 for result in results if result.status == "skipped"),
             "detections": sum(1 for result in results if result.detected),
         },
+        "engine_results": [
+            {
+                "engine_name": result.engine_name,
+                "status": result.status,
+                "detected": result.detected,
+                "duration_ms": result.duration_ms,
+                "created_at": result.created_at,
+            }
+            for result in results
+        ],
+        "worker_events": [
+            {
+                "event_name": event.event_name,
+                "worker_id": event.worker_id,
+                "worker_engine_keys": event.worker_engine_keys,
+                "engine_name": event.engine_name,
+                "duration_ms": event.duration_ms,
+                "created_at": event.created_at,
+            }
+            for event in worker_events
+        ],
         "links": links,
     }
 

@@ -53,6 +53,7 @@ def make_scan(
         case_name="IR-2026-001",
         priority="Normal",
         note="manual api test",
+        source="api",
         status="completed" if completed_at else "running",
         verdict="critical" if completed_at else "pending",
         risk_score=90 if completed_at else None,

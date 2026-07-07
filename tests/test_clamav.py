@@ -91,6 +91,7 @@ def scan_record(sample_path: Path) -> ScanRecord:
         case_name="case",
         priority="Normal",
         note="",
+        source="manual",
         status="running",
         verdict="pending",
         risk_score=None,

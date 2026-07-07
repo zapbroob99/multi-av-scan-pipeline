@@ -20,6 +20,7 @@ class ScanRecord:
     case_name: str
     priority: str
     note: str
+    source: str
     status: str
     verdict: str
     risk_score: int | None
@@ -74,6 +75,38 @@ class EngineResultRecord:
     created_at: str
     details_json: str
     findings_json: str
+
+
+@dataclass(frozen=True)
+class ScanWorkerEventRecord:
+    id: int
+    scan_job_id: int
+    event_name: str
+    worker_id: str
+    worker_engine_keys: str
+    engine_name: str | None
+    duration_ms: int | None
+    details_json: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ScanEngineJobRecord:
+    id: int
+    scan_job_id: int
+    engine_instance_id: int | None
+    engine_key: str
+    engine_name: str
+    status: str
+    worker_id: str | None
+    claimed_at: str | None
+    started_at: str | None
+    finished_at: str | None
+    lease_expires_at: int | None
+    attempt_count: int
+    last_error: str | None
+    created_at: str
+    updated_at: str
 
 
 @dataclass(frozen=True)

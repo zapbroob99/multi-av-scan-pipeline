@@ -11,9 +11,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from app.database import (
+    count_scan_history,
     count_scans_older_than,
     count_users_by_role,
     create_sample,
+    create_scan_engine_jobs,
     create_scan_job,
     create_user,
     delete_scan,
@@ -28,14 +30,23 @@ from app.database import (
     list_active_scans,
     list_engine_result_metrics,
     list_engine_results,
+    list_engine_results_by_scan_ids,
     list_recent_scans,
+    list_scan_history,
+    list_scan_worker_events,
     list_scans_older_than,
     list_users,
     retry_scan_job as retry_scan_job_record,
     update_scan_assessment,
     update_user,
 )
-from app.models import EngineInstanceRecord, EngineResultRecord, ScanRecord, UserRecord
+from app.models import (
+    EngineInstanceRecord,
+    EngineResultRecord,
+    ScanRecord,
+    ScanWorkerEventRecord,
+    UserRecord,
+)
 from app.services.cleanup import delete_sample_file
 from app.services.auth import (
     ROLE_ADMIN,
@@ -138,6 +149,15 @@ def nav_icon(icon_key: str) -> str:
           <path d="m21 21-4.35-4.35"></path>
         </svg>
         """,
+        "api_ledger": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 5h16"></path>
+          <path d="M4 12h16"></path>
+          <path d="M4 19h16"></path>
+          <path d="M8 8v8"></path>
+          <path d="M16 8v8"></path>
+        </svg>
+        """,
         "account": """
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="8" r="4"></circle>
@@ -192,6 +212,7 @@ def page_shell(
     )
     nav_items = [
         ("dashboard", "/", "Dashboard"),
+        ("api_ledger", "/api-ledger", "API Ledger"),
         ("new_scan", "/scans/new", "New Scan"),
         ("account", "/account", "Account"),
     ]
@@ -770,6 +791,7 @@ def build_scan_summary_payload(scan: ScanRecord) -> dict[str, object]:
         "filename": scan.original_filename,
         "case_name": scan.case_name,
         "priority": scan.priority,
+        "source": scan.source,
         "status": scan.status,
         "verdict": scan.verdict,
         "risk_score": scan.risk_score,
@@ -837,8 +859,10 @@ def build_api_scan_status_payload(
     request: Request,
     scan: ScanRecord,
     engine_results: list[EngineResultRecord] | None = None,
+    worker_events: list[ScanWorkerEventRecord] | None = None,
 ) -> dict[str, object]:
     results = engine_results if engine_results is not None else list_engine_results(scan.id)
+    events = worker_events if worker_events is not None else list_scan_worker_events(scan.id)
     queue_metrics = get_queue_metrics()
     queue_position = get_scan_queue_position(scan.id)
     result_ready = scan_is_terminal(scan)
@@ -853,6 +877,7 @@ def build_api_scan_status_payload(
         queue_position=queue_position,
         expected_engines=len(enabled_engines()),
         results=results,
+        worker_events=events,
         links=api_scan_links(request, scan.id),
     )
 
@@ -895,6 +920,7 @@ async def enqueue_scan_from_upload(
     case_name: str,
     priority: str,
     note: str,
+    source: str,
 ) -> ScanRecord:
     if not sample.filename:
         raise HTTPException(status_code=400, detail="A file must be selected.")
@@ -910,7 +936,9 @@ async def enqueue_scan_from_upload(
         case_name=case_name.strip() or "Unassigned",
         priority=priority,
         note=note.strip(),
+        source=source,
     )
+    create_scan_engine_jobs(scan_id, enabled_engines())
     scan = get_scan(scan_id)
     if scan is None:
         raise HTTPException(status_code=500, detail="Scan could not be loaded.")
@@ -2624,11 +2652,10 @@ def filter_recent_scans(
     status_filter: str,
     verdict_filter: str,
 ) -> tuple[list[ScanRecord], dict[int, list[EngineResultRecord]]]:
-    results_by_scan: dict[int, list[EngineResultRecord]] = {}
+    results_by_scan = list_engine_results_by_scan_ids([scan.id for scan in scans])
     filtered_scans = []
     for scan in scans:
-        engine_results = list_engine_results(scan.id)
-        results_by_scan[scan.id] = engine_results
+        engine_results = results_by_scan.get(scan.id, [])
         if scan_matches_recent_filters(scan, engine_results, query, status_filter, verdict_filter):
             filtered_scans.append(scan)
     return filtered_scans, results_by_scan
@@ -2654,7 +2681,8 @@ def paginate_scans(
     return scans[start_index:end_index], current_page, total_pages, total_items
 
 
-def dashboard_query_url(
+def scan_query_url(
+    base_path: str,
     *,
     page: int,
     query: str,
@@ -2669,7 +2697,39 @@ def dashboard_query_url(
     if verdict_filter != "all":
         params["verdict"] = verdict_filter
     query_string = urlencode(params)
-    return f"/?{query_string}" if query_string else "/"
+    return f"{base_path}?{query_string}" if query_string else base_path
+
+
+def dashboard_query_url(
+    *,
+    page: int,
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+) -> str:
+    return scan_query_url(
+        "/",
+        page=page,
+        query=query,
+        status_filter=status_filter,
+        verdict_filter=verdict_filter,
+    )
+
+
+def api_ledger_query_url(
+    *,
+    page: int,
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+) -> str:
+    return scan_query_url(
+        "/api-ledger",
+        page=page,
+        query=query,
+        status_filter=status_filter,
+        verdict_filter=verdict_filter,
+    )
 
 
 def select_option(value: str, label: str, selected_value: str) -> str:
@@ -2677,9 +2737,21 @@ def select_option(value: str, label: str, selected_value: str) -> str:
     return f'<option value="{html.escape(value)}"{selected}>{html.escape(label)}</option>'
 
 
-def render_recent_scan_filters(query: str, status_filter: str, verdict_filter: str) -> str:
+def render_scan_filters(
+    *,
+    action_path: str,
+    reset_path: str,
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+    verdict_options: list[tuple[str, str]],
+) -> str:
+    verdict_option_html = "\n".join(
+        select_option(value, label, verdict_filter)
+        for value, label in verdict_options
+    )
     return f"""
-    <form class="scan-filter-bar" action="/" method="get">
+    <form class="scan-filter-bar" action="{html.escape(action_path)}" method="get">
       <label class="scan-search-field">
         <span>Search</span>
         <input type="search" name="q" value="{html.escape(query)}" placeholder="File, case, hash">
@@ -2699,23 +2771,37 @@ def render_recent_scan_filters(query: str, status_filter: str, verdict_filter: s
       <label>
         <span>Verdict</span>
         <select name="verdict">
-          {select_option("all", "All verdicts", verdict_filter)}
-          {select_option("pending", "Pending", verdict_filter)}
-          {select_option("malicious", "Malicious", verdict_filter)}
-          {select_option("undetected", "Undetected", verdict_filter)}
-          {select_option("metadata_only", "Metadata only", verdict_filter)}
+          {verdict_option_html}
         </select>
       </label>
       <div class="scan-filter-actions">
         <button class="primary-action compact-action" type="submit">Apply</button>
-        <a class="secondary-action compact-action" href="/">Reset</a>
+        <a class="secondary-action compact-action" href="{html.escape(reset_path)}">Reset</a>
       </div>
     </form>
     """
 
 
-def render_recent_scan_pagination(
+def render_recent_scan_filters(query: str, status_filter: str, verdict_filter: str) -> str:
+    return render_scan_filters(
+        action_path="/",
+        reset_path="/",
+        query=query,
+        status_filter=status_filter,
+        verdict_filter=verdict_filter,
+        verdict_options=[
+            ("all", "All verdicts"),
+            ("pending", "Pending"),
+            ("malicious", "Malicious"),
+            ("undetected", "Undetected"),
+            ("metadata_only", "Metadata only"),
+        ],
+    )
+
+
+def render_scan_pagination(
     *,
+    base_path: str,
     page: int,
     total_pages: int,
     total_items: int,
@@ -2730,12 +2816,12 @@ def render_recent_scan_pagination(
     start_item = ((page - 1) * page_size) + 1
     end_item = min(page * page_size, total_items)
     previous_link = (
-        f'<a class="secondary-action compact-action" href="{html.escape(dashboard_query_url(page=page - 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter))}">Previous</a>'
+        f'<a class="secondary-action compact-action" href="{html.escape(scan_query_url(base_path, page=page - 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter))}">Previous</a>'
         if page > 1
         else '<span class="secondary-action compact-action is-disabled" aria-disabled="true">Previous</span>'
     )
     next_link = (
-        f'<a class="secondary-action compact-action" href="{html.escape(dashboard_query_url(page=page + 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter))}">Next</a>'
+        f'<a class="secondary-action compact-action" href="{html.escape(scan_query_url(base_path, page=page + 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter))}">Next</a>'
         if page < total_pages
         else '<span class="secondary-action compact-action is-disabled" aria-disabled="true">Next</span>'
     )
@@ -2753,6 +2839,28 @@ def render_recent_scan_pagination(
       </div>
     </div>
     """
+
+
+def render_recent_scan_pagination(
+    *,
+    page: int,
+    total_pages: int,
+    total_items: int,
+    page_size: int,
+    query: str,
+    status_filter: str,
+    verdict_filter: str,
+) -> str:
+    return render_scan_pagination(
+        base_path="/",
+        page=page,
+        total_pages=total_pages,
+        total_items=total_items,
+        page_size=page_size,
+        query=query,
+        status_filter=status_filter,
+        verdict_filter=verdict_filter,
+    )
 
 
 def render_recent_scan_rows(
@@ -2807,6 +2915,90 @@ def render_recent_scan_rows(
                 <span class="detection-count {detection_tone}">{html.escape(detection_summary_text_for_scan(scan, engine_results))}</span>
               </td>
               <td>{html.escape(scan.created_at)}</td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def api_scan_source_pill(scan: ScanRecord) -> str:
+    tone = "warning" if scan.status in {"queued", "running"} else "neutral"
+    return f'<span class="pill {tone}">{html.escape(scan.source.title())}</span>'
+
+
+def render_api_ledger_rows(
+    scans: list[ScanRecord],
+    results_by_scan: dict[int, list[EngineResultRecord]],
+    empty_message: str,
+    can_delete: bool = False,
+) -> str:
+    if not scans:
+        colspan = 9 if can_delete else 8
+        return f'<tr><td class="empty-cell" colspan="{colspan}">{html.escape(empty_message)}</td></tr>'
+
+    rows = []
+    for scan in scans:
+        engine_results = results_by_scan.get(scan.id, [])
+        timing = build_scan_timing_payload(scan)
+        queue_wait = format_duration_ms(timing["queue_wait_ms"])
+        processing_duration = format_duration_ms(timing["processing_duration_ms"])
+        total_duration = format_duration_ms(timing["total_duration_ms"])
+        detection_summary = detection_summary_text_for_scan(scan, engine_results)
+        detail_summary = coverage_detail_text_for_scan(scan, engine_results) or detection_detail_text_for_scan(scan, engine_results)
+        delete_action = (
+            f"""
+                  <form action="/api-ledger/scans/{scan.id}/delete" method="post" data-action-form data-preserve-scroll>
+                    <button class="danger-action compact-action" type="submit" data-busy-label="Deleting...">Delete</button>
+                  </form>
+            """
+            if can_delete
+            else ""
+        )
+        select_cell = (
+            f"""
+              <td class="select-cell">
+                <input class="row-checkbox" type="checkbox" data-row-checkbox aria-label="Select scan {scan.id}">
+              </td>
+            """
+            if can_delete
+            else ""
+        )
+        rows.append(
+            f"""
+            <tr class="dashboard-scan-row" data-scan-row data-scan-id="{scan.id}" data-scan-url="/scans/{scan.id}" tabindex="0" aria-selected="false">
+              {select_cell}
+              <td>
+                <div class="table-link">
+                  <strong>{html.escape(scan.original_filename)}</strong>
+                  <small>{html.escape(scan.case_name or "Unassigned")}</small>
+                </div>
+              </td>
+              <td><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{short_hash(scan.sha256)}</code></td>
+              <td>
+                {status_pill(scan.status)}
+                <small class="status-detail">{html.escape(scan.last_error or detail_summary)}</small>
+              </td>
+              <td>
+                {verdict_pill(scan.verdict)}
+                <small class="status-detail">{html.escape(detection_summary)}</small>
+              </td>
+              <td>
+                <strong>Q {html.escape(queue_wait)}</strong>
+                <small>P {html.escape(processing_duration)} | T {html.escape(total_duration)}</small>
+              </td>
+              <td>
+                {api_scan_source_pill(scan)}
+                <small class="status-detail">{html.escape(scan.priority)} priority | attempt {scan.attempt_count}</small>
+              </td>
+              <td>{html.escape(scan.created_at)}</td>
+              <td>
+                <div class="table-actions">
+                  <a class="secondary-action compact-action" href="/scans/{scan.id}">Open</a>
+                  <a class="secondary-action compact-action" href="/api-ledger/scans/{scan.id}/status">Status JSON</a>
+                  <a class="secondary-action compact-action" href="/api-ledger/scans/{scan.id}/result">Result JSON</a>
+                  {delete_action}
+                </div>
+              </td>
             </tr>
             """
         )
@@ -3723,7 +3915,7 @@ def dashboard(
 ) -> str:
     user = require_user(request)
     can_manage_scans = user.role == ROLE_ADMIN
-    scans = list_recent_scans(limit=None)
+    scans = list_recent_scans(limit=None, source="manual")
     page_size = 20
     status_filter = status if status in {"all", "active", "queued", "running", "completed", "partial", "failed"} else "all"
     verdict_filter = verdict if verdict in {"all", "pending", "malicious", "undetected", "metadata_only"} else "all"
@@ -3735,7 +3927,7 @@ def dashboard(
     )
     filters_active = bool(q.strip()) or status_filter != "all" or verdict_filter != "all"
     empty_message = "No scans match the current filters." if filters_active else "No scans submitted yet."
-    counts = get_scan_counts()
+    counts = get_scan_counts(source="manual")
     worker_status = get_worker_status()
     configured_engine_count = len(configured_engines())
     delete_actions = (
@@ -3762,9 +3954,9 @@ def dashboard(
     body = f"""
     {notice_html}
     <section class="metric-grid">
-      {metric_card("Samples", str(counts["total"]), "Persisted scan jobs")}
-      {metric_card("Active", str(counts["running"]), "Queued or running jobs", "tone-blue")}
-      {metric_card("High risk", str(counts["high_risk"]), "All persisted jobs", "tone-red")}
+      {metric_card("Samples", str(counts["total"]), "Persisted manual scan jobs")}
+      {metric_card("Active", str(counts["running"]), "Queued or running manual jobs", "tone-blue")}
+      {metric_card("High risk", str(counts["high_risk"]), "Manual scans with high verdicts", "tone-red")}
       {metric_card("Engines", str(configured_engine_count), "Configured locally", "tone-green")}
     </section>
 
@@ -3773,7 +3965,7 @@ def dashboard(
         <div class="panel-header">
           <div>
             <h2>Recent scans</h2>
-            <p>{total_filtered_scans} matching scans across {len(scans)} total samples.</p>
+            <p>{total_filtered_scans} matching scans across {len(scans)} manual submissions.</p>
           </div>
           <div class="panel-actions">
             {delete_actions}
@@ -3806,6 +3998,255 @@ def dashboard(
     </section>
     """
     return page_shell("Scan Dashboard", "dashboard", body, user)
+
+
+def render_api_payload_page(
+    *,
+    title: str,
+    active_nav: str,
+    scan: ScanRecord,
+    payload: dict[str, object],
+    user: UserRecord,
+) -> str:
+    pretty_payload = html.escape(json.dumps(payload, indent=2, ensure_ascii=True))
+    body = f"""
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>{html.escape(title)}</h2>
+          <p>Session-authenticated view of the normalized API payload for scan #{scan.id}.</p>
+        </div>
+        <div class="panel-actions">
+          <a class="secondary-action compact-action" href="/api-ledger">Back to ledger</a>
+          <a class="secondary-action compact-action" href="/scans/{scan.id}">Open scan</a>
+        </div>
+      </div>
+      <div class="report-raw-grid">
+        <section class="panel wide">
+          <div class="panel-header compact">
+            <div>
+              <h2>Payload</h2>
+              <p>{html.escape(scan.original_filename)} | {html.escape(scan.sha256)}</p>
+            </div>
+            {verdict_pill(scan.verdict)}
+          </div>
+          <div class="table-wrap">
+            <pre>{pretty_payload}</pre>
+          </div>
+        </section>
+      </div>
+    </section>
+    """
+    return page_shell(title, active_nav, body, user)
+
+
+@app.get("/api-ledger", response_class=HTMLResponse)
+def api_ledger(
+    request: Request,
+    q: str = "",
+    status: str = "all",
+    verdict: str = "all",
+    page: int = 1,
+    message: str = "",
+    error: str = "",
+) -> str:
+    user = require_user(request)
+    can_delete_scans = user.role == ROLE_ADMIN
+    page_size = 25
+    status_filter = status if status in {"all", "active", "queued", "running", "completed", "partial", "failed"} else "all"
+    verdict_filter = verdict if verdict in {"all", "pending", "info", "metadata_only", "low", "medium", "high", "critical"} else "all"
+    total_items = count_scan_history(
+        source="api",
+        query=q,
+        status_filter=status_filter,
+        verdict_filter=verdict_filter,
+    )
+    total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items else 1
+    current_page = min(normalize_dashboard_page(page), total_pages)
+    scans = list_scan_history(
+        source="api",
+        query=q,
+        status_filter=status_filter,
+        verdict_filter=verdict_filter,
+        limit=page_size,
+        offset=(current_page - 1) * page_size,
+    )
+    results_by_scan = list_engine_results_by_scan_ids([scan.id for scan in scans])
+    counts = get_scan_counts(source="api")
+    queue_metrics = get_queue_metrics()
+    empty_message = "No API scans match the current filters." if total_items else "No API scans have been submitted yet."
+    notice_html = (
+        page_notice("API ledger updated", message, "success")
+        + page_notice("Action blocked", error, "danger")
+    )
+    delete_actions = (
+        """
+            <form id="bulk-delete-form" action="/api-ledger/scans/delete" method="post" data-bulk-delete-form data-action-form data-preserve-scroll></form>
+            <button class="toolbar-delete" type="submit" form="bulk-delete-form" data-bulk-delete data-busy-label="Deleting..." hidden>Delete selected</button>
+        """
+        if can_delete_scans
+        else '<span class="pill neutral">Read-only history</span>'
+    )
+    select_header = (
+        """
+                <th class="select-cell">
+                  <input class="row-checkbox" type="checkbox" data-select-all aria-label="Select all scans" title="Select all scans">
+                </th>
+        """
+        if can_delete_scans
+        else ""
+    )
+    body = f"""
+    {notice_html}
+    <section class="metric-grid">
+      {metric_card("API scans", str(counts["total"]), "Persisted API submissions")}
+      {metric_card("Active", str(counts["running"]), "Queued or running API jobs", "tone-blue")}
+      {metric_card("Failed", str(counts["failed"]), "API jobs with terminal failure", "tone-red")}
+      {metric_card("Global queue", str(queue_metrics["active"]), "All queued or running jobs", "tone-green")}
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="panel wide">
+        <div class="panel-header">
+          <div>
+            <h2>API ledger</h2>
+            <p>{total_items} matching API scans. This view is optimized for lookups, exclusions, and raw payload review.</p>
+          </div>
+          <div class="panel-actions">
+            {delete_actions}
+          </div>
+        </div>
+        {render_scan_filters(
+            action_path="/api-ledger",
+            reset_path="/api-ledger",
+            query=q,
+            status_filter=status_filter,
+            verdict_filter=verdict_filter,
+            verdict_options=[
+                ("all", "All verdicts"),
+                ("pending", "Pending"),
+                ("info", "Info"),
+                ("metadata_only", "Metadata only"),
+                ("low", "Low"),
+                ("medium", "Medium"),
+                ("high", "High"),
+                ("critical", "Critical"),
+            ],
+        )}
+        {render_scan_pagination(base_path="/api-ledger", page=current_page, total_pages=total_pages, total_items=total_items, page_size=page_size, query=q, status_filter=status_filter, verdict_filter=verdict_filter)}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {select_header}
+                <th>File</th>
+                <th>SHA256</th>
+                <th>Status</th>
+                <th>Verdict</th>
+                <th>Timing</th>
+                <th>Meta</th>
+                <th>Submitted</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {render_api_ledger_rows(scans, results_by_scan, empty_message, can_delete=can_delete_scans)}
+            </tbody>
+          </table>
+        </div>
+        {render_scan_pagination(base_path="/api-ledger", page=current_page, total_pages=total_pages, total_items=total_items, page_size=page_size, query=q, status_filter=status_filter, verdict_filter=verdict_filter)}
+      </div>
+
+      {render_worker_status_panel(get_worker_status())}
+    </section>
+    """
+    return page_shell("API Ledger", "api_ledger", body, user)
+
+
+@app.get("/api-ledger/scans/{scan_id}/status", response_class=HTMLResponse)
+def api_ledger_status_payload(request: Request, scan_id: int) -> str:
+    user = require_user(request)
+    scan = get_scan(scan_id)
+    if scan is None or scan.source != "api":
+        raise HTTPException(status_code=404, detail="API scan not found.")
+    payload = build_api_scan_status_payload(request, scan)
+    return render_api_payload_page(
+        title=f"API Status Payload #{scan.id}",
+        active_nav="api_ledger",
+        scan=scan,
+        payload=payload,
+        user=user,
+    )
+
+
+@app.get("/api-ledger/scans/{scan_id}/result", response_class=HTMLResponse)
+def api_ledger_result_payload(request: Request, scan_id: int) -> str:
+    user = require_user(request)
+    scan = get_scan(scan_id)
+    if scan is None or scan.source != "api":
+        raise HTTPException(status_code=404, detail="API scan not found.")
+    payload = build_api_scan_result_payload(request, scan)
+    return render_api_payload_page(
+        title=f"API Result Payload #{scan.id}",
+        active_nav="api_ledger",
+        scan=scan,
+        payload=payload,
+        user=user,
+    )
+
+
+@app.post("/api-ledger/scans/{scan_id}/delete")
+async def delete_api_ledger_scan(request: Request, scan_id: int) -> RedirectResponse:
+    require_admin(request)
+    scan = get_scan(scan_id)
+    if scan is None or scan.source != "api":
+        return RedirectResponse(
+            url=redirect_url("/api-ledger", error="API scan not found."),
+            status_code=303,
+        )
+    deleted_scan = delete_scan_record(scan_id)
+    if deleted_scan is None:
+        return RedirectResponse(
+            url=redirect_url("/api-ledger", error="API scan not found."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=redirect_url("/api-ledger", message=f"Deleted API scan {deleted_scan.original_filename}."),
+        status_code=303,
+    )
+
+
+@app.post("/api-ledger/scans/delete")
+async def delete_selected_api_scans(
+    request: Request,
+    scan_ids: list[int] = Form(default=[]),
+) -> RedirectResponse:
+    require_admin(request)
+    if not scan_ids:
+        return RedirectResponse(
+            url=redirect_url("/api-ledger", error="No API scans were selected."),
+            status_code=303,
+        )
+
+    deleted_count = 0
+    for scan_id in scan_ids:
+        scan = get_scan(scan_id)
+        if scan is None or scan.source != "api":
+            continue
+        if delete_scan_record(scan_id) is not None:
+            deleted_count += 1
+
+    if deleted_count == 0:
+        return RedirectResponse(
+            url=redirect_url("/api-ledger", error="No matching API scans could be deleted."),
+            status_code=303,
+        )
+
+    message = f"Deleted {deleted_count} API scan." if deleted_count == 1 else f"Deleted {deleted_count} API scans."
+    return RedirectResponse(
+        url=redirect_url("/api-ledger", message=message),
+        status_code=303,
+    )
 
 
 @app.get("/system", response_class=HTMLResponse)
@@ -4032,6 +4473,7 @@ async def create_scan(
             case_name=case_name,
             priority=priority,
             note=note,
+            source="manual",
         )
     except HTTPException as exc:
         if exc.status_code == 413:
@@ -4063,6 +4505,7 @@ async def api_create_scan(
         case_name=case_name,
         priority=priority,
         note=note,
+        source="api",
     )
     applied_wait_seconds = normalized_api_wait_seconds(wait_seconds)
     current_scan = await wait_for_terminal_scan(scan.id, applied_wait_seconds)
@@ -4163,6 +4606,7 @@ async def retry_single_scan(request: Request, scan_id: int) -> RedirectResponse:
             url=redirect_url(f"/scans/{scan_id}", error="Only completed or failed scans can be retried."),
             status_code=303,
         )
+    create_scan_engine_jobs(scan_id, enabled_engines())
     return RedirectResponse(
         url=redirect_url(f"/scans/{scan_id}", message="Scan was queued for another run."),
         status_code=303,

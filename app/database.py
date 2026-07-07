@@ -15,7 +15,9 @@ from app.models import (
     EngineInstanceRecord,
     EngineResultInput,
     EngineResultRecord,
+    ScanEngineJobRecord,
     ScanRecord,
+    ScanWorkerEventRecord,
     StoredSample,
     UserRecord,
 )
@@ -210,6 +212,7 @@ def init_sqlite_db() -> None:
                 case_name TEXT NOT NULL,
                 priority TEXT NOT NULL,
                 note TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'manual',
                 status TEXT NOT NULL,
                 verdict TEXT NOT NULL,
                 risk_score INTEGER,
@@ -240,6 +243,39 @@ def init_sqlite_db() -> None:
                 findings_json TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS scan_worker_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_job_id INTEGER NOT NULL,
+                event_name TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                worker_engine_keys TEXT NOT NULL,
+                engine_name TEXT,
+                duration_ms INTEGER,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS scan_engine_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_job_id INTEGER NOT NULL,
+                engine_instance_id INTEGER,
+                engine_key TEXT NOT NULL,
+                engine_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                worker_id TEXT,
+                claimed_at TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                lease_expires_at INTEGER,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE,
+                FOREIGN KEY (engine_instance_id) REFERENCES engine_instances (id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS app_settings (
@@ -277,18 +313,49 @@ def init_sqlite_db() -> None:
             );
             """
         )
+        ensure_column(connection, "scan_jobs", "started_at", "TEXT")
+        ensure_column(connection, "scan_jobs", "failed_at", "TEXT")
+        ensure_column(connection, "scan_jobs", "attempt_count", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(connection, "scan_jobs", "last_error", "TEXT")
+        ensure_column(connection, "scan_jobs", "source", "TEXT NOT NULL DEFAULT 'manual'")
+        ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
         connection.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_results_scan_engine
             ON engine_results (scan_job_id, engine_name)
             """
         )
-        ensure_column(connection, "scan_jobs", "started_at", "TEXT")
-        ensure_column(connection, "scan_jobs", "failed_at", "TEXT")
-        ensure_column(connection, "scan_jobs", "attempt_count", "INTEGER NOT NULL DEFAULT 0")
-        ensure_column(connection, "scan_jobs", "last_error", "TEXT")
-        ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
-        ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_jobs_source_created
+            ON scan_jobs (source, created_at, id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_jobs_source_status_created
+            ON scan_jobs (source, status, created_at, id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_worker_events_scan_created
+            ON scan_worker_events (scan_job_id, created_at, id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_engine
+            ON scan_engine_jobs (scan_job_id, engine_key)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_engine_jobs_claim
+            ON scan_engine_jobs (status, engine_key, lease_expires_at, id)
+            """
+        )
 
 
 def init_postgres_db() -> None:
@@ -314,6 +381,7 @@ def init_postgres_db() -> None:
                 case_name TEXT NOT NULL,
                 priority TEXT NOT NULL,
                 note TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'manual',
                 status TEXT NOT NULL,
                 verdict TEXT NOT NULL,
                 risk_score INTEGER,
@@ -348,6 +416,48 @@ def init_postgres_db() -> None:
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_results_scan_engine
             ON engine_results (scan_job_id, engine_name);
+
+            CREATE TABLE IF NOT EXISTS scan_worker_events (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                scan_job_id INTEGER NOT NULL,
+                event_name TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                worker_engine_keys TEXT NOT NULL,
+                engine_name TEXT,
+                duration_ms INTEGER,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_scan_worker_events_scan_created
+            ON scan_worker_events (scan_job_id, created_at, id);
+
+            CREATE TABLE IF NOT EXISTS scan_engine_jobs (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                scan_job_id INTEGER NOT NULL,
+                engine_instance_id INTEGER,
+                engine_key TEXT NOT NULL,
+                engine_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                worker_id TEXT,
+                claimed_at TIMESTAMPTZ,
+                started_at TIMESTAMPTZ,
+                finished_at TIMESTAMPTZ,
+                lease_expires_at INTEGER,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id) ON DELETE CASCADE,
+                FOREIGN KEY (engine_instance_id) REFERENCES engine_instances (id) ON DELETE SET NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_engine
+            ON scan_engine_jobs (scan_job_id, engine_key);
+
+            CREATE INDEX IF NOT EXISTS idx_scan_engine_jobs_claim
+            ON scan_engine_jobs (status, engine_key, lease_expires_at, id);
 
             CREATE TABLE IF NOT EXISTS app_settings (
                 key TEXT PRIMARY KEY,
@@ -388,8 +498,45 @@ def init_postgres_db() -> None:
         ensure_column(connection, "scan_jobs", "failed_at", "TIMESTAMPTZ")
         ensure_column(connection, "scan_jobs", "attempt_count", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(connection, "scan_jobs", "last_error", "TEXT")
+        ensure_column(connection, "scan_jobs", "source", "TEXT NOT NULL DEFAULT 'manual'")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_results_scan_engine
+            ON engine_results (scan_job_id, engine_name)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_jobs_source_created
+            ON scan_jobs (source, created_at, id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_jobs_source_status_created
+            ON scan_jobs (source, status, created_at, id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_worker_events_scan_created
+            ON scan_worker_events (scan_job_id, created_at, id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_engine
+            ON scan_engine_jobs (scan_job_id, engine_key)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_engine_jobs_claim
+            ON scan_engine_jobs (status, engine_key, lease_expires_at, id)
+            """
+        )
 
 
 def ensure_column(
@@ -916,6 +1063,7 @@ def create_scan_job(
     case_name: str,
     priority: str,
     note: str,
+    source: str = "manual",
     status: str = "queued",
     verdict: str = "pending",
     risk_score: int | None = None,
@@ -928,6 +1076,7 @@ def create_scan_job(
                 case_name,
                 priority,
                 note,
+                source,
                 status,
                 verdict,
                 risk_score,
@@ -935,7 +1084,7 @@ def create_scan_job(
                 completed_at
             )
             VALUES (
-                ?, ?, ?, ?, ?, ?, ?, NULL,
+                ?, ?, ?, ?, ?, ?, ?, ?, NULL,
                 CASE
                     WHEN ? IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
                     ELSE NULL
@@ -948,6 +1097,7 @@ def create_scan_job(
                 case_name,
                 priority,
                 note,
+                source,
                 status,
                 verdict,
                 risk_score,
@@ -1131,7 +1281,400 @@ def list_engine_results(scan_job_id: int) -> list[EngineResultRecord]:
     return [row_to_engine_result_record(row) for row in rows]
 
 
-def list_recent_scans(limit: int | None = 20, offset: int = 0) -> list[ScanRecord]:
+def list_engine_results_by_scan_ids(scan_job_ids: list[int]) -> dict[int, list[EngineResultRecord]]:
+    if not scan_job_ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in scan_job_ids)
+    with connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                id,
+                scan_job_id,
+                engine_name,
+                engine_version,
+                signature_version,
+                status,
+                detected,
+                signature,
+                severity,
+                confidence,
+                raw_output,
+                error_message,
+                duration_ms,
+                details_json,
+                findings_json,
+                created_at
+            FROM engine_results
+            WHERE scan_job_id IN ({placeholders})
+            ORDER BY scan_job_id ASC, created_at ASC, id ASC
+            """,
+            tuple(scan_job_ids),
+        ).fetchall()
+
+    results_by_scan: dict[int, list[EngineResultRecord]] = {scan_id: [] for scan_id in scan_job_ids}
+    for row in rows:
+        record = row_to_engine_result_record(row)
+        results_by_scan.setdefault(record.scan_job_id, []).append(record)
+    return results_by_scan
+
+
+def create_scan_worker_event(
+    *,
+    scan_job_id: int,
+    event_name: str,
+    worker_id: str,
+    worker_engine_keys: str,
+    engine_name: str | None = None,
+    duration_ms: int | None = None,
+    details_json: str = "{}",
+) -> int:
+    with connect() as connection:
+        cursor = connection.execute(
+            f"""
+            INSERT INTO scan_worker_events (
+                scan_job_id,
+                event_name,
+                worker_id,
+                worker_engine_keys,
+                engine_name,
+                duration_ms,
+                details_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            {returning_id_clause()}
+            """,
+            (
+                scan_job_id,
+                event_name,
+                worker_id,
+                worker_engine_keys,
+                engine_name,
+                duration_ms,
+                details_json,
+            ),
+        )
+        return require_lastrowid(cursor)
+
+
+def list_scan_worker_events(scan_job_id: int) -> list[ScanWorkerEventRecord]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                id,
+                scan_job_id,
+                event_name,
+                worker_id,
+                worker_engine_keys,
+                engine_name,
+                duration_ms,
+                details_json,
+                created_at
+            FROM scan_worker_events
+            WHERE scan_job_id = ?
+            ORDER BY created_at ASC, id ASC
+            """,
+            (scan_job_id,),
+        ).fetchall()
+    return [row_to_scan_worker_event_record(row) for row in rows]
+
+
+def create_scan_engine_jobs(
+    scan_job_id: int,
+    engines: list[EngineInstanceRecord],
+) -> int:
+    created = 0
+    with connect() as connection:
+        for engine in engines:
+            if using_postgres():
+                cursor = connection.execute(
+                    """
+                    INSERT INTO scan_engine_jobs (
+                        scan_job_id,
+                        engine_instance_id,
+                        engine_key,
+                        engine_name
+                    )
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT (scan_job_id, engine_key) DO NOTHING
+                    RETURNING id
+                    """,
+                    (
+                        scan_job_id,
+                        engine.id,
+                        engine.adapter_key,
+                        engine.display_name,
+                    ),
+                )
+                if cursor.fetchone() is not None:
+                    created += 1
+                continue
+
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO scan_engine_jobs (
+                    scan_job_id,
+                    engine_instance_id,
+                    engine_key,
+                    engine_name
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    scan_job_id,
+                    engine.id,
+                    engine.adapter_key,
+                    engine.display_name,
+                ),
+            )
+            created += int(cursor.rowcount > 0)
+    return created
+
+
+def list_scan_engine_jobs(scan_job_id: int) -> list[ScanEngineJobRecord]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                id,
+                scan_job_id,
+                engine_instance_id,
+                engine_key,
+                engine_name,
+                status,
+                worker_id,
+                claimed_at,
+                started_at,
+                finished_at,
+                lease_expires_at,
+                attempt_count,
+                last_error,
+                created_at,
+                updated_at
+            FROM scan_engine_jobs
+            WHERE scan_job_id = ?
+            ORDER BY id ASC
+            """,
+            (scan_job_id,),
+        ).fetchall()
+    return [row_to_scan_engine_job_record(row) for row in rows]
+
+
+def get_scan_engine_job(job_id: int) -> ScanEngineJobRecord | None:
+    with connect() as connection:
+        return get_scan_engine_job_with_connection(connection, job_id)
+
+
+def claim_next_scan_engine_job(
+    engine_keys: set[str],
+    worker_id: str,
+    *,
+    lease_seconds: int = 120,
+    now: int | None = None,
+) -> ScanEngineJobRecord | None:
+    if not engine_keys:
+        return None
+
+    current_time = int(time.time()) if now is None else now
+    lease_expires_at = current_time + max(1, lease_seconds)
+    sorted_engine_keys = sorted(engine_keys)
+    placeholders = ", ".join("?" for _ in sorted_engine_keys)
+    claimable_statuses = ("pending", "claimed", "running")
+
+    with connect() as connection:
+        if not using_postgres():
+            connection.execute("BEGIN IMMEDIATE")
+
+        row = connection.execute(
+            f"""
+            SELECT scan_engine_jobs.id
+            FROM scan_engine_jobs
+            JOIN scan_jobs ON scan_jobs.id = scan_engine_jobs.scan_job_id
+            WHERE scan_jobs.status IN ('queued', 'running')
+              AND scan_engine_jobs.engine_key IN ({placeholders})
+              AND (
+                scan_engine_jobs.status = ?
+                OR (
+                  scan_engine_jobs.status IN (?, ?)
+                  AND scan_engine_jobs.lease_expires_at IS NOT NULL
+                  AND scan_engine_jobs.lease_expires_at <= ?
+                )
+              )
+            ORDER BY scan_jobs.created_at ASC, scan_jobs.id ASC, scan_engine_jobs.id ASC
+            LIMIT 1
+            {"FOR UPDATE SKIP LOCKED" if using_postgres() else ""}
+            """,
+            (
+                *sorted_engine_keys,
+                claimable_statuses[0],
+                claimable_statuses[1],
+                claimable_statuses[2],
+                current_time,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+
+        job_id = int(row_value(row, "id"))
+        connection.execute(
+            """
+            UPDATE scan_engine_jobs
+            SET
+                status = 'claimed',
+                worker_id = ?,
+                claimed_at = CURRENT_TIMESTAMP,
+                started_at = NULL,
+                finished_at = NULL,
+                lease_expires_at = ?,
+                attempt_count = attempt_count + 1,
+                last_error = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (worker_id, lease_expires_at, job_id),
+        )
+        return get_scan_engine_job_with_connection(connection, job_id)
+
+
+def mark_scan_engine_job_running(
+    job_id: int,
+    worker_id: str,
+    *,
+    lease_seconds: int = 120,
+    now: int | None = None,
+) -> bool:
+    current_time = int(time.time()) if now is None else now
+    lease_expires_at = current_time + max(1, lease_seconds)
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE scan_engine_jobs
+            SET
+                status = 'running',
+                worker_id = ?,
+                started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+                lease_expires_at = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status IN ('claimed', 'running')
+            """,
+            (worker_id, lease_expires_at, job_id),
+        )
+        return int(cursor.rowcount) > 0
+
+
+def mark_scan_engine_job_terminal(
+    job_id: int,
+    status: str,
+    *,
+    last_error: str | None = None,
+) -> bool:
+    if status not in {"completed", "failed", "skipped"}:
+        raise ValueError("scan engine job terminal status must be completed, failed, or skipped")
+
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE scan_engine_jobs
+            SET
+                status = ?,
+                finished_at = CURRENT_TIMESTAMP,
+                lease_expires_at = NULL,
+                last_error = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (status, last_error, job_id),
+        )
+        return int(cursor.rowcount) > 0
+
+
+def get_scan_engine_job_with_connection(
+    connection: Any,
+    job_id: int,
+) -> ScanEngineJobRecord | None:
+    row = connection.execute(
+        """
+        SELECT
+            id,
+            scan_job_id,
+            engine_instance_id,
+            engine_key,
+            engine_name,
+            status,
+            worker_id,
+            claimed_at,
+            started_at,
+            finished_at,
+            lease_expires_at,
+            attempt_count,
+            last_error,
+            created_at,
+            updated_at
+        FROM scan_engine_jobs
+        WHERE id = ?
+        """,
+        (job_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return row_to_scan_engine_job_record(row)
+
+
+def build_scan_history_where_clause(
+    *,
+    source: str | None = None,
+    query: str = "",
+    status_filter: str = "all",
+    verdict_filter: str = "all",
+) -> tuple[str, list[object]]:
+    conditions: list[str] = []
+    params: list[object] = []
+
+    if source:
+        conditions.append("scan_jobs.source = ?")
+        params.append(source)
+
+    normalized_query = query.strip().lower()
+    if normalized_query:
+        like_value = f"%{normalized_query}%"
+        conditions.append(
+            """
+            (
+                LOWER(samples.original_filename) LIKE ?
+                OR LOWER(scan_jobs.case_name) LIKE ?
+                OR LOWER(scan_jobs.note) LIKE ?
+                OR LOWER(samples.sha256) LIKE ?
+                OR LOWER(samples.sha1) LIKE ?
+                OR LOWER(samples.md5) LIKE ?
+            )
+            """
+        )
+        params.extend([like_value] * 6)
+
+    if status_filter and status_filter != "all":
+        if status_filter == "active":
+            conditions.append("scan_jobs.status IN ('queued', 'running')")
+        else:
+            conditions.append("scan_jobs.status = ?")
+            params.append(status_filter)
+
+    if verdict_filter and verdict_filter != "all":
+        conditions.append("scan_jobs.verdict = ?")
+        params.append(verdict_filter)
+
+    if not conditions:
+        return "", params
+    return "WHERE " + " AND ".join(conditions), params
+
+
+def list_recent_scans(
+    limit: int | None = 20,
+    offset: int = 0,
+    *,
+    source: str | None = None,
+) -> list[ScanRecord]:
     with connect() as connection:
         query = """
             SELECT
@@ -1140,6 +1683,7 @@ def list_recent_scans(limit: int | None = 20, offset: int = 0) -> list[ScanRecor
                 scan_jobs.case_name,
                 scan_jobs.priority,
                 scan_jobs.note,
+                scan_jobs.source,
                 scan_jobs.status,
                 scan_jobs.verdict,
                 scan_jobs.risk_score,
@@ -1159,13 +1703,124 @@ def list_recent_scans(limit: int | None = 20, offset: int = 0) -> list[ScanRecor
                 samples.sha256
             FROM scan_jobs
             JOIN samples ON samples.id = scan_jobs.sample_id
-            ORDER BY scan_jobs.created_at DESC, scan_jobs.id DESC
             """
         params: list[object] = []
+        where_clause, where_params = build_scan_history_where_clause(source=source)
+        if where_clause:
+            query += "\n" + where_clause
+            params.extend(where_params)
+        query += "\nORDER BY scan_jobs.created_at DESC, scan_jobs.id DESC"
         if limit is not None:
             query += "\nLIMIT ?\nOFFSET ?"
             params.extend([limit, max(0, offset)])
         rows = connection.execute(query, tuple(params)).fetchall()
+    return [row_to_scan_record(row) for row in rows]
+
+
+def count_scan_history(
+    *,
+    source: str | None = None,
+    query: str = "",
+    status_filter: str = "all",
+    verdict_filter: str = "all",
+) -> int:
+    with connect() as connection:
+        where_clause, params = build_scan_history_where_clause(
+            source=source,
+            query=query,
+            status_filter=status_filter,
+            verdict_filter=verdict_filter,
+        )
+        row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM scan_jobs
+            JOIN samples ON samples.id = scan_jobs.sample_id
+            {where_clause}
+            """,
+            tuple(params),
+        ).fetchone()
+    if row is None:
+        return 0
+    if isinstance(row, dict):
+        return int(row["total"])
+    return int(row[0])
+
+
+def list_scan_history(
+    *,
+    source: str | None = None,
+    query: str = "",
+    status_filter: str = "all",
+    verdict_filter: str = "all",
+    limit: int = 20,
+    offset: int = 0,
+) -> list[ScanRecord]:
+    return list_recent_scans(
+        limit=max(1, limit),
+        offset=max(0, offset),
+        source=source,
+    ) if not query.strip() and status_filter == "all" and verdict_filter == "all" else _list_scan_history_filtered(
+        source=source,
+        query=query,
+        status_filter=status_filter,
+        verdict_filter=verdict_filter,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def _list_scan_history_filtered(
+    *,
+    source: str | None = None,
+    query: str = "",
+    status_filter: str = "all",
+    verdict_filter: str = "all",
+    limit: int = 20,
+    offset: int = 0,
+) -> list[ScanRecord]:
+    with connect() as connection:
+        where_clause, params = build_scan_history_where_clause(
+            source=source,
+            query=query,
+            status_filter=status_filter,
+            verdict_filter=verdict_filter,
+        )
+        rows = connection.execute(
+            f"""
+            SELECT
+                scan_jobs.id,
+                scan_jobs.sample_id,
+                scan_jobs.case_name,
+                scan_jobs.priority,
+                scan_jobs.note,
+                scan_jobs.source,
+                scan_jobs.status,
+                scan_jobs.verdict,
+                scan_jobs.risk_score,
+                scan_jobs.created_at,
+                scan_jobs.started_at,
+                scan_jobs.completed_at,
+                scan_jobs.failed_at,
+                scan_jobs.attempt_count,
+                scan_jobs.last_error,
+                samples.original_filename,
+                samples.stored_filename,
+                samples.storage_path,
+                samples.content_type,
+                samples.size_bytes,
+                samples.md5,
+                samples.sha1,
+                samples.sha256
+            FROM scan_jobs
+            JOIN samples ON samples.id = scan_jobs.sample_id
+            {where_clause}
+            ORDER BY scan_jobs.created_at DESC, scan_jobs.id DESC
+            LIMIT ?
+            OFFSET ?
+            """,
+            tuple(params + [max(1, limit), max(0, offset)]),
+        ).fetchall()
     return [row_to_scan_record(row) for row in rows]
 
 
@@ -1192,6 +1847,7 @@ def list_scans_older_than(created_before: str, limit: int = 100) -> list[ScanRec
                 scan_jobs.case_name,
                 scan_jobs.priority,
                 scan_jobs.note,
+                scan_jobs.source,
                 scan_jobs.status,
                 scan_jobs.verdict,
                 scan_jobs.risk_score,
@@ -1230,6 +1886,7 @@ def list_active_scans(limit: int = 20) -> list[ScanRecord]:
                 scan_jobs.case_name,
                 scan_jobs.priority,
                 scan_jobs.note,
+                scan_jobs.source,
                 scan_jobs.status,
                 scan_jobs.verdict,
                 scan_jobs.risk_score,
@@ -1268,6 +1925,7 @@ def get_scan(scan_id: int) -> ScanRecord | None:
                 scan_jobs.case_name,
                 scan_jobs.priority,
                 scan_jobs.note,
+                scan_jobs.source,
                 scan_jobs.status,
                 scan_jobs.verdict,
                 scan_jobs.risk_score,
@@ -1450,26 +2108,71 @@ def claim_next_scan_job() -> ScanRecord | None:
         return row_to_scan_record(row)
 
 
-def get_scan_counts() -> dict[str, int]:
+def get_scan_counts(source: str | None = None) -> dict[str, int]:
     with connect() as connection:
-        total = fetch_count(connection, "SELECT COUNT(*) FROM scan_jobs")
-        running = fetch_count(
-            connection,
-            "SELECT COUNT(*) FROM scan_jobs WHERE status IN ('queued', 'running')",
-        )
-        high_risk = fetch_count(
-            connection,
-            """
-            SELECT COUNT(*)
+        params: tuple[object, ...] = ()
+        source_where = ""
+        if source:
+            source_where = "WHERE source = ?"
+            params = (source,)
+
+        total_row = connection.execute(
+            f"SELECT COUNT(*) AS total FROM scan_jobs {source_where}",
+            params,
+        ).fetchone()
+        active_row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS total
             FROM scan_jobs
-            WHERE verdict IN ('high', 'critical')
+            {source_where}
+            {'AND' if source_where else 'WHERE'} status IN ('queued', 'running')
             """,
-        )
+            params,
+        ).fetchone()
+        high_risk_row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM scan_jobs
+            {source_where}
+            {'AND' if source_where else 'WHERE'} verdict IN ('high', 'critical')
+            """,
+            params,
+        ).fetchone()
+        queued_row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM scan_jobs
+            {source_where}
+            {'AND' if source_where else 'WHERE'} status = 'queued'
+            """,
+            params,
+        ).fetchone()
+        completed_row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM scan_jobs
+            {source_where}
+            {'AND' if source_where else 'WHERE'} status = 'completed'
+            """,
+            params,
+        ).fetchone()
+        failed_row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM scan_jobs
+            {source_where}
+            {'AND' if source_where else 'WHERE'} status = 'failed'
+            """,
+            params,
+        ).fetchone()
 
     return {
-        "total": total,
-        "running": running,
-        "high_risk": high_risk,
+        "total": int(total_row["total"] if isinstance(total_row, dict) else total_row[0]),
+        "running": int(active_row["total"] if isinstance(active_row, dict) else active_row[0]),
+        "high_risk": int(high_risk_row["total"] if isinstance(high_risk_row, dict) else high_risk_row[0]),
+        "queued": int(queued_row["total"] if isinstance(queued_row, dict) else queued_row[0]),
+        "completed": int(completed_row["total"] if isinstance(completed_row, dict) else completed_row[0]),
+        "failed": int(failed_row["total"] if isinstance(failed_row, dict) else failed_row[0]),
     }
 
 
@@ -1598,6 +2301,14 @@ def retry_scan_job(scan_id: int) -> bool:
             (scan_id,),
         )
         connection.execute(
+            "DELETE FROM scan_engine_jobs WHERE scan_job_id = ?",
+            (scan_id,),
+        )
+        connection.execute(
+            "DELETE FROM scan_worker_events WHERE scan_job_id = ?",
+            (scan_id,),
+        )
+        connection.execute(
             """
             UPDATE scan_jobs
             SET
@@ -1626,6 +2337,7 @@ def row_to_scan_record(row: sqlite3.Row) -> ScanRecord:
         case_name=str(row_value(row, "case_name")),
         priority=str(row_value(row, "priority")),
         note=str(row_value(row, "note")),
+        source=str(row_value(row, "source")),
         status=str(row_value(row, "status")),
         verdict=str(row_value(row, "verdict")),
         risk_score=None
@@ -1682,6 +2394,58 @@ def row_to_engine_result_record(row: sqlite3.Row) -> EngineResultRecord:
         created_at=str(row_value(row, "created_at")),
         details_json=str(row_value(row, "details_json")),
         findings_json=str(row_value(row, "findings_json")),
+    )
+
+
+def row_to_scan_worker_event_record(row: sqlite3.Row) -> ScanWorkerEventRecord:
+    return ScanWorkerEventRecord(
+        id=int(row_value(row, "id")),
+        scan_job_id=int(row_value(row, "scan_job_id")),
+        event_name=str(row_value(row, "event_name")),
+        worker_id=str(row_value(row, "worker_id")),
+        worker_engine_keys=str(row_value(row, "worker_engine_keys")),
+        engine_name=None
+        if row_value(row, "engine_name") is None
+        else str(row_value(row, "engine_name")),
+        duration_ms=None
+        if row_value(row, "duration_ms") is None
+        else int(row_value(row, "duration_ms")),
+        details_json=str(row_value(row, "details_json")),
+        created_at=str(row_value(row, "created_at")),
+    )
+
+
+def row_to_scan_engine_job_record(row: sqlite3.Row) -> ScanEngineJobRecord:
+    return ScanEngineJobRecord(
+        id=int(row_value(row, "id")),
+        scan_job_id=int(row_value(row, "scan_job_id")),
+        engine_instance_id=None
+        if row_value(row, "engine_instance_id") is None
+        else int(row_value(row, "engine_instance_id")),
+        engine_key=str(row_value(row, "engine_key")),
+        engine_name=str(row_value(row, "engine_name")),
+        status=str(row_value(row, "status")),
+        worker_id=None
+        if row_value(row, "worker_id") is None
+        else str(row_value(row, "worker_id")),
+        claimed_at=None
+        if row_value(row, "claimed_at") is None
+        else str(row_value(row, "claimed_at")),
+        started_at=None
+        if row_value(row, "started_at") is None
+        else str(row_value(row, "started_at")),
+        finished_at=None
+        if row_value(row, "finished_at") is None
+        else str(row_value(row, "finished_at")),
+        lease_expires_at=None
+        if row_value(row, "lease_expires_at") is None
+        else int(row_value(row, "lease_expires_at")),
+        attempt_count=int(row_value(row, "attempt_count")),
+        last_error=None
+        if row_value(row, "last_error") is None
+        else str(row_value(row, "last_error")),
+        created_at=str(row_value(row, "created_at")),
+        updated_at=str(row_value(row, "updated_at")),
     )
 
 

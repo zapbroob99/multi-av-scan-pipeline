@@ -1,6 +1,7 @@
 import unittest
 
 from app.services.benchmarking import BenchmarkRun, percentile, summarize_benchmark
+from tools.benchmark_scans import extract_engine_durations
 
 
 class BenchmarkingTests(unittest.TestCase):
@@ -30,6 +31,12 @@ class BenchmarkingTests(unittest.TestCase):
                 failed_engines=0,
                 skipped_engines=0,
                 detections=3,
+                engine_durations_ms={"ClamAV": 1200, "YARA": 300},
+                worker_event_durations_ms={
+                    "load_context": 20,
+                    "engine_run:ClamAV": 1250,
+                    "finalize": 30,
+                },
                 error=None,
             ),
             BenchmarkRun(
@@ -52,6 +59,12 @@ class BenchmarkingTests(unittest.TestCase):
                 failed_engines=0,
                 skipped_engines=1,
                 detections=0,
+                engine_durations_ms={"ClamAV": 1800, "Microsoft Defender": 4200},
+                worker_event_durations_ms={
+                    "load_context": 30,
+                    "engine_run:Microsoft Defender": 4300,
+                    "finalize": 40,
+                },
                 error=None,
             ),
             BenchmarkRun(
@@ -101,6 +114,29 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertEqual(summary["latency_ms"]["submit_p50"], 120)
         self.assertEqual(summary["latency_ms"]["queue_wait_p50"], 400)
         self.assertEqual(summary["latency_ms"]["processing_p50"], 1400)
+        self.assertEqual(summary["engine_timings_ms"]["ClamAV"]["samples"], 2)
+        self.assertEqual(summary["engine_timings_ms"]["ClamAV"]["avg"], 1500)
+        self.assertEqual(summary["engine_timings_ms"]["YARA"]["p95"], 300)
+        self.assertEqual(summary["worker_timing_ms"]["load_context"]["avg"], 25)
+        self.assertEqual(summary["worker_timing_ms"]["finalize"]["p95"], 40)
+
+    def test_extract_engine_durations_ignores_skipped_results(self) -> None:
+        durations = extract_engine_durations(
+            [
+                {
+                    "engine_name": "Microsoft Defender",
+                    "status": "skipped",
+                    "duration_ms": 21000,
+                },
+                {
+                    "engine_name": "ClamAV",
+                    "status": "completed",
+                    "duration_ms": 42,
+                },
+            ]
+        )
+
+        self.assertEqual(durations, {"ClamAV": 42})
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from statistics import mean
 from typing import Any
 
@@ -26,6 +26,8 @@ class BenchmarkRun:
     failed_engines: int | None
     skipped_engines: int | None
     detections: int | None
+    engine_durations_ms: dict[str, int] = field(default_factory=dict)
+    worker_event_durations_ms: dict[str, int] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -65,6 +67,8 @@ def summarize_benchmark(
         for run in completed_runs
         if run.processing_duration_ms is not None
     )
+    engine_timings = summarize_engine_timings(completed_runs)
+    worker_timings = summarize_worker_timings(completed_runs)
 
     expected_engine_values = [
         run.expected_engines for run in completed_runs if run.expected_engines is not None
@@ -128,6 +132,8 @@ def summarize_benchmark(
                 and run.reported_engines < run.expected_engines
             ),
         },
+        "engine_timings_ms": engine_timings,
+        "worker_timing_ms": worker_timings,
         "runs": [asdict(run) for run in runs],
     }
 
@@ -136,6 +142,48 @@ def safe_average(values: list[int]) -> float | None:
     if not values:
         return None
     return round(mean(values), 2)
+
+
+def summarize_engine_timings(runs: list[BenchmarkRun]) -> dict[str, dict[str, int | float | None]]:
+    values_by_engine: dict[str, list[int]] = {}
+    for run in runs:
+        for engine_name, duration_ms in run.engine_durations_ms.items():
+            values_by_engine.setdefault(engine_name, []).append(duration_ms)
+
+    summary: dict[str, dict[str, int | float | None]] = {}
+    for engine_name, values in sorted(values_by_engine.items()):
+        sorted_values = sorted(values)
+        summary[engine_name] = {
+            "samples": len(sorted_values),
+            "avg": safe_average(sorted_values),
+            "p50": percentile(sorted_values, 0.50),
+            "p95": percentile(sorted_values, 0.95),
+            "p99": percentile(sorted_values, 0.99),
+            "min": sorted_values[0] if sorted_values else None,
+            "max": sorted_values[-1] if sorted_values else None,
+        }
+    return summary
+
+
+def summarize_worker_timings(runs: list[BenchmarkRun]) -> dict[str, dict[str, int | float | None]]:
+    values_by_event: dict[str, list[int]] = {}
+    for run in runs:
+        for event_name, duration_ms in run.worker_event_durations_ms.items():
+            values_by_event.setdefault(event_name, []).append(duration_ms)
+
+    summary: dict[str, dict[str, int | float | None]] = {}
+    for event_name, values in sorted(values_by_event.items()):
+        sorted_values = sorted(values)
+        summary[event_name] = {
+            "samples": len(sorted_values),
+            "avg": safe_average(sorted_values),
+            "p50": percentile(sorted_values, 0.50),
+            "p95": percentile(sorted_values, 0.95),
+            "p99": percentile(sorted_values, 0.99),
+            "min": sorted_values[0] if sorted_values else None,
+            "max": sorted_values[-1] if sorted_values else None,
+        }
+    return summary
 
 
 def count_values(values: Any) -> dict[str, int]:

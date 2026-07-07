@@ -53,6 +53,16 @@ Use the Linux worker for Linux-compatible engines such as ClamAV and YARA. Do
 not use it when you want Microsoft Defender via local CLI to process jobs,
 because Defender requires a Windows worker.
 
+For throughput experiments, MASP also provides a split Linux worker profile:
+
+```powershell
+docker compose --profile linux-worker-split up --build
+```
+
+This starts separate Linux workers for `static_metadata`, `clamav`, and `yara`
+so benchmark runs can compare one serial Linux worker against engine-specific
+Linux workers.
+
 The app image installs the `yara` CLI. Docker Compose mounts the local `rules/`
 directory into `/app/rules`, so rule edits can be picked up without rebuilding
 the image.
@@ -79,11 +89,21 @@ MASP_UPLOAD_MAX_BYTES=0
 MASP_RETENTION_DAYS=0
 MASP_RETENTION_BATCH_SIZE=100
 MASP_WORKER_POLL_SECONDS=2
+MASP_ENGINE_JOB_QUEUE_ENABLED=1
+MASP_ENGINE_JOB_LEASE_SECONDS=120
+MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED=0
+MASP_WORKER_TIMING_EVENTS_ENABLED=1
 ```
 
 `MASP_RETENTION_DAYS=0` disables retention cleanup. Set it above `0` to enable
 manual old scan cleanup from the System page. Cleanup deletes both scan records
 and their stored sample files, up to `MASP_RETENTION_BATCH_SIZE` records per run.
+`MASP_WORKER_TIMING_EVENTS_ENABLED=1` records compact worker orchestration
+events for throughput analysis; set it to `0` to disable those records.
+`MASP_ENGINE_JOB_QUEUE_ENABLED=1` makes workers claim engine-level jobs instead
+of scanning the active scan list. `MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED=0`
+keeps the old scan-centric fallback disabled by default so it cannot recreate
+timeout/skipped races while the engine queue is active.
 
 ## API
 
@@ -117,7 +137,10 @@ python tools/benchmark_scans.py `
 
 The script submits real scans through `POST /api/v1/scans`, polls
 `GET /api/v1/scans/{id}`, and prints aggregate latency plus partial-coverage
-summary data.
+summary data. The JSON output also includes `engine_timings_ms`, which
+summarizes per-engine `duration_ms` values from the public status API, and
+`worker_timing_ms`, which summarizes worker orchestration events such as
+context loading, engine execution, and finalization.
 
 ClamAV may take time to initialize and download/update signatures on first
 startup. MASP waits briefly for clamd to accept TCP connections before recording

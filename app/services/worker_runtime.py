@@ -205,6 +205,25 @@ def get_worker_heartbeats(current_time: int) -> list[dict[str, object]]:
     )
 
 
+def worker_is_running_scan_engine(
+    scan_id: int,
+    engine_key: str,
+    *,
+    now: int | None = None,
+) -> bool:
+    current_time = int(time.time()) if now is None else now
+    for worker in get_worker_heartbeats(current_time):
+        if not bool(worker.get("online")):
+            continue
+        if str(worker.get("state") or "") != "running":
+            continue
+        if int(worker.get("active_scan_id", 0) or 0) != scan_id:
+            continue
+        if engine_key in normalize_engine_keys(worker.get("engine_keys")):
+            return True
+    return False
+
+
 def worker_identity(payload: dict[str, object]) -> str:
     return f'{payload.get("hostname", "-")}:{payload.get("pid", 0)}'
 

@@ -80,6 +80,7 @@ def make_scan(size_bytes: int = 16) -> ScanRecord:
         case_name="Case",
         priority="Normal",
         note="",
+        source="manual",
         status="queued",
         verdict="pending",
         risk_score=None,

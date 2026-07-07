@@ -9,7 +9,7 @@ from app.main import (
     build_api_scan_status_payload,
     configured_api_retry_after_seconds,
 )
-from app.models import EngineResultRecord, ScanRecord
+from app.models import EngineResultRecord, ScanRecord, ScanWorkerEventRecord
 
 
 def make_request() -> Request:
@@ -37,6 +37,7 @@ class ApiContractTests(unittest.TestCase):
                 make_request(),
                 make_scan("running"),
                 engine_results=[make_result("ClamAV", detected=False)],
+                worker_events=[make_worker_event("engine_run", "ClamAV", 22)],
             )
 
         self.assertFalse(payload["completed"])
@@ -48,6 +49,10 @@ class ApiContractTests(unittest.TestCase):
         )
         self.assertEqual(payload["scan"]["timing"]["queue_wait_ms"], 1000)
         self.assertIsNone(payload["scan"]["timing"]["processing_duration_ms"])
+        self.assertEqual(payload["engine_results"][0]["engine_name"], "ClamAV")
+        self.assertEqual(payload["engine_results"][0]["duration_ms"], 15)
+        self.assertEqual(payload["worker_events"][0]["event_name"], "engine_run")
+        self.assertEqual(payload["worker_events"][0]["duration_ms"], 22)
 
     def test_result_payload_marks_completed_scans_as_ready(self) -> None:
         with patch("app.main.enabled_engines", return_value=[object()]):
@@ -84,6 +89,7 @@ def make_scan(status: str) -> ScanRecord:
         case_name="IR-2026-001",
         priority="Normal",
         note="manual api test",
+        source="api",
         status=status,
         verdict="pending" if status != "completed" else "critical",
         risk_score=None if status != "completed" else 90,
@@ -122,6 +128,24 @@ def make_result(engine_name: str, detected: bool) -> EngineResultRecord:
         created_at="2026-07-04 00:00:02+00:00",
         details_json="{}",
         findings_json="[]",
+    )
+
+
+def make_worker_event(
+    event_name: str,
+    engine_name: str | None,
+    duration_ms: int | None,
+) -> ScanWorkerEventRecord:
+    return ScanWorkerEventRecord(
+        id=1,
+        scan_job_id=29,
+        event_name=event_name,
+        worker_id="test-worker",
+        worker_engine_keys="clamav,yara",
+        engine_name=engine_name,
+        duration_ms=duration_ms,
+        details_json="{}",
+        created_at="2026-07-04 00:00:02+00:00",
     )
 
 

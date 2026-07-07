@@ -99,9 +99,68 @@ Status responses include:
 - `scan`
 - `queue`
 - `engines`
+- `engine_results`
+- `worker_events`
 - `links`
 
 `result_ready=true` means `GET /api/v1/scans/{id}/result` is expected to succeed.
+
+The `engines` object contains aggregate coverage counts. The `engine_results`
+array contains compact per-engine observability data while polling:
+
+```json
+{
+  "engines": {
+    "expected": 4,
+    "reported": 3,
+    "completed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "detections": 0
+  },
+  "engine_results": [
+    {
+      "engine_name": "ClamAV",
+      "status": "completed",
+      "detected": false,
+      "duration_ms": 1240,
+      "created_at": "2026-07-06 08:21:00+00:00"
+    }
+  ]
+}
+```
+
+Use `engine_results[].duration_ms` for per-engine adapter performance analysis
+only when `status` is `completed` or `failed`. A `skipped` result is synthetic:
+it records coverage/accounting state, not adapter execution time.
+Use `worker_events[].duration_ms` to analyze orchestration time inside the
+worker processing window:
+
+```json
+{
+  "worker_events": [
+    {
+      "event_name": "engine_run",
+      "worker_id": "worker-clamav-1",
+      "worker_engine_keys": "clamav",
+      "engine_name": "ClamAV",
+      "duration_ms": 18,
+      "created_at": "2026-07-06 08:21:00+00:00"
+    },
+    {
+      "event_name": "finalize",
+      "worker_id": "worker-clamav-1",
+      "worker_engine_keys": "clamav",
+      "engine_name": null,
+      "duration_ms": 3,
+      "created_at": "2026-07-06 08:21:00+00:00"
+    }
+  ]
+}
+```
+
+Use the final result endpoint when you need full raw output, findings, and
+details.
 
 The `decision` object is the automation-friendly outcome:
 

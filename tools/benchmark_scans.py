@@ -340,6 +340,8 @@ def poll_until_terminal(
             failed_engines=run.failed_engines,
             skipped_engines=run.skipped_engines,
             detections=run.detections,
+            engine_durations_ms=run.engine_durations_ms,
+            worker_event_durations_ms=run.worker_event_durations_ms,
             error="Benchmark timeout reached before terminal scan state.",
         )
 
@@ -386,6 +388,8 @@ def poll_single_scan(
             failed_engines=previous_run.failed_engines,
             skipped_engines=previous_run.skipped_engines,
             detections=previous_run.detections,
+            engine_durations_ms=previous_run.engine_durations_ms,
+            worker_event_durations_ms=previous_run.worker_event_durations_ms,
             error=str(exc),
         )
 
@@ -429,6 +433,8 @@ def poll_single_scan(
             failed_engines=previous_run.failed_engines,
             skipped_engines=previous_run.skipped_engines,
             detections=previous_run.detections,
+            engine_durations_ms=previous_run.engine_durations_ms,
+            worker_event_durations_ms=previous_run.worker_event_durations_ms,
             error="Status payload did not include a scan id.",
         )
     return updated_run
@@ -486,6 +492,8 @@ def run_from_payload(
         failed_engines = safe_int(engines_payload.get("failed"))
         skipped_engines = safe_int(engines_payload.get("skipped"))
         detections = safe_int(engines_payload.get("detections"))
+    engine_durations_ms = extract_engine_durations(payload.get("engine_results"))
+    worker_event_durations_ms = extract_worker_event_durations(payload.get("worker_events"))
 
     return BenchmarkRun(
         request_index=request_index,
@@ -507,8 +515,44 @@ def run_from_payload(
         failed_engines=failed_engines,
         skipped_engines=skipped_engines,
         detections=detections,
+        engine_durations_ms=engine_durations_ms,
+        worker_event_durations_ms=worker_event_durations_ms,
         error=optional_string(payload.get("detail")) if scan_id is None else None,
     )
+
+
+def extract_engine_durations(value: Any) -> dict[str, int]:
+    if not isinstance(value, list):
+        return {}
+    durations: dict[str, int] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        if optional_string(item.get("status")) == "skipped":
+            continue
+        engine_name = optional_string(item.get("engine_name"))
+        duration_ms = safe_int(item.get("duration_ms"))
+        if engine_name is None or duration_ms is None:
+            continue
+        durations[engine_name] = duration_ms
+    return durations
+
+
+def extract_worker_event_durations(value: Any) -> dict[str, int]:
+    if not isinstance(value, list):
+        return {}
+    durations: dict[str, int] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        event_name = optional_string(item.get("event_name"))
+        duration_ms = safe_int(item.get("duration_ms"))
+        if event_name is None or duration_ms is None:
+            continue
+        engine_name = optional_string(item.get("engine_name"))
+        key = f"{event_name}:{engine_name}" if engine_name else event_name
+        durations[key] = durations.get(key, 0) + duration_ms
+    return durations
 
 
 def merge_run_updates(
@@ -654,6 +698,26 @@ def print_summary(summary: dict[str, Any]) -> None:
     print(f"Statuses: {json.dumps(aggregate['terminal_statuses'], sort_keys=True)}")
     print(f"Decisions: {json.dumps(aggregate['decision_actions'], sort_keys=True)}")
     print(f"Verdicts: {json.dumps(aggregate['verdicts'], sort_keys=True)}")
+    engine_timings = summary.get("engine_timings_ms")
+    if isinstance(engine_timings, dict) and engine_timings:
+        print("Engine duration avg/p95/p99:")
+        for engine_name, timing in sorted(engine_timings.items()):
+            if not isinstance(timing, dict):
+                continue
+            print(
+                f"  {engine_name}: {format_ms(timing.get('avg'))} / "
+                f"{format_ms(timing.get('p95'))} / {format_ms(timing.get('p99'))}"
+            )
+    worker_timings = summary.get("worker_timing_ms")
+    if isinstance(worker_timings, dict) and worker_timings:
+        print("Worker event duration avg/p95/p99:")
+        for event_name, timing in sorted(worker_timings.items()):
+            if not isinstance(timing, dict):
+                continue
+            print(
+                f"  {event_name}: {format_ms(timing.get('avg'))} / "
+                f"{format_ms(timing.get('p95'))} / {format_ms(timing.get('p99'))}"
+            )
 
 
 def format_ms(value: Any) -> str:

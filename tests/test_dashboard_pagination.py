@@ -1,7 +1,7 @@
 import unittest
 
-from app.main import dashboard_query_url, paginate_scans
-from app.models import ScanRecord
+from app.main import api_ledger_query_url, dashboard_query_url, paginate_scans, render_api_ledger_rows
+from app.models import EngineResultRecord, ScanRecord
 
 
 class DashboardPaginationTests(unittest.TestCase):
@@ -44,6 +44,29 @@ class DashboardPaginationTests(unittest.TestCase):
             "/?page=3&q=eicar&status=completed&verdict=malicious",
         )
 
+    def test_api_ledger_query_url_preserves_filters(self) -> None:
+        self.assertEqual(
+            api_ledger_query_url(
+                page=2,
+                query="sha256",
+                status_filter="failed",
+                verdict_filter="critical",
+            ),
+            "/api-ledger?page=2&q=sha256&status=failed&verdict=critical",
+        )
+
+    def test_api_ledger_rows_include_selection_controls_for_admins(self) -> None:
+        markup = render_api_ledger_rows(
+            [make_scan(7)],
+            {7: [make_result(7)]},
+            "empty",
+            can_delete=True,
+        )
+
+        self.assertIn('data-scan-row', markup)
+        self.assertIn('data-row-checkbox', markup)
+        self.assertIn('/api-ledger/scans/7/delete', markup)
+
 
 def make_scan(scan_id: int) -> ScanRecord:
     return ScanRecord(
@@ -52,6 +75,7 @@ def make_scan(scan_id: int) -> ScanRecord:
         case_name=f"Case {scan_id}",
         priority="Normal",
         note="",
+        source="manual",
         status="completed",
         verdict="undetected",
         risk_score=0,
@@ -69,6 +93,27 @@ def make_scan(scan_id: int) -> ScanRecord:
         md5="0" * 32,
         sha1="0" * 40,
         sha256="0" * 64,
+    )
+
+
+def make_result(scan_id: int) -> EngineResultRecord:
+    return EngineResultRecord(
+        id=scan_id,
+        scan_job_id=scan_id,
+        engine_name="ClamAV",
+        engine_version="test",
+        signature_version=None,
+        status="completed",
+        detected=False,
+        signature=None,
+        severity="info",
+        confidence=100,
+        raw_output="ok",
+        error_message=None,
+        duration_ms=10,
+        created_at="2026-07-04 00:00:02",
+        details_json="{}",
+        findings_json="[]",
     )
 
 
