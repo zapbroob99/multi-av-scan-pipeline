@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,8 +37,8 @@ class ArchiveEnqueueTests(unittest.TestCase):
         )
 
         with patch("app.main.store_upload", new=AsyncMock(return_value=stored_sample)), patch(
-            "app.main.is_supported_archive",
-            return_value=True,
+            "app.main.detect_archive_format",
+            return_value="zip",
         ), patch("app.main.enabled_engines", return_value=[]):
             scan = asyncio.run(
                 enqueue_scan_from_upload(
@@ -63,6 +64,9 @@ class ArchiveEnqueueTests(unittest.TestCase):
         self.assertEqual(batch.archive_mode, "lazy_extract_on_detection")
         self.assertEqual(batch.total_items, 1)
 
+        metadata = json.loads(batch.metadata_json)
+        self.assertEqual(metadata["container_archive_format"], "zip")
+
     def test_non_zip_upload_remains_standalone(self) -> None:
         stored_sample = StoredSample(
             original_filename="sample.bin",
@@ -76,8 +80,8 @@ class ArchiveEnqueueTests(unittest.TestCase):
         )
 
         with patch("app.main.store_upload", new=AsyncMock(return_value=stored_sample)), patch(
-            "app.main.is_supported_archive",
-            return_value=False,
+            "app.main.detect_archive_format",
+            return_value=None,
         ), patch("app.main.enabled_engines", return_value=[]):
             scan = asyncio.run(
                 enqueue_scan_from_upload(

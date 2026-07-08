@@ -1235,6 +1235,40 @@ def get_scan_batch(batch_id: int) -> ScanBatchRecord | None:
     return row_to_scan_batch_record(row)
 
 
+def list_scan_batches_by_ids(batch_ids: list[int]) -> dict[int, ScanBatchRecord]:
+    if not batch_ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in batch_ids)
+    with connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                id,
+                source,
+                original_filename,
+                archive_mode,
+                status,
+                total_items,
+                queued_items,
+                running_items,
+                completed_items,
+                failed_items,
+                malicious_items,
+                skipped_items,
+                metadata_json,
+                created_at,
+                updated_at,
+                completed_at,
+                last_error
+            FROM scan_batches
+            WHERE id IN ({placeholders})
+            """,
+            tuple(batch_ids),
+        ).fetchall()
+    return {int(row_value(row, "id")): row_to_scan_batch_record(row) for row in rows}
+
+
 def list_scan_batch_scans(
     batch_id: int,
     *,

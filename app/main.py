@@ -35,6 +35,7 @@ from app.database import (
     list_engine_results_by_scan_ids,
     list_recent_scans,
     list_scan_batch_scans,
+    list_scan_batches_by_ids,
     list_scan_history,
     list_scan_worker_events,
     list_scans_older_than,
@@ -92,7 +93,7 @@ from app.services.engine_registry import (
     remove_engine,
 )
 from app.services.ingest import UploadTooLargeError, store_upload
-from app.services.archive_extractor import is_supported_archive
+from app.services.archive_extractor import detect_archive_format
 from app.services.api_payloads import (
     create_api_scan_result_payload,
     create_api_scan_status_payload,
@@ -1108,7 +1109,8 @@ async def enqueue_scan_from_upload(
     batch_id: int | None = None
     relative_path: str | None = None
     scan_role = "standalone"
-    if is_supported_archive(stored_sample.storage_path):
+    archive_format = detect_archive_format(stored_sample.storage_path)
+    if archive_format is not None:
         batch_id = create_scan_batch(
             source=source,
             original_filename=stored_sample.original_filename,
@@ -1118,6 +1120,7 @@ async def enqueue_scan_from_upload(
                 {
                     "container_sha256": stored_sample.sha256,
                     "container_size_bytes": stored_sample.size_bytes,
+                    "container_archive_format": archive_format,
                 }
             ),
         )
@@ -3083,11 +3086,44 @@ def render_recent_scan_pagination(
     )
 
 
+ARCHIVE_FORMAT_TAG_LABELS = {
+    "zip": "Zip",
+    "tar": "Tar",
+    "7z": "7Zip",
+}
+
+
+def scan_file_type_tag_label(
+    scan: ScanRecord,
+    archive_format_by_batch_id: dict[int, str],
+) -> str:
+    if scan.scan_role == "standalone" or scan.batch_id is None:
+        return "File"
+    archive_format = archive_format_by_batch_id.get(scan.batch_id)
+    return ARCHIVE_FORMAT_TAG_LABELS.get(archive_format or "", "Archive")
+
+
+def build_archive_format_by_batch_id(scans: list[ScanRecord]) -> dict[int, str]:
+    batch_ids = sorted({scan.batch_id for scan in scans if scan.batch_id is not None})
+    batches = list_scan_batches_by_ids(batch_ids)
+    formats: dict[int, str] = {}
+    for batch_id, batch in batches.items():
+        try:
+            metadata = json.loads(batch.metadata_json) if batch.metadata_json.strip() else {}
+        except json.JSONDecodeError:
+            metadata = {}
+        archive_format = metadata.get("container_archive_format")
+        if archive_format:
+            formats[batch_id] = archive_format
+    return formats
+
+
 def render_recent_scan_rows(
     scans: list[ScanRecord],
     can_select: bool,
     results_by_scan: dict[int, list[EngineResultRecord]] | None = None,
     empty_message: str = "No scans submitted yet.",
+    archive_format_by_batch_id: dict[int, str] | None = None,
 ) -> str:
     if not scans:
         colspan = 7 if can_select else 6
@@ -3095,6 +3131,7 @@ def render_recent_scan_rows(
 
     rows = []
     cached_results = results_by_scan or {}
+    archive_formats = archive_format_by_batch_id or {}
     for scan in scans:
         engine_results = cached_results.get(scan.id)
         if engine_results is None:
@@ -3106,10 +3143,8 @@ def render_recent_scan_rows(
             if scan.status != "completed"
             else ""
         )
-        batch_badge = (
-            '<span class="pill warning batch-badge" title="Archive upload scanned as a batch">Batch</span>'
-            if scan.scan_role == "container"
-            else ""
+        file_type_tag = (
+            f'<span class="file-type-tag">{html.escape(scan_file_type_tag_label(scan, archive_formats))}</span>'
         )
         select_cell = (
             f"""
@@ -3126,8 +3161,8 @@ def render_recent_scan_rows(
               {select_cell}
               <td>
                 <div class="table-link {file_tone_class}">
-                  <strong><span class="scan-file-label">{pending_icon}{batch_badge}<span>{html.escape(scan.original_filename)}</span></span></strong>
-                  <small>{html.escape(scan.case_name)}</small>
+                  <strong><span class="scan-file-label">{pending_icon}<span>{html.escape(scan.original_filename)}</span></span></strong>
+                  <small>{file_type_tag} {html.escape(scan.case_name)}</small>
                 </div>
               </td>
               <td><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{short_hash(scan.sha256)}</code></td>
@@ -4286,6 +4321,7 @@ def dashboard(
     )
     filters_active = bool(q.strip()) or status_filter != "all" or verdict_filter != "all"
     empty_message = "No scans match the current filters." if filters_active else "No scans submitted yet."
+    archive_format_by_batch_id = build_archive_format_by_batch_id(paginated_scans)
     counts = get_scan_counts(source="manual", include_child_scans=False)
     worker_status = get_worker_status()
     configured_engine_count = len(configured_engines())
@@ -4346,7 +4382,7 @@ def dashboard(
               </tr>
             </thead>
             <tbody>
-              {render_recent_scan_rows(paginated_scans, can_select=can_manage_scans, results_by_scan=results_by_scan, empty_message=empty_message)}
+              {render_recent_scan_rows(paginated_scans, can_select=can_manage_scans, results_by_scan=results_by_scan, empty_message=empty_message, archive_format_by_batch_id=archive_format_by_batch_id)}
             </tbody>
           </table>
         </div>

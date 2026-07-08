@@ -3,13 +3,14 @@ from unittest.mock import patch
 
 from app.main import (
     api_ledger_query_url,
+    build_archive_format_by_batch_id,
     dashboard_query_url,
     paginate_scans,
     render_api_ledger_rows,
     render_recent_scan_rows,
     render_scan_result,
 )
-from app.models import EngineResultRecord, ScanRecord, UserRecord
+from app.models import EngineResultRecord, ScanBatchRecord, ScanRecord, UserRecord
 
 
 class DashboardPaginationTests(unittest.TestCase):
@@ -95,24 +96,64 @@ class DashboardPaginationTests(unittest.TestCase):
         self.assertIn('data-scan-url="/scans/9"', markup)
         self.assertNotIn('/batches/51', markup)
 
-    def test_recent_scan_rows_show_batch_badge_for_archive_containers(self) -> None:
+    def test_recent_scan_rows_show_archive_format_tag_for_zip_container(self) -> None:
         markup = render_recent_scan_rows(
             [make_scan(9, batch_id=51, scan_role="container", relative_path="bundle.zip")],
             can_select=False,
             results_by_scan={9: [make_result(9)]},
+            archive_format_by_batch_id={51: "zip"},
         )
 
-        self.assertIn('batch-badge', markup)
-        self.assertIn('>Batch<', markup)
+        self.assertIn('file-type-tag', markup)
+        self.assertIn('>Zip<', markup)
 
-    def test_recent_scan_rows_hide_batch_badge_for_standalone_scans(self) -> None:
+    def test_recent_scan_rows_show_archive_format_tag_for_seven_zip_container(self) -> None:
+        markup = render_recent_scan_rows(
+            [make_scan(13, batch_id=52, scan_role="container", relative_path="bundle.7z")],
+            can_select=False,
+            results_by_scan={13: [make_result(13)]},
+            archive_format_by_batch_id={52: "7z"},
+        )
+
+        self.assertIn('>7Zip<', markup)
+
+    def test_recent_scan_rows_fall_back_to_archive_tag_when_format_is_unknown(self) -> None:
+        markup = render_recent_scan_rows(
+            [make_scan(14, batch_id=53, scan_role="container", relative_path="bundle.dat")],
+            can_select=False,
+            results_by_scan={14: [make_result(14)]},
+            archive_format_by_batch_id={},
+        )
+
+        self.assertIn('>Archive<', markup)
+
+    def test_recent_scan_rows_show_file_tag_for_standalone_scans(self) -> None:
         markup = render_recent_scan_rows(
             [make_scan(12)],
             can_select=False,
             results_by_scan={12: [make_result(12)]},
         )
 
-        self.assertNotIn('batch-badge', markup)
+        self.assertIn('file-type-tag', markup)
+        self.assertIn('>File<', markup)
+
+    def test_build_archive_format_by_batch_id_reads_container_format_from_batch_metadata(self) -> None:
+        batch = make_scan_batch(51, metadata_json='{"container_archive_format": "zip"}')
+
+        with patch("app.main.list_scan_batches_by_ids", return_value={51: batch}) as list_batches:
+            formats = build_archive_format_by_batch_id(
+                [make_scan(9, batch_id=51, scan_role="container", relative_path="bundle.zip")]
+            )
+
+        list_batches.assert_called_once_with([51])
+        self.assertEqual(formats, {51: "zip"})
+
+    def test_build_archive_format_by_batch_id_skips_scans_without_batch(self) -> None:
+        with patch("app.main.list_scan_batches_by_ids", return_value={}) as list_batches:
+            formats = build_archive_format_by_batch_id([make_scan(15)])
+
+        list_batches.assert_called_once_with([])
+        self.assertEqual(formats, {})
 
     def test_scan_result_renders_archive_members_inside_container_scan(self) -> None:
         container_scan = make_scan(9, batch_id=51, scan_role="container", relative_path="bundle.zip")
@@ -226,6 +267,28 @@ def make_result(scan_id: int, detected: bool = False) -> EngineResultRecord:
         created_at="2026-07-04 00:00:02",
         details_json="{}",
         findings_json="[]",
+    )
+
+
+def make_scan_batch(batch_id: int, *, metadata_json: str = "{}") -> ScanBatchRecord:
+    return ScanBatchRecord(
+        id=batch_id,
+        source="manual",
+        original_filename="bundle.zip",
+        archive_mode="lazy_extract_on_detection",
+        status="queued",
+        total_items=1,
+        queued_items=1,
+        running_items=0,
+        completed_items=0,
+        failed_items=0,
+        malicious_items=0,
+        skipped_items=0,
+        metadata_json=metadata_json,
+        created_at="2026-07-04 00:00:00",
+        updated_at="2026-07-04 00:00:00",
+        completed_at=None,
+        last_error=None,
     )
 
 
