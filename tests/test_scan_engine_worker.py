@@ -13,10 +13,16 @@ from app.models import (
     ScanRecord,
     StoredSample,
 )
-from app.services.archive_extractor import ArchiveExtractionResult, ExtractedArchiveMember
+from app.services.archive_extractor import (
+    ArchiveExtractionLimits,
+    ArchiveExtractionResult,
+    ExtractedArchiveMember,
+)
 from app.services.routing import EngineRouteDecision, ROUTE_ACTION_RUN
+from app.services.scoring import RiskAssessment
 from app.workers.scan_worker import (
     finalize_scan_if_complete,
+    maybe_enqueue_lazy_archive_children,
     process_next_scan_job,
     process_scan_engine_job,
 )
@@ -197,7 +203,7 @@ class ScanEngineWorkerTests(unittest.TestCase):
             "app.workers.scan_worker.resolve_sample_path",
             return_value=existing_archive_path,
         ), patch(
-            "app.workers.scan_worker.extract_zip_archive",
+            "app.workers.scan_worker.extract_archive",
             return_value=extraction,
         ) as extract_archive, patch(
             "app.workers.scan_worker.create_sample",
@@ -264,7 +270,7 @@ class ScanEngineWorkerTests(unittest.TestCase):
             "app.workers.scan_worker.resolve_sample_path",
             return_value=Path("C:/missing/bundle.zip"),
         ), patch(
-            "app.workers.scan_worker.extract_zip_archive",
+            "app.workers.scan_worker.extract_archive",
         ) as extract_archive, patch(
             "app.workers.scan_worker.refresh_scan_batch_counts",
         ) as refresh_counts, patch(
@@ -282,6 +288,251 @@ class ScanEngineWorkerTests(unittest.TestCase):
             details={
                 "batch_id": 42,
                 "error": "Sample file not found: /app/storage/samples/bundle.zip (resolved locally as C:\\missing\\bundle.zip)",
+            },
+        )
+
+
+class NestedArchiveEnqueueTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.engine = make_engine("static_metadata", "Static Metadata")
+        self.container = replace(
+            make_scan(),
+            id=1,
+            batch_id=42,
+            scan_role="container",
+            relative_path="outer.zip",
+        )
+        self.child = replace(
+            make_scan(),
+            id=2,
+            batch_id=42,
+            parent_scan_id=1,
+            scan_role="child",
+            relative_path="payloads/inner.zip",
+            storage_path="storage/samples/inner.zip",
+        )
+        self.detected_result = make_engine_result(2, self.engine.display_name, detected=True)
+        self.assessment = RiskAssessment(score=80, verdict="high", reasons=[])
+
+    def test_detected_child_archive_enqueues_grandchildren_with_prefixed_paths(self) -> None:
+        existing_archive_path = Path(__file__).resolve()
+        grandchild_sample = StoredSample(
+            original_filename="evil.exe",
+            stored_filename="stored-evil.exe",
+            storage_path="storage/samples/stored-evil.exe",
+            content_type="application/octet-stream",
+            size_bytes=12,
+            md5="0" * 32,
+            sha1="0" * 40,
+            sha256="1" * 64,
+        )
+        extraction = ArchiveExtractionResult(
+            archive_path=self.child.storage_path,
+            members=[
+                ExtractedArchiveMember(relative_path="bin/evil.exe", sample=grandchild_sample)
+            ],
+            total_uncompressed_bytes=12,
+        )
+
+        with patch(
+            "app.workers.scan_worker.get_scan_batch",
+            return_value=make_batch(42),
+        ), patch(
+            "app.workers.scan_worker.list_scan_batch_scans",
+            return_value=[self.container, self.child],
+        ), patch(
+            "app.workers.scan_worker.resolve_sample_path",
+            return_value=existing_archive_path,
+        ), patch(
+            "app.workers.scan_worker.is_supported_archive",
+            return_value=True,
+        ), patch(
+            "app.workers.scan_worker.extract_archive",
+            return_value=extraction,
+        ) as extract, patch(
+            "app.workers.scan_worker.create_sample",
+            return_value=123,
+        ), patch(
+            "app.workers.scan_worker.create_scan_job",
+            return_value=456,
+        ) as create_scan, patch(
+            "app.workers.scan_worker.create_scan_engine_jobs",
+        ) as create_engine_jobs, patch(
+            "app.workers.scan_worker.refresh_scan_batch_counts",
+        ) as refresh_counts, patch(
+            "app.workers.scan_worker.record_worker_timing_event",
+        ):
+            created = maybe_enqueue_lazy_archive_children(
+                self.child,
+                self.assessment,
+                [self.detected_result],
+                [self.engine],
+                set(),
+            )
+
+        self.assertEqual(created, 1)
+        extract.assert_called_once_with(existing_archive_path)
+        create_scan.assert_called_once_with(
+            sample_id=123,
+            case_name=self.child.case_name,
+            priority=self.child.priority,
+            note=self.child.note,
+            source=self.child.source,
+            batch_id=42,
+            parent_scan_id=2,
+            relative_path="payloads/inner.zip/bin/evil.exe",
+            scan_role="child",
+        )
+        create_engine_jobs.assert_called_once_with(456, [self.engine])
+        refresh_counts.assert_called_once_with(42)
+
+    def test_detected_child_that_is_not_an_archive_is_ignored(self) -> None:
+        with patch(
+            "app.workers.scan_worker.get_scan_batch",
+            return_value=make_batch(42),
+        ), patch(
+            "app.workers.scan_worker.resolve_sample_path",
+            return_value=Path(__file__).resolve(),
+        ), patch(
+            "app.workers.scan_worker.is_supported_archive",
+            return_value=False,
+        ), patch(
+            "app.workers.scan_worker.extract_archive",
+        ) as extract, patch(
+            "app.workers.scan_worker.refresh_scan_batch_counts",
+        ) as refresh_counts, patch(
+            "app.workers.scan_worker.record_worker_timing_event",
+        ) as record_event:
+            created = maybe_enqueue_lazy_archive_children(
+                self.child,
+                self.assessment,
+                [self.detected_result],
+                [self.engine],
+                set(),
+            )
+
+        self.assertEqual(created, 0)
+        extract.assert_not_called()
+        record_event.assert_not_called()
+        refresh_counts.assert_called_once_with(42)
+
+    def test_nested_extraction_respects_max_nested_levels(self) -> None:
+        with patch(
+            "app.workers.scan_worker.get_scan_batch",
+            return_value=make_batch(42),
+        ), patch(
+            "app.workers.scan_worker.list_scan_batch_scans",
+            return_value=[self.container, self.child],
+        ), patch(
+            "app.workers.scan_worker.resolve_sample_path",
+            return_value=Path(__file__).resolve(),
+        ), patch(
+            "app.workers.scan_worker.is_supported_archive",
+            return_value=True,
+        ), patch(
+            "app.workers.scan_worker.configured_max_nested_levels",
+            return_value=1,
+        ), patch(
+            "app.workers.scan_worker.extract_archive",
+        ) as extract, patch(
+            "app.workers.scan_worker.refresh_scan_batch_counts",
+        ) as refresh_counts, patch(
+            "app.workers.scan_worker.record_worker_timing_event",
+        ) as record_event:
+            created = maybe_enqueue_lazy_archive_children(
+                self.child,
+                self.assessment,
+                [self.detected_result],
+                [self.engine],
+                set(),
+            )
+
+        self.assertEqual(created, 0)
+        extract.assert_not_called()
+        refresh_counts.assert_called_once_with(42)
+        record_event.assert_any_call(
+            2,
+            "archive_nested_level_exceeded",
+            set(),
+            details={
+                "batch_id": 42,
+                "nesting_level": 2,
+                "max_nested_levels": 1,
+            },
+        )
+
+    def test_nested_extraction_skips_when_batch_child_budget_is_exhausted(self) -> None:
+        sibling_child = replace(
+            make_scan(),
+            id=3,
+            batch_id=42,
+            parent_scan_id=1,
+            scan_role="child",
+            relative_path="payloads/other.bin",
+        )
+        member_sample = StoredSample(
+            original_filename="evil.exe",
+            stored_filename="stored-evil.exe",
+            storage_path="storage/samples/stored-evil.exe",
+            content_type="application/octet-stream",
+            size_bytes=12,
+            md5="0" * 32,
+            sha1="0" * 40,
+            sha256="1" * 64,
+        )
+        extraction = ArchiveExtractionResult(
+            archive_path=self.child.storage_path,
+            members=[
+                ExtractedArchiveMember(relative_path="bin/evil.exe", sample=member_sample)
+            ],
+            total_uncompressed_bytes=12,
+        )
+
+        with patch(
+            "app.workers.scan_worker.get_scan_batch",
+            return_value=make_batch(42),
+        ), patch(
+            "app.workers.scan_worker.list_scan_batch_scans",
+            return_value=[self.container, self.child, sibling_child],
+        ), patch(
+            "app.workers.scan_worker.resolve_sample_path",
+            return_value=Path(__file__).resolve(),
+        ), patch(
+            "app.workers.scan_worker.is_supported_archive",
+            return_value=True,
+        ), patch(
+            "app.workers.scan_worker.configured_archive_limits",
+            return_value=ArchiveExtractionLimits(max_files=2),
+        ), patch(
+            "app.workers.scan_worker.extract_archive",
+            return_value=extraction,
+        ), patch(
+            "app.workers.scan_worker.create_scan_job",
+        ) as create_scan, patch(
+            "app.workers.scan_worker.refresh_scan_batch_counts",
+        ) as refresh_counts, patch(
+            "app.workers.scan_worker.record_worker_timing_event",
+        ) as record_event:
+            created = maybe_enqueue_lazy_archive_children(
+                self.child,
+                self.assessment,
+                [self.detected_result],
+                [self.engine],
+                set(),
+            )
+
+        self.assertEqual(created, 0)
+        create_scan.assert_not_called()
+        refresh_counts.assert_called_once_with(42)
+        record_event.assert_any_call(
+            2,
+            "archive_batch_child_limit_reached",
+            set(),
+            details={
+                "batch_id": 42,
+                "extracted_members": 1,
+                "remaining_child_budget": 0,
+                "max_files": 2,
             },
         )
 

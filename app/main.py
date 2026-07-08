@@ -92,7 +92,7 @@ from app.services.engine_registry import (
     remove_engine,
 )
 from app.services.ingest import UploadTooLargeError, store_upload
-from app.services.archive_extractor import is_zip_file
+from app.services.archive_extractor import is_supported_archive
 from app.services.api_payloads import (
     create_api_scan_result_payload,
     create_api_scan_status_payload,
@@ -1108,7 +1108,7 @@ async def enqueue_scan_from_upload(
     batch_id: int | None = None
     relative_path: str | None = None
     scan_role = "standalone"
-    if is_zip_file(stored_sample.storage_path):
+    if is_supported_archive(stored_sample.storage_path):
         batch_id = create_scan_batch(
             source=source,
             original_filename=stored_sample.original_filename,

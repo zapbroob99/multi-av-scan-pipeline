@@ -22,11 +22,13 @@ Implemented foundation:
 - `scan_jobs.parent_scan_id` to link child scans to the container scan.
 - `scan_jobs.relative_path` to preserve the path inside the uploaded archive.
 - `scan_jobs.scan_role` to distinguish standalone, container, and child scans.
-- `POST /api/v1/scans` accepts `archive_mode` for ZIP uploads.
-- ZIP uploads create a `scan_batch` and a `container` scan before extraction is
-  enabled.
-- `lazy_extract_on_detection` extracts a ZIP after the container scan has a
-  detection-risk verdict and enqueues extracted members as child scans.
+- `POST /api/v1/scans` accepts `archive_mode` for archive uploads
+  (ZIP, TAR family, 7z).
+- Archive uploads create a `scan_batch` and a `container` scan before
+  extraction is enabled.
+- `lazy_extract_on_detection` extracts an archive after the container scan has
+  a detection-risk verdict and enqueues extracted members as child scans, and
+  applies the same rule recursively to detected children that are archives.
 
 Scan roles:
 
@@ -173,6 +175,56 @@ child file count * enabled engine count
 The existing engine-job queue is the correct execution path because different
 workers can claim compatible engine jobs independently.
 
+## Supported Formats
+
+`app/services/archive_extractor.py` detects and extracts these formats through
+one entry point, `extract_archive()`:
+
+```text
+zip   Python stdlib zipfile
+tar   Python stdlib tarfile (tar, tar.gz/tgz, tar.bz2, tar.xz)
+7z    py7zr (pure-Python dependency)
+```
+
+Format detection is `detect_archive_format()`; upload-time classification uses
+`is_supported_archive()`. 7z and ZIP are magic-byte checks; TAR detection is
+checksum-based and can false-positive on unlucky binaries, so it runs last.
+
+Format-specific safety notes:
+
+- ZIP: encrypted members are rejected explicitly.
+- TAR: symlink, hardlink, device, and FIFO members are skipped; they carry no
+  scannable payload, and members always stream into flat uuid-named sample
+  files, never into their original paths.
+- 7z: encrypted archives are rejected. Declared header sizes are validated
+  first, and a custom writer factory re-enforces per-file and total byte
+  limits on actual decompressed bytes, aborting mid-stream on a lying header
+  (decompression-bomb defense).
+
+RAR is intentionally not supported. Every Python RAR library shells out to an
+external `unrar` binary that would have to be installed and version-managed on
+each worker host (Docker and Windows) and has license restrictions. Revisit if
+customer demand justifies the operational cost.
+
+## Nested Archives
+
+Lazy extraction is recursive: when a `child` scan is detected (or scores a
+trigger verdict) and its sample is itself a supported archive, the worker
+extracts it and enqueues grandchildren. Controls:
+
+- `MASP_ARCHIVE_MAX_NESTED_LEVELS` (default 3) bounds archive-in-archive
+  depth. The container is level 0; its children are level 1. When the limit is
+  exceeded the worker records an `archive_nested_level_exceeded` event and
+  creates nothing.
+- The total number of `child` scans in one batch is capped by
+  `MASP_ARCHIVE_MAX_FILES`. If an extraction would exceed the remaining
+  budget, no children are created (partial fan-out would silently understate
+  coverage) and an `archive_batch_child_limit_reached` event is recorded.
+- Nested children keep the full path chain in `relative_path`, e.g.
+  `payloads/inner.zip/bin/evil.exe`, and link to the nested archive scan via
+  `parent_scan_id`.
+- Clean children and non-archive children never expand.
+
 ## Safety Limits
 
 Archive extraction must be bounded before it is enabled:
@@ -182,6 +234,7 @@ MASP_ARCHIVE_MAX_FILES
 MASP_ARCHIVE_MAX_TOTAL_BYTES
 MASP_ARCHIVE_MAX_SINGLE_FILE_BYTES
 MASP_ARCHIVE_MAX_DEPTH
+MASP_ARCHIVE_MAX_NESTED_LEVELS
 MASP_ARCHIVE_EXTRACT_ENABLED
 ```
 
@@ -190,10 +243,7 @@ The extractor must also reject unsafe paths:
 - absolute paths
 - `..` traversal
 - drive-prefixed paths
-- symlink/hardlink surprises when future archive formats are added
-
-ZIP should be the first supported format because Python's `zipfile` gives MASP
-a structured standard-library parser and avoids shelling out to external tools.
+- symlink/hardlink surprises across all archive formats
 
 ## UI Model
 

@@ -3,6 +3,7 @@ import os
 import time
 import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.database import (
     DatabaseOperationalError,
@@ -49,7 +50,13 @@ from app.services.routing import (
     route_engine_for_worker,
 )
 from app.services.scoring import RiskAssessment, calculate_risk
-from app.services.archive_extractor import ArchiveExtractionError, extract_zip_archive
+from app.services.archive_extractor import (
+    ArchiveExtractionError,
+    configured_archive_limits,
+    configured_max_nested_levels,
+    extract_archive,
+    is_supported_archive,
+)
 from app.services.sample_paths import resolve_sample_path, sample_path_error
 from app.services.worker_capabilities import (
     all_enabled_engines_have_results,
@@ -529,7 +536,7 @@ def maybe_enqueue_lazy_archive_children(
     engines: list[EngineInstanceRecord],
     engine_keys: set[str],
 ) -> int:
-    if scan.scan_role != "container" or scan.batch_id is None:
+    if scan.scan_role not in {"container", "child"} or scan.batch_id is None:
         return 0
 
     batch = get_scan_batch(scan.batch_id)
@@ -546,12 +553,44 @@ def maybe_enqueue_lazy_archive_children(
         refresh_scan_batch_counts(batch.id)
         return 0
 
-    existing_scans = list_scan_batch_scans(batch.id, limit=1000)
-    if any(existing_scan.scan_role == "child" for existing_scan in existing_scans):
+    archive_path = resolve_sample_path(scan)
+    if scan.scan_role == "child" and (
+        not archive_path.is_file() or not is_supported_archive(archive_path)
+    ):
+        # Most detected children are plain files, not nested archives.
         refresh_scan_batch_counts(batch.id)
         return 0
 
-    archive_path = resolve_sample_path(scan)
+    limits = configured_archive_limits()
+    existing_scans = list_scan_batch_scans(batch.id, limit=limits.max_files + 1)
+    if any(
+        existing_scan.scan_role == "child" and existing_scan.parent_scan_id == scan.id
+        for existing_scan in existing_scans
+    ):
+        refresh_scan_batch_counts(batch.id)
+        return 0
+
+    child_level = archive_nesting_level(scan, existing_scans) + 1
+    max_nested_levels = configured_max_nested_levels()
+    if child_level > max_nested_levels:
+        record_worker_timing_event(
+            scan.id,
+            "archive_nested_level_exceeded",
+            engine_keys,
+            details={
+                "batch_id": batch.id,
+                "nesting_level": child_level,
+                "max_nested_levels": max_nested_levels,
+            },
+        )
+        refresh_scan_batch_counts(batch.id)
+        return 0
+
+    existing_children = sum(
+        1 for existing_scan in existing_scans if existing_scan.scan_role == "child"
+    )
+    remaining_child_budget = limits.max_files - existing_children
+
     if not archive_path.is_file():
         record_worker_timing_event(
             scan.id,
@@ -566,7 +605,7 @@ def maybe_enqueue_lazy_archive_children(
         return 0
 
     try:
-        extraction = extract_zip_archive(archive_path)
+        extraction = extract_archive(archive_path)
     except ArchiveExtractionError as exc:
         record_worker_timing_event(
             scan.id,
@@ -580,6 +619,28 @@ def maybe_enqueue_lazy_archive_children(
         refresh_scan_batch_counts(batch.id)
         return 0
 
+    if len(extraction.members) > remaining_child_budget:
+        # Creating a partial child set would silently understate coverage, so
+        # nothing is enqueued and the skip is recorded as an explicit event.
+        for member in extraction.members:
+            Path(member.sample.storage_path).unlink(missing_ok=True)
+        record_worker_timing_event(
+            scan.id,
+            "archive_batch_child_limit_reached",
+            engine_keys,
+            details={
+                "batch_id": batch.id,
+                "extracted_members": len(extraction.members),
+                "remaining_child_budget": max(0, remaining_child_budget),
+                "max_files": limits.max_files,
+            },
+        )
+        refresh_scan_batch_counts(batch.id)
+        return 0
+
+    relative_prefix = (
+        f"{scan.relative_path}/" if scan.scan_role == "child" and scan.relative_path else ""
+    )
     created_children = 0
     for member in extraction.members:
         sample_id = create_sample(member.sample)
@@ -591,7 +652,7 @@ def maybe_enqueue_lazy_archive_children(
             source=scan.source,
             batch_id=batch.id,
             parent_scan_id=scan.id,
-            relative_path=member.relative_path,
+            relative_path=f"{relative_prefix}{member.relative_path}",
             scan_role="child",
         )
         create_scan_engine_jobs(child_scan_id, engines)
@@ -605,10 +666,25 @@ def maybe_enqueue_lazy_archive_children(
         details={
             "batch_id": batch.id,
             "created_children": created_children,
+            "nesting_level": child_level,
             "total_uncompressed_bytes": extraction.total_uncompressed_bytes,
         },
     )
     return created_children
+
+
+def archive_nesting_level(scan: ScanRecord, batch_scans: list[ScanRecord]) -> int:
+    """Hop count from this scan up to the batch container (container = 0)."""
+    scans_by_id = {batch_scan.id: batch_scan for batch_scan in batch_scans}
+    level = 0
+    current = scan
+    while current.parent_scan_id is not None and level < 32:
+        parent = scans_by_id.get(current.parent_scan_id) or get_scan(current.parent_scan_id)
+        if parent is None:
+            break
+        level += 1
+        current = parent
+    return level
 
 
 def all_scan_engine_jobs_terminal(jobs: list[ScanEngineJobRecord]) -> bool:

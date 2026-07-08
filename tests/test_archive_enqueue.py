@@ -36,7 +36,7 @@ class ArchiveEnqueueTests(unittest.TestCase):
         )
 
         with patch("app.main.store_upload", new=AsyncMock(return_value=stored_sample)), patch(
-            "app.main.is_zip_file",
+            "app.main.is_supported_archive",
             return_value=True,
         ), patch("app.main.enabled_engines", return_value=[]):
             scan = asyncio.run(
@@ -76,7 +76,7 @@ class ArchiveEnqueueTests(unittest.TestCase):
         )
 
         with patch("app.main.store_upload", new=AsyncMock(return_value=stored_sample)), patch(
-            "app.main.is_zip_file",
+            "app.main.is_supported_archive",
             return_value=False,
         ), patch("app.main.enabled_engines", return_value=[]):
             scan = asyncio.run(
