@@ -3106,6 +3106,11 @@ def render_recent_scan_rows(
             if scan.status != "completed"
             else ""
         )
+        batch_badge = (
+            '<span class="pill warning batch-badge" title="Archive upload scanned as a batch">Batch</span>'
+            if scan.scan_role == "container"
+            else ""
+        )
         select_cell = (
             f"""
               <td class="select-cell">
@@ -3121,7 +3126,7 @@ def render_recent_scan_rows(
               {select_cell}
               <td>
                 <div class="table-link {file_tone_class}">
-                  <strong><span class="scan-file-label">{pending_icon}<span>{html.escape(scan.original_filename)}</span></span></strong>
+                  <strong><span class="scan-file-label">{pending_icon}{batch_badge}<span>{html.escape(scan.original_filename)}</span></span></strong>
                   <small>{html.escape(scan.case_name)}</small>
                 </div>
               </td>

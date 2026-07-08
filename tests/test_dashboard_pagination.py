@@ -95,6 +95,25 @@ class DashboardPaginationTests(unittest.TestCase):
         self.assertIn('data-scan-url="/scans/9"', markup)
         self.assertNotIn('/batches/51', markup)
 
+    def test_recent_scan_rows_show_batch_badge_for_archive_containers(self) -> None:
+        markup = render_recent_scan_rows(
+            [make_scan(9, batch_id=51, scan_role="container", relative_path="bundle.zip")],
+            can_select=False,
+            results_by_scan={9: [make_result(9)]},
+        )
+
+        self.assertIn('batch-badge', markup)
+        self.assertIn('>Batch<', markup)
+
+    def test_recent_scan_rows_hide_batch_badge_for_standalone_scans(self) -> None:
+        markup = render_recent_scan_rows(
+            [make_scan(12)],
+            can_select=False,
+            results_by_scan={12: [make_result(12)]},
+        )
+
+        self.assertNotIn('batch-badge', markup)
+
     def test_scan_result_renders_archive_members_inside_container_scan(self) -> None:
         container_scan = make_scan(9, batch_id=51, scan_role="container", relative_path="bundle.zip")
         child_scan = make_scan(

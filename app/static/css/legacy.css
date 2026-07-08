@@ -1235,6 +1235,15 @@ td small {
   box-shadow: inset 0 0 0 1px rgba(194, 107, 0, 0.18);
 }
 
+.batch-badge {
+  flex: 0 0 auto;
+  min-height: 18px;
+  padding: 0 7px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .table-link:hover strong {
   color: var(--accent);
 }
