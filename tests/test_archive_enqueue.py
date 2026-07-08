@@ -5,9 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
+
 from app import database
 from app.main import enqueue_scan_from_upload, normalized_archive_mode
 from app.models import StoredSample
+from app.services.ingest import UploadTooLargeError
 
 
 class ArchiveEnqueueTests(unittest.TestCase):
@@ -96,6 +99,24 @@ class ArchiveEnqueueTests(unittest.TestCase):
         self.assertEqual(scan.scan_role, "standalone")
         self.assertIsNone(scan.batch_id)
         self.assertIsNone(scan.relative_path)
+
+    def test_oversized_upload_is_rejected_with_413(self) -> None:
+        with patch(
+            "app.main.store_upload",
+            new=AsyncMock(side_effect=UploadTooLargeError(50 * 1024 * 1024, 60 * 1024 * 1024)),
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(
+                    enqueue_scan_from_upload(
+                        FakeUpload("large.bin"),
+                        case_name="Case",
+                        priority="Normal",
+                        note="",
+                        source="api",
+                    )
+                )
+
+        self.assertEqual(ctx.exception.status_code, 413)
 
     def test_archive_mode_aliases_are_normalized(self) -> None:
         self.assertEqual(normalized_archive_mode("lazy"), "lazy_extract_on_detection")

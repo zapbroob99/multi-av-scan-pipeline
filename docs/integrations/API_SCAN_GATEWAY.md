@@ -7,6 +7,46 @@ The primary workflow is:
 2. Read the returned `links.status` URL until `result_ready` is `true`
 3. Fetch the normalized final payload from `links.result`
 
+## Upload-Gateway Integration Pattern (v1)
+
+For integrations that scan a file before allowing an action elsewhere (for
+example, a file storage product scanning an upload before accepting it), the
+recommended v1 pattern is a **size-capped synchronous scan**:
+
+```text
+1. Client submits the file directly via POST /api/v1/scans with wait_seconds
+   set high enough to cover a typical scan (see tuning below).
+2. 200 OK  -> scan finished inside the wait window; read decision.action.
+3. 202 Accepted -> did not finish in time; poll links.status until
+   result_ready=true (or treat as a timeout per your own policy).
+4. 413 Payload Too Large -> file exceeds MASP_UPLOAD_MAX_BYTES; the client
+   decides what to do with oversized files (this API does not scan them).
+```
+
+Recommended server configuration for this pattern:
+
+```text
+MASP_UPLOAD_MAX_BYTES=52428800      # 50 MB — reject anything larger with 413
+MASP_API_MAX_WAIT_SECONDS=30        # upper bound a client may request to wait
+```
+
+The client should pass `wait_seconds` explicitly on every request (it defaults
+to `0`, i.e. fire-and-poll, if omitted). 30 seconds comfortably covers a
+single small-file scan across all four engines under normal load; raise it if
+your engine mix or host is slower, but stay mindful that the request holds a
+connection open for the full wait.
+
+There is no separate "scan and wait" endpoint — this is `POST /api/v1/scans`
+used with `wait_seconds` set, which the API already supports. Nothing else in
+the request shape changes.
+
+This pattern intentionally does not include a hash-only reputation lookup in
+v1: MASP can only answer for hashes it has already scanned, so a lookup-first
+step still requires a full-file fallback for anything unknown. For a first
+integration, submitting the file directly keeps the contract simple. A
+hash-based fast path was prototyped and can be revisited later without
+touching this contract (see `git log` / the `hash-lookup-api` branch).
+
 ## Authentication
 
 Use a bearer token in the `Authorization` header.
@@ -34,7 +74,8 @@ MASP_UPLOAD_MAX_BYTES=0
 
 - `MASP_API_MAX_WAIT_SECONDS`: upper bound for client-requested blocking wait time
 - `MASP_API_RETRY_AFTER_SECONDS`: recommended poll interval returned in API responses
-- `MASP_UPLOAD_MAX_BYTES`: `0` disables the upload limit
+- `MASP_UPLOAD_MAX_BYTES`: `0` disables the upload limit; set a real cap (for
+  example `52428800` for 50 MB) for upload-gateway integrations
 
 ## Submit a Scan
 
@@ -192,3 +233,5 @@ The `409` response repeats the status payload and includes a `Retry-After` heade
 - Use `wait_seconds` only as a convenience for short-running scans
 - Prefer polling `links.status` until `result_ready=true`
 - Persist the returned `scan.id` in the calling system for audit and traceability
+- For size-capped upload-gateway integrations, see "Upload-Gateway Integration
+  Pattern (v1)" above
