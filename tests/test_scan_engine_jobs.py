@@ -96,6 +96,45 @@ class ScanEngineJobTests(unittest.TestCase):
             )
         )
 
+    def test_skip_pending_scan_engine_job_only_affects_pending(self) -> None:
+        scan_id = create_scan_with_two_engines()
+        engines = database.list_engine_instances()
+        database.create_scan_engine_jobs(scan_id, engines)
+
+        jobs = database.list_scan_engine_jobs(scan_id)
+        defender_job = next(j for j in jobs if j.engine_key == "microsoft_defender")
+
+        self.assertTrue(
+            database.skip_pending_scan_engine_job(
+                defender_job.id, last_error="no worker"
+            )
+        )
+        skipped = database.get_scan_engine_job(defender_job.id)
+        assert skipped is not None
+        self.assertEqual(skipped.status, "skipped")
+        self.assertEqual(skipped.last_error, "no worker")
+        self.assertIsNotNone(skipped.finished_at)
+        self.assertIsNone(skipped.lease_expires_at)
+
+        # Second call is a no-op: job no longer pending.
+        self.assertFalse(database.skip_pending_scan_engine_job(defender_job.id))
+
+    def test_skip_pending_does_not_clobber_claimed_job(self) -> None:
+        scan_id = create_scan_with_two_engines()
+        engines = database.list_engine_instances()
+        database.create_scan_engine_jobs(scan_id, engines)
+
+        claimed = database.claim_next_scan_engine_job(
+            {"microsoft_defender"}, "windows-1", lease_seconds=30, now=1000
+        )
+        assert claimed is not None
+
+        # Reaper loses the race: job already claimed, skip must not apply.
+        self.assertFalse(database.skip_pending_scan_engine_job(claimed.id))
+        still = database.get_scan_engine_job(claimed.id)
+        assert still is not None
+        self.assertEqual(still.status, "claimed")
+
     def test_retry_scan_job_removes_engine_jobs(self) -> None:
         scan_id = create_scan_with_two_engines(status="completed")
         engines = database.list_engine_instances()

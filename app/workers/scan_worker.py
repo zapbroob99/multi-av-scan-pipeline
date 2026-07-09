@@ -23,6 +23,7 @@ from app.database import (
     mark_scan_engine_job_running,
     mark_scan_engine_job_terminal,
     mark_scan_running,
+    skip_pending_scan_engine_job,
     refresh_scan_batch_counts,
     recover_running_scan_jobs,
     update_scan_assessment,
@@ -62,7 +63,11 @@ from app.services.worker_capabilities import (
     all_enabled_engines_have_results,
     worker_engine_keys,
 )
-from app.services.worker_runtime import record_worker_heartbeat, worker_is_running_scan_engine
+from app.services.worker_runtime import (
+    get_worker_status,
+    record_worker_heartbeat,
+    worker_is_running_scan_engine,
+)
 
 
 POLL_INTERVAL_SECONDS = float(os.getenv("MASP_WORKER_POLL_SECONDS", "2"))
@@ -89,6 +94,10 @@ LEGACY_SCAN_WORKER_FALLBACK_ENABLED = os.getenv(
     "0",
 ).strip().lower() in {"1", "true", "yes", "on"}
 ENGINE_JOB_LEASE_SECONDS = int(os.getenv("MASP_ENGINE_JOB_LEASE_SECONDS", "120"))
+ORPHANED_ENGINE_JOB_REAP_ENABLED = os.getenv(
+    "MASP_ORPHANED_ENGINE_JOB_REAP_ENABLED",
+    "1",
+).strip().lower() not in {"0", "false", "no", "off"}
 ENGINE_JOB_TERMINAL_STATUSES = {"completed", "failed", "skipped"}
 LAZY_ARCHIVE_TRIGGER_VERDICTS = {"medium", "high", "critical"}
 WORKER_ID = (
@@ -141,6 +150,8 @@ def process_next_scan_engine_job() -> bool:
         lease_seconds=ENGINE_JOB_LEASE_SECONDS,
     )
     if job is None:
+        if ORPHANED_ENGINE_JOB_REAP_ENABLED:
+            reap_orphaned_engine_jobs(engine_keys)
         record_worker_heartbeat("idle")
         return False
 
@@ -846,6 +857,82 @@ def skipped_engine_result(
         error_message=message,
         raw_output=message,
     )
+
+
+def online_worker_engine_keys() -> set[str]:
+    """Engine keys advertised by any worker currently sending heartbeats."""
+    status = get_worker_status()
+    return {str(key) for key in status.get("engine_keys", []) if str(key)}
+
+
+def reap_orphaned_engine_jobs(engine_keys: set[str]) -> bool:
+    """Skip pending engine jobs that no online worker can ever claim.
+
+    In engine-job-queue mode a worker only claims jobs for its own engine keys.
+    If an engine is enabled but no online worker advertises it (its worker is
+    down or was never started), its jobs sit ``pending`` forever, and because
+    ``finalize_scan_if_complete`` requires every job to be terminal, the scan
+    never finalizes. This sweep converts such jobs to ``skipped`` once the
+    orchestration wait window has elapsed, mirroring the legacy timeout path so
+    the scan finishes with partial coverage instead of hanging indefinitely.
+    """
+    covered_engine_keys = online_worker_engine_keys()
+    engines = enabled_engines()
+    engines_by_key = {engine.adapter_key: engine for engine in engines}
+    reaped_any = False
+
+    for scan in list_active_scans(limit=ACTIVE_SCAN_LIMIT):
+        engine_jobs = list_scan_engine_jobs(scan.id)
+        if not engine_jobs:
+            continue
+
+        orphan_jobs = [
+            (job, engines_by_key[job.engine_key])
+            for job in engine_jobs
+            if job.status == "pending"
+            and job.engine_key not in covered_engine_keys
+            and job.engine_key in engines_by_key
+        ]
+        if not orphan_jobs:
+            continue
+
+        missing_engines = [engine for _, engine in orphan_jobs]
+        if not should_finalize_scan_with_partial_results(scan, missing_engines):
+            continue
+
+        wait_seconds = partial_results_wait_seconds(missing_engines)
+        message = (
+            "No online worker advertises this engine; skipped after the "
+            f"orchestration wait window expired ({wait_seconds}s)."
+        )
+        skipped_scan = False
+        for job, engine in orphan_jobs:
+            if not skip_pending_scan_engine_job(job.id, last_error=message):
+                # A worker came online and claimed the job between our checks.
+                continue
+            create_engine_result_if_missing(
+                scan.id,
+                skipped_engine_result(scan, engine, engine_keys, wait_seconds),
+            )
+            record_worker_timing_event(
+                scan.id,
+                "engine_job_reaped",
+                engine_keys,
+                engine_name=engine.display_name,
+                details={
+                    "engine_job_id": job.id,
+                    "engine_key": job.engine_key,
+                    "reason_code": ROUTE_REASON_WORKER_TIMEOUT,
+                    "wait_seconds": wait_seconds,
+                },
+            )
+            reaped_any = True
+            skipped_scan = True
+
+        if skipped_scan:
+            finalize_scan_if_complete(refresh_scan_record(scan), engines)
+
+    return reaped_any
 
 
 def process_next_scan_job() -> bool:

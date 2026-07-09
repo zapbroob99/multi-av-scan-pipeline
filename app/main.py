@@ -1846,10 +1846,52 @@ def render_add_engine_panel() -> str:
     """
 
 
+def worker_backed_engine_health(
+    instance: EngineInstanceRecord,
+    health: dict[str, str | bool],
+) -> dict[str, str | bool]:
+    """Rewrite the 'unsupported' status for worker-deployed engines.
+
+    Engines with ``deployment='worker'`` (e.g. Microsoft Defender) run their
+    local CLI on a remote worker host, not on the API host. When the API host
+    cannot execute that check it reports ``unsupported``, which reads as
+    "broken" even though the engine may be perfectly healthy on a live worker.
+    Replace that with a status derived from worker heartbeats so the settings
+    page shows whether a capable worker is actually online.
+    """
+    if str(health.get("status")) != "unsupported":
+        return health
+    if adapter_capabilities(instance.adapter_key).deployment != "worker":
+        return health
+
+    advertised_keys = get_worker_status().get("engine_keys", [])
+    online_engine_keys = (
+        {str(key) for key in advertised_keys}
+        if isinstance(advertised_keys, (list, tuple, set))
+        else set()
+    )
+    if instance.adapter_key in online_engine_keys:
+        return {
+            "ok": True,
+            "status": "worker online",
+            "detail": "A worker advertising this engine is online and sending heartbeats.",
+        }
+    return {
+        "ok": False,
+        "status": "no online worker",
+        "detail": (
+            "No online worker runs this engine. Scans that require it wait, then "
+            "are skipped once the orchestration timeout expires."
+        ),
+    }
+
+
 def health_tone_for(adapter_key: str, health: dict[str, str | bool]) -> str:
     if str(health["status"]) == "disabled":
         return "neutral"
     if str(health["status"]) == "degraded":
+        return "warning"
+    if str(health["status"]) == "no online worker":
         return "warning"
     if bool(health["ok"]):
         return "success"
@@ -1955,7 +1997,10 @@ def render_engine_card(
     health = (
         {"ok": False, "status": "disabled", "detail": "Engine instance is disabled."}
         if not instance.enabled
-        else health_overrides.get(instance.adapter_key) or engine_health(instance)
+        else worker_backed_engine_health(
+            instance,
+            health_overrides.get(instance.adapter_key) or engine_health(instance),
+        )
     )
     tone = health_tone_for(instance.adapter_key, health)
     status_html = f'<span class="pill {tone}">{html.escape(str(health["status"]).title())}</span>'

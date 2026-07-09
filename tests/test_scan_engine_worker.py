@@ -25,6 +25,7 @@ from app.workers.scan_worker import (
     maybe_enqueue_lazy_archive_children,
     process_next_scan_job,
     process_scan_engine_job,
+    reap_orphaned_engine_jobs,
 )
 
 
@@ -535,6 +536,118 @@ class NestedArchiveEnqueueTests(unittest.TestCase):
                 "max_files": 2,
             },
         )
+
+
+class ReapOrphanedEngineJobsTests(unittest.TestCase):
+    WORKER_KEYS = {"static_metadata", "clamav", "yara"}
+
+    def _reap(self, **overrides):
+        scan = make_scan()
+        static_engine = make_engine("static_metadata", "Static Metadata")
+        defender_engine = make_engine("microsoft_defender", "Microsoft Defender")
+        static_job = replace(
+            make_job(scan.id, static_engine), id=1, status="completed"
+        )
+        defender_job = replace(
+            make_job(scan.id, defender_engine),
+            id=2,
+            engine_instance_id=None,
+            worker_id=None,
+            status=overrides.get("defender_status", "pending"),
+        )
+
+        patches = {
+            "get_worker_status": {
+                "engine_keys": overrides.get(
+                    "online_engine_keys", ["static_metadata", "clamav", "yara"]
+                )
+            },
+            "enabled_engines": [static_engine, defender_engine],
+            "list_active_scans": [scan],
+            "list_scan_engine_jobs": [static_job, defender_job],
+            "should_finalize_scan_with_partial_results": overrides.get(
+                "window_elapsed", True
+            ),
+            "skip_pending_scan_engine_job": overrides.get("skip_won", True),
+            "skipped_engine_result": "skipped-result-sentinel",
+            "refresh_scan_record": scan,
+        }
+
+        with patch(
+            "app.workers.scan_worker.get_worker_status",
+            return_value=patches["get_worker_status"],
+        ), patch(
+            "app.workers.scan_worker.enabled_engines",
+            return_value=patches["enabled_engines"],
+        ), patch(
+            "app.workers.scan_worker.list_active_scans",
+            return_value=patches["list_active_scans"],
+        ), patch(
+            "app.workers.scan_worker.list_scan_engine_jobs",
+            return_value=patches["list_scan_engine_jobs"],
+        ), patch(
+            "app.workers.scan_worker.should_finalize_scan_with_partial_results",
+            return_value=patches["should_finalize_scan_with_partial_results"],
+        ), patch(
+            "app.workers.scan_worker.partial_results_wait_seconds",
+            return_value=30,
+        ), patch(
+            "app.workers.scan_worker.skip_pending_scan_engine_job",
+            return_value=patches["skip_pending_scan_engine_job"],
+        ) as skip_pending, patch(
+            "app.workers.scan_worker.skipped_engine_result",
+            return_value=patches["skipped_engine_result"],
+        ), patch(
+            "app.workers.scan_worker.create_engine_result_if_missing",
+            return_value=99,
+        ) as create_result, patch(
+            "app.workers.scan_worker.finalize_scan_if_complete",
+            return_value=True,
+        ) as finalize, patch(
+            "app.workers.scan_worker.record_worker_timing_event",
+        ):
+            reaped = reap_orphaned_engine_jobs(self.WORKER_KEYS)
+
+        return reaped, skip_pending, create_result, finalize, scan, defender_job
+
+    def test_reaps_orphaned_pending_job_after_window(self) -> None:
+        reaped, skip_pending, create_result, finalize, scan, defender_job = self._reap()
+
+        self.assertTrue(reaped)
+        skip_pending.assert_called_once()
+        self.assertEqual(skip_pending.call_args.args[0], defender_job.id)
+        create_result.assert_called_once_with(scan.id, "skipped-result-sentinel")
+        finalize.assert_called_once()
+
+    def test_ignores_job_covered_by_online_worker(self) -> None:
+        reaped, skip_pending, create_result, finalize, _, _ = self._reap(
+            online_engine_keys=["static_metadata", "clamav", "yara", "microsoft_defender"],
+        )
+
+        self.assertFalse(reaped)
+        skip_pending.assert_not_called()
+        create_result.assert_not_called()
+        finalize.assert_not_called()
+
+    def test_waits_until_orchestration_window_elapses(self) -> None:
+        reaped, skip_pending, create_result, finalize, _, _ = self._reap(
+            window_elapsed=False,
+        )
+
+        self.assertFalse(reaped)
+        skip_pending.assert_not_called()
+        create_result.assert_not_called()
+        finalize.assert_not_called()
+
+    def test_respects_claim_race_when_skip_loses(self) -> None:
+        reaped, skip_pending, create_result, finalize, _, _ = self._reap(
+            skip_won=False,
+        )
+
+        self.assertFalse(reaped)
+        skip_pending.assert_called_once()
+        create_result.assert_not_called()
+        finalize.assert_not_called()
 
 
 def make_engine(adapter_key: str, display_name: str) -> EngineInstanceRecord:

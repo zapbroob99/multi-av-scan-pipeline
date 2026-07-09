@@ -1928,6 +1928,34 @@ def mark_scan_engine_job_terminal(
         return int(cursor.rowcount) > 0
 
 
+def skip_pending_scan_engine_job(
+    job_id: int,
+    *,
+    last_error: str | None = None,
+) -> bool:
+    """Mark a still-unclaimed engine job as skipped.
+
+    Returns False if the job was already claimed, running, or finished, so a
+    reaper cannot clobber a worker that just picked the job up. Only jobs still
+    in ``pending`` are affected.
+    """
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE scan_engine_jobs
+            SET
+                status = 'skipped',
+                finished_at = CURRENT_TIMESTAMP,
+                lease_expires_at = NULL,
+                last_error = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'pending'
+            """,
+            (last_error, job_id),
+        )
+        return int(cursor.rowcount) > 0
+
+
 def get_scan_engine_job_with_connection(
     connection: Any,
     job_id: int,
