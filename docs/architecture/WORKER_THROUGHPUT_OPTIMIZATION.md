@@ -794,3 +794,91 @@ If submit latency grows:
 For the current local runs, the evidence points to worker and engine execution,
 not API submission. The least risky next experiment is engine-split workers
 using the existing `MASP_WORKER_ENGINE_KEYS` mechanism.
+
+## Synchronous Upload-Gateway Load Profile
+
+The upload-gateway integration (see
+[`API_SCAN_GATEWAY.md`](../integrations/API_SCAN_GATEWAY.md)) uses the
+*synchronous* pattern: the client submits with `wait_seconds` and expects an
+HTTP `200` with a terminal decision inside that window; if the scan does not
+finish in time it gets a `202` and must poll. The key SLA question is
+therefore not average latency but the **synchronous completion rate** — what
+fraction of requests returned `200` within the wait window versus fell back to
+`202`.
+
+The benchmark tool now reports this directly:
+
+```text
+Synchronous completions (HTTP 200 within wait window): N/total (rate%)
+Async (HTTP 202) fallbacks: N
+```
+
+exposed in the summary as `summary.synchronous_completions`,
+`summary.synchronous_completion_rate`, and `summary.async_fallbacks`. A run
+that finished synchronously (200 at submit) is tracked separately from one
+that finished only after polling, which the plain `completed` count conflates.
+
+### Observed break point (dev host)
+
+Local runs: single uvicorn process, SQLite, engines limited to
+`static_metadata` + `microsoft_defender` (ClamAV/YARA not installed on this
+host), `wait_seconds=30`, 30 requests per step. Worker count was confirmed
+authoritatively via `get_worker_status()["online_count"]`, not OS process
+counting (on Windows one `python -m` invocation shows as two processes but is
+one logical worker).
+
+```text
+1 worker:
+  concurrency  5:  100.0% sync   submit p95  4.97s   total p95  5s
+  concurrency 10:  100.0% sync   submit p95  9.62s   total p95  9s
+  concurrency 25:   46.7% sync   submit p95 16.11s   total p95 27s   <- SLA breaks
+
+3 workers:
+  concurrency 25:  100.0% sync   submit p95 14.14s   total p95 14s   <- recovered
+  concurrency 50:  100.0% sync   submit p95 13.97s   total p95 13s
+```
+
+### Interpretation
+
+- With 1 worker the synchronous contract holds up to ~concurrency 10 and
+  breaks by 25 (over half the requests fall back to 202, total p95 27s nears
+  the 30s window).
+- Worker count is the lever: raising 1 → 3 workers moved the concurrency-25
+  break point back to 100% synchronous and roughly halved total p95. This is
+  the same worker-capacity finding as the async benchmarks, now confirmed for
+  the synchronous pattern.
+- The synchronous wait does not hard-block the event loop
+  ([`wait_for_terminal_scan`](../../app/main.py) uses `await asyncio.sleep`),
+  so the ceiling is worker/engine throughput, not connection handling — matching
+  the "processing, not submit" conclusion above.
+
+### How to reproduce
+
+Run the ramp against a running stack (Docker stack for all four engines, or a
+local app + worker), one variable at a time:
+
+```powershell
+foreach ($c in 5,10,25,50) {
+  .\.venv\Scripts\python.exe tools\benchmark_scans.py `
+    --base-url http://localhost:8000 --token $env:MASP_API_TOKEN `
+    --sample .\path\to\small_sample.bin `
+    --requests 30 --concurrency $c --wait-seconds 30 --timeout 300 `
+    --output .\benchmark-results\sync-c$c.json
+}
+```
+
+Read `synchronous_completion_rate` and `submit_p95` per step; the break point
+is where the rate drops below the acceptable bar or `submit_p95` approaches
+`wait_seconds`. To confirm the worker-count lever, rerun the breaking
+concurrency with more Defender workers and watch the rate recover.
+
+### What to tell the integrating team
+
+Quote a **safe concurrency** (the highest step that stayed at/above the sync
+rate you require) for a given worker count, not a single latency number. If
+their expected concurrency exceeds what worker scaling can hold within
+`wait_seconds`, the synchronous pattern is the wrong fit and they should either
+poll on `202` or move to an async callback (a webhook does not exist yet — see
+the handoff notes). The absolute numbers above are dev-host specific; re-run
+the ramp on the real deployment (full engine set, Postgres) before quoting
+figures.

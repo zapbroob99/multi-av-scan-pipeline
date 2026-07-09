@@ -38,6 +38,7 @@ class BenchmarkingTests(unittest.TestCase):
                     "finalize": 30,
                 },
                 error=None,
+                completed_synchronously=True,
             ),
             BenchmarkRun(
                 request_index=2,
@@ -106,6 +107,9 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertEqual(summary["summary"]["submitted"], 3)
         self.assertEqual(summary["summary"]["completed"], 2)
         self.assertEqual(summary["summary"]["errored"], 1)
+        self.assertEqual(summary["summary"]["synchronous_completions"], 1)
+        self.assertEqual(summary["summary"]["synchronous_completion_rate"], round(1 / 3, 4))
+        self.assertEqual(summary["summary"]["async_fallbacks"], 1)
         self.assertEqual(summary["summary"]["terminal_statuses"]["completed"], 2)
         self.assertEqual(summary["summary"]["terminal_statuses"]["submit_failed"], 1)
         self.assertEqual(summary["summary"]["decision_actions"]["block"], 1)
@@ -119,6 +123,59 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertEqual(summary["engine_timings_ms"]["YARA"]["p95"], 300)
         self.assertEqual(summary["worker_timing_ms"]["load_context"]["avg"], 25)
         self.assertEqual(summary["worker_timing_ms"]["finalize"]["p95"], 40)
+
+    def test_synchronous_completion_metrics_edges(self) -> None:
+        def make_run(index: int, *, accepted: bool, sync: bool) -> BenchmarkRun:
+            return BenchmarkRun(
+                request_index=index,
+                scan_id=index,
+                accepted=accepted,
+                completed=sync,
+                submit_duration_ms=100,
+                queue_wait_ms=None,
+                processing_duration_ms=None,
+                total_duration_ms=100,
+                polls=0,
+                queue_position=None,
+                final_status="completed" if sync else "running",
+                final_verdict=None,
+                decision_action=None,
+                expected_engines=None,
+                reported_engines=None,
+                completed_engines=None,
+                failed_engines=None,
+                skipped_engines=None,
+                detections=None,
+                completed_synchronously=sync,
+            )
+
+        def summarize(runs: list[BenchmarkRun]) -> dict:
+            return summarize_benchmark(
+                runs,
+                base_url="http://localhost:8000",
+                sample_name="s.bin",
+                sample_size_bytes=1,
+                requested_runs=len(runs),
+                concurrency=1,
+                poll_interval_seconds=1.0,
+                wait_seconds=30,
+                benchmark_duration_ms=1,
+            )
+
+        all_sync = summarize([make_run(i, accepted=True, sync=True) for i in range(4)])
+        self.assertEqual(all_sync["summary"]["synchronous_completions"], 4)
+        self.assertEqual(all_sync["summary"]["synchronous_completion_rate"], 1.0)
+        self.assertEqual(all_sync["summary"]["async_fallbacks"], 0)
+
+        all_async = summarize([make_run(i, accepted=True, sync=False) for i in range(4)])
+        self.assertEqual(all_async["summary"]["synchronous_completions"], 0)
+        self.assertEqual(all_async["summary"]["synchronous_completion_rate"], 0.0)
+        self.assertEqual(all_async["summary"]["async_fallbacks"], 4)
+
+        empty = summarize([])
+        self.assertEqual(empty["summary"]["synchronous_completions"], 0)
+        self.assertEqual(empty["summary"]["synchronous_completion_rate"], 0.0)
+        self.assertEqual(empty["summary"]["async_fallbacks"], 0)
 
     def test_extract_engine_durations_ignores_skipped_results(self) -> None:
         durations = extract_engine_durations(

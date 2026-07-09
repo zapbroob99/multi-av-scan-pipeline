@@ -29,6 +29,7 @@ class BenchmarkRun:
     engine_durations_ms: dict[str, int] = field(default_factory=dict)
     worker_event_durations_ms: dict[str, int] = field(default_factory=dict)
     error: str | None = None
+    completed_synchronously: bool = False
 
 
 def percentile(values: list[int], percentile_rank: float) -> int | None:
@@ -56,6 +57,10 @@ def summarize_benchmark(
     submit_durations = sorted(run.submit_duration_ms for run in runs)
     completed_runs = [run for run in runs if run.completed]
     errored_runs = [run for run in runs if run.error]
+    synchronous_runs = [run for run in runs if run.completed_synchronously]
+    async_fallback_runs = [
+        run for run in runs if run.accepted and not run.completed_synchronously
+    ]
     total_durations = sorted(
         run.total_duration_ms for run in runs if run.total_duration_ms is not None
     )
@@ -96,6 +101,11 @@ def summarize_benchmark(
             "completed": len(completed_runs),
             "errored": len(errored_runs),
             "accepted": sum(1 for run in runs if run.accepted),
+            "synchronous_completions": len(synchronous_runs),
+            "synchronous_completion_rate": round(len(synchronous_runs) / len(runs), 4)
+            if runs
+            else 0.0,
+            "async_fallbacks": len(async_fallback_runs),
             "terminal_statuses": count_values(run.final_status for run in runs),
             "decision_actions": count_values(
                 run.decision_action for run in runs if run.decision_action

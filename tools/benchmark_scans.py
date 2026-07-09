@@ -275,6 +275,7 @@ def submit_single_scan(
         total_duration_ms=elapsed_ms if bool(payload.get("completed")) else None,
         polls=0,
         fallback_status=f"http_{status_code}",
+        completed_synchronously=bool(payload.get("completed")),
     )
 
 
@@ -343,6 +344,7 @@ def poll_until_terminal(
             engine_durations_ms=run.engine_durations_ms,
             worker_event_durations_ms=run.worker_event_durations_ms,
             error="Benchmark timeout reached before terminal scan state.",
+            completed_synchronously=run.completed_synchronously,
         )
 
     return terminal_runs
@@ -391,6 +393,7 @@ def poll_single_scan(
             engine_durations_ms=previous_run.engine_durations_ms,
             worker_event_durations_ms=previous_run.worker_event_durations_ms,
             error=str(exc),
+            completed_synchronously=previous_run.completed_synchronously,
         )
 
     total_duration_ms = previous_run.submit_duration_ms
@@ -411,6 +414,7 @@ def poll_single_scan(
         total_duration_ms=total_duration_ms,
         polls=previous_run.polls + 1,
         fallback_status="running",
+        completed_synchronously=previous_run.completed_synchronously,
     )
     if updated_run.scan_id is None:
         return BenchmarkRun(
@@ -436,6 +440,7 @@ def poll_single_scan(
             engine_durations_ms=previous_run.engine_durations_ms,
             worker_event_durations_ms=previous_run.worker_event_durations_ms,
             error="Status payload did not include a scan id.",
+            completed_synchronously=previous_run.completed_synchronously,
         )
     return updated_run
 
@@ -450,6 +455,7 @@ def run_from_payload(
     total_duration_ms: int | None,
     polls: int,
     fallback_status: str,
+    completed_synchronously: bool = False,
 ) -> BenchmarkRun:
     scan_payload = payload.get("scan")
     queue_payload = payload.get("queue")
@@ -518,6 +524,7 @@ def run_from_payload(
         engine_durations_ms=engine_durations_ms,
         worker_event_durations_ms=worker_event_durations_ms,
         error=optional_string(payload.get("detail")) if scan_id is None else None,
+        completed_synchronously=completed_synchronously,
     )
 
 
@@ -674,6 +681,13 @@ def print_summary(summary: dict[str, Any]) -> None:
         f"Submitted: {aggregate['submitted']} | Completed: {aggregate['completed']} | "
         f"Errored: {aggregate['errored']}"
     )
+    sync_rate_pct = round(aggregate.get("synchronous_completion_rate", 0.0) * 100, 1)
+    print(
+        f"Synchronous completions (HTTP 200 within wait window): "
+        f"{aggregate.get('synchronous_completions', 0)}/{aggregate['submitted']} "
+        f"({sync_rate_pct}%)"
+    )
+    print(f"Async (HTTP 202) fallbacks: {aggregate.get('async_fallbacks', 0)}")
     print(
         f"Submit latency avg/p95/p99: {format_ms(latency['submit_avg'])} / "
         f"{format_ms(latency['submit_p95'])} / {format_ms(latency['submit_p99'])}"
