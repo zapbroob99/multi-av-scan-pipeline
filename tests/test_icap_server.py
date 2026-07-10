@@ -43,14 +43,18 @@ async def _make_reader(data: bytes) -> asyncio.StreamReader:
     return reader
 
 
-def reqmod_message(body: bytes, *, preview: int | None = None, ieof: bool = False) -> bytes:
+def reqmod_message(
+    body: bytes, *, preview: int | None = None, ieof: bool = False, allow_204: bool = True
+) -> bytes:
     http_hdr = (
         b"PUT /upload HTTP/1.1\r\nHost: x\r\nContent-Length: "
         + str(len(body)).encode()
         + b"\r\n\r\n"
     )
     encapsulated = b"req-hdr=0, req-body=" + str(len(http_hdr)).encode()
-    lines = [b"REQMOD icap://s/masp ICAP/1.0", b"Host: s", b"Allow: 204"]
+    lines = [b"REQMOD icap://s/masp ICAP/1.0", b"Host: s"]
+    if allow_204:
+        lines.append(b"Allow: 204")
     if preview is not None:
         lines.append(b"Preview: " + str(preview).encode())
     lines.append(b"Encapsulated: " + encapsulated)
@@ -185,6 +189,55 @@ class IcapServerTests(unittest.TestCase):
         )
         self.assertIn(b"ICAP/1.0 100 Continue\r\n\r\n", out)
         self.assertIn(b"ICAP/1.0 200 OK\r\n", out)
+
+    def test_allow_without_allow_204_echoes_unmodified(self) -> None:
+        # Client did not offer Allow: 204 and did not preview -> must not 204;
+        # the original message is echoed back in a 200 instead.
+        out, _ = run_handler(
+            reqmod_message(b"clean-bytes", allow_204=False),
+            self.config,
+            decision_action="allow",
+        )
+        self.assertTrue(out.startswith(b"ICAP/1.0 200 OK\r\n"))
+        self.assertNotIn(b"204 No Content", out)
+        self.assertIn(b"Encapsulated: req-hdr=0, req-body=", out)
+        self.assertIn(b"PUT /upload HTTP/1.1", out)
+        # No 403 replacement — this is an allow, the original bytes come back.
+        self.assertNotIn(b"403 Forbidden", out)
+        self.assertIn(b"clean-bytes", out)
+
+    def test_preview_allows_204_without_allow_header(self) -> None:
+        # A preview may always be answered with 204 even without Allow: 204.
+        out, _ = run_handler(
+            reqmod_message(b"clean", preview=0, allow_204=False),
+            self.config,
+            decision_action="allow",
+        )
+        self.assertIn(b"ICAP/1.0 204 No Content\r\n", out)
+
+    def test_unknown_method_returns_405_with_istag(self) -> None:
+        writer = FakeWriter()
+
+        async def _run() -> None:
+            reader = await _make_reader(b"FROBNICATE icap://s/masp ICAP/1.0\r\nHost: s\r\n\r\n")
+            await server.handle_connection(reader, writer, self.config)
+
+        asyncio.run(_run())
+        out = bytes(writer.buffer)
+        self.assertTrue(out.startswith(b"ICAP/1.0 405 Method Not Allowed\r\n"))
+        self.assertIn(b"ISTag:", out)
+
+    def test_malformed_request_returns_400(self) -> None:
+        writer = FakeWriter()
+
+        async def _run() -> None:
+            reader = await _make_reader(b"GARBAGE-LINE\r\n\r\n")
+            await server.handle_connection(reader, writer, self.config)
+
+        asyncio.run(_run())
+        out = bytes(writer.buffer)
+        self.assertTrue(out.startswith(b"ICAP/1.0 400 Bad Request\r\n"))
+        self.assertIn(b"ISTag:", out)
 
     def test_allowlist_rejects_unlisted_ip(self) -> None:
         config = IcapConfig(allowed_ips=frozenset({"10.0.0.1"}))

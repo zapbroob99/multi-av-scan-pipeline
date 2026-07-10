@@ -106,6 +106,49 @@ class IcapResponseBuildTests(unittest.TestCase):
     def test_continue_response(self) -> None:
         self.assertEqual(protocol.build_continue(), b"ICAP/1.0 100 Continue\r\n\r\n")
 
+    def test_options_omits_preview_when_zero(self) -> None:
+        raw = protocol.build_options_response(preview_bytes=0)
+        self.assertNotIn(b"Preview:", raw)
+
+    def test_options_advertises_preview_when_configured(self) -> None:
+        raw = protocol.build_options_response(preview_bytes=1024)
+        self.assertIn(b"Preview: 1024", raw)
+
+    def test_unmodified_response_echoes_body(self) -> None:
+        http_header = b"PUT /x HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\n"
+        body = b"clean"
+        raw = protocol.build_unmodified_response(
+            [("req-hdr", 0), ("req-body", len(http_header))], http_header, body
+        )
+        self.assertTrue(raw.startswith(b"ICAP/1.0 200 OK\r\n"))
+        self.assertIn(b'ISTag:', raw)
+        self.assertIn(
+            b"Encapsulated: req-hdr=0, req-body=" + str(len(http_header)).encode(), raw
+        )
+        self.assertIn(http_header, raw)
+        # Body echoed back re-chunked.
+        self.assertIn(protocol.encode_chunked(body), raw)
+
+    def test_unmodified_response_null_body(self) -> None:
+        http_header = b"PUT /x HTTP/1.1\r\nHost: h\r\n\r\n"
+        raw = protocol.build_unmodified_response(
+            [("req-hdr", 0), ("null-body", len(http_header))], http_header, b""
+        )
+        self.assertIn(
+            b"Encapsulated: req-hdr=0, null-body=" + str(len(http_header)).encode(), raw
+        )
+        self.assertTrue(raw.endswith(http_header))
+
+    def test_method_not_allowed_has_istag(self) -> None:
+        raw = protocol.build_method_not_allowed()
+        self.assertTrue(raw.startswith(b"ICAP/1.0 405 Method Not Allowed\r\n"))
+        self.assertIn(b"ISTag:", raw)
+
+    def test_bad_request_has_istag(self) -> None:
+        raw = protocol.build_bad_request()
+        self.assertTrue(raw.startswith(b"ICAP/1.0 400 Bad Request\r\n"))
+        self.assertIn(b"ISTag:", raw)
+
 
 if __name__ == "__main__":
     unittest.main()

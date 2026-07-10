@@ -16,8 +16,10 @@ replace the REST API.
 2. MASP stores the bytes, creates a scan (`source=icap`), and runs the enabled
    engines through the normal worker queue.
 3. MASP waits up to `MASP_ICAP_WAIT_SECONDS` for a verdict and replies:
-   - **204 No Content** → allow (let the transfer through unmodified)
-   - **200 OK** with an `HTTP 403` response → block
+   - **allow** → `204 No Content` when the client offered `Allow: 204` (or
+     sent a preview); otherwise the original message is echoed back unchanged
+     in a `200 OK` (RFC 3507 §4.6 forbids a bare `204` in that case).
+   - **block** → `200 OK` carrying a replacement `HTTP 403` response.
 
 ICAP-submitted scans appear in the **API Ledger** (`source=icap`), alongside
 REST submissions.
@@ -26,8 +28,8 @@ REST submissions.
 
 | Scan outcome | ICAP reply |
 |---|---|
-| Completed, verdict allows (`allow`) | `204` allow |
-| Completed, uncertain (`review`) | `204` allow (unless `MASP_ICAP_BLOCK_ON_REVIEW=1`) |
+| Completed, verdict allows (`allow`) | allow (`204`, or `200` echo without `Allow: 204`) |
+| Completed, uncertain (`review`) | allow (unless `MASP_ICAP_BLOCK_ON_REVIEW=1`) |
 | Completed, malicious (`block`) | `200` block |
 | Did not finish within the wait window | **fail-closed:** `200` block |
 | File over the size cap | **fail-closed:** `200` block |
@@ -91,8 +93,13 @@ is a fail-closed `200` block within `MASP_ICAP_WAIT_SECONDS`.
 
 ## Notes / limits (v1)
 
-- Preview is used only to pull the full file (AV needs the whole payload); there
-  is no early-allow from a partial preview.
+- Preview is not advertised by default (`MASP_ICAP_PREVIEW_BYTES=0`): AV needs
+  the whole payload, so a preview only adds a `100 Continue` round trip. If a
+  client previews anyway, MASP pulls the full file before deciding — there is no
+  early-allow from a partial preview. Set `MASP_ICAP_PREVIEW_BYTES` above `0`
+  only if a client requires a preview to be offered.
+- Unsupported methods get `405 Method Not Allowed`; unparseable messages get
+  `400 Bad Request`. All responses (including these) carry an `ISTag`.
 - ICAP archive uploads create a batch like REST archive uploads, but the
   `/api/v1/batches` endpoints are REST-scoped; inspect ICAP archives via the
   API Ledger.

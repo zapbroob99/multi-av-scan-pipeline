@@ -59,14 +59,20 @@ async def read_encapsulated_body(
     head: protocol.IcapHead,
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
-) -> bytes:
-    """Read the encapsulated HTTP header block + body, honoring Preview."""
+) -> tuple[bytes, bytes]:
+    """Read the encapsulated HTTP header block + body, honoring Preview.
+
+    Returns ``(http_header_bytes, body_bytes)``. The header block is kept (not
+    discarded) so an allow can be answered by echoing the original message back
+    when the client did not offer ``Allow: 204``.
+    """
     hdr_len = protocol.header_block_length(head.encapsulated)
+    http_header = b""
     if hdr_len:
-        await reader.readexactly(hdr_len)  # HTTP headers of the wrapped message
+        http_header = await reader.readexactly(hdr_len)  # wrapped HTTP headers
 
     if protocol.body_section(head.encapsulated) is None:
-        return b""  # null-body: nothing to scan
+        return http_header, b""  # null-body: nothing to scan
 
     body, is_ieof = await read_chunked_body(reader)
     has_preview = "preview" in head.headers
@@ -76,7 +82,16 @@ async def read_encapsulated_body(
         await writer.drain()
         rest, _ = await read_chunked_body(reader)
         body += rest
-    return body
+    return http_header, body
+
+
+def client_accepts_204(head: protocol.IcapHead) -> bool:
+    """RFC 3507 4.6: a 204 is only legal when the client offered ``Allow: 204``
+    or sent a preview (a preview may always be answered with 204)."""
+    allow_values = {value.strip() for value in head.header("allow").split(",")}
+    if "204" in allow_values:
+        return True
+    return "preview" in head.headers
 
 
 def resolve_icap_action(scan, config: IcapConfig) -> str:
@@ -131,12 +146,18 @@ async def handle_modification(
     writer: asyncio.StreamWriter,
     config: IcapConfig,
 ) -> None:
-    data = await read_encapsulated_body(head, reader, writer)
+    http_header, data = await read_encapsulated_body(head, reader, writer)
     filename = f"icap_{head.method.lower()}.bin"
     action = await scan_and_decide(filename, "application/octet-stream", data, config)
 
     if action == "allow":
-        writer.write(protocol.build_no_content())
+        if client_accepts_204(head):
+            writer.write(protocol.build_no_content())
+        else:
+            # Client did not offer Allow: 204 — echo the original message back.
+            writer.write(
+                protocol.build_unmodified_response(head.encapsulated, http_header, data)
+            )
     else:
         writer.write(protocol.build_block_response())
     await writer.drain()
@@ -167,6 +188,8 @@ async def handle_connection(
                 head = protocol.parse_head(raw_head)
             except protocol.IcapProtocolError as exc:
                 log(f"bad request from {peer_ip}: {exc}")
+                writer.write(protocol.build_bad_request())
+                await writer.drain()
                 break
 
             if head.method == "OPTIONS":
@@ -181,10 +204,7 @@ async def handle_connection(
                 continue
 
             # Unsupported method: refuse cleanly.
-            writer.write(
-                b"ICAP/1.0 405 Method Not Allowed\r\n"
-                b"Encapsulated: null-body=0\r\n\r\n"
-            )
+            writer.write(protocol.build_method_not_allowed())
             await writer.drain()
     except (ConnectionResetError, BrokenPipeError):
         pass
