@@ -1990,7 +1990,7 @@ def get_scan_engine_job_with_connection(
 
 def build_scan_history_where_clause(
     *,
-    source: str | None = None,
+    source: str | tuple[str, ...] | list[str] | None = None,
     query: str = "",
     status_filter: str = "all",
     verdict_filter: str = "all",
@@ -2000,8 +2000,13 @@ def build_scan_history_where_clause(
     params: list[object] = []
 
     if source:
-        conditions.append("scan_jobs.source = ?")
-        params.append(source)
+        if isinstance(source, str):
+            conditions.append("scan_jobs.source = ?")
+            params.append(source)
+        else:
+            placeholders = ", ".join("?" for _ in source)
+            conditions.append(f"scan_jobs.source IN ({placeholders})")
+            params.extend(source)
 
     if not include_child_scans:
         conditions.append("scan_jobs.scan_role != 'child'")
@@ -2043,7 +2048,7 @@ def list_recent_scans(
     limit: int | None = 20,
     offset: int = 0,
     *,
-    source: str | None = None,
+    source: str | tuple[str, ...] | list[str] | None = None,
     include_child_scans: bool = True,
 ) -> list[ScanRecord]:
     with connect() as connection:
@@ -2097,7 +2102,7 @@ def list_recent_scans(
 
 def count_scan_history(
     *,
-    source: str | None = None,
+    source: str | tuple[str, ...] | list[str] | None = None,
     query: str = "",
     status_filter: str = "all",
     verdict_filter: str = "all",
@@ -2129,7 +2134,7 @@ def count_scan_history(
 
 def list_scan_history(
     *,
-    source: str | None = None,
+    source: str | tuple[str, ...] | list[str] | None = None,
     query: str = "",
     status_filter: str = "all",
     verdict_filter: str = "all",
@@ -2155,7 +2160,7 @@ def list_scan_history(
 
 def _list_scan_history_filtered(
     *,
-    source: str | None = None,
+    source: str | tuple[str, ...] | list[str] | None = None,
     query: str = "",
     status_filter: str = "all",
     verdict_filter: str = "all",
@@ -2515,7 +2520,7 @@ def claim_next_scan_job() -> ScanRecord | None:
 
 
 def get_scan_counts(
-    source: str | None = None,
+    source: str | tuple[str, ...] | list[str] | None = None,
     *,
     include_child_scans: bool = True,
 ) -> dict[str, int]:
@@ -2523,8 +2528,13 @@ def get_scan_counts(
         params: list[object] = []
         conditions: list[str] = []
         if source:
-            conditions.append("source = ?")
-            params.append(source)
+            if isinstance(source, str):
+                conditions.append("source = ?")
+                params.append(source)
+            else:
+                placeholders = ", ".join("?" for _ in source)
+                conditions.append(f"source IN ({placeholders})")
+                params.extend(source)
         if not include_child_scans:
             conditions.append("scan_role != 'child'")
         source_where = f"WHERE {' AND '.join(conditions)}" if conditions else ""

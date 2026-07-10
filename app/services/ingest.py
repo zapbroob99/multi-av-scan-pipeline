@@ -81,3 +81,42 @@ async def store_upload(
         sha1=sha1_hash.hexdigest(),
         sha256=sha256_hash.hexdigest(),
     )
+
+
+def store_bytes(
+    filename: str,
+    content_type: str,
+    data: bytes,
+    max_size_bytes: int | None = None,
+) -> StoredSample:
+    """Persist an in-memory buffer as a sample.
+
+    Byte-based counterpart to :func:`store_upload` for callers that already
+    hold the full content (e.g. the ICAP server). Honors the same size cap and
+    produces an identical :class:`StoredSample`.
+    """
+    SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    upload_limit = configured_upload_max_bytes() if max_size_bytes is None else max_size_bytes
+    if upload_limit is not None and len(data) > upload_limit:
+        raise UploadTooLargeError(upload_limit, len(data))
+
+    safe_filename = sanitize_filename(filename or "sample.bin")
+    stored_filename = f"{uuid.uuid4().hex}_{safe_filename}"
+    storage_path = SAMPLES_DIR / stored_filename
+
+    try:
+        storage_path.write_bytes(data)
+    except Exception:
+        storage_path.unlink(missing_ok=True)
+        raise
+
+    return StoredSample(
+        original_filename=safe_filename,
+        stored_filename=stored_filename,
+        storage_path=str(storage_path),
+        content_type=content_type or "application/octet-stream",
+        size_bytes=len(data),
+        md5=hashlib.md5(data, usedforsecurity=False).hexdigest(),
+        sha1=hashlib.sha1(data).hexdigest(),
+        sha256=hashlib.sha256(data).hexdigest(),
+    )

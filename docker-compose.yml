@@ -26,6 +26,31 @@ services:
       clamav:
         condition: service_started
 
+  icap:
+    build: .
+    profiles:
+      - icap
+    command: python -m app.icap.server
+    ports:
+      - "1344:1344"
+    environment:
+      MASP_DATABASE_URL: postgresql://masp:masp_dev_password@postgres:5432/masp
+      MASP_ICAP_HOST: 0.0.0.0
+      MASP_ICAP_PORT: "1344"
+      MASP_ICAP_SERVICE_NAME: ${MASP_ICAP_SERVICE_NAME:-masp}
+      MASP_ICAP_WAIT_SECONDS: ${MASP_ICAP_WAIT_SECONDS:-30}
+      MASP_ICAP_MAX_BYTES: ${MASP_ICAP_MAX_BYTES:-0}
+      MASP_UPLOAD_MAX_BYTES: ${MASP_UPLOAD_MAX_BYTES:-0}
+      MASP_ICAP_FAIL_MODE_CLOSED: ${MASP_ICAP_FAIL_MODE_CLOSED:-1}
+      MASP_ICAP_BLOCK_ON_REVIEW: ${MASP_ICAP_BLOCK_ON_REVIEW:-0}
+      MASP_ICAP_ALLOWED_IPS: ${MASP_ICAP_ALLOWED_IPS:-}
+    volumes:
+      - ./storage:/app/storage
+      - ./rules:/app/rules
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   worker:
     build: .
     profiles:

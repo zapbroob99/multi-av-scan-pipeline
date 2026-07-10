@@ -1,4 +1,3 @@
-import asyncio
 import html
 import json
 import os
@@ -14,10 +13,7 @@ from app.database import (
     count_scan_history,
     count_scans_older_than,
     count_users_by_role,
-    create_sample,
-    create_scan_batch,
     create_scan_engine_jobs,
-    create_scan_job,
     create_user,
     delete_scan,
     delete_user,
@@ -71,7 +67,7 @@ from app.services.auth import (
     seed_default_users,
     verify_password,
 )
-from app.services.decisions import ScanDecision, decide_scan_action
+from app.services.decisions import ScanDecision
 from app.services.engine_registry import (
     ADAPTERS,
     ROADMAP_ADAPTERS,
@@ -93,7 +89,18 @@ from app.services.engine_registry import (
     remove_engine,
 )
 from app.services.ingest import UploadTooLargeError, store_upload
-from app.services.archive_extractor import detect_archive_format
+from app.services.scan_intake import (
+    DEFAULT_ARCHIVE_MODE,
+    enqueue_scan_from_stored_sample,
+    scan_is_terminal,
+    wait_for_terminal_scan,
+)
+from app.services.scan_assessment import (
+    detection_engine_results,
+    detection_summary,
+    required_engine_coverage,
+    scan_decision,
+)
 from app.services.api_payloads import (
     create_api_scan_result_payload,
     create_api_scan_status_payload,
@@ -131,9 +138,10 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 CSS_PATH = STATIC_DIR / "css" / "app.css"
 LEGACY_CSS_PATH = STATIC_DIR / "css" / "legacy.css"
-API_TERMINAL_SCAN_STATUSES = {"completed", "failed"}
 SUPPORTED_ARCHIVE_MODES = {"container", "lazy_extract_on_detection"}
-DEFAULT_ARCHIVE_MODE = "lazy_extract_on_detection"
+# The API Ledger surfaces every non-interactive submission source, so REST and
+# ICAP gateway scans share one operator view.
+API_LEDGER_SOURCES = ("api", "icap")
 
 init_db()
 seed_default_users()
@@ -804,10 +812,6 @@ def redirect_url(
     return url
 
 
-def scan_is_terminal(scan: ScanRecord) -> bool:
-    return scan.status in API_TERMINAL_SCAN_STATUSES
-
-
 def configured_api_max_wait_seconds() -> int:
     raw_value = os.getenv("MASP_API_MAX_WAIT_SECONDS", "15").strip()
     try:
@@ -980,32 +984,6 @@ def build_scan_batch_result_payload(
     }
 
 
-def scan_decision(
-    scan: ScanRecord,
-    engine_results: list[EngineResultRecord],
-    *,
-    risk_score: int | None = None,
-    verdict: str | None = None,
-) -> ScanDecision:
-    assessment = calculate_risk(engine_results)
-    effective_score = risk_score if risk_score is not None else scan.risk_score
-    effective_verdict = verdict if verdict is not None else scan.verdict
-    if effective_score is None:
-        effective_score = assessment.score
-    if effective_verdict == "pending":
-        effective_verdict = assessment.verdict
-    detected_count, detection_total = detection_summary(engine_results)
-    _, _, coverage_unavailable = required_engine_coverage(engine_results)
-    return decide_scan_action(
-        scan_status=scan.status,
-        verdict=effective_verdict,
-        risk_score=effective_score,
-        detected_engines=detected_count,
-        detection_engines=detection_total,
-        unavailable_engines=coverage_unavailable,
-    )
-
-
 def scan_decision_payload(decision: ScanDecision) -> dict[str, object]:
     return {
         "action": decision.action,
@@ -1072,21 +1050,6 @@ def build_api_scan_result_payload(
     return payload
 
 
-async def wait_for_terminal_scan(scan_id: int, wait_seconds: int) -> ScanRecord | None:
-    scan = get_scan(scan_id)
-    if scan is None or wait_seconds <= 0 or scan_is_terminal(scan):
-        return scan
-
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + wait_seconds
-    while loop.time() < deadline:
-        await asyncio.sleep(min(0.5, max(0.1, deadline - loop.time())))
-        scan = get_scan(scan_id)
-        if scan is None or scan_is_terminal(scan):
-            return scan
-    return get_scan(scan_id)
-
-
 async def enqueue_scan_from_upload(
     sample: UploadFile,
     *,
@@ -1105,43 +1068,14 @@ async def enqueue_scan_from_upload(
     except UploadTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
 
-    sample_id = create_sample(stored_sample)
-    batch_id: int | None = None
-    relative_path: str | None = None
-    scan_role = "standalone"
-    archive_format = detect_archive_format(stored_sample.storage_path)
-    if archive_format is not None:
-        batch_id = create_scan_batch(
-            source=source,
-            original_filename=stored_sample.original_filename,
-            archive_mode=effective_archive_mode,
-            total_items=1,
-            metadata_json=json.dumps(
-                {
-                    "container_sha256": stored_sample.sha256,
-                    "container_size_bytes": stored_sample.size_bytes,
-                    "container_archive_format": archive_format,
-                }
-            ),
-        )
-        relative_path = stored_sample.original_filename
-        scan_role = "container"
-
-    scan_id = create_scan_job(
-        sample_id=sample_id,
-        case_name=case_name.strip() or "Unassigned",
+    return enqueue_scan_from_stored_sample(
+        stored_sample,
+        case_name=case_name,
         priority=priority,
-        note=note.strip(),
+        note=note,
         source=source,
-        batch_id=batch_id,
-        relative_path=relative_path,
-        scan_role=scan_role,
+        archive_mode=effective_archive_mode,
     )
-    create_scan_engine_jobs(scan_id, enabled_engines())
-    scan = get_scan(scan_id)
-    if scan is None:
-        raise HTTPException(status_code=500, detail="Scan could not be loaded.")
-    return scan
 
 
 def render_login_page(next_url: str = "/", error: str = "", message: str = "") -> str:
@@ -2609,22 +2543,6 @@ def detected_pill(status: str, detected: bool) -> str:
     return '<span class="pill success">Clean</span>'
 
 
-def detection_engine_results(results: list[EngineResultRecord]) -> list[EngineResultRecord]:
-    return [
-        result
-        for result in results
-        if result.engine_name.lower() != "static metadata"
-    ]
-
-
-def detection_summary(results: list[EngineResultRecord]) -> tuple[int, int]:
-    detection_results = detection_engine_results(results)
-    detected = sum(
-        1
-        for result in detection_results
-        if result.status == "completed" and result.detected
-    )
-    return detected, max(len(detection_results), len(detection_engine_names()))
 
 
 def detected_engine_names(results: list[EngineResultRecord]) -> list[str]:
@@ -2723,33 +2641,6 @@ def detection_summary_tone(results: list[EngineResultRecord]) -> str:
     if detected > 0:
         return "danger"
     return "success"
-
-
-def engine_result_map(results: list[EngineResultRecord]) -> dict[str, EngineResultRecord]:
-    return {result.engine_name.lower(): result for result in results}
-
-
-def required_engine_coverage(
-    results: list[EngineResultRecord],
-) -> tuple[int, int, list[str]]:
-    result_map = engine_result_map(results)
-    unavailable = []
-    ran = 0
-    required_engines = detection_engine_names()
-
-    for engine_name in required_engines:
-        result = result_map.get(engine_name.lower())
-        if result is None:
-            unavailable.append(f"{engine_name} missing")
-            continue
-
-        if result.status == "completed":
-            ran += 1
-            continue
-
-        unavailable.append(f"{engine_name} {result.status}")
-
-    return ran, len(required_engines), unavailable
 
 
 def coverage_summary_text(results: list[EngineResultRecord]) -> str:
@@ -4676,7 +4567,7 @@ def api_ledger(
     status_filter = status if status in {"all", "active", "queued", "running", "completed", "partial", "failed"} else "all"
     verdict_filter = verdict if verdict in {"all", "pending", "info", "metadata_only", "low", "medium", "high", "critical"} else "all"
     total_items = count_scan_history(
-        source="api",
+        source=API_LEDGER_SOURCES,
         query=q,
         status_filter=status_filter,
         verdict_filter=verdict_filter,
@@ -4685,7 +4576,7 @@ def api_ledger(
     total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items else 1
     current_page = min(normalize_dashboard_page(page), total_pages)
     scans = list_scan_history(
-        source="api",
+        source=API_LEDGER_SOURCES,
         query=q,
         status_filter=status_filter,
         verdict_filter=verdict_filter,
@@ -4694,7 +4585,7 @@ def api_ledger(
         include_child_scans=False,
     )
     results_by_scan = list_engine_results_by_scan_ids([scan.id for scan in scans])
-    counts = get_scan_counts(source="api", include_child_scans=False)
+    counts = get_scan_counts(source=API_LEDGER_SOURCES, include_child_scans=False)
     queue_metrics = get_queue_metrics()
     empty_message = "No API scans match the current filters." if total_items else "No API scans have been submitted yet."
     notice_html = (
@@ -4914,7 +4805,7 @@ async def delete_selected_api_scans(
     deleted_count = 0
     for scan_id in scan_ids:
         scan = get_scan(scan_id)
-        if scan is None or scan.source != "api":
+        if scan is None or scan.source not in API_LEDGER_SOURCES:
             continue
         if delete_scan_record(scan_id) is not None:
             deleted_count += 1
