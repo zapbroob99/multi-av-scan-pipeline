@@ -174,11 +174,17 @@ def build_options_response(
         b'ISTag: "' + istag.encode("ascii", "ignore") + b'"',
         b"Service: " + service_label.encode("ascii", "ignore"),
         b"Allow: 204",
-        b"Preview: " + str(max(0, preview_bytes)).encode("ascii"),
+    ]
+    # Only advertise Preview when one is configured. MASP needs the whole file
+    # to scan, so a preview buys nothing; advertising ``Preview: 0`` would just
+    # force an extra 100-Continue round trip on every request.
+    if preview_bytes > 0:
+        lines.append(b"Preview: " + str(preview_bytes).encode("ascii"))
+    lines.extend([
         b"Max-Connections: " + str(max_connections).encode("ascii"),
         b"Options-TTL: " + str(options_ttl).encode("ascii"),
         b"Encapsulated: null-body=0",
-    ]
+    ])
     return CRLF.join(lines) + CRLF + CRLF
 
 
@@ -213,6 +219,64 @@ def build_block_response(
         + b"Encapsulated: " + encapsulated + b"\r\n\r\n"
         + http_header
         + res_body
+    )
+
+
+def build_unmodified_response(
+    encapsulated: list[tuple[str, int]],
+    http_header: bytes,
+    body: bytes,
+    *,
+    istag: str = DEFAULT_ISTAG,
+) -> bytes:
+    """200 OK echoing the original message unchanged.
+
+    RFC 3507 4.6: a ``204 No Content`` may only be sent when the client
+    offered ``Allow: 204`` (or sent a preview). When it did not, "allow the
+    transfer" must be expressed by returning the original encapsulated message
+    verbatim in a 200. The header sections keep their original offsets; the
+    body is re-chunked and its offset becomes the header-block length.
+    """
+    hdr_len = len(http_header)
+    sections: list[str] = []
+    for name, offset in encapsulated:
+        if name in {"req-body", "res-body", "null-body"}:
+            continue
+        sections.append(f"{name}={offset}")
+
+    body_name = body_section(encapsulated)
+    if body_name is None:
+        sections.append(f"null-body={hdr_len}")
+        body_bytes = b""
+    else:
+        sections.append(f"{body_name}={hdr_len}")
+        body_bytes = encode_chunked(body)
+
+    encap = ", ".join(sections).encode("ascii")
+    return (
+        b"ICAP/1.0 200 OK\r\n"
+        + _istag_header(istag)
+        + b"Encapsulated: " + encap + b"\r\n\r\n"
+        + http_header
+        + body_bytes
+    )
+
+
+def build_method_not_allowed(istag: str = DEFAULT_ISTAG) -> bytes:
+    """405 Method Not Allowed for methods other than OPTIONS/REQMOD/RESPMOD."""
+    return (
+        b"ICAP/1.0 405 Method Not Allowed\r\n"
+        + _istag_header(istag)
+        + b"Encapsulated: null-body=0\r\n\r\n"
+    )
+
+
+def build_bad_request(istag: str = DEFAULT_ISTAG) -> bytes:
+    """400 Bad Request for messages that cannot be parsed."""
+    return (
+        b"ICAP/1.0 400 Bad Request\r\n"
+        + _istag_header(istag)
+        + b"Encapsulated: null-body=0\r\n\r\n"
     )
 
 

@@ -41,17 +41,20 @@ def options_message(host: str, port: int, service: str) -> bytes:
     ).encode()
 
 
-def reqmod_message(host: str, port: int, service: str, filename: str, body: bytes) -> bytes:
+def reqmod_message(
+    host: str, port: int, service: str, filename: str, body: bytes, *, allow_204: bool = True
+) -> bytes:
     http_hdr = (
         f"PUT /{filename} HTTP/1.1\r\nHost: {host}\r\n"
         f"Content-Length: {len(body)}\r\n\r\n"
     ).encode()
     chunked = b"%x\r\n%s\r\n0\r\n\r\n" % (len(body), body)
     encapsulated = f"req-hdr=0, req-body={len(http_hdr)}".encode()
+    allow_line = b"Allow: 204\r\n" if allow_204 else b""
     head = (
         f"REQMOD icap://{host}:{port}/{service} ICAP/1.0\r\n"
-        f"Host: {host}:{port}\r\nAllow: 204\r\n"
-    ).encode() + b"Encapsulated: " + encapsulated + b"\r\n\r\n"
+        f"Host: {host}:{port}\r\n"
+    ).encode() + allow_line + b"Encapsulated: " + encapsulated + b"\r\n\r\n"
     return head + http_hdr + chunked
 
 
@@ -61,6 +64,8 @@ def verdict(response: bytes) -> str:
         return f"ALLOW  ({status})"
     if response.startswith(b"ICAP/1.0 200") and b"403" in response:
         return f"BLOCK  ({status})"
+    if response.startswith(b"ICAP/1.0 200"):
+        return f"ALLOW  ({status}) [echoed unmodified, no Allow:204 offered]"
     return f"?      ({status})"
 
 
@@ -74,6 +79,11 @@ def main() -> None:
     group.add_argument("--file", help="Send this file's bytes.")
     group.add_argument("--eicar", action="store_true", help="Send the EICAR test string.")
     group.add_argument("--options", action="store_true", help="Only do the OPTIONS handshake.")
+    parser.add_argument(
+        "--no-allow-204",
+        action="store_true",
+        help="Omit Allow: 204 to exercise the RFC-required echo-unmodified allow path.",
+    )
     args = parser.parse_args()
 
     opt = talk(args.host, args.port, options_message(args.host, args.port, args.service), args.timeout)
@@ -93,7 +103,10 @@ def main() -> None:
     resp = talk(
         args.host,
         args.port,
-        reqmod_message(args.host, args.port, args.service, filename, body),
+        reqmod_message(
+            args.host, args.port, args.service, filename, body,
+            allow_204=not args.no_allow_204,
+        ),
         args.timeout,
     )
     print(f"REQMOD   -> {verdict(resp)}   [{filename}, {len(body)} bytes]")
