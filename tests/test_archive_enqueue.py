@@ -40,9 +40,9 @@ class ArchiveEnqueueTests(unittest.TestCase):
         )
 
         with patch("app.main.store_upload", new=AsyncMock(return_value=stored_sample)), patch(
-            "app.main.detect_archive_format",
+            "app.services.scan_intake.detect_archive_format",
             return_value="zip",
-        ), patch("app.main.enabled_engines", return_value=[]):
+        ), patch("app.services.scan_intake.enabled_engines", return_value=[]):
             scan = asyncio.run(
                 enqueue_scan_from_upload(
                     FakeUpload("bundle.zip"),
@@ -83,9 +83,9 @@ class ArchiveEnqueueTests(unittest.TestCase):
         )
 
         with patch("app.main.store_upload", new=AsyncMock(return_value=stored_sample)), patch(
-            "app.main.detect_archive_format",
+            "app.services.scan_intake.detect_archive_format",
             return_value=None,
-        ), patch("app.main.enabled_engines", return_value=[]):
+        ), patch("app.services.scan_intake.enabled_engines", return_value=[]):
             scan = asyncio.run(
                 enqueue_scan_from_upload(
                     FakeUpload("sample.bin"),
