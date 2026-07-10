@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-from time import perf_counter
+from time import monotonic, perf_counter
 
 from app.models import EngineResultInput, ScanRecord
 from app.services.findings import evidence_object, normalized_finding
@@ -14,6 +14,56 @@ ENGINE_NAME = "Microsoft Defender"
 DEFAULT_TIMEOUT_SECONDS = 900
 DEFAULT_SIGNATURE_STALE_DAYS = 3
 DEFAULT_SCAN_TYPE = "custom"
+DEFAULT_HEALTH_CACHE_SECONDS = 30
+# Negative (ok=False) health results get a much shorter TTL so a transient
+# PowerShell/Defender hiccup does not skip every scan for the full positive TTL.
+DEFAULT_NEGATIVE_HEALTH_CACHE_SECONDS = 5
+
+# Per-worker-process TTL caches. The Defender health probe shells out to
+# PowerShell (Get-MpComputerStatus) and MpCmdRun path resolution walks the
+# filesystem; both are stable for the life of a worker between config changes,
+# so caching them per process removes that fixed cost from every scan.
+_health_cache: dict[tuple, tuple[float, dict[str, str | bool]]] = {}
+_mpcmdrun_path_cache: dict[str, tuple[float, str | None]] = {}
+
+
+def health_cache_seconds() -> int:
+    raw = os.getenv(
+        "MASP_MICROSOFT_DEFENDER_HEALTH_CACHE_SECONDS",
+        str(DEFAULT_HEALTH_CACHE_SECONDS),
+    ).strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_HEALTH_CACHE_SECONDS
+
+
+def negative_health_cache_seconds() -> int:
+    raw = os.getenv(
+        "MASP_MICROSOFT_DEFENDER_NEGATIVE_HEALTH_CACHE_SECONDS",
+        str(DEFAULT_NEGATIVE_HEALTH_CACHE_SECONDS),
+    ).strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_NEGATIVE_HEALTH_CACHE_SECONDS
+
+
+def defender_health_cache_key(config: dict[str, str | int | bool]) -> tuple:
+    # Only fields that can change the health verdict belong in the key, so a
+    # scan-type or update-before-scan change does not needlessly invalidate.
+    return (
+        str(config["execution_mode"]),
+        str(config["powershell_path"]),
+        str(config["mpcmdrun_path"]),
+        int(config["timeout_seconds"]),
+        bool(config["require_real_time_enabled"]),
+    )
+
+
+def clear_defender_caches() -> None:
+    _health_cache.clear()
+    _mpcmdrun_path_cache.clear()
 
 
 def get_microsoft_defender_config(
@@ -66,8 +116,11 @@ def get_microsoft_defender_config(
 
 def check_microsoft_defender_health(
     config_override: dict[str, str] | None = None,
+    *,
+    config: dict[str, str | int | bool] | None = None,
 ) -> dict[str, str | bool]:
-    config = get_microsoft_defender_config(config_override)
+    if config is None:
+        config = get_microsoft_defender_config(config_override)
     if os.name != "nt":
         return {
             "ok": False,
@@ -117,13 +170,45 @@ def check_microsoft_defender_health(
     return evaluated
 
 
+def cached_microsoft_defender_health(
+    config: dict[str, str | int | bool],
+    config_override: dict[str, str] | None = None,
+) -> dict[str, str | bool]:
+    """Health probe with a per-process TTL cache keyed by health-affecting config.
+
+    ``ok=True`` results are cached for the positive TTL
+    (``MASP_MICROSOFT_DEFENDER_HEALTH_CACHE_SECONDS``, default 30); ``ok=False``
+    results only for the short negative TTL
+    (``MASP_MICROSOFT_DEFENDER_NEGATIVE_HEALTH_CACHE_SECONDS``, default 5) so a
+    transient failure does not skip every scan for the full positive window.
+    Re-probes on TTL expiry, config change, or when caching is disabled (both
+    TTLs 0).
+    """
+    positive_ttl = health_cache_seconds()
+    negative_ttl = negative_health_cache_seconds()
+    if positive_ttl <= 0 and negative_ttl <= 0:
+        return check_microsoft_defender_health(config_override, config=config)
+
+    key = defender_health_cache_key(config)
+    now = monotonic()
+    entry = _health_cache.get(key)
+    if entry is not None and entry[0] > now:
+        return entry[1]
+
+    result = check_microsoft_defender_health(config_override, config=config)
+    ttl = positive_ttl if bool(result["ok"]) else negative_ttl
+    if ttl > 0:
+        _health_cache[key] = (now + ttl, result)
+    return result
+
+
 def run_microsoft_defender_engine(
     scan: ScanRecord,
     config_override: dict[str, str] | None = None,
 ) -> EngineResultInput:
     started_at = perf_counter()
     config = get_microsoft_defender_config(config_override)
-    health = check_microsoft_defender_health(config_override)
+    health = cached_microsoft_defender_health(config, config_override)
     base_details = {
         "adapter": "microsoft_defender_local_cli",
         "sample": {
@@ -224,6 +309,21 @@ def resolve_powershell_path(configured_path: str) -> str | None:
 
 
 def resolve_mpcmdrun_path(configured_path: str) -> str | None:
+    ttl = health_cache_seconds()
+    if ttl <= 0:
+        return _resolve_mpcmdrun_path_uncached(configured_path)
+
+    now = monotonic()
+    entry = _mpcmdrun_path_cache.get(configured_path)
+    if entry is not None and entry[0] > now:
+        return entry[1]
+
+    resolved = _resolve_mpcmdrun_path_uncached(configured_path)
+    _mpcmdrun_path_cache[configured_path] = (now + ttl, resolved)
+    return resolved
+
+
+def _resolve_mpcmdrun_path_uncached(configured_path: str) -> str | None:
     if configured_path and configured_path.lower() != "auto":
         return configured_path if Path(configured_path).is_file() else None
 
