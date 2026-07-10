@@ -1,5 +1,4 @@
 import hashlib
-import os
 from pathlib import Path
 import re
 import uuid
@@ -23,11 +22,12 @@ class UploadTooLargeError(ValueError):
 
 
 def configured_upload_max_bytes() -> int | None:
-    raw_value = os.getenv("MASP_UPLOAD_MAX_BYTES", "0").strip()
-    try:
-        limit = int(raw_value or "0")
-    except ValueError:
-        return None
+    # Resolved centrally (DB override -> MASP_UPLOAD_MAX_BYTES -> default) so the
+    # Scan Policy admin panel and the API upload path share one value. Imported
+    # lazily to keep this low-level storage module free of a boot-time DB import.
+    from app.services import scan_policy
+
+    limit = scan_policy.resolve_int("upload_max_bytes")
     if limit <= 0:
         return None
     return limit

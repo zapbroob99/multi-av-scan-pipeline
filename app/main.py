@@ -1,6 +1,5 @@
 import html
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -89,6 +88,7 @@ from app.services.engine_registry import (
     remove_engine,
 )
 from app.services.ingest import UploadTooLargeError, store_upload
+from app.services import scan_policy
 from app.services.scan_intake import (
     DEFAULT_ARCHIVE_MODE,
     enqueue_scan_from_stored_sample,
@@ -196,6 +196,19 @@ def nav_icon(icon_key: str) -> str:
           <path d="M8 20h8"></path>
         </svg>
         """,
+        "scan_policy": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 6h10"></path>
+          <path d="M18 6h2"></path>
+          <circle cx="16" cy="6" r="2"></circle>
+          <path d="M4 12h2"></path>
+          <path d="M10 12h10"></path>
+          <circle cx="8" cy="12" r="2"></circle>
+          <path d="M4 18h10"></path>
+          <path d="M18 18h2"></path>
+          <circle cx="16" cy="18" r="2"></circle>
+        </svg>
+        """,
         "system": """
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
@@ -235,6 +248,7 @@ def page_shell(
     ]
     if user.role == ROLE_ADMIN:
         nav_items.append(("engines", "/engines", "Engines"))
+        nav_items.append(("scan_policy", "/scan-policy", "Scan Policy"))
         nav_items.append(("system", "/system", "System"))
         nav_items.append(("users", "/users", "Users"))
     nav_html = "\n".join(
@@ -813,21 +827,11 @@ def redirect_url(
 
 
 def configured_api_max_wait_seconds() -> int:
-    raw_value = os.getenv("MASP_API_MAX_WAIT_SECONDS", "15").strip()
-    try:
-        wait_seconds = int(raw_value or "15")
-    except ValueError:
-        return 15
-    return max(0, min(wait_seconds, 300))
+    return scan_policy.resolve_int("api_max_wait_seconds")
 
 
 def configured_api_retry_after_seconds() -> int:
-    raw_value = os.getenv("MASP_API_RETRY_AFTER_SECONDS", "2").strip()
-    try:
-        retry_seconds = int(raw_value or "2")
-    except ValueError:
-        return 2
-    return max(1, min(retry_seconds, 30))
+    return scan_policy.resolve_int("api_retry_after_seconds")
 
 
 def normalized_api_wait_seconds(requested_wait_seconds: int) -> int:
@@ -5278,6 +5282,127 @@ def scan_detail(request: Request, scan_id: int, message: str = "", error: str = 
         raise HTTPException(status_code=404, detail="Scan not found.")
     engine_results = list_engine_results(scan.id)
     return render_scan_result(scan, engine_results, user, message=message, error=error)
+
+
+def render_scan_policy_field(field: dict) -> str:
+    spec = field["spec"]
+    override_value = html.escape(field["override_raw"])
+    unit = f" ({html.escape(spec.unit)})" if spec.unit else ""
+    source_tone = "neutral" if field["has_override"] else "success"
+    hint = f"Effective value: {field['value']}"
+    if spec.key == "upload_max_bytes" and field["value"] > 0:
+        hint += f" (~{field['value'] / (1024 * 1024):.1f} MB)"
+    elif spec.key == "upload_max_bytes":
+        hint += " (unlimited)"
+    return f"""
+    <label>
+      {html.escape(spec.label)}{unit}
+      <input type="number" name="{spec.key}" value="{override_value}"
+             min="{spec.minimum}" max="{spec.maximum}" step="1"
+             placeholder="default: {spec.default}">
+      <small class="field-help">{html.escape(spec.help)}</small>
+      <small class="field-help">{html.escape(hint)} · Source: <span class="pill {source_tone}">{html.escape(field['source'])}</span></small>
+    </label>
+    """
+
+
+def render_scan_policy_page(user: UserRecord, message: str = "", error: str = "") -> str:
+    fields = scan_policy.snapshot()
+    notice_html = (
+        page_notice("Scan policy updated", message, "success")
+        + page_notice("Could not save", error, "danger")
+    )
+    field_html = "\n".join(render_scan_policy_field(field) for field in fields)
+    body = f"""
+    {notice_html}
+    <section class="panel">
+      <div class="panel-header compact">
+        <div>
+          <h2>REST scan API policy</h2>
+          <p>Operational limits for <code>POST /api/v1/scans</code> and file intake.
+             Changes take effect immediately, no restart needed.</p>
+        </div>
+      </div>
+      <form class="settings-form" action="/scan-policy" method="post">
+        <div class="settings-section">
+          <div class="settings-grid">
+            {field_html}
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button class="primary-action" type="submit" data-busy-label="Saving...">Save scan policy</button>
+        </div>
+      </form>
+      <p class="field-help">
+        Leave a field blank to clear its override and fall back to the
+        environment variable or built-in default. Each value is stored as an
+        admin override that takes precedence over the corresponding
+        <code>MASP_*</code> environment variable.
+      </p>
+    </section>
+    <section class="panel">
+      <div class="panel-header compact">
+        <div>
+          <h2>Not configured here</h2>
+          <p>These are set at process startup and cannot be changed from the web.</p>
+        </div>
+      </div>
+      <p class="field-help">
+        Deployment/wiring (database URL, bind host/port, worker engine keys,
+        ClamAV host) stays in environment variables. ICAP gateway tuning
+        (<code>MASP_ICAP_*</code>) is configured per the ICAP gateway doc; the
+        ICAP process reads its config at startup.
+      </p>
+    </section>
+    """
+    return page_shell("Scan Policy", "scan_policy", body, user)
+
+
+@app.get("/scan-policy", response_class=HTMLResponse)
+def scan_policy_page(request: Request, message: str = "", error: str = "") -> str:
+    user = require_admin(request)
+    return render_scan_policy_page(user, message=message, error=error)
+
+
+@app.post("/scan-policy")
+def save_scan_policy(
+    request: Request,
+    api_max_wait_seconds: str = Form(""),
+    api_retry_after_seconds: str = Form(""),
+    upload_max_bytes: str = Form(""),
+) -> RedirectResponse:
+    admin = require_admin(request)
+    submitted = {
+        "api_max_wait_seconds": api_max_wait_seconds,
+        "api_retry_after_seconds": api_retry_after_seconds,
+        "upload_max_bytes": upload_max_bytes,
+    }
+    resolved: dict[str, int | None] = {}
+    errors: list[str] = []
+    for key, raw in submitted.items():
+        value, field_error = scan_policy.validate(key, raw)
+        if field_error:
+            errors.append(field_error)
+        else:
+            resolved[key] = value
+
+    if errors:
+        return RedirectResponse(
+            url=redirect_url("/scan-policy", error=" ".join(errors)),
+            status_code=303,
+        )
+
+    for key, value in resolved.items():
+        scan_policy.store(key, value)
+        print(
+            f"[scan-policy] {getattr(admin, 'username', '?')} set {key}="
+            f"{'default' if value is None else value}",
+            flush=True,
+        )
+    return RedirectResponse(
+        url=redirect_url("/scan-policy", message="Saved scan policy settings."),
+        status_code=303,
+    )
 
 
 @app.get("/engines", response_class=HTMLResponse)
