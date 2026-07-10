@@ -20,6 +20,17 @@ class ScanEngineJobTests(unittest.TestCase):
         database.DATABASE_URL = self.original_database_url
         self.temp_dir.cleanup()
 
+    def test_setting_set_get_delete_round_trip(self) -> None:
+        self.assertIsNone(database.get_setting("scan_policy.api_max_wait_seconds"))
+        database.set_setting("scan_policy.api_max_wait_seconds", "45")
+        self.assertEqual(
+            database.get_setting("scan_policy.api_max_wait_seconds"), "45"
+        )
+        database.delete_setting("scan_policy.api_max_wait_seconds")
+        self.assertIsNone(database.get_setting("scan_policy.api_max_wait_seconds"))
+        # Deleting a missing key is a no-op, not an error.
+        database.delete_setting("scan_policy.api_max_wait_seconds")
+
     def test_scan_engine_jobs_are_claimed_by_engine_key_and_lease(self) -> None:
         scan_id = create_scan_with_two_engines()
         engines = database.list_engine_instances()

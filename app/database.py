@@ -970,6 +970,17 @@ def set_setting(key: str, value: str) -> None:
             )
 
 
+def delete_setting(key: str) -> None:
+    """Remove a stored setting, reverting it to its env/hardcoded default."""
+    try:
+        with connect() as connection:
+            connection.execute("DELETE FROM app_settings WHERE key = ?", (key,))
+    except sqlite3.OperationalError as exc:
+        if not is_missing_settings_table(exc):
+            raise
+        # No table yet means there is nothing to delete.
+
+
 def list_engine_instances() -> list[EngineInstanceRecord]:
     try:
         with connect() as connection:
