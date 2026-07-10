@@ -761,7 +761,7 @@ def page_notice(title: str, message: str, tone: str = "success") -> str:
         "danger": "danger-notice",
     }.get(tone, "success-notice")
     return (
-        f'<section class="notice {tone_class}"><div>'
+        f'<section class="notice {tone_class}"><div class="notice-copy">'
         f"<strong>{html.escape(title)}</strong>"
         f"<span>{html.escape(message)}</span>"
         f"</div></section>"
@@ -5287,22 +5287,35 @@ def scan_detail(request: Request, scan_id: int, message: str = "", error: str = 
 def render_scan_policy_field(field: dict) -> str:
     spec = field["spec"]
     override_value = html.escape(field["override_raw"])
-    unit = f" ({html.escape(spec.unit)})" if spec.unit else ""
     source_tone = "neutral" if field["has_override"] else "success"
-    hint = f"Effective value: {field['value']}"
-    if spec.key == "upload_max_bytes" and field["value"] > 0:
-        hint += f" (~{field['value'] / (1024 * 1024):.1f} MB)"
-    elif spec.key == "upload_max_bytes":
-        hint += " (unlimited)"
+    if spec.key == "upload_max_bytes":
+        effective = (
+            "0 (unlimited)"
+            if field["value"] <= 0
+            else f"{field['value']:,} (~{field['value'] / (1024 * 1024):.1f} MB)"
+        )
+    else:
+        effective = str(field["value"])
+    unit = f'<span class="policy-unit">{html.escape(spec.unit)}</span>' if spec.unit else ""
     return f"""
-    <label>
-      {html.escape(spec.label)}{unit}
-      <input type="number" name="{spec.key}" value="{override_value}"
-             min="{spec.minimum}" max="{spec.maximum}" step="1"
-             placeholder="default: {spec.default}">
-      <small class="field-help">{html.escape(spec.help)}</small>
-      <small class="field-help">{html.escape(hint)} · Source: <span class="pill {source_tone}">{html.escape(field['source'])}</span></small>
-    </label>
+    <div class="policy-row">
+      <div class="policy-row-info">
+        <label for="policy-{spec.key}">{html.escape(spec.label)}</label>
+        <p>{html.escape(spec.help)}</p>
+      </div>
+      <div class="policy-row-control">
+        <div class="policy-input">
+          <input id="policy-{spec.key}" type="number" name="{spec.key}" value="{override_value}"
+                 min="{spec.minimum}" max="{spec.maximum}" step="1"
+                 placeholder="default: {spec.default}">
+          {unit}
+        </div>
+        <p class="policy-meta">
+          Effective: <strong>{html.escape(effective)}</strong>
+          <span class="pill {source_tone}">{html.escape(field['source'])}</span>
+        </p>
+      </div>
+    </div>
     """
 
 
@@ -5323,22 +5336,18 @@ def render_scan_policy_page(user: UserRecord, message: str = "", error: str = ""
              Changes take effect immediately, no restart needed.</p>
         </div>
       </div>
-      <form class="settings-form" action="/scan-policy" method="post">
-        <div class="settings-section">
-          <div class="settings-grid">
-            {field_html}
-          </div>
+      <form class="policy-form" action="/scan-policy" method="post">
+        <div class="policy-list">
+          {field_html}
         </div>
-        <div class="settings-actions">
+        <div class="policy-footer">
+          <p class="field-help">
+            Leave a field blank to clear its override and fall back to the
+            <code>MASP_*</code> environment variable or built-in default.
+          </p>
           <button class="primary-action" type="submit" data-busy-label="Saving...">Save scan policy</button>
         </div>
       </form>
-      <p class="field-help">
-        Leave a field blank to clear its override and fall back to the
-        environment variable or built-in default. Each value is stored as an
-        admin override that takes precedence over the corresponding
-        <code>MASP_*</code> environment variable.
-      </p>
     </section>
     <section class="panel">
       <div class="panel-header compact">
@@ -5347,12 +5356,14 @@ def render_scan_policy_page(user: UserRecord, message: str = "", error: str = ""
           <p>These are set at process startup and cannot be changed from the web.</p>
         </div>
       </div>
-      <p class="field-help">
-        Deployment/wiring (database URL, bind host/port, worker engine keys,
-        ClamAV host) stays in environment variables. ICAP gateway tuning
-        (<code>MASP_ICAP_*</code>) is configured per the ICAP gateway doc; the
-        ICAP process reads its config at startup.
-      </p>
+      <div class="panel-body">
+        <p class="field-help">
+          Deployment and wiring (database URL, bind host/port, worker engine
+          keys, ClamAV host) stays in environment variables. ICAP gateway tuning
+          (<code>MASP_ICAP_*</code>) is configured per the ICAP gateway doc; the
+          ICAP process reads its config at startup.
+        </p>
+      </div>
     </section>
     """
     return page_shell("Scan Policy", "scan_policy", body, user)
