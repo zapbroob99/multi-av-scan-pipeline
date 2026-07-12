@@ -27,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
 from app.services.benchmarking import percentile, safe_average
 
 EICAR = rb"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+MAX_RESPONSE_HEAD_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,43 @@ def build_reqmod(host: str, port: int, service: str, filename: str, body: bytes)
     return head + http_hdr + chunked
 
 
+def read_icap_response_head(sock: socket.socket) -> bytes:
+    """Read through the ICAP header terminator, without waiting for keep-alive EOF.
+
+    The benchmark only needs the ICAP status line to classify a verdict. The
+    gateway deliberately keeps connections alive, so waiting for EOF or a
+    follow-up socket timeout adds idle time to both measured latency and the
+    client's occupied concurrency slot.
+    """
+    response = bytearray()
+    while b"\r\n\r\n" not in response:
+        try:
+            chunk = sock.recv(4096)
+        except socket.timeout as exc:
+            if response:
+                raise OSError("ICAP response headers timed out before completion") from exc
+            raise
+        if not chunk:
+            break
+        response.extend(chunk)
+        if len(response) > MAX_RESPONSE_HEAD_BYTES:
+            raise OSError("ICAP response headers exceed 64 KiB")
+    return bytes(response)
+
+
+def classify_icap_response(response: bytes) -> tuple[str, str | None]:
+    if not response:
+        return "timeout", None
+    if b"\r\n\r\n" not in response:
+        return "error", "ICAP response ended before headers completed"
+    if response.startswith(b"ICAP/1.0 204"):
+        return "allow", None
+    if response.startswith(b"ICAP/1.0 200"):
+        return "block", None
+    status_line = response.split(b"\r\n", 1)[0].decode(errors="replace") or "<no response>"
+    return "error", status_line
+
+
 def send_reqmod(
     *,
     host: str,
@@ -90,33 +128,17 @@ def send_reqmod(
         with socket.create_connection((host, port), timeout=timeout) as sock:
             sock.sendall(message)
             sock.settimeout(timeout)
-            chunks: list[bytes] = []
-            while True:
-                try:
-                    data = sock.recv(4096)
-                except socket.timeout:
-                    # The gateway keeps the connection open (keep-alive) after
-                    # replying, so a timeout here just means "no more data is
-                    # coming" once we already have a response.
-                    break
-                if not data:
-                    break
-                chunks.append(data)
-                sock.settimeout(1.0)
-        response = b"".join(chunks)
+            response = read_icap_response_head(sock)
+    except socket.timeout:
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        return IcapBenchRun(request_index, "timeout", duration_ms)
     except OSError as exc:
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         return IcapBenchRun(request_index, "error", duration_ms, error=str(exc))
 
     duration_ms = int((time.perf_counter() - started_at) * 1000)
-    if not response:
-        return IcapBenchRun(request_index, "timeout", duration_ms)
-    if response.startswith(b"ICAP/1.0 204"):
-        return IcapBenchRun(request_index, "allow", duration_ms)
-    if response.startswith(b"ICAP/1.0 200"):
-        return IcapBenchRun(request_index, "block", duration_ms)
-    status_line = response.split(b"\r\n", 1)[0].decode(errors="replace") or "<no response>"
-    return IcapBenchRun(request_index, "error", duration_ms, error=status_line)
+    verdict, error = classify_icap_response(response)
+    return IcapBenchRun(request_index, verdict, duration_ms, error=error)
 
 
 def run_benchmark(

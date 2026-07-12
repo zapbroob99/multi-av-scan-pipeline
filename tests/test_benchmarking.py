@@ -1,10 +1,58 @@
 import unittest
 
 from app.services.benchmarking import BenchmarkRun, percentile, summarize_benchmark
+from tools.benchmark_icap import classify_icap_response, read_icap_response_head
 from tools.benchmark_scans import extract_engine_durations
 
 
+class FakeResponseSocket:
+    def __init__(self, chunks: list[bytes | BaseException]) -> None:
+        self.chunks = chunks
+        self.recv_calls = 0
+
+    def recv(self, _: int) -> bytes:
+        self.recv_calls += 1
+        next_chunk = self.chunks.pop(0) if self.chunks else b""
+        if isinstance(next_chunk, BaseException):
+            raise next_chunk
+        return next_chunk
+
+
 class BenchmarkingTests(unittest.TestCase):
+    def test_icap_response_reader_stops_at_204_header(self) -> None:
+        socket = FakeResponseSocket(
+            [
+                b"ICAP/1.0 204 No Content\r\nISTag: \\\"masp-v1\\\"\r\n",
+                b"\r\nignored-on-keep-alive",
+            ]
+        )
+
+        response = read_icap_response_head(socket)  # type: ignore[arg-type]
+
+        self.assertEqual(socket.recv_calls, 2)
+        self.assertEqual(classify_icap_response(response), ("allow", None))
+
+    def test_icap_response_reader_stops_at_200_header(self) -> None:
+        socket = FakeResponseSocket(
+            [
+                b"ICAP/1.0 200 OK\r\nEncapsulated: res-hdr=0, res-body=0\r\n\r\n",
+                b"HTTP/1.1 403 Forbidden\r\n",
+            ]
+        )
+
+        response = read_icap_response_head(socket)  # type: ignore[arg-type]
+
+        self.assertEqual(socket.recv_calls, 1)
+        self.assertEqual(classify_icap_response(response), ("block", None))
+
+    def test_icap_response_reader_rejects_partial_header_timeout(self) -> None:
+        socket = FakeResponseSocket(
+            [b"ICAP/1.0 204 No Content\r\n", TimeoutError()]
+        )
+
+        with self.assertRaisesRegex(OSError, "headers timed out before completion"):
+            read_icap_response_head(socket)  # type: ignore[arg-type]
+
     def test_percentile_returns_expected_rank(self) -> None:
         self.assertEqual(percentile([100, 200, 300, 400, 500], 0.50), 300)
         self.assertEqual(percentile([100, 200, 300, 400, 500], 0.95), 500)
