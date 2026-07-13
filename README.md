@@ -93,7 +93,18 @@ MASP_ENGINE_JOB_QUEUE_ENABLED=1
 MASP_ENGINE_JOB_LEASE_SECONDS=120
 MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED=0
 MASP_WORKER_TIMING_EVENTS_ENABLED=1
+MASP_DB_POOL_ENABLED=1
+MASP_DB_POOL_MIN=0
+MASP_DB_POOL_MAX=4
+MASP_DB_POOL_TIMEOUT_SECONDS=30
 ```
+
+PostgreSQL connections are reused through a per-process pool (`psycopg_pool`).
+`MASP_DB_POOL_MAX` applies per process, so keep
+`process count x MASP_DB_POOL_MAX` below the Postgres `max_connections` limit.
+Set `MASP_DB_POOL_ENABLED=0` to restore the previous one-connection-per-query
+behavior. Details and the measured effect are in
+`docs/architecture/WORKER_THROUGHPUT_OPTIMIZATION.md`.
 
 `MASP_RETENTION_DAYS=0` disables retention cleanup. Set it above `0` to enable
 manual old scan cleanup from the System page. Cleanup deletes both scan records
