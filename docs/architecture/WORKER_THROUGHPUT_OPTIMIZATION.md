@@ -882,3 +882,67 @@ poll on `202` or move to an async callback (a webhook does not exist yet — see
 the handoff notes). The absolute numbers above are dev-host specific; re-run
 the ramp on the real deployment (full engine set, Postgres) before quoting
 figures.
+
+## PostgreSQL Connection Pooling (2026-07-13)
+
+Every database helper used to open a fresh `psycopg.connect()` per call, so a
+single engine job paid TCP + auth + backend-spawn cost roughly 15 times
+(claim, mark-running, result insert, terminal mark, finalize, timing events,
+heartbeats). Under concurrent ICAP load this connection setup was the dominant
+orchestration cost. `app/database.py` now reuses connections through
+`psycopg_pool`.
+
+### Behavior
+
+- The pool is **per process** and **lazy**: it is never opened at import time,
+  it is created on the first Postgres `connect()` call, and it is rebuilt if
+  the PID changes (fork safety). Shutdown closes it via `atexit`.
+- `connect()` / `with connect()` semantics are unchanged: commit on clean
+  exit, rollback on exception, connection returned to the pool instead of
+  closed. The SQLite path is completely untouched.
+- The "Postgres not ready yet" startup tolerance is preserved: pool
+  acquisition is wrapped in the same
+  `MASP_DATABASE_CONNECT_ATTEMPTS` x `MASP_DATABASE_RETRY_DELAY_SECONDS`
+  retry loop as the old direct-connect path.
+- Each process logs `MASP DB pool enabled (min=N, max=M)` when its pool is
+  created. Absence of that line means the process is running direct-connect
+  (pool disabled, psycopg_pool missing, or SQLite).
+
+### Configuration
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `MASP_DB_POOL_ENABLED` | `1` | `0` restores the previous direct-connect behavior exactly (fallback/escape hatch) |
+| `MASP_DB_POOL_MIN` | `0` | Connections opened eagerly per pool; `0` = fully lazy |
+| `MASP_DB_POOL_MAX` | `4` | Maximum connections **per process** |
+| `MASP_DB_POOL_TIMEOUT_SECONDS` | `30` | Wait for a free pooled connection before failing (`PoolTimeout`, caught by the existing `DatabaseOperationalError` handling) |
+
+### Connection budget
+
+`MASP_DB_POOL_MAX` applies per process. Budget the deployment as:
+
+```
+(number of MASP processes) x MASP_DB_POOL_MAX  <  Postgres max_connections - reserve
+```
+
+A typical local split stack (app + icap + 2 Linux workers + 1 Windows Defender
+worker) is 5 processes x 4 = 20 potential connections against the Postgres
+default `max_connections = 100`. Raise `max_connections` or lower
+`MASP_DB_POOL_MAX` before adding many worker replicas.
+
+### Measured effect
+
+ICAP REQMOD benchmark, 5 MB sample, engine-key split Linux workers
+(clamav / static_metadata), YARA disabled, c=10, r=100, warm-up first:
+
+- Cleanest available comparison (Linux worker timing events OFF in both runs):
+  **2.37 -> 4.42 files/sec, ~1.86x**, p50 3.45s -> 2.23s.
+- Caveats recorded in the benchmark notes: the pooled runs' timing-ON/OFF
+  cells were not cleanly isolated (the Windows Defender worker kept timing ON
+  and ran unpooled code in both), so "pool + timing ON" vs "pool + timing OFF"
+  and any larger multiplier (for example 0.89 -> 4.42) must NOT be quoted as a
+  pure pooling effect. A clean re-run would be needed to make those claims;
+  the ~1.86x figure is the defensible one.
+- With pooling in place, batching/sampling worker timing events showed no
+  additional measurable win in these runs, so that optimization is parked
+  (hypothesis, not a verdict, for the reason above).
