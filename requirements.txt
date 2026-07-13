@@ -1,5 +1,5 @@
 fastapi
-psycopg[binary]
+psycopg[binary,pool]
 py7zr
 python-multipart
 uvicorn

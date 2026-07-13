@@ -1,6 +1,8 @@
 from pathlib import Path
+import atexit
 import os
 import sqlite3
+import threading
 import time
 from typing import Any, Iterable
 
@@ -10,6 +12,13 @@ try:
 except ImportError:  # pragma: no cover - exercised only when Postgres is configured.
     psycopg = None  # type: ignore[assignment]
     dict_row = None  # type: ignore[assignment]
+
+try:
+    from psycopg_pool import ConnectionPool
+    from psycopg_pool import PoolTimeout
+except ImportError:  # pragma: no cover - pool is optional; falls back to direct connect.
+    ConnectionPool = None  # type: ignore[assignment]
+    PoolTimeout = None  # type: ignore[assignment]
 
 from app.models import (
     EngineInstanceRecord,
@@ -35,21 +44,51 @@ DATABASE_CONNECT_ATTEMPTS = int(os.getenv("MASP_DATABASE_CONNECT_ATTEMPTS", "20"
 DATABASE_RETRY_DELAY_SECONDS = float(os.getenv("MASP_DATABASE_RETRY_DELAY_SECONDS", "1"))
 
 
+def _env_flag(name: str, default: str) -> bool:
+    return os.getenv(name, default).strip().lower() not in {"0", "false", "no", "off"}
+
+
+DB_POOL_ENABLED = _env_flag("MASP_DB_POOL_ENABLED", "1")
+DB_POOL_MIN = int(os.getenv("MASP_DB_POOL_MIN", "0"))
+DB_POOL_MAX = int(os.getenv("MASP_DB_POOL_MAX", "4"))
+DB_POOL_TIMEOUT_SECONDS = float(os.getenv("MASP_DB_POOL_TIMEOUT_SECONDS", "30"))
+
+
 if psycopg is None:
     DatabaseOperationalError = (sqlite3.Error,)
 else:
     DatabaseOperationalError = (sqlite3.Error, psycopg.Error)
 
+# psycopg_pool.PoolTimeout subclasses psycopg.OperationalError, so the tuple above
+# already catches it; include it defensively in case that ever changes upstream.
+if PoolTimeout is not None and psycopg is not None and not issubclass(PoolTimeout, psycopg.Error):
+    DatabaseOperationalError = DatabaseOperationalError + (PoolTimeout,)
+
+
+# Process-local connection pool. Created lazily on first Postgres connect (never at
+# import time) and rebuilt if the PID changes, so a forked child never shares a
+# parent's pool. Guarded by a lock because worker/app processes are multi-threaded.
+_pool_lock = threading.Lock()
+_pool: Any = None
+_pool_pid: int | None = None
+
 
 class PostgresConnection:
-    def __init__(self, connection: Any):
+    def __init__(self, connection: Any, pool_cm: Any = None):
         self.connection = connection
+        # When set, this is the pool's ``connection()`` context manager already
+        # entered in ``connect_postgres``; exiting it commits/rolls back and
+        # returns the connection to the pool instead of closing it.
+        self._pool_cm = pool_cm
 
     def __enter__(self) -> "PostgresConnection":
-        self.connection.__enter__()
+        if self._pool_cm is None:
+            self.connection.__enter__()
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> object:
+        if self._pool_cm is not None:
+            return self._pool_cm.__exit__(exc_type, exc, traceback)
         return self.connection.__exit__(exc_type, exc, traceback)
 
     def execute(self, query: str, params: Iterable[object] | None = None) -> Any:
@@ -62,6 +101,53 @@ class PostgresConnection:
 
 def using_postgres() -> bool:
     return bool(DATABASE_URL)
+
+
+def pool_available() -> bool:
+    return DB_POOL_ENABLED and ConnectionPool is not None and using_postgres()
+
+
+def get_pool() -> Any:
+    """Return this process's connection pool, creating it lazily and per-PID."""
+    global _pool, _pool_pid
+    pid = os.getpid()
+    if _pool is not None and _pool_pid == pid:
+        return _pool
+    with _pool_lock:
+        if _pool is not None and _pool_pid == pid:
+            return _pool
+        # A pool object inherited across fork belongs to the parent; drop the
+        # reference without closing it (the parent still owns those sockets).
+        _pool = ConnectionPool(
+            DATABASE_URL,
+            min_size=DB_POOL_MIN,
+            max_size=DB_POOL_MAX,
+            timeout=DB_POOL_TIMEOUT_SECONDS,
+            kwargs={"row_factory": dict_row},
+            name=f"masp-{pid}",
+            open=True,
+        )
+        _pool_pid = pid
+        print(
+            f"MASP DB pool enabled (min={DB_POOL_MIN}, max={DB_POOL_MAX})",
+            flush=True,
+        )
+        return _pool
+
+
+def close_pool() -> None:
+    global _pool, _pool_pid
+    with _pool_lock:
+        if _pool is not None and _pool_pid == os.getpid():
+            try:
+                _pool.close()
+            except Exception:  # pragma: no cover - best-effort shutdown.
+                pass
+        _pool = None
+        _pool_pid = None
+
+
+atexit.register(close_pool)
 
 
 def connect() -> Any:
@@ -77,12 +163,40 @@ def connect_postgres() -> PostgresConnection:
             "Install requirements.txt before using PostgreSQL."
         )
 
+    if pool_available():
+        return connect_postgres_pooled()
+
     last_error: Exception | None = None
     for attempt in range(max(1, DATABASE_CONNECT_ATTEMPTS)):
         try:
             connection = psycopg.connect(DATABASE_URL, row_factory=dict_row)
             return PostgresConnection(connection)
         except psycopg.OperationalError as exc:
+            last_error = exc
+            if attempt >= DATABASE_CONNECT_ATTEMPTS - 1:
+                raise
+            time.sleep(DATABASE_RETRY_DELAY_SECONDS)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("PostgreSQL connection could not be opened.")
+
+
+def connect_postgres_pooled() -> PostgresConnection:
+    # Acquisition is wrapped in the same retry loop as the direct path so a
+    # not-yet-ready Postgres (pool empty, backend still starting) is tolerated.
+    pool_errors: tuple[type[BaseException], ...] = (psycopg.OperationalError,)
+    if PoolTimeout is not None:
+        pool_errors = pool_errors + (PoolTimeout,)
+
+    last_error: Exception | None = None
+    for attempt in range(max(1, DATABASE_CONNECT_ATTEMPTS)):
+        pool = get_pool()
+        pool_cm = pool.connection()
+        try:
+            connection = pool_cm.__enter__()
+            return PostgresConnection(connection, pool_cm=pool_cm)
+        except pool_errors as exc:
             last_error = exc
             if attempt >= DATABASE_CONNECT_ATTEMPTS - 1:
                 raise
