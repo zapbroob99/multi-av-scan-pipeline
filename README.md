@@ -15,6 +15,7 @@ shows analyst-friendly scan results.
 - ClamAV integration via clamd TCP when configured
 - Local `clamscan` fallback when clamd is not configured
 - YARA integration via local CLI and rules in `rules/`
+- Research-stage ESET Server Security for Linux adapter via local `odscan`
 - Database-backed scan queue with separate worker processes
 - Bulk scan deletion with stored sample cleanup
 
@@ -201,6 +202,71 @@ The worker capability split is:
 
 - Docker/Linux worker: `static_metadata`, `clamav`, `yara`
 - Windows worker: `microsoft_defender`
+- Dedicated ESET Linux VM worker: `eset_server_security_linux_cli` (explicit
+  opt-in; research state)
 
 Each worker only writes results for engines it can run. A scan stays `running`
 until every enabled engine has a result.
+
+## ESET Server Security worker (research)
+
+The ESET adapter is implemented on the `eset-server-security-linux` branch but
+has not yet been validated against a real ESET installation. It remains in
+`research` state, is not part of the default worker engine keys, and is created
+disabled when added through the admin UI. Do not treat it as production-ready
+until the corporate Stage B validation is complete.
+
+ESET is not called through MASP's ICAP gateway or through ESET PROTECT. ESET
+Server Security for Linux and its local `odscan` executable run on a dedicated
+Linux VM. That VM contains only the MASP worker runtime; the web application,
+ICAP service, PostgreSQL, and primary sample storage remain on the main MASP
+deployment. ESET PROTECT manages the VM's license, updates, and policy, but is
+not a file-scanning endpoint.
+
+The file flow is:
+
+1. A client submits a file to MASP through REST or ICAP.
+2. MASP stores the file and creates engine jobs in PostgreSQL.
+3. The ESET VM worker claims only `eset_server_security_linux_cli` jobs.
+4. Path mapping resolves the DB-stored sample path to the VM's shared storage
+   mount.
+5. The worker invokes local `odscan` and writes the normalized result back to
+   PostgreSQL. File bytes are not uploaded to ESET PROTECT.
+
+The ESET worker environment file is `/etc/masp/eset-worker.env` and requires at
+least:
+
+```bash
+MASP_DATABASE_URL='postgresql://masp:REPLACE_ME@masp-db:5432/masp'
+MASP_WORKER_ENGINE_KEYS=eset_server_security_linux_cli
+MASP_ODSCAN_PATH=/opt/eset/efs/bin/odscan
+MASP_DB_POOL_ENABLED=1
+MASP_SAMPLE_PATH_MAPPINGS_JSON='{"/app/storage/samples":"/mnt/masp-storage/samples"}'
+```
+
+The VM must be able to reach the shared PostgreSQL database and read the same
+sample files as the main deployment. Provision the worker after installing and
+licensing ESET Server Security for Linux:
+
+```bash
+sudo ./install-masp-eset-worker.sh --dry-run
+sudo ./install-masp-eset-worker.sh
+sudoedit /etc/masp/eset-worker.env
+sudo ./install-masp-eset-worker.sh
+```
+
+Run `tools/eset_discovery.py` before enabling the engine to confirm the real
+`odscan` path, command-line flags, exit codes, output format, and scan duration.
+Controlled clean, EICAR, unscannable, and timeout fixtures must be collected in
+the corporate environment before the adapter can move from `research` to `lab`.
+
+A read-only storage mount is sufficient for discovery and simple-file
+validation. Production lazy archive extraction may run on whichever worker
+finalizes the detected archive and can require writes to storage shared by all
+workers. Before production, use shared writable storage for that path or add an
+explicit centralized archive finalizer; this architecture decision is still
+open.
+
+See [docs/integrations/ESET_SERVER_SECURITY.md](docs/integrations/ESET_SERVER_SECURITY.md)
+for the complete ESET PROTECT policy model, Stage B procedure, security gates,
+and release packaging steps.
