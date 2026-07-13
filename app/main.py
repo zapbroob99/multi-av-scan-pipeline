@@ -2237,9 +2237,9 @@ def render_engine_card(
         )
 
     fields = [
-        ("Adapter", "built-in"),
-        ("Category", "metadata"),
-        ("Detection", "No"),
+        ("Adapter", definition.integration_method or "built-in"),
+        ("Category", definition.category),
+        ("Detection", "Yes" if definition.detection else "No"),
         ("Configured via", "engine registry"),
     ]
     fields = append_capability_fields(fields, instance.adapter_key)

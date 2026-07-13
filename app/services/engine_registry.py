@@ -14,6 +14,11 @@ from app.database import (
     update_engine_instance,
 )
 from app.engines.clamav import check_clamav_health, get_clamav_config, run_clamav_engine
+from app.engines.eset_server_security_linux import (
+    check_eset_health,
+    get_eset_config,
+    run_eset_server_security_linux_engine,
+)
 from app.engines.microsoft_defender import (
     check_microsoft_defender_health,
     get_microsoft_defender_config,
@@ -57,6 +62,10 @@ class EngineAdapterDefinition:
     supports_rules: bool = False
     docs_path: str = ""
     config_fields: tuple[EngineConfigField, ...] = ()
+    # Whether adding this adapter via the admin UI creates an already-enabled
+    # engine instance. Lab/research adapters set this False so an operator must
+    # verify config + worker + health before the engine joins scan routing.
+    enabled_on_add: bool = True
 
 
 @dataclass(frozen=True)
@@ -277,6 +286,44 @@ REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
         health_check_function=check_microsoft_defender_health,
         scan_function=run_microsoft_defender_engine,
     ),
+    "eset_server_security_linux_cli": RegisteredEngineAdapter(
+        definition=EngineAdapterDefinition(
+            key="eset_server_security_linux_cli",
+            label="ESET Server Security",
+            short_label="ES",
+            category="detection",
+            description=(
+                "ESET Server Security for Linux on-demand CLI (odscan). "
+                "Research state: not validated against a real ESET install."
+            ),
+            vendor="ESET",
+            product="ESET Server Security for Linux",
+            integration_method="local CLI (odscan)",
+            support_state="research",
+            detection=True,
+            # Stage A: configurable via DB setting / env, not the admin UI form.
+            # A dedicated config form is deferred to Stage B once a real fixture
+            # confirms which knobs actually matter. executable_path defaults to
+            # "auto" (standard EFS install path) and can be overridden with the
+            # `eset_server_security_linux_cli.executable_path` setting.
+            configurable=False,
+            docs_path="docs/integrations/ESET_SERVER_SECURITY.md",
+            enabled_on_add=False,
+        ),
+        capabilities=EngineCapabilityProfile(
+            input_modes=("file", "path"),
+            deployment="worker",
+            supported_platforms=("linux",),
+            execution_model="sync",
+            supports_file_upload=True,
+            supports_hash_lookup=False,
+            supports_archives=True,
+            requires_network=False,
+        ),
+        runtime_config_factory=get_eset_config,
+        health_check_function=check_eset_health,
+        scan_function=run_eset_server_security_linux_engine,
+    ),
 }
 
 ADAPTERS: dict[str, EngineAdapterDefinition] = {
@@ -400,7 +447,7 @@ def add_engine(adapter_key: str) -> None:
     create_engine_instance(
         adapter_key=definition.key,
         display_name=definition.label,
-        enabled=True,
+        enabled=definition.enabled_on_add,
         config_json="{}",
     )
 
