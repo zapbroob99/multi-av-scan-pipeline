@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.models import ACTIVE_SCAN_STATUSES
+
 
 @dataclass(frozen=True)
 class ScanDecision:
@@ -23,7 +25,7 @@ def decide_scan_action(
     detection_engines: int,
     unavailable_engines: list[str],
 ) -> ScanDecision:
-    if scan_status in {"queued", "running"}:
+    if scan_status in ACTIVE_SCAN_STATUSES:
         return ScanDecision(
             action="wait",
             label="Wait",

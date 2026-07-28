@@ -3,10 +3,20 @@ __pycache__/
 *.py[cod]
 node_modules/
 .env
+# Real env files (secrets); the *.example templates stay tracked.
+.env.*
+!.env.*.example
 
 data/
 storage/samples/
+storage/staging/
 benchmark-results/
 benchmark-samples/
+backups/
+dist/
 
+# Internal / local-only — keep out of future commits
+.agents/
+.claude/
+agent/
 agent.md

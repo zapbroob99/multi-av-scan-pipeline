@@ -39,7 +39,6 @@ class ApiContractTests(unittest.TestCase):
                 make_request(),
                 make_scan("running"),
                 engine_results=[make_result("ClamAV", detected=False)],
-                worker_events=[make_worker_event("engine_run", "ClamAV", 22)],
             )
 
         self.assertFalse(payload["completed"])
@@ -55,8 +54,10 @@ class ApiContractTests(unittest.TestCase):
         self.assertIsNone(payload["scan"]["timing"]["processing_duration_ms"])
         self.assertEqual(payload["engine_results"][0]["engine_name"], "ClamAV")
         self.assertEqual(payload["engine_results"][0]["duration_ms"], 15)
-        self.assertEqual(payload["worker_events"][0]["event_name"], "engine_run")
-        self.assertEqual(payload["worker_events"][0]["duration_ms"], 22)
+        # Public projection: orchestration telemetry and internal fields absent.
+        self.assertNotIn("worker_events", payload)
+        self.assertNotIn("sample_id", payload["scan"])
+        self.assertNotIn("ui", payload["links"])
 
     def test_result_payload_marks_completed_scans_as_ready(self) -> None:
         with patch("app.main.enabled_engines", return_value=[object()]):
@@ -89,7 +90,9 @@ class ApiContractTests(unittest.TestCase):
             )
 
         self.assertEqual(status_payload["batch_links"]["status"], "http://localhost:8000/api/v1/batches/44")
-        self.assertEqual(result_payload["batch_links"]["ui"], "http://localhost:8000/api-ledger/batches/44")
+        self.assertEqual(result_payload["batch_links"]["result"], "http://localhost:8000/api/v1/batches/44/result")
+        # Operator-console URL is not part of the public batch links.
+        self.assertNotIn("ui", result_payload["batch_links"])
 
     def test_batch_status_payload_includes_scan_links(self) -> None:
         payload = build_scan_batch_status_payload(

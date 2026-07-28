@@ -8,15 +8,9 @@ to import the web app.
 from __future__ import annotations
 
 import asyncio
-import json
+from pathlib import Path
 
-from app.database import (
-    create_sample,
-    create_scan_batch,
-    create_scan_engine_jobs,
-    create_scan_job,
-    get_scan,
-)
+from app.database import create_scan_intake, get_scan
 from app.models import ScanRecord, StoredSample
 from app.services.archive_extractor import detect_archive_format
 from app.services.engine_registry import enabled_engines
@@ -26,8 +20,26 @@ API_TERMINAL_SCAN_STATUSES = {"completed", "failed"}
 DEFAULT_ARCHIVE_MODE = "lazy_extract_on_detection"
 
 
+class NoEligibleEnginesError(RuntimeError):
+    """Intake attempted with no enabled scan engines.
+
+    Creating such a scan would leave it with zero engine jobs and no way ever to
+    reach a terminal state, so intake is rejected up front instead.
+    """
+
+
 def scan_is_terminal(scan: ScanRecord) -> bool:
     return scan.status in API_TERMINAL_SCAN_STATUSES
+
+
+def _discard_stored_sample_file(stored_sample: StoredSample) -> None:
+    # The file was written for THIS intake only: a unique uuid-named file with no
+    # deduplication, so no other scan references it. Safe to remove when the DB
+    # transaction that would own it fails. (Revisit if content dedup is added.)
+    try:
+        Path(stored_sample.storage_path).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def enqueue_scan_from_stored_sample(
@@ -41,42 +53,35 @@ def enqueue_scan_from_stored_sample(
 ) -> ScanRecord:
     """Create a scan job (and archive batch/container when applicable).
 
-    ``archive_mode`` must already be normalized by the caller; this service
-    does not perform web-layer validation.
+    Sample, optional batch, scan job, and engine jobs are created in one
+    transaction, so a failure leaves no orphan rows or engine-jobless scan.
+    Rejects intake when no engine is enabled. ``archive_mode`` must already be
+    normalized by the caller.
     """
-    sample_id = create_sample(stored_sample)
-    batch_id: int | None = None
-    relative_path: str | None = None
-    scan_role = "standalone"
-    archive_format = detect_archive_format(stored_sample.storage_path)
-    if archive_format is not None:
-        batch_id = create_scan_batch(
+    try:
+        engines = enabled_engines()
+        if not engines:
+            raise NoEligibleEnginesError("No scan engines are enabled; intake rejected.")
+        archive_format = detect_archive_format(stored_sample.storage_path)
+        scan_id = create_scan_intake(
+            sample=stored_sample,
+            engines=engines,
+            case_name=case_name.strip() or "Unassigned",
+            priority=priority,
+            note=note.strip(),
             source=source,
-            original_filename=stored_sample.original_filename,
             archive_mode=archive_mode,
-            total_items=1,
-            metadata_json=json.dumps(
-                {
-                    "container_sha256": stored_sample.sha256,
-                    "container_size_bytes": stored_sample.size_bytes,
-                    "container_archive_format": archive_format,
-                }
-            ),
+            archive_format=archive_format,
         )
-        relative_path = stored_sample.original_filename
-        scan_role = "container"
+    except Exception:
+        # Any failure BEFORE the intake transaction commits (zero engines,
+        # archive detection error, or a DB error) leaves the just-written sample
+        # file orphaned — no DB row references it — so remove it.
+        _discard_stored_sample_file(stored_sample)
+        raise
 
-    scan_id = create_scan_job(
-        sample_id=sample_id,
-        case_name=case_name.strip() or "Unassigned",
-        priority=priority,
-        note=note.strip(),
-        source=source,
-        batch_id=batch_id,
-        relative_path=relative_path,
-        scan_role=scan_role,
-    )
-    create_scan_engine_jobs(scan_id, enabled_engines())
+    # The sample row is committed and now references the file, so a failure from
+    # here on must NOT delete it.
     scan = get_scan(scan_id)
     if scan is None:
         raise RuntimeError("Scan could not be loaded after creation.")

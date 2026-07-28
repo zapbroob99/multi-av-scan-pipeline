@@ -1,6 +1,8 @@
 import hashlib
 import os
+import shutil
 import tarfile
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
@@ -12,6 +14,92 @@ import py7zr.exceptions
 
 from app.models import StoredSample
 from app.services.ingest import SAMPLES_DIR, sanitize_filename
+
+
+# Archive members are extracted under a per-run staging directory, not directly
+# into the samples dir. Each extracted file is promoted to its final,
+# deterministic samples path *before* its child scan row is committed, so the
+# child is never visible in the DB pointing at a missing file. The cost is that a
+# finalizer fenced out (or crashed) between promotion and commit can leave a
+# promoted-but-unreferenced ``child-*`` file; orphan cleanup removes those once
+# the parent scan is terminal. A crash mid-extraction leaves isolated staging
+# files (cleaned by TTL) instead of half-written files in the samples dir.
+STAGING_DIR = SAMPLES_DIR.parent / "staging"
+DEFAULT_STAGING_MAX_AGE_SECONDS = 6 * 60 * 60
+
+
+def new_staging_dir() -> Path:
+    staging = STAGING_DIR / uuid.uuid4().hex
+    staging.mkdir(parents=True, exist_ok=True)
+    return staging
+
+
+def remove_staging_dir(staging: Path) -> None:
+    try:
+        shutil.rmtree(staging, ignore_errors=True)
+    except OSError:
+        pass
+
+
+def deterministic_child_stored_filename(
+    parent_scan_id: int, member_ordinal: int, sha256: str, original_filename: str
+) -> str:
+    """Stable samples filename for an archive child, identical across retries.
+
+    Keyed by parent + ordinal (unique within the parent) plus the content hash,
+    so a re-extraction produces the SAME final path — a child whose file
+    promotion was interrupted is restored to the path its DB row already points
+    at, instead of a fresh random path the DB never learns about.
+    """
+    safe = sanitize_filename(original_filename)
+    digest = (sha256 or "0")[:32]
+    return f"child-{parent_scan_id}-{member_ordinal}-{digest}-{safe}"
+
+
+def parse_child_parent_scan_id(stored_filename: str) -> int | None:
+    """Recover the parent scan id from a deterministic ``child-*`` filename.
+
+    Inverse of :func:`deterministic_child_stored_filename` for the parent-id
+    field only. Returns ``None`` for anything that is not a well-formed
+    ``child-<parent>-<ordinal>-...`` name so orphan cleanup can conservatively
+    skip files it does not recognize. Only the leading ``child-`` prefix and a
+    numeric parent segment are trusted; the sanitized suffix is never parsed.
+    """
+    if not stored_filename.startswith("child-"):
+        return None
+    rest = stored_filename[len("child-"):]
+    parent, sep, _tail = rest.partition("-")
+    if not sep or not parent.isdigit():
+        return None
+    return int(parent)
+
+
+def promote_staged_file(staged_path: Path, final_path: Path) -> None:
+    """Atomically place an extracted file at its final samples path.
+
+    ``os.replace`` is an atomic rename within the same filesystem (staging and
+    samples share the storage dir), so a concurrent reader never sees a partial
+    file. Idempotent: a retry re-extracts and re-promotes to the same
+    deterministic path, overwriting any leftover from an interrupted run.
+    """
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(str(staged_path), str(final_path))
+
+
+def cleanup_stale_staging_dirs(max_age_seconds: int = DEFAULT_STAGING_MAX_AGE_SECONDS) -> int:
+    """Remove staging directories older than the TTL (crash orphans). Returns count."""
+    if not STAGING_DIR.is_dir():
+        return 0
+    cutoff = time.time() - max(1, max_age_seconds)
+    removed = 0
+    for entry in STAGING_DIR.iterdir():
+        try:
+            if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 ARCHIVE_FORMAT_ZIP = "zip"

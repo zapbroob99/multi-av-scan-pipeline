@@ -21,6 +21,8 @@ class ArchiveEnqueueTests(unittest.TestCase):
         database.DB_PATH = Path(self.temp_dir.name) / "test.db"
         database.DATABASE_URL = ""
         database.init_db()
+        database.create_engine_instance("static_metadata", "Static Metadata")
+        self.engines = database.list_engine_instances()
 
     def tearDown(self) -> None:
         database.DB_PATH = self.original_db_path
@@ -42,7 +44,7 @@ class ArchiveEnqueueTests(unittest.TestCase):
         with patch("app.main.store_upload", new=AsyncMock(return_value=stored_sample)), patch(
             "app.services.scan_intake.detect_archive_format",
             return_value="zip",
-        ), patch("app.services.scan_intake.enabled_engines", return_value=[]):
+        ), patch("app.services.scan_intake.enabled_engines", return_value=self.engines):
             scan = asyncio.run(
                 enqueue_scan_from_upload(
                     FakeUpload("bundle.zip"),
@@ -85,7 +87,7 @@ class ArchiveEnqueueTests(unittest.TestCase):
         with patch("app.main.store_upload", new=AsyncMock(return_value=stored_sample)), patch(
             "app.services.scan_intake.detect_archive_format",
             return_value=None,
-        ), patch("app.services.scan_intake.enabled_engines", return_value=[]):
+        ), patch("app.services.scan_intake.enabled_engines", return_value=self.engines):
             scan = asyncio.run(
                 enqueue_scan_from_upload(
                     FakeUpload("sample.bin"),

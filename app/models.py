@@ -1,6 +1,24 @@
 from dataclasses import dataclass
 
 
+# A scan is "active" (non-terminal, still in progress) in exactly these states.
+# 'finalizing' is the brief owned window between all engine jobs finishing and
+# the scan being marked completed. Treated identically to running everywhere a
+# scan is considered in progress (polling, decisions=wait, active filters, queue
+# metrics, retry guards, UI refresh).
+ACTIVE_SCAN_STATUSES = frozenset({"queued", "running", "finalizing"})
+
+# Terminal (settled) scan states. Terminal is NOT forever: retry_scan_job moves
+# a completed/failed scan back to queued, after which it can reach 'finalizing'
+# again and re-promote archive-child files to the same deterministic paths. A
+# terminal status read in isolation therefore never proves that no child file is
+# about to appear; orphan-sample cleanup re-confirms terminal-and-unreferenced
+# under the parent's row lock (database.remove_orphan_child_sample) at the
+# moment of deletion, which is what actually excludes a concurrent retry or
+# finalizer.
+TERMINAL_SCAN_STATUSES = frozenset({"completed", "failed"})
+
+
 @dataclass(frozen=True)
 class StoredSample:
     original_filename: str

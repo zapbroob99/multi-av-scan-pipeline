@@ -3,15 +3,35 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 import time
 from datetime import datetime
+from typing import Iterator
 
-from app.database import DatabaseOperationalError, get_setting, set_setting
+from app.database import (
+    DatabaseOperationalError,
+    delete_settings_if_values_match,
+    list_settings_by_prefix,
+    set_setting,
+)
 from app.services.worker_capabilities import worker_engine_keys
 
 
+# Legacy single-worker key (one process only) and legacy bulk key (all workers
+# packed into one JSON row). Both are still READ for backward compatibility but
+# are never written by the current code — the shared bulk row was the source of
+# the read-modify-write lost-update race. Each worker now owns its own row under
+# ``WORKER_HEARTBEAT_ROW_PREFIX`` and writes it with a single atomic UPSERT.
 WORKER_HEARTBEAT_KEY = "worker.scan_worker.heartbeat"
 WORKER_HEARTBEATS_KEY = "worker.scan_worker.heartbeats"
+WORKER_HEARTBEAT_ROW_PREFIX = "worker.scan_worker.heartbeats."
+# Prefix that matches all three shapes at once (single, bulk, and per-worker
+# rows all start with it), so one prefix query loads every heartbeat record.
+WORKER_HEARTBEAT_QUERY_PREFIX = "worker.scan_worker.heartbeat"
+
+
+_HEARTBEAT_CLEANUP_LOCK = threading.Lock()
+_last_heartbeat_cleanup_at = 0.0
 
 
 def worker_poll_seconds() -> float:
@@ -41,26 +61,31 @@ def worker_retention_seconds() -> int:
     return max(300, worker_stale_seconds() * 10)
 
 
-def record_worker_heartbeat(state: str, active_scan_id: int | None = None) -> None:
+def record_worker_heartbeat(state: str, active_scan_id: int | None = None) -> bool:
     hostname = socket.gethostname()
     pid = os.getpid()
+    timestamp = int(time.time())
     payload = {
         "state": state,
         "hostname": hostname,
         "pid": pid,
-        "timestamp": int(time.time()),
+        "timestamp": timestamp,
         "active_scan_id": active_scan_id,
         "poll_seconds": worker_poll_seconds(),
         "engine_keys": sorted(worker_engine_keys()),
     }
+    row_key = f"{WORKER_HEARTBEAT_ROW_PREFIX}{worker_identity(payload)}"
     try:
-        set_setting(WORKER_HEARTBEAT_KEY, json.dumps(payload, sort_keys=True))
-        set_setting(
-            WORKER_HEARTBEATS_KEY,
-            json.dumps(update_worker_heartbeats(payload), sort_keys=True),
-        )
+        # One independent atomic UPSERT of this worker's own row. No shared
+        # read-modify-write, so concurrent workers can never clobber each other.
+        set_setting(row_key, json.dumps(payload, sort_keys=True))
     except DatabaseOperationalError as exc:
         print(f"Worker heartbeat could not be recorded: {exc}", flush=True)
+        return False
+    # Cleanup is best-effort and throttled; a failure here must never break the
+    # heartbeat write above.
+    _maybe_cleanup_stale_heartbeats(timestamp)
+    return True
 
 
 def get_worker_status(now: int | None = None) -> dict[str, object]:
@@ -112,103 +137,71 @@ def get_worker_status(now: int | None = None) -> dict[str, object]:
             "total_worker_records": len(workers),
         }
 
-    return get_legacy_worker_status(current_time)
+    return offline_worker_status()
 
 
-def get_legacy_worker_status(current_time: int) -> dict[str, object]:
-    try:
-        raw = get_setting(WORKER_HEARTBEAT_KEY, "")
-    except DatabaseOperationalError:
-        raw = ""
-    payload: dict[str, object] = {}
-
-    if raw:
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            parsed = {}
-        if isinstance(parsed, dict):
-            payload = parsed
-
-    timestamp = int(payload.get("timestamp", 0) or 0)
-    age_seconds = max(0, current_time - timestamp) if timestamp else None
-    stale = timestamp == 0 or (age_seconds is not None and age_seconds > worker_stale_seconds())
-    online = not stale
-
-    last_seen_at = None
-    if timestamp:
-        last_seen_at = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-
-    state = str(payload.get("state", "offline"))
-    if not online:
-        state = "offline"
-
+def offline_worker_status() -> dict[str, object]:
+    """Status payload when no heartbeat record of any shape is present."""
     return {
-        "online": online,
-        "state": state,
-        "hostname": str(payload.get("hostname", "-")),
-        "pid": int(payload.get("pid", 0) or 0),
-        "active_scan_id": payload.get("active_scan_id"),
-        "engine_keys": normalize_engine_keys(payload.get("engine_keys")),
-        "age_seconds": age_seconds,
-        "last_seen_at": last_seen_at,
+        "online": False,
+        "state": "offline",
+        "hostname": "-",
+        "pid": 0,
+        "active_scan_id": None,
+        "engine_keys": [],
+        "age_seconds": None,
+        "last_seen_at": None,
         "stale_after_seconds": worker_stale_seconds(),
         "workers": [],
-        "online_count": 1 if online else 0,
-        "total_worker_records": 1 if payload else 0,
+        "online_count": 0,
+        "total_worker_records": 0,
     }
 
 
-def update_worker_heartbeats(payload: dict[str, object]) -> dict[str, object]:
-    try:
-        raw = get_setting(WORKER_HEARTBEATS_KEY, "{}")
-    except DatabaseOperationalError:
-        raw = "{}"
-    try:
-        parsed = json.loads(raw or "{}")
-    except json.JSONDecodeError:
-        parsed = {}
-    heartbeats = parsed if isinstance(parsed, dict) else {}
-    heartbeats = prune_worker_heartbeats(
-        heartbeats,
-        int(payload.get("timestamp", 0) or 0),
-    )
-    worker_id = worker_identity(payload)
-    heartbeats[worker_id] = payload
-    return heartbeats
-
-
 def get_worker_heartbeats(current_time: int) -> list[dict[str, object]]:
+    """Merge per-worker rows with the legacy single/bulk rows.
+
+    During a rolling upgrade the store can hold new per-worker rows AND the old
+    shared rows at the same time. Records are merged by worker identity; the
+    highest timestamp wins, and a per-worker row wins a timestamp tie (it is the
+    authoritative post-upgrade source). Records older than the retention window
+    are dropped from the view.
+    """
     try:
-        raw = get_setting(WORKER_HEARTBEATS_KEY, "{}")
+        settings = list_settings_by_prefix(WORKER_HEARTBEAT_QUERY_PREFIX)
     except DatabaseOperationalError:
-        raw = "{}"
-    try:
-        parsed = json.loads(raw or "{}")
-    except json.JSONDecodeError:
-        parsed = {}
-    if not isinstance(parsed, dict):
-        return []
-    parsed = prune_worker_heartbeats(parsed, current_time)
+        settings = {}
+
+    retention_seconds = worker_retention_seconds()
+    best: dict[str, tuple[int, bool, dict[str, object]]] = {}
+    for payload, from_per_worker in _iter_heartbeat_payloads(settings):
+        timestamp = int(payload.get("timestamp", 0) or 0)
+        if timestamp <= 0:
+            continue
+        if current_time - timestamp > retention_seconds:
+            continue
+        identity = worker_identity(payload)
+        current = best.get(identity)
+        if current is None:
+            best[identity] = (timestamp, from_per_worker, payload)
+            continue
+        current_ts, current_from_per_worker, _ = current
+        if timestamp > current_ts or (
+            timestamp == current_ts and from_per_worker and not current_from_per_worker
+        ):
+            best[identity] = (timestamp, from_per_worker, payload)
 
     workers = []
-    for worker_id, value in parsed.items():
-        if not isinstance(value, dict):
-            continue
-        worker = dict(value)
-        timestamp = int(worker.get("timestamp", 0) or 0)
-        age_seconds = max(0, current_time - timestamp) if timestamp else None
-        stale = timestamp == 0 or (
-            age_seconds is not None and age_seconds > worker_stale_seconds()
-        )
-        worker["worker_id"] = str(worker_id)
+    for identity, (timestamp, _from_per_worker, payload) in best.items():
+        worker = dict(payload)
+        age_seconds = max(0, current_time - timestamp)
+        stale = age_seconds > worker_stale_seconds()
+        worker["worker_id"] = identity
         worker["online"] = not stale
         worker["age_seconds"] = age_seconds
         worker["engine_keys"] = normalize_engine_keys(worker.get("engine_keys"))
-        worker["last_seen_at"] = (
-            datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-            if timestamp
-            else None
+        worker["last_seen_at"] = datetime.fromtimestamp(timestamp).strftime(
+            "%Y-%m-%d %H:%M:%S"
         )
         if not bool(worker["online"]):
             worker["state"] = "offline"
@@ -220,23 +213,85 @@ def get_worker_heartbeats(current_time: int) -> list[dict[str, object]]:
     )
 
 
-def prune_worker_heartbeats(
-    heartbeats: dict[str, object],
-    current_time: int,
-) -> dict[str, object]:
+def _iter_heartbeat_payloads(
+    settings: dict[str, str],
+) -> Iterator[tuple[dict[str, object], bool]]:
+    """Yield ``(payload, from_per_worker)`` for every heartbeat record shape."""
+    for key, raw in settings.items():
+        try:
+            parsed = json.loads(raw or "")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if key.startswith(WORKER_HEARTBEAT_ROW_PREFIX):
+            if isinstance(parsed, dict):
+                yield parsed, True
+        elif key == WORKER_HEARTBEATS_KEY:
+            if isinstance(parsed, dict):
+                for value in parsed.values():
+                    if isinstance(value, dict):
+                        yield value, False
+        elif key == WORKER_HEARTBEAT_KEY:
+            if isinstance(parsed, dict):
+                yield parsed, False
+
+
+def _maybe_cleanup_stale_heartbeats(now: int) -> None:
+    global _last_heartbeat_cleanup_at
+    interval = max(worker_stale_seconds(), 1)
+    with _HEARTBEAT_CLEANUP_LOCK:
+        if now - _last_heartbeat_cleanup_at < interval:
+            return
+        _last_heartbeat_cleanup_at = now
+    try:
+        cleanup_stale_worker_heartbeats(now)
+    except Exception as exc:  # cleanup must never break the heartbeat write
+        print(f"Worker heartbeat cleanup failed: {exc}", flush=True)
+
+
+def cleanup_stale_worker_heartbeats(now: int | None = None) -> int:
+    """Bulk-delete heartbeat rows past the retention window.
+
+    Covers per-worker rows AND the two legacy exact keys. A legacy key kept
+    fresh by an active old worker (its embedded timestamp is recent) survives;
+    it is removed only once nothing refreshes it. Returns the count deleted.
+    """
+    current_time = int(time.time()) if now is None else now
     retention_seconds = worker_retention_seconds()
-    pruned: dict[str, object] = {}
-    for worker_id, value in heartbeats.items():
-        if not isinstance(value, dict):
+    settings = list_settings_by_prefix(WORKER_HEARTBEAT_QUERY_PREFIX)
+    stale_settings: dict[str, str] = {}
+    for key, raw in settings.items():
+        if not _is_heartbeat_setting_key(key):
             continue
-        timestamp = int(value.get("timestamp", 0) or 0)
-        if timestamp <= 0:
-            continue
-        age_seconds = max(0, current_time - timestamp)
-        if age_seconds > retention_seconds:
-            continue
-        pruned[str(worker_id)] = value
-    return pruned
+        newest = _key_newest_timestamp(key, raw)
+        if newest <= 0 or current_time - newest > retention_seconds:
+            stale_settings[key] = raw
+    if not stale_settings:
+        return 0
+    return delete_settings_if_values_match(stale_settings)
+
+
+def _is_heartbeat_setting_key(key: str) -> bool:
+    return key in {WORKER_HEARTBEAT_KEY, WORKER_HEARTBEATS_KEY} or key.startswith(
+        WORKER_HEARTBEAT_ROW_PREFIX
+    )
+
+
+def _key_newest_timestamp(key: str, raw: str) -> int:
+    """Newest embedded timestamp for a heartbeat row (0 if unreadable)."""
+    try:
+        parsed = json.loads(raw or "")
+    except (json.JSONDecodeError, TypeError):
+        return 0
+    if key == WORKER_HEARTBEATS_KEY and isinstance(parsed, dict):
+        timestamps = [
+            int(value.get("timestamp", 0) or 0)
+            for value in parsed.values()
+            if isinstance(value, dict)
+        ]
+        return max(timestamps) if timestamps else 0
+    if isinstance(parsed, dict):
+        return int(parsed.get("timestamp", 0) or 0)
+    return 0
 
 
 def worker_is_running_scan_engine(

@@ -1,9 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app import database
-from app.models import StoredSample
+from app.models import EngineResultInput, StoredSample
 
 
 class ScanEngineJobTests(unittest.TestCase):
@@ -62,6 +63,11 @@ class ScanEngineJobTests(unittest.TestCase):
             )
         )
 
+        # The lease expires. claim no longer reclaims an expired job directly;
+        # recovery returns it to pending, then another worker can claim it.
+        self.assertEqual(
+            database.recover_running_scan_jobs(now=1031, max_attempts=5), 1
+        )
         reclaimed = database.claim_next_scan_engine_job(
             {"microsoft_defender"},
             "windows-2",
@@ -104,6 +110,40 @@ class ScanEngineJobTests(unittest.TestCase):
                 "windows-3",
                 lease_seconds=30,
                 now=1100,
+            )
+        )
+
+    def test_claim_does_not_reclaim_an_expired_job_without_recovery(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+        database.create_scan_engine_jobs(scan_id, database.list_engine_instances())
+        claimed = database.claim_next_scan_engine_job(
+            {"microsoft_defender"}, "w1", lease_seconds=30, now=1000
+        )
+        assert claimed is not None
+        # Lease long expired, but recovery has not run: the claim must NOT revive
+        # a possibly-still-live owner. Only recovery returns it to pending.
+        self.assertIsNone(
+            database.claim_next_scan_engine_job(
+                {"microsoft_defender"}, "w2", lease_seconds=30, now=9000
+            )
+        )
+
+    def test_claim_skips_a_pending_job_at_the_attempt_cap(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+        database.create_scan_engine_jobs(scan_id, database.list_engine_instances())
+        job = next(
+            j
+            for j in database.list_scan_engine_jobs(scan_id)
+            if j.engine_key == "microsoft_defender"
+        )
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE scan_engine_jobs SET attempt_count = 5 WHERE id = ?",
+                (job.id,),
+            )
+        self.assertIsNone(
+            database.claim_next_scan_engine_job(
+                {"microsoft_defender"}, "w1", lease_seconds=30, now=1000, max_attempts=5
             )
         )
 
@@ -306,6 +346,782 @@ def create_scan_with_two_engines(
         status=status,
         verdict="pending",
     )
+
+
+class CommitEngineJobResultIfOwnedTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DB_PATH = Path(self.temp_dir.name) / "test.db"
+        database.DATABASE_URL = ""
+        database.init_db()
+
+    def tearDown(self) -> None:
+        database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
+        self.temp_dir.cleanup()
+
+    def _claim(self, worker_id: str, now: int):
+        scan_id = create_scan_with_two_engines(status="running")
+        database.create_scan_engine_jobs(scan_id, database.list_engine_instances())
+        job = database.claim_next_scan_engine_job(
+            {"microsoft_defender"}, worker_id, lease_seconds=120, now=now
+        )
+        assert job is not None
+        return scan_id, job
+
+    def _result(self, name: str, status: str = "completed") -> EngineResultInput:
+        return EngineResultInput(
+            engine_name=name,
+            status=status,
+            detected=False,
+            severity="info",
+            confidence=0,
+            signature=None,
+            raw_output="",
+            duration_ms=1,
+        )
+
+    def test_owner_commits_result_and_terminal_atomically(self) -> None:
+        scan_id, job = self._claim("worker-A", now=1000)
+        self.assertTrue(
+            database.commit_engine_job_result_if_owned(
+                job_id=job.id,
+                worker_id="worker-A",
+                attempt_generation=job.attempt_count,
+                result=self._result(job.engine_name),
+                terminal_status="completed",
+            )
+        )
+        updated = database.get_scan_engine_job(job.id)
+        assert updated is not None
+        self.assertEqual(updated.status, "completed")
+        self.assertEqual(len(database.list_engine_results(scan_id)), 1)
+
+    def test_wrong_generation_or_worker_commits_nothing(self) -> None:
+        scan_id, job = self._claim("worker-A", now=1000)
+        # Wrong attempt generation.
+        self.assertFalse(
+            database.commit_engine_job_result_if_owned(
+                job_id=job.id,
+                worker_id="worker-A",
+                attempt_generation=job.attempt_count + 1,
+                result=self._result(job.engine_name),
+                terminal_status="completed",
+            )
+        )
+        # Wrong worker id at the right generation.
+        self.assertFalse(
+            database.commit_engine_job_result_if_owned(
+                job_id=job.id,
+                worker_id="worker-B",
+                attempt_generation=job.attempt_count,
+                result=self._result(job.engine_name),
+                terminal_status="completed",
+            )
+        )
+        updated = database.get_scan_engine_job(job.id)
+        assert updated is not None
+        self.assertEqual(updated.status, "claimed")
+        self.assertEqual(len(database.list_engine_results(scan_id)), 0)
+
+    def test_stale_worker_loses_to_new_owner_after_reclaim(self) -> None:
+        scan_id, job_a = self._claim("worker-A", now=1000)
+        # Lease expires; recovery resets to pending; worker-B claims (attempt++).
+        database.recover_running_scan_jobs(now=2000, max_attempts=5)
+        job_b = database.claim_next_scan_engine_job(
+            {"microsoft_defender"}, "worker-B", lease_seconds=120, now=2001
+        )
+        assert job_b is not None
+        self.assertEqual(job_b.id, job_a.id)
+        self.assertGreater(job_b.attempt_count, job_a.attempt_count)
+
+        # Stale worker-A commits at its old generation: nothing is written.
+        self.assertFalse(
+            database.commit_engine_job_result_if_owned(
+                job_id=job_a.id,
+                worker_id="worker-A",
+                attempt_generation=job_a.attempt_count,
+                result=self._result(job_a.engine_name, status="failed"),
+                terminal_status="failed",
+            )
+        )
+        # The new owner commits and wins.
+        self.assertTrue(
+            database.commit_engine_job_result_if_owned(
+                job_id=job_b.id,
+                worker_id="worker-B",
+                attempt_generation=job_b.attempt_count,
+                result=self._result(job_b.engine_name, status="completed"),
+                terminal_status="completed",
+            )
+        )
+        results = database.list_engine_results(scan_id)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].status, "completed")
+
+
+class FencedTerminalAndRenewalTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DB_PATH = Path(self.temp_dir.name) / "test.db"
+        database.DATABASE_URL = ""
+        database.init_db()
+
+    def tearDown(self) -> None:
+        database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
+        self.temp_dir.cleanup()
+
+    def _claim(self, worker: str = "worker-A", now: int = 1000):
+        scan_id = create_scan_with_two_engines(status="running")
+        database.create_scan_engine_jobs(scan_id, database.list_engine_instances())
+        job = database.claim_next_scan_engine_job(
+            {"microsoft_defender"}, worker, lease_seconds=120, now=now
+        )
+        assert job is not None
+        return scan_id, job
+
+    def test_terminal_if_owned_fences_on_generation(self) -> None:
+        _scan_id, job = self._claim()
+        # Wrong generation: no-op.
+        self.assertFalse(
+            database.mark_scan_engine_job_terminal_if_owned(
+                job.id, "worker-A", job.attempt_count + 1, "failed", last_error="x"
+            )
+        )
+        self.assertEqual(database.get_scan_engine_job(job.id).status, "claimed")
+        # Owner + generation: applies.
+        self.assertTrue(
+            database.mark_scan_engine_job_terminal_if_owned(
+                job.id, "worker-A", job.attempt_count, "failed", last_error="boom"
+            )
+        )
+        self.assertEqual(database.get_scan_engine_job(job.id).status, "failed")
+
+    def test_commit_rejects_cross_engine_result(self) -> None:
+        scan_id, job = self._claim()
+        with self.assertRaises(ValueError):
+            database.commit_engine_job_result_if_owned(
+                job_id=job.id,
+                worker_id="worker-A",
+                attempt_generation=job.attempt_count,
+                result=EngineResultInput(
+                    engine_name="Some Other Engine",
+                    status="completed",
+                    detected=False,
+                    severity="info",
+                    confidence=0,
+                    signature=None,
+                    raw_output="",
+                    duration_ms=1,
+                ),
+                terminal_status="completed",
+            )
+        # The guarded update rolled back with the raise: job is still claimed.
+        self.assertEqual(database.get_scan_engine_job(job.id).status, "claimed")
+        self.assertEqual(len(database.list_engine_results(scan_id)), 0)
+
+    def test_commit_conflict_raises_instead_of_attributing_stale_result(self) -> None:
+        scan_id, job = self._claim()
+        # A stale result already exists for this engine.
+        database.create_engine_result_if_missing(
+            scan_id,
+            EngineResultInput(
+                engine_name=job.engine_name,
+                status="completed",
+                detected=False,
+                severity="info",
+                confidence=0,
+                signature=None,
+                raw_output="stale",
+                duration_ms=1,
+            ),
+        )
+        with self.assertRaises(database.EngineResultConflictError):
+            database.commit_engine_job_result_if_owned(
+                job_id=job.id,
+                worker_id="worker-A",
+                attempt_generation=job.attempt_count,
+                result=EngineResultInput(
+                    engine_name=job.engine_name,
+                    status="failed",
+                    detected=False,
+                    severity="info",
+                    confidence=0,
+                    signature=None,
+                    raw_output="new",
+                    duration_ms=1,
+                ),
+                terminal_status="failed",
+            )
+        # Rolled back: job still claimed, only the one pre-existing result remains.
+        self.assertEqual(database.get_scan_engine_job(job.id).status, "claimed")
+        self.assertEqual(len(database.list_engine_results(scan_id)), 1)
+
+    def test_renew_lease_is_fenced_and_only_for_running_jobs(self) -> None:
+        _scan_id, job = self._claim()
+        # Claimed (not running) yet: renew targets running only -> no-op.
+        self.assertFalse(
+            database.renew_scan_engine_job_lease(job.id, "worker-A", job.attempt_count, 120, now=2000)
+        )
+        database.mark_scan_engine_job_running(
+            job.id, "worker-A", lease_seconds=30, now=2000, attempt_generation=job.attempt_count
+        )
+        # Wrong generation: no-op.
+        self.assertFalse(
+            database.renew_scan_engine_job_lease(job.id, "worker-A", job.attempt_count + 1, 120, now=2100)
+        )
+        # Owner + generation + running: extends the lease.
+        self.assertTrue(
+            database.renew_scan_engine_job_lease(job.id, "worker-A", job.attempt_count, 120, now=2100)
+        )
+        self.assertEqual(database.get_scan_engine_job(job.id).lease_expires_at, 2220)
+
+
+class RunEngineLeaseRenewalTests(unittest.TestCase):
+    def test_lease_is_renewed_while_a_long_engine_runs(self) -> None:
+        import time as _time
+        from app.models import EngineInstanceRecord, ScanEngineJobRecord, ScanRecord
+        from app.workers import scan_worker
+
+        engine = EngineInstanceRecord(
+            id=1,
+            adapter_key="clamav",
+            display_name="ClamAV",
+            enabled=True,
+            config_json="{}",
+            created_at="",
+            updated_at="",
+        )
+        scan = ScanRecord.__new__(ScanRecord)
+        job = ScanEngineJobRecord.__new__(ScanEngineJobRecord)
+        object.__setattr__(job, "id", 7)
+        object.__setattr__(job, "attempt_count", 1)
+
+        renewals: list[int] = []
+
+        def slow_run(_engine, _scan):
+            _time.sleep(0.16)  # spans several renewal intervals
+            return "RESULT"
+
+        with patch("app.workers.scan_worker.lease_renewal_interval", return_value=0.05), patch(
+            "app.workers.scan_worker.run_engine", side_effect=slow_run
+        ), patch(
+            "app.workers.scan_worker.renew_scan_engine_job_lease",
+            side_effect=lambda *a, **k: renewals.append(1) or True,
+        ):
+            result = scan_worker.run_engine_with_lease_renewal(engine, scan, job, lease_seconds=30)
+
+        self.assertEqual(result, "RESULT")
+        self.assertGreaterEqual(len(renewals), 1)  # renewed during the long run
+
+    def test_finalization_lease_is_renewed_during_long_work(self) -> None:
+        import time as _time
+
+        from app.workers import scan_worker
+
+        calls: list[int] = []
+        with patch(
+            "app.workers.scan_worker.lease_renewal_interval", return_value=0.05
+        ), patch(
+            "app.workers.scan_worker.renew_scan_finalization",
+            side_effect=lambda *a, **k: calls.append(1) or True,
+        ):
+            with scan_worker.finalization_lease_renewal(7, 1, 30):
+                _time.sleep(0.16)  # spans several renewal intervals
+        self.assertGreaterEqual(len(calls), 1)
+
+    def test_renewal_stops_when_ownership_is_lost(self) -> None:
+        import time as _time
+        from app.models import EngineInstanceRecord, ScanEngineJobRecord, ScanRecord
+        from app.workers import scan_worker
+
+        engine = EngineInstanceRecord(
+            id=1, adapter_key="clamav", display_name="ClamAV", enabled=True,
+            config_json="{}", created_at="", updated_at="",
+        )
+        scan = ScanRecord.__new__(ScanRecord)
+        job = ScanEngineJobRecord.__new__(ScanEngineJobRecord)
+        object.__setattr__(job, "id", 7)
+        object.__setattr__(job, "attempt_count", 1)
+
+        calls: list[int] = []
+
+        def slow_run(_engine, _scan):
+            _time.sleep(0.16)
+            return "RESULT"
+
+        # renew returns False -> ownership lost -> the loop must stop calling it.
+        with patch("app.workers.scan_worker.lease_renewal_interval", return_value=0.05), patch(
+            "app.workers.scan_worker.run_engine", side_effect=slow_run
+        ), patch(
+            "app.workers.scan_worker.renew_scan_engine_job_lease",
+            side_effect=lambda *a, **k: (calls.append(1), False)[1],
+        ):
+            scan_worker.run_engine_with_lease_renewal(engine, scan, job, lease_seconds=30)
+
+        self.assertLessEqual(len(calls), 2)  # stopped after the first False
+
+
+class TransitionScanToCompletedTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DB_PATH = Path(self.temp_dir.name) / "test.db"
+        database.DATABASE_URL = ""
+        database.init_db()
+
+    def tearDown(self) -> None:
+        database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
+        self.temp_dir.cleanup()
+
+    def test_transition_completes_once_and_is_idempotent(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+
+        self.assertTrue(database.transition_scan_to_completed(scan_id, "low", 10))
+        scan = database.get_scan(scan_id)
+        assert scan is not None
+        self.assertEqual(scan.status, "completed")
+        self.assertEqual(scan.verdict, "low")
+        self.assertEqual(scan.risk_score, 10)
+
+        # A second (concurrent) finalizer loses the transition and changes nothing.
+        self.assertFalse(database.transition_scan_to_completed(scan_id, "high", 99))
+        scan = database.get_scan(scan_id)
+        assert scan is not None
+        self.assertEqual(scan.verdict, "low")
+        self.assertEqual(scan.risk_score, 10)
+
+    def test_failed_scan_is_never_completed(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+        database.update_scan_status(scan_id, "failed", last_error="boom")
+        self.assertFalse(database.transition_scan_to_completed(scan_id, "low", 10))
+        scan = database.get_scan(scan_id)
+        assert scan is not None
+        self.assertEqual(scan.status, "failed")
+
+
+class ArchiveStagingTests(unittest.TestCase):
+    def test_promote_moves_file_and_cleanup_removes_only_stale_dirs(self) -> None:
+        import os as _os
+        import time as _time
+
+        from app.services import archive_extractor as ae
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+            with patch.object(ae, "STAGING_DIR", Path(d) / "staging"):
+                staging = ae.new_staging_dir()
+                staged_file = staging / "x.bin"
+                staged_file.write_bytes(b"hi")
+                final = Path(d) / "final.bin"
+                ae.promote_staged_file(staged_file, final)
+                self.assertTrue(final.is_file())
+                self.assertFalse(staged_file.exists())
+
+                stale = ae.new_staging_dir()
+                old = _time.time() - 10_000
+                _os.utime(stale, (old, old))
+                fresh = ae.new_staging_dir()
+
+                removed = ae.cleanup_stale_staging_dirs(max_age_seconds=3600)
+                self.assertGreaterEqual(removed, 1)
+                self.assertFalse(stale.exists())
+                self.assertTrue(fresh.exists())
+
+
+class ArchiveChildIntakeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DB_PATH = Path(self.temp_dir.name) / "test.db"
+        database.DATABASE_URL = ""
+        database.init_db()
+
+    def tearDown(self) -> None:
+        database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
+        self.temp_dir.cleanup()
+
+    def _sample(self, sha: str):
+        return StoredSample("m.bin", "m.bin", "/tmp/m.bin", "application/octet-stream", 1, "0" * 32, "0" * 40, sha)
+
+    def _child(self, parent_id: int, batch_id: int, relative_path: str, ordinal: int):
+        return database.create_archive_child(
+            parent_scan_id=parent_id,
+            parent_finalize_worker_id=self.finalizer,
+            parent_finalize_generation=self.generation,
+            batch_id=batch_id,
+            sample=self._sample(str(ordinal) * 64 if len(str(ordinal)) == 1 else "2" * 64),
+            engines=database.list_engine_instances(),
+            case_name="C",
+            priority="Normal",
+            note="",
+            source="api",
+            relative_path=relative_path,
+            member_ordinal=ordinal,
+        )
+
+    def test_child_intake_is_atomic_and_idempotent_by_ordinal(self) -> None:
+        parent = create_scan_with_two_engines(status="running")
+        self.finalizer = "w-A"
+        self.generation = database.claim_scan_finalization(parent, self.finalizer, lease_seconds=120, now=1000)
+        batch_id = database.create_scan_batch(
+            source="api", original_filename="a.zip", archive_mode="lazy_extract_on_detection", total_items=1
+        )
+        c1 = self._child(parent, batch_id, "dup.txt", 0)
+        self.assertIsNotNone(c1)
+        # Same ordinal again -> idempotent no-op (no new scan, no orphan sample).
+        before = database.count_scan_history()
+        c1b = self._child(parent, batch_id, "dup.txt", 0)
+        self.assertIsNone(c1b)
+        self.assertEqual(database.count_scan_history(), before)
+        # A DUPLICATE member name at a different ordinal is a distinct child.
+        c2 = self._child(parent, batch_id, "dup.txt", 1)
+        self.assertIsNotNone(c2)
+        self.assertNotEqual(c1, c2)
+        # Each child got its engine jobs in the same transaction.
+        self.assertEqual(len(database.list_scan_engine_jobs(c1)), 2)
+        self.assertEqual(len(database.list_scan_engine_jobs(c2)), 2)
+
+    def test_non_conflict_integrity_error_propagates(self) -> None:
+        from app.models import EngineInstanceRecord
+
+        parent = create_scan_with_two_engines(status="running")
+        self.finalizer = "w-A"
+        self.generation = database.claim_scan_finalization(parent, self.finalizer, lease_seconds=120, now=1000)
+        batch_id = database.create_scan_batch(
+            source="api", original_filename="a.zip", archive_mode="lazy_extract_on_detection", total_items=1
+        )
+        # An engine job referencing a non-existent engine instance -> FK violation.
+        # It is NOT a member-ordinal duplicate, so it must propagate (not be
+        # silently treated as already-registered), and leave no orphan sample.
+        bad_engine = EngineInstanceRecord(
+            id=999999, adapter_key="ghost", display_name="Ghost", enabled=True,
+            config_json="{}", created_at="", updated_at="",
+        )
+        samples_before = _sample_count_local()
+        with self.assertRaises(Exception):
+            database.create_archive_child(
+                parent_scan_id=parent,
+                parent_finalize_worker_id=self.finalizer,
+                parent_finalize_generation=self.generation,
+                batch_id=batch_id,
+                sample=self._sample("3" * 64),
+                engines=[bad_engine],
+                case_name="C",
+                priority="Normal",
+                note="",
+                source="api",
+                relative_path="x.bin",
+                member_ordinal=0,
+            )
+        self.assertEqual(_sample_count_local(), samples_before)
+
+
+    def test_cleanup_orphan_child_samples_removes_only_unreferenced_old_children(self) -> None:
+        import os as _os
+        import time as _time
+
+        from app.workers import scan_worker
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+            samples = Path(d) / "samples"
+            samples.mkdir()
+            old = _time.time() - 10_000
+            with patch.object(scan_worker, "SAMPLES_DIR", samples):
+                orphan = samples / "child-1-0-abc-x.bin"
+                orphan.write_bytes(b"x")
+                _os.utime(orphan, (old, old))
+
+                referenced = samples / "child-2-0-def-y.bin"
+                referenced.write_bytes(b"y")
+                _os.utime(referenced, (old, old))
+                database.create_sample(
+                    StoredSample("y", referenced.name, str(referenced), "application/octet-stream", 1, "0" * 32, "0" * 40, "2" * 64)
+                )
+
+                other = samples / "regular.bin"
+                other.write_bytes(b"z")
+                _os.utime(other, (old, old))
+
+                fresh = samples / "child-3-0-ghi-z.bin"
+                fresh.write_bytes(b"z")
+
+                removed = scan_worker.cleanup_orphan_child_samples(max_age_seconds=3600)
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(orphan.exists())  # unreferenced + old + child-* -> removed
+            self.assertTrue(referenced.exists())  # a sample row points at it
+            self.assertTrue(other.exists())  # not a child-* file
+            self.assertTrue(fresh.exists())  # within the TTL
+
+
+def _sample_count_local() -> int:
+    with database.connect() as connection:
+        row = connection.execute("SELECT COUNT(*) AS n FROM samples").fetchone()
+    return int(row["n"] if isinstance(row, dict) else row[0])
+
+
+class FinalizingIsActiveTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DB_PATH = Path(self.temp_dir.name) / "test.db"
+        database.DATABASE_URL = ""
+        database.init_db()
+
+    def tearDown(self) -> None:
+        database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
+        self.temp_dir.cleanup()
+
+    def test_decision_for_finalizing_scan_is_wait(self) -> None:
+        from app.services.decisions import decide_scan_action
+
+        decision = decide_scan_action(
+            scan_status="finalizing",
+            verdict="high",
+            risk_score=90,
+            detected_engines=1,
+            detection_engines=1,
+            unavailable_engines=[],
+        )
+        self.assertEqual(decision.action, "wait")
+
+    def test_finalizing_scan_cannot_be_retried(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+        database.create_scan_engine_jobs(scan_id, database.list_engine_instances())
+        database.claim_scan_finalization(scan_id, "w-A", lease_seconds=120, now=1000)
+        self.assertEqual(database.get_scan(scan_id).status, "finalizing")
+        # Retry must refuse an active (finalizing) scan and leave its jobs intact.
+        self.assertFalse(database.retry_scan_job(scan_id))
+        self.assertEqual(len(database.list_scan_engine_jobs(scan_id)), 2)
+
+
+class ScanFinalizationStateMachineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DB_PATH = Path(self.temp_dir.name) / "test.db"
+        database.DATABASE_URL = ""
+        database.init_db()
+
+    def tearDown(self) -> None:
+        database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
+        self.temp_dir.cleanup()
+
+    def test_claim_is_exclusive_and_completion_is_fenced(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+        gen = database.claim_scan_finalization(scan_id, "w-A", lease_seconds=120, now=1000)
+        self.assertIsNotNone(gen)
+        self.assertEqual(database.get_scan(scan_id).status, "finalizing")
+        # A second claim while the lease is valid loses.
+        self.assertIsNone(
+            database.claim_scan_finalization(scan_id, "w-B", lease_seconds=120, now=1010)
+        )
+        # Wrong generation cannot complete.
+        self.assertFalse(
+            database.complete_finalizing_scan(scan_id, "w-A", gen + 1, "low", 10)
+        )
+        # The owner completes.
+        self.assertTrue(
+            database.complete_finalizing_scan(scan_id, "w-A", gen, "low", 10)
+        )
+        self.assertEqual(database.get_scan(scan_id).status, "completed")
+
+    def test_expired_finalizing_is_stolen_and_crashed_owner_is_fenced(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+        gen_a = database.claim_scan_finalization(scan_id, "w-A", lease_seconds=30, now=1000)
+        # Lease expired; another worker steals the finalization.
+        gen_b = database.claim_scan_finalization(scan_id, "w-B", lease_seconds=30, now=2000)
+        self.assertIsNotNone(gen_b)
+        self.assertGreater(gen_b, gen_a)
+        # The crashed original owner cannot complete with its stale generation.
+        self.assertFalse(
+            database.complete_finalizing_scan(scan_id, "w-A", gen_a, "low", 10)
+        )
+        self.assertTrue(
+            database.complete_finalizing_scan(scan_id, "w-B", gen_b, "high", 90)
+        )
+        self.assertEqual(database.get_scan(scan_id).verdict, "high")
+
+    def test_renew_finalization_is_fenced(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+        gen = database.claim_scan_finalization(scan_id, "w-A", lease_seconds=30, now=1000)
+        self.assertFalse(
+            database.renew_scan_finalization(scan_id, "w-A", gen + 1, 30, now=1010)
+        )
+        self.assertTrue(
+            database.renew_scan_finalization(scan_id, "w-A", gen, 30, now=1010)
+        )
+
+    def test_failed_scan_cannot_be_claimed_for_finalization(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+        database.update_scan_status(scan_id, "failed")
+        self.assertIsNone(
+            database.claim_scan_finalization(scan_id, "w-A", lease_seconds=30, now=1000)
+        )
+
+
+class SweepFinalizeStuckScansTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DB_PATH = Path(self.temp_dir.name) / "test.db"
+        database.DATABASE_URL = ""
+        database.init_db()
+
+    def tearDown(self) -> None:
+        database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
+        self.temp_dir.cleanup()
+
+    def test_sweep_finalizes_all_terminal_scan_and_is_idempotent(self) -> None:
+        from app.workers import scan_worker
+
+        scan_id = create_scan_with_two_engines(status="running")
+        engines = database.list_engine_instances()
+        database.create_scan_engine_jobs(scan_id, engines)
+        # A crashed worker left every engine job terminal but never finalized.
+        for job in database.list_scan_engine_jobs(scan_id):
+            database.mark_scan_engine_job_terminal(job.id, "completed")
+            database.create_engine_result_if_missing(
+                scan_id,
+                EngineResultInput(
+                    engine_name=job.engine_name,
+                    status="completed",
+                    detected=False,
+                    severity="info",
+                    confidence=0,
+                    signature=None,
+                    raw_output="",
+                    duration_ms=1,
+                ),
+            )
+        self.assertEqual(database.get_scan(scan_id).status, "running")
+
+        with patch("app.workers.scan_worker.enabled_engines", return_value=engines):
+            self.assertEqual(scan_worker.sweep_finalize_stuck_scans(), 1)
+            self.assertEqual(database.get_scan(scan_id).status, "completed")
+            # Idempotent: the completed scan is no longer active, nothing to do.
+            self.assertEqual(scan_worker.sweep_finalize_stuck_scans(), 0)
+
+    def test_sweep_backfills_synthetic_result_for_poisoned_job(self) -> None:
+        from app.workers import scan_worker
+
+        scan_id = create_scan_with_two_engines(status="running")
+        engines = database.list_engine_instances()
+        database.create_scan_engine_jobs(scan_id, engines)
+        jobs = database.list_scan_engine_jobs(scan_id)
+        for index, job in enumerate(jobs):
+            if index == 0:
+                database.mark_scan_engine_job_terminal(job.id, "completed")
+                database.create_engine_result_if_missing(
+                    scan_id,
+                    EngineResultInput(
+                        engine_name=job.engine_name,
+                        status="completed",
+                        detected=False,
+                        severity="info",
+                        confidence=0,
+                        signature=None,
+                        raw_output="",
+                        duration_ms=1,
+                    ),
+                )
+            else:
+                # Poisoned by recovery: terminal 'failed' with NO result.
+                database.mark_scan_engine_job_terminal(
+                    job.id, "failed", last_error="exceeded max attempts"
+                )
+
+        with patch("app.workers.scan_worker.enabled_engines", return_value=engines):
+            self.assertEqual(scan_worker.sweep_finalize_stuck_scans(), 1)
+
+        self.assertEqual(database.get_scan(scan_id).status, "completed")
+        results = {r.engine_name: r.status for r in database.list_engine_results(scan_id)}
+        self.assertEqual(len(results), 2)  # one real, one synthetic
+        self.assertIn("failed", results.values())
+
+
+class RecoverRunningScanJobsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.original_db_path = database.DB_PATH
+        self.original_database_url = database.DATABASE_URL
+        database.DB_PATH = Path(self.temp_dir.name) / "test.db"
+        database.DATABASE_URL = ""
+        database.init_db()
+
+    def tearDown(self) -> None:
+        database.DB_PATH = self.original_db_path
+        database.DATABASE_URL = self.original_database_url
+        self.temp_dir.cleanup()
+
+    def _claim_one(self, lease_seconds: int, now: int):
+        scan_id = create_scan_with_two_engines(status="running")
+        database.create_scan_engine_jobs(scan_id, database.list_engine_instances())
+        claimed = database.claim_next_scan_engine_job(
+            {"microsoft_defender"}, "worker-dead", lease_seconds=lease_seconds, now=now
+        )
+        assert claimed is not None
+        return claimed
+
+    def test_expired_claimed_job_is_reset_to_pending(self) -> None:
+        claimed = self._claim_one(lease_seconds=30, now=1000)
+        # now is well past the lease (1000 + 30).
+        recovered = database.recover_running_scan_jobs(now=2000, max_attempts=5)
+        self.assertEqual(recovered, 1)
+        job = database.get_scan_engine_job(claimed.id)
+        assert job is not None
+        self.assertEqual(job.status, "pending")
+        self.assertIsNone(job.worker_id)
+        self.assertIsNone(job.lease_expires_at)
+
+    def test_valid_lease_job_is_not_touched(self) -> None:
+        claimed = self._claim_one(lease_seconds=120, now=1000)
+        # now is still within the lease window (1000 + 120).
+        recovered = database.recover_running_scan_jobs(now=1050, max_attempts=5)
+        self.assertEqual(recovered, 0)
+        job = database.get_scan_engine_job(claimed.id)
+        assert job is not None
+        self.assertEqual(job.status, "claimed")
+        self.assertEqual(job.worker_id, "worker-dead")
+
+    def test_expired_job_over_attempt_cap_is_failed(self) -> None:
+        scan_id = create_scan_with_two_engines(status="running")
+        database.create_scan_engine_jobs(scan_id, database.list_engine_instances())
+
+        # Each cycle: claim (attempt++), the lease expires, recovery returns it
+        # to pending while under the cap. The claim that reaches the cap is then
+        # poisoned to failed by the next recovery pass.
+        now = 1000
+        job = None
+        for _ in range(5):
+            job = database.claim_next_scan_engine_job(
+                {"microsoft_defender"}, "worker-dead", lease_seconds=30, now=now
+            )
+            assert job is not None
+            now += 100
+            database.recover_running_scan_jobs(now=now, max_attempts=5)
+
+        assert job is not None
+        final = database.get_scan_engine_job(job.id)
+        assert final is not None
+        self.assertGreaterEqual(final.attempt_count, 5)
+        self.assertEqual(final.status, "failed")
+        self.assertIsNotNone(final.last_error)
 
 
 if __name__ == "__main__":

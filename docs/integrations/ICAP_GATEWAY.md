@@ -1,7 +1,7 @@
 # MASP ICAP Gateway
 
 MASP can accept files over **ICAP** (RFC 3507) in addition to the REST API.
-A storage system (e.g. storage client) that already speaks ICAP configures MASP as
+A storage system that already speaks ICAP configures MASP as
 a generic ICAP service in its management console — no custom client code — and
 MASP answers **allow** or **block** for each file before the upload is stored.
 

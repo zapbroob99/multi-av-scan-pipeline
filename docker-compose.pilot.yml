@@ -1,0 +1,158 @@
+# Single-host MASP pilot: API, ICAP, workers, ClamAV, and PostgreSQL.
+#
+# This compose file is intentionally separate from local development and the
+# external-database production topology. Configure it with .env.pilot; never
+# expose PostgreSQL outside the compose network.
+
+name: masp-pilot
+
+x-masp-service: &masp-service
+  image: ${MASP_IMAGE:-masp-pilot:local}
+  build:
+    context: .
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: ${MASP_LOG_MAX_SIZE:-20m}
+      max-file: ${MASP_LOG_MAX_FILES:-5}
+
+x-common-env: &common-env
+  MASP_DATABASE_URL: postgresql://masp:${MASP_POSTGRES_PASSWORD:?set MASP_POSTGRES_PASSWORD}@postgres:5432/masp
+  MASP_DB_POOL_ENABLED: ${MASP_DB_POOL_ENABLED:-1}
+  MASP_DB_POOL_MIN: ${MASP_DB_POOL_MIN:-0}
+  MASP_DB_POOL_MAX: ${MASP_DB_POOL_MAX:-4}
+  MASP_DB_POOL_TIMEOUT_SECONDS: ${MASP_DB_POOL_TIMEOUT_SECONDS:-30}
+  MASP_CLAMD_HOST: clamav
+  MASP_CLAMD_PORT: "3310"
+  MASP_CLAMD_TIMEOUT_SECONDS: ${MASP_CLAMD_TIMEOUT_SECONDS:-180}
+  MASP_CLAMD_READY_TIMEOUT_SECONDS: ${MASP_CLAMD_READY_TIMEOUT_SECONDS:-30}
+  MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS: ${MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS:-120}
+  MASP_YARA_RULES_DIR: /app/rules
+
+services:
+  app:
+    <<: *masp-service
+    ports:
+      - "${MASP_APP_BIND:?set MASP_APP_BIND}:8000"
+    environment:
+      <<: *common-env
+      MASP_API_TOKEN: ${MASP_API_TOKEN:?set MASP_API_TOKEN}
+      MASP_ADMIN_PASSWORD: ${MASP_ADMIN_PASSWORD:?set MASP_ADMIN_PASSWORD}
+      MASP_SHOW_DEV_LOGIN_HINTS: "0"
+      MASP_API_MAX_WAIT_SECONDS: ${MASP_API_MAX_WAIT_SECONDS:-30}
+      MASP_API_RETRY_AFTER_SECONDS: ${MASP_API_RETRY_AFTER_SECONDS:-2}
+      MASP_UPLOAD_MAX_BYTES: ${MASP_UPLOAD_MAX_BYTES:?set MASP_UPLOAD_MAX_BYTES}
+    volumes:
+      - ${MASP_STORAGE_DIR:?set MASP_STORAGE_DIR}:/app/storage
+      - ${MASP_RULES_DIR:-./rules}:/app/rules
+      - ./tools:/app/tools:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    <<: *masp-service
+    command: python -m app.workers.scan_worker
+    environment:
+      <<: *common-env
+      MASP_WORKER_POLL_SECONDS: ${MASP_WORKER_POLL_SECONDS:-2}
+      MASP_WORKER_TIMING_EVENTS_ENABLED: ${MASP_WORKER_TIMING_EVENTS_ENABLED:-1}
+      MASP_WORKER_ENGINE_KEYS: ${MASP_WORKER_ENGINE_KEYS:-static_metadata,clamav,yara}
+      MASP_ENGINE_JOB_QUEUE_ENABLED: "1"
+      MASP_ENGINE_JOB_LEASE_SECONDS: ${MASP_ENGINE_JOB_LEASE_SECONDS:-120}
+      MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED: "0"
+    volumes:
+      - ${MASP_STORAGE_DIR:?set MASP_STORAGE_DIR}:/app/storage
+      - ${MASP_RULES_DIR:-./rules}:/app/rules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+
+  icap:
+    <<: *masp-service
+    command: python -m app.icap.server
+    ports:
+      - "${MASP_ICAP_BIND:?set MASP_ICAP_BIND}:1344"
+    environment:
+      <<: *common-env
+      MASP_ICAP_HOST: 0.0.0.0
+      MASP_ICAP_PORT: "1344"
+      MASP_ICAP_SERVICE_NAME: ${MASP_ICAP_SERVICE_NAME:-masp}
+      MASP_ICAP_WAIT_SECONDS: ${MASP_ICAP_WAIT_SECONDS:-30}
+      MASP_ICAP_MAX_BYTES: ${MASP_ICAP_MAX_BYTES:?set MASP_ICAP_MAX_BYTES}
+      MASP_UPLOAD_MAX_BYTES: ${MASP_UPLOAD_MAX_BYTES:?set MASP_UPLOAD_MAX_BYTES}
+      MASP_ICAP_FAIL_MODE_CLOSED: "1"
+      MASP_ICAP_BLOCK_ON_REVIEW: "1"
+      MASP_ICAP_BLOCK_ARCHIVES: "1"
+      MASP_ICAP_ALLOWED_IPS: ${MASP_ICAP_ALLOWED_IPS:?set MASP_ICAP_ALLOWED_IPS}
+      MASP_ICAP_PREVIEW_BYTES: ${MASP_ICAP_PREVIEW_BYTES:-0}
+      MASP_ICAP_READ_TIMEOUT_SECONDS: ${MASP_ICAP_READ_TIMEOUT_SECONDS:-60}
+      MASP_ICAP_BODY_TIMEOUT_SECONDS: ${MASP_ICAP_BODY_TIMEOUT_SECONDS:-300}
+      # Bounds concurrent scans (each buffers up to the ICAP size cap in RAM).
+      # Kept low for the single-worker pilot; raise with worker capacity.
+      MASP_ICAP_MAX_CONNECTIONS: ${MASP_ICAP_MAX_CONNECTIONS:-8}
+      MASP_ICAP_ADMISSION_TIMEOUT_SECONDS: ${MASP_ICAP_ADMISSION_TIMEOUT_SECONDS:-10}
+    volumes:
+      - ${MASP_STORAGE_DIR:?set MASP_STORAGE_DIR}:/app/storage
+      - ${MASP_RULES_DIR:-./rules}:/app/rules
+      - ./tools:/app/tools:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+
+  postgres:
+    image: ${MASP_POSTGRES_IMAGE:-postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: masp
+      POSTGRES_USER: masp
+      POSTGRES_PASSWORD: ${MASP_POSTGRES_PASSWORD:?set MASP_POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U masp -d masp"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging:
+      driver: json-file
+      options:
+        max-size: ${MASP_LOG_MAX_SIZE:-20m}
+        max-file: ${MASP_LOG_MAX_FILES:-5}
+
+  clamav:
+    image: ${MASP_CLAMAV_IMAGE:-clamav/clamav:stable@sha256:1b6443c4a7b456baa1abfaf9796815f8d21e2fb558dbaed5b682fd4552d8b0c3}
+    restart: unless-stopped
+    environment:
+      CLAMD_CONF_StreamMaxLength: ${MASP_CLAMD_STREAM_MAX_LENGTH:-64M}
+      CLAMD_CONF_MaxFileSize: ${MASP_CLAMD_MAX_FILE_SIZE:-64M}
+      CLAMD_CONF_MaxScanSize: ${MASP_CLAMD_MAX_SCAN_SIZE:-64M}
+    volumes:
+      - clamav-db:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --version || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: ${MASP_LOG_MAX_SIZE:-20m}
+        max-file: ${MASP_LOG_MAX_FILES:-5}
+
+volumes:
+  postgres-data:
+  clamav-db:

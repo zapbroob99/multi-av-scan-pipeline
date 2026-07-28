@@ -1,16 +1,24 @@
+import contextlib
 import json
 import os
+import threading
 import time
 import traceback
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from app.database import (
     DatabaseOperationalError,
     claim_next_scan_engine_job,
-    create_sample,
-    create_scan_engine_jobs,
-    create_scan_job,
+    claim_scan_finalization,
+    complete_finalizing_scan,
+    commit_engine_job_result_if_owned,
+    renew_scan_finalization,
+    StaleFinalizerError,
+    mark_scan_engine_job_terminal_if_owned,
+    renew_scan_engine_job_lease,
+    create_archive_child,
     create_scan_worker_event,
     create_engine_result_if_missing,
     get_scan_batch,
@@ -21,12 +29,14 @@ from app.database import (
     list_scan_batch_scans,
     list_scan_engine_jobs,
     mark_scan_engine_job_running,
-    mark_scan_engine_job_terminal,
     mark_scan_running,
     skip_pending_scan_engine_job,
     refresh_scan_batch_counts,
     recover_running_scan_jobs,
-    update_scan_assessment,
+    filter_referenced_storage_paths,
+    get_scan_statuses,
+    remove_orphan_child_sample,
+    transition_scan_to_completed,
     update_scan_status,
 )
 from app.models import (
@@ -35,6 +45,7 @@ from app.models import (
     EngineResultRecord,
     ScanEngineJobRecord,
     ScanRecord,
+    TERMINAL_SCAN_STATUSES,
 )
 from app.services.engine_registry import (
     enabled_engines,
@@ -53,12 +64,18 @@ from app.services.routing import (
 from app.services.scoring import RiskAssessment, calculate_risk
 from app.services.archive_extractor import (
     ArchiveExtractionError,
+    cleanup_stale_staging_dirs,
     configured_archive_limits,
     configured_max_nested_levels,
+    deterministic_child_stored_filename,
     extract_archive,
     is_supported_archive,
+    new_staging_dir,
+    parse_child_parent_scan_id,
+    promote_staged_file,
+    remove_staging_dir,
 )
-from app.services.sample_paths import resolve_sample_path, sample_path_error
+from app.services.sample_paths import SAMPLES_DIR, resolve_sample_path, sample_path_error
 from app.services.worker_capabilities import (
     all_enabled_engines_have_results,
     worker_engine_keys,
@@ -98,6 +115,21 @@ ORPHANED_ENGINE_JOB_REAP_ENABLED = os.getenv(
     "MASP_ORPHANED_ENGINE_JOB_REAP_ENABLED",
     "1",
 ).strip().lower() not in {"0", "false", "no", "off"}
+ENGINE_JOB_RECOVERY_ENABLED = os.getenv(
+    "MASP_ENGINE_JOB_RECOVERY_ENABLED",
+    "1",
+).strip().lower() not in {"0", "false", "no", "off"}
+ENGINE_JOB_MAX_ATTEMPTS = int(os.getenv("MASP_ENGINE_JOB_MAX_ATTEMPTS", "5"))
+# Lease for the finalize claim (assessment + archive-child extraction + complete).
+FINALIZE_LEASE_SECONDS = int(os.getenv("MASP_FINALIZE_LEASE_SECONDS", "120"))
+# Extra headroom added to an engine's own hard timeout when leasing its job, so a
+# legitimately long run never has its lease expire mid-scan and get reclaimed.
+ENGINE_JOB_LEASE_GRACE_SECONDS = int(os.getenv("MASP_ENGINE_JOB_LEASE_GRACE_SECONDS", "60"))
+# Maintenance (recovery, reaper, finalizer sweep) runs on this cadence
+# independent of load, so a stuck scan is recovered even while the queue is busy.
+MAINTENANCE_INTERVAL_SECONDS = max(
+    5, int(os.getenv("MASP_WORKER_MAINTENANCE_INTERVAL_SECONDS", "30"))
+)
 ENGINE_JOB_TERMINAL_STATUSES = {"completed", "failed", "skipped"}
 LAZY_ARCHIVE_TRIGGER_VERDICTS = {"medium", "high", "critical"}
 WORKER_ID = (
@@ -142,30 +174,130 @@ def synthetic_engine_duration_ms() -> int:
     return 1
 
 
+def engine_lease_seconds(engine: EngineInstanceRecord) -> int:
+    """Lease long enough to outlast this engine's own hard timeout plus grace.
+
+    A flat lease shorter than an engine's timeout (e.g. 120s lease vs a 180s
+    ClamAV timeout) would let a legitimately long run's lease expire and be
+    reclaimed mid-scan. Deriving the lease from the engine's configured timeout
+    keeps an expired lease meaning "no longer authorized", not "still working".
+    """
+    try:
+        timeout = int(runtime_config(engine).get("timeout_seconds") or 0)
+    except (TypeError, ValueError):
+        timeout = 0
+    return max(ENGINE_JOB_LEASE_SECONDS, timeout + ENGINE_JOB_LEASE_GRACE_SECONDS)
+
+
+def lease_renewal_interval(lease_seconds: int) -> float:
+    """Renew roughly three times per lease, so two missed renewals still fit."""
+    return max(5.0, lease_seconds / 3.0)
+
+
+@contextlib.contextmanager
+def finalization_lease_renewal(scan_id: int, generation: int, lease_seconds: int):
+    """Renew the finalization lease while long work (archive extraction) runs.
+
+    Extraction runtime is not bounded by a wall-clock guarantee, so without
+    renewal a long extraction could let the finalize lease expire and be stolen.
+    The renewer is fenced to this owner+generation and stopped/joined on exit
+    (before completion, which is itself fenced). If it loses ownership it stops;
+    the child-intake fence and the fenced completion then reject any stale work.
+    """
+    stop = threading.Event()
+    interval = lease_renewal_interval(lease_seconds)
+
+    def renew_loop() -> None:
+        while not stop.wait(interval):
+            try:
+                if not renew_scan_finalization(
+                    scan_id, WORKER_ID, generation, lease_seconds
+                ):
+                    return  # ownership lost; stop renewing
+            except DatabaseOperationalError:
+                continue
+
+    renewer = threading.Thread(
+        target=renew_loop, name=f"finalize-renew-{scan_id}", daemon=True
+    )
+    renewer.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        renewer.join()
+
+
+def run_engine_with_lease_renewal(
+    engine: EngineInstanceRecord,
+    scan: ScanRecord,
+    job: ScanEngineJobRecord,
+    lease_seconds: int,
+) -> EngineResultInput:
+    """Run an engine while a background thread renews the job's lease.
+
+    ``timeout_seconds`` is not the true maximum runtime — an engine can chain
+    several timeouts (YARA per-rule-file fallback, Defender health+update+scan,
+    ClamAV readiness+scan) — so a fixed lease can still expire mid-run. The
+    renewer extends the lease (fenced to this owner+generation) until the run
+    finishes; it is stopped and joined BEFORE the result is committed. If it ever
+    loses ownership it stops, and the fenced commit rejects the result anyway.
+    """
+    stop = threading.Event()
+    interval = lease_renewal_interval(lease_seconds)
+
+    def renew_loop() -> None:
+        while not stop.wait(interval):
+            try:
+                if not renew_scan_engine_job_lease(
+                    job.id, WORKER_ID, job.attempt_count, lease_seconds
+                ):
+                    return  # ownership lost; stop renewing
+            except DatabaseOperationalError:
+                continue  # transient; try again next interval
+
+    renewer = threading.Thread(
+        target=renew_loop, name=f"lease-renew-{job.id}", daemon=True
+    )
+    renewer.start()
+    try:
+        return run_engine(engine, scan)
+    finally:
+        stop.set()
+        renewer.join()
+
+
 def process_next_scan_engine_job() -> bool:
     engine_keys = worker_engine_keys()
     job = claim_next_scan_engine_job(
         engine_keys,
         WORKER_ID,
         lease_seconds=ENGINE_JOB_LEASE_SECONDS,
+        max_attempts=ENGINE_JOB_MAX_ATTEMPTS,
     )
     if job is None:
-        if ORPHANED_ENGINE_JOB_REAP_ENABLED:
-            reap_orphaned_engine_jobs(engine_keys)
+        # Maintenance (recovery/reaper/sweep) is driven by the periodic tick in
+        # run_forever, not here, so it also runs while the queue is busy.
         record_worker_heartbeat("idle")
         return False
 
     try:
         processed = process_scan_engine_job(job, engine_keys)
     except Exception as exc:
-        mark_scan_engine_job_terminal(job.id, "failed", last_error=str(exc))
-        try:
-            update_scan_status(job.scan_job_id, "failed", last_error=str(exc))
-        except DatabaseOperationalError as update_exc:
-            print(
-                f"Scan job {job.scan_job_id} failed, but status could not be recorded: {update_exc}",
-                flush=True,
-            )
+        # Fence the failure: only mark the job (and the scan) failed if this
+        # worker still owns the job. A superseded worker whose adapter raised
+        # must not fail the new owner's job or the whole scan.
+        owned = mark_scan_engine_job_terminal_if_owned(
+            job.id, WORKER_ID, job.attempt_count, "failed", last_error=str(exc)
+        )
+        if owned:
+            try:
+                update_scan_status(job.scan_job_id, "failed", last_error=str(exc))
+            except DatabaseOperationalError as update_exc:
+                print(
+                    f"Scan job {job.scan_job_id} failed, but status could not be recorded: {update_exc}",
+                    flush=True,
+                )
         record_worker_timing_event(
             job.scan_job_id,
             "process_engine_job_failed",
@@ -186,7 +318,9 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
     process_started_at = time.perf_counter()
     scan = get_scan(job.scan_job_id)
     if scan is None:
-        mark_scan_engine_job_terminal(job.id, "failed", last_error="Scan not found.")
+        mark_scan_engine_job_terminal_if_owned(
+            job.id, WORKER_ID, job.attempt_count, "failed", last_error="Scan not found."
+        )
         return True
 
     record_worker_heartbeat("running", active_scan_id=scan.id)
@@ -194,8 +328,10 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
     engines = enabled_engines()
     engine = find_engine_for_job(job, engines)
     if engine is None:
-        mark_scan_engine_job_terminal(
+        mark_scan_engine_job_terminal_if_owned(
             job.id,
+            WORKER_ID,
+            job.attempt_count,
             "skipped",
             last_error="Engine is no longer enabled for this scan.",
         )
@@ -210,6 +346,7 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
         finalize_scan_if_complete(scan, engines)
         return True
 
+    lease_seconds = engine_lease_seconds(engine)
     decision = route_engine_for_worker(engine, scan, engine_keys)
     if decision.action == ROUTE_ACTION_SKIP:
         stage_started_at = time.perf_counter()
@@ -217,16 +354,20 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
         mark_scan_engine_job_running(
             job.id,
             WORKER_ID,
-            lease_seconds=ENGINE_JOB_LEASE_SECONDS,
+            lease_seconds=lease_seconds,
+            attempt_generation=job.attempt_count,
         )
-        create_engine_result_if_missing(
-            scan.id,
-            build_skipped_engine_result(
+        commit_engine_job_result_if_owned(
+            job_id=job.id,
+            worker_id=WORKER_ID,
+            attempt_generation=job.attempt_count,
+            result=build_skipped_engine_result(
                 decision,
                 duration_ms=synthetic_engine_duration_ms(),
             ),
+            terminal_status="skipped",
+            last_error=decision.reason,
         )
-        mark_scan_engine_job_terminal(job.id, "skipped", last_error=decision.reason)
         record_worker_timing_event(
             scan.id,
             "engine_job_skip",
@@ -242,7 +383,9 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
         return True
 
     if decision.action != ROUTE_ACTION_RUN:
-        mark_scan_engine_job_terminal(job.id, "failed", last_error=decision.reason)
+        mark_scan_engine_job_terminal_if_owned(
+            job.id, WORKER_ID, job.attempt_count, "failed", last_error=decision.reason
+        )
         record_worker_timing_event(
             scan.id,
             "engine_job_not_runnable",
@@ -260,11 +403,22 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
     stage_started_at = time.perf_counter()
     mark_scan_running(scan.id)
     scan = refresh_scan_record(scan)
-    mark_scan_engine_job_running(
+    if not mark_scan_engine_job_running(
         job.id,
         WORKER_ID,
-        lease_seconds=ENGINE_JOB_LEASE_SECONDS,
-    )
+        lease_seconds=lease_seconds,
+        attempt_generation=job.attempt_count,
+    ):
+        # Ownership was already lost before the run started; another worker has
+        # this job. Do nothing and let that worker produce the result.
+        record_worker_timing_event(
+            scan.id,
+            "engine_job_ownership_lost",
+            engine_keys,
+            engine_name=engine.display_name,
+            details={"engine_job_id": job.id, "stage": "pre_run"},
+        )
+        return True
     record_worker_timing_event(
         scan.id,
         "mark_engine_job_running",
@@ -276,14 +430,29 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
 
     print(f"Running {engine.display_name} for scan job {scan.id}", flush=True)
     stage_started_at = time.perf_counter()
-    result = run_engine(engine, scan)
-    result_id = create_engine_result_if_missing(scan.id, result)
+    result = run_engine_with_lease_renewal(engine, scan, job, lease_seconds)
     terminal_status = engine_job_terminal_status(result.status)
-    mark_scan_engine_job_terminal(
-        job.id,
-        terminal_status,
+    committed = commit_engine_job_result_if_owned(
+        job_id=job.id,
+        worker_id=WORKER_ID,
+        attempt_generation=job.attempt_count,
+        result=result,
+        terminal_status=terminal_status,
         last_error=result.error_message,
     )
+    if not committed:
+        # The lease expired and the job was re-claimed while this engine ran, so
+        # this worker is no longer authorized to commit. Discard the result — the
+        # new owner will produce the authoritative one — and do not finalize.
+        record_worker_timing_event(
+            scan.id,
+            "engine_job_ownership_lost",
+            engine_keys,
+            engine_name=engine.display_name,
+            duration_ms=elapsed_ms(stage_started_at),
+            details={"engine_job_id": job.id, "stage": "post_run"},
+        )
+        return True
     record_worker_timing_event(
         scan.id,
         "engine_job_run",
@@ -293,7 +462,6 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
         details={
             "engine_job_id": job.id,
             "adapter_duration_ms": result.duration_ms,
-            "result_created": result_id is not None,
             "result_status": result.status,
             "job_status": terminal_status,
         },
@@ -506,11 +674,44 @@ def finalize_scan_if_complete_or_timeout(
         return False
 
     assessment = calculate_risk(engine_results)
-    update_scan_assessment(scan.id, assessment.verdict, assessment.score)
-    update_scan_status(scan.id, "completed")
+    if not transition_scan_to_completed(scan.id, assessment.verdict, assessment.score):
+        return False
     maybe_enqueue_lazy_archive_children(scan, assessment, engine_results, engines, engine_keys)
     print(f"Completed scan job {scan.id}", flush=True)
     return True
+
+
+def backfill_missing_engine_results(
+    scan_id: int,
+    engine_jobs: list[ScanEngineJobRecord],
+    missing_engine_names: set[str],
+) -> bool:
+    """Write a synthetic result for each terminal failed/skipped job that is
+    required but has no result yet. Idempotent; returns whether anything was
+    written. A ``completed`` job is never synthesized (a real result must exist)."""
+    wrote_any = False
+    for job in engine_jobs:
+        if job.engine_name not in missing_engine_names:
+            continue
+        if job.status not in {"failed", "skipped"}:
+            continue
+        create_engine_result_if_missing(
+            scan_id,
+            EngineResultInput(
+                engine_name=job.engine_name,
+                status=job.status,
+                detected=False,
+                severity="info",
+                confidence=0,
+                signature=None,
+                raw_output=job.last_error
+                or f"Engine job reached '{job.status}' without producing a result.",
+                error_message=job.last_error,
+                duration_ms=synthetic_engine_duration_ms(),
+            ),
+        )
+        wrote_any = True
+    return wrote_any
 
 
 def finalize_scan_if_complete(
@@ -525,6 +726,16 @@ def finalize_scan_if_complete(
             if not all_scan_engine_jobs_terminal(engine_jobs):
                 return False
             required_engine_names = required_engine_job_result_names(engine_jobs, engines)
+            missing = required_engine_names - existing_engine_names
+            if missing:
+                # A job can reach a terminal failed/skipped state without a
+                # result (recovery poisoning at the attempt cap, or a
+                # non-runnable route). Backfill a synthetic result from the
+                # engine-job snapshot so the scan finalizes with partial coverage
+                # instead of hanging. Idempotent (create-if-missing).
+                if backfill_missing_engine_results(scan.id, engine_jobs, missing):
+                    engine_results = list_engine_results(scan.id)
+                    existing_engine_names = {r.engine_name for r in engine_results}
             if not required_engine_names.issubset(existing_engine_names):
                 return False
         elif not all_enabled_engines_have_results(engines, existing_engine_names):
@@ -532,10 +743,34 @@ def finalize_scan_if_complete(
     elif not all_enabled_engines_have_results(engines, existing_engine_names):
         return False
 
+    # Claim the finalization: queued/running -> finalizing, fenced to one owner.
+    # An expired finalizing claim (crashed finalizer) can be stolen here.
+    generation = claim_scan_finalization(
+        scan.id, WORKER_ID, lease_seconds=FINALIZE_LEASE_SECONDS
+    )
+    if generation is None:
+        return False  # another worker owns the finalization
+
     assessment = calculate_risk(engine_results)
-    update_scan_assessment(scan.id, assessment.verdict, assessment.score)
-    update_scan_status(scan.id, "completed")
-    maybe_enqueue_lazy_archive_children(scan, assessment, engine_results, engines, set())
+    # Register archive children BEFORE completing, inside the finalization
+    # ownership, so a crash before completion is redone by a later finalizer
+    # (idempotent child registration) rather than leaving a completed container
+    # whose members were never scanned.
+    try:
+        with finalization_lease_renewal(scan.id, generation, FINALIZE_LEASE_SECONDS):
+            maybe_enqueue_lazy_archive_children(
+                scan, assessment, engine_results, engines, set(), finalize_generation=generation
+            )
+    except StaleFinalizerError:
+        # Lost the finalization (lease expired, stolen) during extraction; stop
+        # and let the new owner redo it. Do not complete.
+        return False
+    if not complete_finalizing_scan(
+        scan.id, WORKER_ID, generation, assessment.verdict, assessment.score
+    ):
+        # Lost the finalization (lease expired and it was stolen); the new owner
+        # will complete it. Do not run completion side effects again.
+        return False
     print(f"Completed scan job {scan.id}", flush=True)
     return True
 
@@ -546,8 +781,15 @@ def maybe_enqueue_lazy_archive_children(
     engine_results: list[EngineResultRecord],
     engines: list[EngineInstanceRecord],
     engine_keys: set[str],
+    *,
+    finalize_generation: int | None = None,
 ) -> int:
     if scan.scan_role not in {"container", "child"} or scan.batch_id is None:
+        return 0
+    if finalize_generation is None:
+        # Child registration must run inside a fenced finalization (it mutates the
+        # DB and files on behalf of the parent). Callers without a generation
+        # cannot fence, so no children are created.
         return 0
 
     batch = get_scan_batch(scan.batch_id)
@@ -574,13 +816,6 @@ def maybe_enqueue_lazy_archive_children(
 
     limits = configured_archive_limits()
     existing_scans = list_scan_batch_scans(batch.id, limit=limits.max_files + 1)
-    if any(
-        existing_scan.scan_role == "child" and existing_scan.parent_scan_id == scan.id
-        for existing_scan in existing_scans
-    ):
-        refresh_scan_batch_counts(batch.id)
-        return 0
-
     child_level = archive_nesting_level(scan, existing_scans) + 1
     max_nested_levels = configured_max_nested_levels()
     if child_level > max_nested_levels:
@@ -597,8 +832,12 @@ def maybe_enqueue_lazy_archive_children(
         refresh_scan_batch_counts(batch.id)
         return 0
 
+    # Exclude THIS parent's own children so a re-run (idempotent re-registration)
+    # does not shrink its own budget and wrongly trip the over-budget guard.
     existing_children = sum(
-        1 for existing_scan in existing_scans if existing_scan.scan_role == "child"
+        1
+        for existing_scan in existing_scans
+        if existing_scan.scan_role == "child" and existing_scan.parent_scan_id != scan.id
     )
     remaining_child_budget = limits.max_files - existing_children
 
@@ -615,9 +854,11 @@ def maybe_enqueue_lazy_archive_children(
         refresh_scan_batch_counts(batch.id)
         return 0
 
+    staging = new_staging_dir()
     try:
-        extraction = extract_archive(archive_path)
+        extraction = extract_archive(archive_path, destination_dir=staging)
     except ArchiveExtractionError as exc:
+        remove_staging_dir(staging)
         record_worker_timing_event(
             scan.id,
             "archive_lazy_extract_failed",
@@ -632,9 +873,8 @@ def maybe_enqueue_lazy_archive_children(
 
     if len(extraction.members) > remaining_child_budget:
         # Creating a partial child set would silently understate coverage, so
-        # nothing is enqueued and the skip is recorded as an explicit event.
-        for member in extraction.members:
-            Path(member.sample.storage_path).unlink(missing_ok=True)
+        # nothing is enqueued and the staged files are discarded.
+        remove_staging_dir(staging)
         record_worker_timing_event(
             scan.id,
             "archive_batch_child_limit_reached",
@@ -653,21 +893,41 @@ def maybe_enqueue_lazy_archive_children(
         f"{scan.relative_path}/" if scan.scan_role == "child" and scan.relative_path else ""
     )
     created_children = 0
-    for member in extraction.members:
-        sample_id = create_sample(member.sample)
-        child_scan_id = create_scan_job(
-            sample_id=sample_id,
+    for member_ordinal, member in enumerate(extraction.members):
+        # Deterministic final path (parent + ordinal + content hash), identical
+        # across retries, so a re-extraction restores the file to the exact path
+        # the child's DB row references.
+        final_name = deterministic_child_stored_filename(
+            scan.id, member_ordinal, member.sample.sha256, member.sample.original_filename
+        )
+        final_path = SAMPLES_DIR / final_name
+        # Promote (atomic os.replace) BEFORE the child row becomes visible, so a
+        # worker can never claim a child whose sample file is not yet in place.
+        promote_staged_file(Path(member.sample.storage_path), final_path)
+        child_sample = replace(
+            member.sample, stored_filename=final_name, storage_path=str(final_path)
+        )
+        # Idempotent by (parent_scan_id, ordinal) and fenced to this finalizer:
+        # a re-run registers only missing members; a superseded finalizer cannot
+        # mutate the DB (raises StaleFinalizerError, handled by the caller).
+        child_scan_id = create_archive_child(
+            parent_scan_id=scan.id,
+            parent_finalize_worker_id=WORKER_ID,
+            parent_finalize_generation=finalize_generation,
+            batch_id=batch.id,
+            sample=child_sample,
+            engines=engines,
             case_name=scan.case_name,
             priority=scan.priority,
             note=scan.note,
             source=scan.source,
-            batch_id=batch.id,
-            parent_scan_id=scan.id,
             relative_path=f"{relative_prefix}{member.relative_path}",
-            scan_role="child",
+            member_ordinal=member_ordinal,
         )
-        create_scan_engine_jobs(child_scan_id, engines)
-        created_children += 1
+        if child_scan_id is not None:
+            created_children += 1
+
+    remove_staging_dir(staging)
 
     refresh_scan_batch_counts(batch.id)
     record_worker_timing_event(
@@ -865,6 +1125,27 @@ def online_worker_engine_keys() -> set[str]:
     return {str(key) for key in status.get("engine_keys", []) if str(key)}
 
 
+def sweep_finalize_stuck_scans() -> int:
+    """Finalize scans whose engine jobs are all terminal but were never closed.
+
+    If a worker dies after marking the last engine job terminal but before
+    finalizing, the scan stays ``running`` forever: no pending jobs remain (so
+    the reaper ignores it) and no worker will claim it. This idle sweep finds
+    such scans and finalizes them. ``finalize_scan_if_complete`` uses the atomic
+    completion transition, so running this on several workers at once is safe —
+    only one wins and no duplicate results or children are produced.
+    """
+    engines = enabled_engines()
+    finalized = 0
+    for scan in list_active_scans(limit=ACTIVE_SCAN_LIMIT):
+        engine_jobs = list_scan_engine_jobs(scan.id)
+        if not engine_jobs or not all_scan_engine_jobs_terminal(engine_jobs):
+            continue
+        if finalize_scan_if_complete(refresh_scan_record(scan), engines):
+            finalized += 1
+    return finalized
+
+
 def reap_orphaned_engine_jobs(engine_keys: set[str]) -> bool:
     """Skip pending engine jobs that no online worker can ever claim.
 
@@ -972,11 +1253,125 @@ def process_next_scan_job() -> bool:
     return False
 
 
+CHILD_SAMPLE_ORPHAN_MAX_AGE_SECONDS = int(
+    os.getenv("MASP_CHILD_SAMPLE_ORPHAN_MAX_AGE_SECONDS", str(6 * 60 * 60))
+)
+
+
+def cleanup_orphan_child_samples(max_age_seconds: int | None = None) -> int:
+    """Delete deterministic ``child-*`` sample files left by a fenced finalizer.
+
+    A finalizer promotes a child's file to its deterministic path *before*
+    committing the DB row, so one fenced out (or crashed) in that window leaves a
+    file no scan references. Removing it safely means never racing a live
+    finalizer that is about to commit a child for the same path. Rather than a
+    fragile mtime-vs-reference check (the mtime read and the unlink straddle a
+    possible commit), we key off the parent scan's lifecycle:
+
+    A file ``child-<parent>-...`` is removed only when ALL hold, re-verified
+    under the parent scan's row lock at the moment of deletion
+    (:func:`database.remove_orphan_child_sample`):
+      * the parent scan is **terminal** (completed/failed) or **missing** — with
+        the row locked, neither ``retry_scan_job`` nor a new finalization claim
+        can commit until the deletion finishes, and every child-file promote
+        happens only after a claim committed ``finalizing``, so no finalizer can
+        be about to commit a child for this path; and
+      * no ``samples`` row references the file; and
+      * the file is older than the TTL (defense in depth).
+
+    The bulk prefilter (one status query + one reference query) only discards
+    the common non-orphan cases cheaply — its reads can go stale (a retry can
+    flip a terminal parent back to active right after them), which is why it is
+    never the basis for a deletion. The locked confirm runs just for the rare
+    surviving candidates, so there is still no per-file N+1 in the steady
+    state. Returns the count removed.
+    """
+    max_age = (
+        CHILD_SAMPLE_ORPHAN_MAX_AGE_SECONDS if max_age_seconds is None else max_age_seconds
+    )
+    if not SAMPLES_DIR.is_dir():
+        return 0
+    cutoff = time.time() - max(1, max_age)
+
+    candidates: list[tuple[Path, int]] = []
+    for entry in SAMPLES_DIR.glob("child-*"):
+        try:
+            if not entry.is_file() or entry.stat().st_mtime >= cutoff:
+                continue
+        except OSError:
+            continue
+        parent_id = parse_child_parent_scan_id(entry.name)
+        if parent_id is None:
+            continue  # unrecognized name: leave it alone
+        candidates.append((entry, parent_id))
+    if not candidates:
+        return 0
+
+    parent_statuses = get_scan_statuses([pid for _entry, pid in candidates])
+    referenced = filter_referenced_storage_paths([str(entry) for entry, _pid in candidates])
+
+    removed = 0
+    for entry, parent_id in candidates:
+        status = parent_statuses.get(parent_id)
+        parent_settled = status is None or status in TERMINAL_SCAN_STATUSES
+        if not parent_settled:
+            continue  # parent may still commit a child for this file
+        if str(entry) in referenced:
+            continue  # a scan references it — never delete a live child's file
+        try:
+            # Authoritative gate: re-confirm terminal-and-unreferenced under the
+            # parent row lock and unlink while holding it, so a retry that
+            # reactivated the parent after the bulk reads cannot lose its file.
+            if remove_orphan_child_sample(
+                parent_id, str(entry), lambda: entry.unlink(missing_ok=True)
+            ):
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def run_maintenance() -> int:
+    """Recover orphaned leases, reap uncoverable jobs, and finalize stuck scans.
+
+    Runs regardless of queue load so a scan wedged by a crashed worker is
+    recovered even under continuous traffic. Returns the number of leases
+    recovered (for startup logging).
+    """
+    engine_keys = worker_engine_keys()
+    recovered = 0
+    if ENGINE_JOB_RECOVERY_ENABLED:
+        recovered = recover_running_scan_jobs(max_attempts=ENGINE_JOB_MAX_ATTEMPTS)
+    if ORPHANED_ENGINE_JOB_REAP_ENABLED:
+        reap_orphaned_engine_jobs(engine_keys)
+    if ENGINE_JOB_RECOVERY_ENABLED:
+        sweep_finalize_stuck_scans()
+    # Remove archive-extraction staging dirs orphaned by a crash mid-extraction,
+    # and deterministic child-* sample files no scan references (a fenced-out
+    # stale finalizer can leave one).
+    try:
+        cleanup_stale_staging_dirs()
+        cleanup_orphan_child_samples()
+    except OSError as exc:  # best-effort; never break the maintenance tick
+        print(f"Sample/staging cleanup failed: {exc}", flush=True)
+    return recovered
+
+
 def run_forever() -> None:
+    # The legacy process_scan path finalizes with the old completed-then-extract
+    # ordering (no finalizing state machine), reintroducing the completion/child
+    # crash gap. It is entered when the engine-job queue is off OR the fallback is
+    # on, so both are refused: only the fenced engine-job path is supported.
+    if not ENGINE_JOB_QUEUE_ENABLED or LEGACY_SCAN_WORKER_FALLBACK_ENABLED:
+        raise SystemExit(
+            "The legacy scan path is not supported (it bypasses the fenced "
+            "finalization state machine). Run with MASP_ENGINE_JOB_QUEUE_ENABLED=1 "
+            "(the default) and MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED unset."
+        )
     init_db()
     seed_default_engines()
     engine_keys = worker_engine_keys()
-    recovered = recover_running_scan_jobs()
+    recovered = run_maintenance()
     record_worker_heartbeat("starting")
     print(
         "MASP scan worker started "
@@ -985,6 +1380,7 @@ def run_forever() -> None:
     )
     if recovered:
         print(f"Recovered {recovered} interrupted scan job(s)", flush=True)
+    last_maintenance = time.monotonic()
     while True:
         try:
             processed = process_next_scan_job()
@@ -993,6 +1389,14 @@ def run_forever() -> None:
             record_worker_heartbeat("error")
             time.sleep(POLL_INTERVAL_SECONDS)
             continue
+
+        if time.monotonic() - last_maintenance >= MAINTENANCE_INTERVAL_SECONDS:
+            try:
+                run_maintenance()
+            except DatabaseOperationalError as exc:
+                print(f"Worker maintenance failed, will retry: {exc}", flush=True)
+            last_maintenance = time.monotonic()
+
         if not processed:
             time.sleep(POLL_INTERVAL_SECONDS)
 

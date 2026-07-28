@@ -87,6 +87,64 @@ def parse_encapsulated(value: str) -> list[tuple[str, int]]:
     return sections
 
 
+# The sections each request method may legally carry (RFC 3507 4.4). opt-body
+# belongs to OPTIONS responses only and must never appear in REQMOD/RESPMOD —
+# the body reader does not recognize it, so accepting it would route the message
+# down the no-body path and allow it unscanned.
+_ALLOWED_SECTIONS = {
+    "REQMOD": {"req-hdr": False, "req-body": True, "null-body": True},
+    "RESPMOD": {"req-hdr": False, "res-hdr": False, "res-body": True, "null-body": True},
+}
+
+
+def encapsulated_well_formed(raw: str, method: str) -> bool:
+    """True if an ``Encapsulated`` header is valid for ``method`` (RFC 3507 4.4).
+
+    Enforced, so a malformed header FAILS CLOSED instead of being treated as a
+    no-body message that passes unscanned:
+
+    - every entry is ``name=<non-negative int>`` with a section name legal for
+      the method (so ``opt-body`` is rejected in REQMOD/RESPMOD);
+    - offsets are non-decreasing in declared order;
+    - exactly one body/null-body section, and it is the last element;
+    - no duplicate sections.
+    """
+    allowed = _ALLOWED_SECTIONS.get(method.upper())
+    if allowed is None:
+        return False
+
+    entries = [entry.strip() for entry in raw.split(",") if entry.strip()]
+    if not entries:
+        return False
+
+    seen: set[str] = set()
+    offsets: list[int] = []
+    body_index: int | None = None
+    for index, entry in enumerate(entries):
+        name, sep, offset_text = entry.partition("=")
+        if not sep:
+            return False
+        name = name.strip()
+        if name not in allowed or name in seen:
+            return False
+        seen.add(name)
+        try:
+            offset = int(offset_text.strip())
+        except ValueError:
+            return False
+        if offset < 0:
+            return False
+        offsets.append(offset)
+        if allowed[name]:  # a body / null-body section
+            if body_index is not None:
+                return False  # more than one body section
+            body_index = index
+
+    if offsets != sorted(offsets):
+        return False
+    return body_index == len(entries) - 1
+
+
 def body_section(encapsulated: list[tuple[str, int]]) -> str | None:
     """Return the name of the body section (req-body/res-body), or None."""
     for name, _ in encapsulated:

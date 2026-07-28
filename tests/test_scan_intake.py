@@ -7,7 +7,10 @@ from unittest.mock import patch
 from app import database
 from app.services import ingest
 from app.services.ingest import UploadTooLargeError, store_bytes
-from app.services.scan_intake import enqueue_scan_from_stored_sample
+from app.services.scan_intake import (
+    NoEligibleEnginesError,
+    enqueue_scan_from_stored_sample,
+)
 
 
 class StoreBytesTests(unittest.TestCase):
@@ -51,8 +54,15 @@ class EnqueueFromStoredSampleTests(unittest.TestCase):
         database.DB_PATH = Path(self.temp_dir.name) / "test.db"
         database.DATABASE_URL = ""
         database.init_db()
+        database.create_engine_instance("static_metadata", "Static Metadata")
+        self.engines = database.list_engine_instances()
+        self.engines_patch = patch(
+            "app.services.scan_intake.enabled_engines", return_value=self.engines
+        )
+        self.engines_patch.start()
 
     def tearDown(self) -> None:
+        self.engines_patch.stop()
         database.DB_PATH = self.original_db_path
         database.DATABASE_URL = self.original_database_url
         self.temp_dir.cleanup()
@@ -60,10 +70,12 @@ class EnqueueFromStoredSampleTests(unittest.TestCase):
     def _stored(self, filename: str = "sample.bin"):
         from app.models import StoredSample
 
+        path = Path(self.temp_dir.name) / filename
+        path.write_bytes(b"payload")
         return StoredSample(
             original_filename=filename,
             stored_filename=f"stored-{filename}",
-            storage_path=str(Path(self.temp_dir.name) / filename),
+            storage_path=str(path),
             content_type="application/octet-stream",
             size_bytes=10,
             md5="0" * 32,
@@ -72,9 +84,7 @@ class EnqueueFromStoredSampleTests(unittest.TestCase):
         )
 
     def test_enqueue_creates_standalone_icap_scan(self) -> None:
-        with patch("app.services.scan_intake.detect_archive_format", return_value=None), patch(
-            "app.services.scan_intake.enabled_engines", return_value=[]
-        ):
+        with patch("app.services.scan_intake.detect_archive_format", return_value=None):
             scan = enqueue_scan_from_stored_sample(
                 self._stored(),
                 case_name="ICAP",
@@ -86,11 +96,11 @@ class EnqueueFromStoredSampleTests(unittest.TestCase):
         self.assertEqual(scan.source, "icap")
         self.assertEqual(scan.scan_role, "standalone")
         self.assertIsNone(scan.batch_id)
+        # Engine jobs were created in the same transaction.
+        self.assertEqual(len(database.list_scan_engine_jobs(scan.id)), 1)
 
     def test_enqueue_creates_container_batch_for_archive(self) -> None:
-        with patch("app.services.scan_intake.detect_archive_format", return_value="zip"), patch(
-            "app.services.scan_intake.enabled_engines", return_value=[]
-        ):
+        with patch("app.services.scan_intake.detect_archive_format", return_value="zip"):
             scan = enqueue_scan_from_stored_sample(
                 self._stored("bundle.zip"),
                 case_name="ICAP",
@@ -105,6 +115,76 @@ class EnqueueFromStoredSampleTests(unittest.TestCase):
         batch = database.get_scan_batch(scan.batch_id)
         assert batch is not None
         self.assertEqual(batch.source, "icap")
+
+    def test_zero_enabled_engines_rejects_intake_and_removes_file(self) -> None:
+        stored = self._stored()
+        self.assertTrue(Path(stored.storage_path).is_file())
+        with patch("app.services.scan_intake.enabled_engines", return_value=[]):
+            with self.assertRaises(NoEligibleEnginesError):
+                enqueue_scan_from_stored_sample(
+                    stored,
+                    case_name="ICAP",
+                    priority="Normal",
+                    note="",
+                    source="icap",
+                )
+        # Rejected before any DB commit: the orphaned file is cleaned up.
+        self.assertEqual(database.count_scan_history(), 0)
+        self.assertFalse(Path(stored.storage_path).is_file())
+
+    def test_archive_detection_error_removes_file(self) -> None:
+        stored = self._stored()
+        with patch(
+            "app.services.scan_intake.detect_archive_format",
+            side_effect=OSError("cannot read"),
+        ):
+            with self.assertRaises(OSError):
+                enqueue_scan_from_stored_sample(
+                    stored,
+                    case_name="ICAP",
+                    priority="Normal",
+                    note="",
+                    source="icap",
+                )
+        self.assertEqual(database.count_scan_history(), 0)
+        self.assertFalse(Path(stored.storage_path).is_file())
+
+    def test_db_failure_compensates_stored_file_and_creates_no_scan(self) -> None:
+        stored = self._stored()
+        self.assertTrue(Path(stored.storage_path).is_file())
+        with patch("app.services.scan_intake.detect_archive_format", return_value=None), patch(
+            "app.services.scan_intake.create_scan_intake",
+            side_effect=RuntimeError("boom"),
+        ):
+            with self.assertRaises(RuntimeError):
+                enqueue_scan_from_stored_sample(
+                    stored,
+                    case_name="ICAP",
+                    priority="Normal",
+                    note="",
+                    source="icap",
+                )
+        # The orphaned file was removed and no scan/sample persisted.
+        self.assertFalse(Path(stored.storage_path).is_file())
+        self.assertEqual(database.count_scan_history(), 0)
+
+    def test_engine_job_insert_failure_rolls_back_the_whole_scan(self) -> None:
+        # A failure while inserting engine jobs must roll back the sample + scan
+        # too (single transaction), leaving nothing behind.
+        stored = self._stored()
+        with patch("app.services.scan_intake.detect_archive_format", return_value=None), patch(
+            "app.database._insert_engine_jobs", side_effect=RuntimeError("engine insert failed")
+        ):
+            with self.assertRaises(RuntimeError):
+                enqueue_scan_from_stored_sample(
+                    stored,
+                    case_name="ICAP",
+                    priority="Normal",
+                    note="",
+                    source="icap",
+                )
+        self.assertEqual(database.count_scan_history(), 0)
+        self.assertFalse(Path(stored.storage_path).is_file())
 
 
 if __name__ == "__main__":

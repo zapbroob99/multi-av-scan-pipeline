@@ -4,7 +4,8 @@ services:
   app:
     build: .
     ports:
-      - "8000:8000"
+      # Loopback-only: this dev stack ships known credentials and login hints.
+      - "127.0.0.1:8000:8000"
     environment:
       MASP_DATABASE_URL: postgresql://masp:masp_dev_password@postgres:5432/masp
       MASP_CLAMD_HOST: clamav
@@ -14,6 +15,11 @@ services:
       MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS: ${MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS:-120}
       MASP_YARA_RULES_DIR: /app/rules
       MASP_API_TOKEN: ${MASP_API_TOKEN:-change-me}
+      # Local development convenience only. The application has no built-in
+      # default password; production/pilot must supply a strong secret and keep
+      # MASP_SHOW_DEV_LOGIN_HINTS off.
+      MASP_ADMIN_PASSWORD: ${MASP_ADMIN_PASSWORD:-admin123!}
+      MASP_SHOW_DEV_LOGIN_HINTS: ${MASP_SHOW_DEV_LOGIN_HINTS:-1}
       MASP_API_MAX_WAIT_SECONDS: ${MASP_API_MAX_WAIT_SECONDS:-15}
       MASP_API_RETRY_AFTER_SECONDS: ${MASP_API_RETRY_AFTER_SECONDS:-2}
       MASP_UPLOAD_MAX_BYTES: ${MASP_UPLOAD_MAX_BYTES:-0}
@@ -32,7 +38,7 @@ services:
       - icap
     command: python -m app.icap.server
     ports:
-      - "1344:1344"
+      - "127.0.0.1:1344:1344"
     environment:
       MASP_DATABASE_URL: postgresql://masp:masp_dev_password@postgres:5432/masp
       MASP_ICAP_HOST: 0.0.0.0
@@ -166,7 +172,7 @@ services:
       POSTGRES_USER: masp
       POSTGRES_PASSWORD: masp_dev_password
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -182,7 +188,7 @@ services:
       CLAMD_CONF_MaxFileSize: 512M
       CLAMD_CONF_MaxScanSize: 512M
     ports:
-      - "3310:3310"
+      - "127.0.0.1:3310:3310"
     volumes:
       - clamav-db:/var/lib/clamav
 

@@ -2,7 +2,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from app.models import (
     EngineInstanceRecord,
@@ -26,7 +26,84 @@ from app.workers.scan_worker import (
     process_next_scan_job,
     process_scan_engine_job,
     reap_orphaned_engine_jobs,
+    run_maintenance,
 )
+
+
+class ExceptionPathFencingTests(unittest.TestCase):
+    """A crashed adapter must not fail the job/scan if the worker lost ownership."""
+
+    def _run(self, *, owned: bool):
+        engine = make_engine("static_metadata", "Static Metadata")
+        job = make_job(1, engine)
+        with patch(
+            "app.workers.scan_worker.claim_next_scan_engine_job", return_value=job
+        ), patch(
+            "app.workers.scan_worker.process_scan_engine_job",
+            side_effect=RuntimeError("adapter boom"),
+        ), patch(
+            "app.workers.scan_worker.mark_scan_engine_job_terminal_if_owned",
+            return_value=owned,
+        ) as terminal, patch(
+            "app.workers.scan_worker.update_scan_status"
+        ) as update_status, patch(
+            "app.workers.scan_worker.record_worker_timing_event"
+        ), patch(
+            "app.workers.scan_worker.record_worker_heartbeat"
+        ):
+            from app.workers.scan_worker import process_next_scan_engine_job
+
+            process_next_scan_engine_job()
+        return terminal, update_status, job
+
+    def test_lost_ownership_does_not_fail_the_scan(self) -> None:
+        terminal, update_status, job = self._run(owned=False)
+        # Terminal is attempted but fenced (returns False); the scan is untouched.
+        terminal.assert_called_once_with(
+            job.id, ANY, job.attempt_count, "failed", last_error="adapter boom"
+        )
+        update_status.assert_not_called()
+
+    def test_owned_failure_marks_the_scan_failed(self) -> None:
+        _terminal, update_status, job = self._run(owned=True)
+        update_status.assert_called_once_with(
+            job.scan_job_id, "failed", last_error="adapter boom"
+        )
+
+
+class RunMaintenanceTests(unittest.TestCase):
+    def test_run_maintenance_runs_recovery_reaper_and_sweep(self) -> None:
+        with patch(
+            "app.workers.scan_worker.worker_engine_keys", return_value={"clamav"}
+        ), patch(
+            "app.workers.scan_worker.recover_running_scan_jobs", return_value=2
+        ) as recover, patch(
+            "app.workers.scan_worker.reap_orphaned_engine_jobs"
+        ) as reap, patch(
+            "app.workers.scan_worker.sweep_finalize_stuck_scans"
+        ) as sweep:
+            recovered = run_maintenance()
+
+        self.assertEqual(recovered, 2)
+        recover.assert_called_once()
+        reap.assert_called_once()
+        sweep.assert_called_once()
+
+    def test_run_forever_refuses_any_legacy_config(self) -> None:
+        from app.workers import scan_worker
+
+        # The legacy scan path must be unreachable in EVERY config combination:
+        # the fallback flag on, OR the engine-job queue off.
+        for queue_enabled, fallback_enabled in [(True, True), (False, False), (False, True)]:
+            with patch(
+                "app.workers.scan_worker.ENGINE_JOB_QUEUE_ENABLED", queue_enabled
+            ), patch(
+                "app.workers.scan_worker.LEGACY_SCAN_WORKER_FALLBACK_ENABLED",
+                fallback_enabled,
+            ), patch("app.workers.scan_worker.init_db") as init_db:
+                with self.assertRaises(SystemExit):
+                    scan_worker.run_forever()
+                init_db.assert_not_called()  # refused before touching the DB
 
 
 class ScanEngineWorkerTests(unittest.TestCase):
@@ -69,12 +146,9 @@ class ScanEngineWorkerTests(unittest.TestCase):
             "app.workers.scan_worker.run_engine",
             return_value=result,
         ) as run_engine, patch(
-            "app.workers.scan_worker.create_engine_result_if_missing",
-            return_value=123,
-        ) as create_result, patch(
-            "app.workers.scan_worker.mark_scan_engine_job_terminal",
+            "app.workers.scan_worker.commit_engine_job_result_if_owned",
             return_value=True,
-        ) as mark_terminal, patch(
+        ) as commit_result, patch(
             "app.workers.scan_worker.finalize_scan_if_complete",
             return_value=True,
         ) as finalize, patch(
@@ -85,8 +159,12 @@ class ScanEngineWorkerTests(unittest.TestCase):
         self.assertTrue(processed)
         mark_running.assert_called_once()
         run_engine.assert_called_once_with(engine, scan)
-        create_result.assert_called_once_with(scan.id, result)
-        mark_terminal.assert_called_once_with(job.id, "completed", last_error=None)
+        commit_result.assert_called_once()
+        _, commit_kwargs = commit_result.call_args
+        self.assertEqual(commit_kwargs["job_id"], job.id)
+        self.assertEqual(commit_kwargs["result"], result)
+        self.assertEqual(commit_kwargs["terminal_status"], "completed")
+        self.assertEqual(commit_kwargs["attempt_generation"], job.attempt_count)
         finalize.assert_called_once()
 
     def test_process_next_scan_job_does_not_use_legacy_fallback_by_default(self) -> None:
@@ -117,15 +195,13 @@ class ScanEngineWorkerTests(unittest.TestCase):
             "app.workers.scan_worker.list_engine_results",
             return_value=[result],
         ), patch(
-            "app.workers.scan_worker.update_scan_assessment",
-        ) as update_assessment, patch(
-            "app.workers.scan_worker.update_scan_status",
-        ) as update_status:
+            "app.workers.scan_worker.claim_scan_finalization",
+            return_value=1,
+        ) as claim_finalize:
             finalized = finalize_scan_if_complete(scan, [engine])
 
         self.assertFalse(finalized)
-        update_assessment.assert_not_called()
-        update_status.assert_not_called()
+        claim_finalize.assert_not_called()
 
     def test_finalize_scan_uses_terminal_engine_jobs_and_results(self) -> None:
         scan = make_scan()
@@ -140,15 +216,17 @@ class ScanEngineWorkerTests(unittest.TestCase):
             "app.workers.scan_worker.list_engine_results",
             return_value=[result],
         ), patch(
-            "app.workers.scan_worker.update_scan_assessment",
-        ) as update_assessment, patch(
-            "app.workers.scan_worker.update_scan_status",
-        ) as update_status:
+            "app.workers.scan_worker.claim_scan_finalization",
+            return_value=3,
+        ) as claim_finalize, patch(
+            "app.workers.scan_worker.complete_finalizing_scan",
+            return_value=True,
+        ) as complete:
             finalized = finalize_scan_if_complete(scan, [engine])
 
         self.assertTrue(finalized)
-        update_assessment.assert_called_once_with(scan.id, "low", 10)
-        update_status.assert_called_once_with(scan.id, "completed")
+        claim_finalize.assert_called_once()
+        complete.assert_called_once_with(scan.id, ANY, 3, "low", 10)
 
     def test_finalize_scan_enqueues_lazy_archive_children_for_detected_container(self) -> None:
         engine = make_engine("static_metadata", "Static Metadata")
@@ -191,9 +269,11 @@ class ScanEngineWorkerTests(unittest.TestCase):
             "app.workers.scan_worker.list_engine_results",
             return_value=[result],
         ), patch(
-            "app.workers.scan_worker.update_scan_assessment",
+            "app.workers.scan_worker.claim_scan_finalization",
+            return_value=1,
         ), patch(
-            "app.workers.scan_worker.update_scan_status",
+            "app.workers.scan_worker.complete_finalizing_scan",
+            return_value=True,
         ), patch(
             "app.workers.scan_worker.get_scan_batch",
             return_value=make_batch(42),
@@ -207,14 +287,15 @@ class ScanEngineWorkerTests(unittest.TestCase):
             "app.workers.scan_worker.extract_archive",
             return_value=extraction,
         ) as extract_archive, patch(
-            "app.workers.scan_worker.create_sample",
-            return_value=123,
-        ) as create_sample, patch(
-            "app.workers.scan_worker.create_scan_job",
+            "app.workers.scan_worker.new_staging_dir", return_value=Path("staging"),
+        ), patch(
+            "app.workers.scan_worker.promote_staged_file",
+        ), patch(
+            "app.workers.scan_worker.remove_staging_dir",
+        ), patch(
+            "app.workers.scan_worker.create_archive_child",
             return_value=456,
-        ) as create_scan, patch(
-            "app.workers.scan_worker.create_scan_engine_jobs",
-        ) as create_engine_jobs, patch(
+        ) as create_child, patch(
             "app.workers.scan_worker.refresh_scan_batch_counts",
         ) as refresh_counts, patch(
             "app.workers.scan_worker.record_worker_timing_event",
@@ -222,20 +303,21 @@ class ScanEngineWorkerTests(unittest.TestCase):
             finalized = finalize_scan_if_complete(scan, [engine])
 
         self.assertTrue(finalized)
-        extract_archive.assert_called_once_with(existing_archive_path)
-        create_sample.assert_called_once_with(child_sample)
-        create_scan.assert_called_once_with(
-            sample_id=123,
+        extract_archive.assert_called_once_with(existing_archive_path, destination_dir=Path("staging"))
+        create_child.assert_called_once_with(
+            parent_scan_id=scan.id,
+            parent_finalize_worker_id=ANY,
+            parent_finalize_generation=1,
+            batch_id=42,
+            sample=ANY,
+            engines=[engine],
             case_name=scan.case_name,
             priority=scan.priority,
             note=scan.note,
             source="api",
-            batch_id=42,
-            parent_scan_id=scan.id,
             relative_path="bin/tool.exe",
-            scan_role="child",
+            member_ordinal=0,
         )
-        create_engine_jobs.assert_called_once_with(456, [engine])
         refresh_counts.assert_called_once_with(42)
 
     def test_finalize_scan_records_failure_when_archive_path_cannot_be_resolved(self) -> None:
@@ -258,9 +340,11 @@ class ScanEngineWorkerTests(unittest.TestCase):
             "app.workers.scan_worker.list_engine_results",
             return_value=[result],
         ), patch(
-            "app.workers.scan_worker.update_scan_assessment",
+            "app.workers.scan_worker.claim_scan_finalization",
+            return_value=1,
         ), patch(
-            "app.workers.scan_worker.update_scan_status",
+            "app.workers.scan_worker.complete_finalizing_scan",
+            return_value=True,
         ), patch(
             "app.workers.scan_worker.get_scan_batch",
             return_value=make_batch(42),
@@ -351,14 +435,15 @@ class NestedArchiveEnqueueTests(unittest.TestCase):
             "app.workers.scan_worker.extract_archive",
             return_value=extraction,
         ) as extract, patch(
-            "app.workers.scan_worker.create_sample",
-            return_value=123,
+            "app.workers.scan_worker.new_staging_dir", return_value=Path("staging"),
         ), patch(
-            "app.workers.scan_worker.create_scan_job",
+            "app.workers.scan_worker.promote_staged_file",
+        ), patch(
+            "app.workers.scan_worker.remove_staging_dir",
+        ), patch(
+            "app.workers.scan_worker.create_archive_child",
             return_value=456,
-        ) as create_scan, patch(
-            "app.workers.scan_worker.create_scan_engine_jobs",
-        ) as create_engine_jobs, patch(
+        ) as create_child, patch(
             "app.workers.scan_worker.refresh_scan_batch_counts",
         ) as refresh_counts, patch(
             "app.workers.scan_worker.record_worker_timing_event",
@@ -369,23 +454,77 @@ class NestedArchiveEnqueueTests(unittest.TestCase):
                 [self.detected_result],
                 [self.engine],
                 set(),
+                finalize_generation=1,
             )
 
         self.assertEqual(created, 1)
-        extract.assert_called_once_with(existing_archive_path)
-        create_scan.assert_called_once_with(
-            sample_id=123,
+        extract.assert_called_once_with(existing_archive_path, destination_dir=Path("staging"))
+        create_child.assert_called_once_with(
+            parent_scan_id=2,
+            parent_finalize_worker_id=ANY,
+            parent_finalize_generation=1,
+            batch_id=42,
+            sample=ANY,
+            engines=[self.engine],
             case_name=self.child.case_name,
             priority=self.child.priority,
             note=self.child.note,
             source=self.child.source,
-            batch_id=42,
-            parent_scan_id=2,
             relative_path="payloads/inner.zip/bin/evil.exe",
-            scan_role="child",
+            member_ordinal=0,
         )
-        create_engine_jobs.assert_called_once_with(456, [self.engine])
         refresh_counts.assert_called_once_with(42)
+
+    def test_rerun_after_partial_crash_registers_only_missing_members(self) -> None:
+        # Simulate a re-finalization after a crash that had registered member 0:
+        # create_archive_child returns None for the already-present ordinal and a
+        # new id for the missing one. Both are re-attempted (idempotent), only the
+        # missing one is counted, and the ordinals are deterministic.
+        existing_archive_path = Path(__file__).resolve()
+        members = [
+            ExtractedArchiveMember(
+                relative_path="dup.exe",
+                sample=StoredSample("dup.exe", f"stored-{i}.exe", f"storage/samples/stored-{i}.exe", "application/octet-stream", 1, "0" * 32, "0" * 40, str(i) * 64),
+            )
+            for i in range(2)
+        ]
+        extraction = ArchiveExtractionResult(
+            archive_path=self.child.storage_path, members=members, total_uncompressed_bytes=2
+        )
+        with patch(
+            "app.workers.scan_worker.get_scan_batch", return_value=make_batch(42)
+        ), patch(
+            "app.workers.scan_worker.list_scan_batch_scans",
+            return_value=[self.container, self.child],
+        ), patch(
+            "app.workers.scan_worker.resolve_sample_path",
+            return_value=existing_archive_path,
+        ), patch(
+            "app.workers.scan_worker.is_supported_archive", return_value=True
+        ), patch(
+            "app.workers.scan_worker.extract_archive", return_value=extraction
+        ), patch(
+            "app.workers.scan_worker.new_staging_dir", return_value=Path("staging")
+        ), patch(
+            "app.workers.scan_worker.promote_staged_file"
+        ), patch(
+            "app.workers.scan_worker.remove_staging_dir"
+        ), patch(
+            "app.workers.scan_worker.create_archive_child", side_effect=[None, 999]
+        ) as create_child, patch(
+            "app.workers.scan_worker.refresh_scan_batch_counts"
+        ), patch(
+            "app.workers.scan_worker.record_worker_timing_event"
+        ):
+            created = maybe_enqueue_lazy_archive_children(
+                self.child, self.assessment, [self.detected_result], [self.engine], set(),
+                finalize_generation=1,
+            )
+
+        self.assertEqual(created, 1)  # only the previously-missing member counts
+        self.assertEqual(create_child.call_count, 2)  # both re-attempted (idempotent)
+        self.assertEqual(create_child.call_args_list[0].kwargs["member_ordinal"], 0)
+        self.assertEqual(create_child.call_args_list[1].kwargs["member_ordinal"], 1)
 
     def test_detected_child_that_is_not_an_archive_is_ignored(self) -> None:
         with patch(
@@ -410,6 +549,7 @@ class NestedArchiveEnqueueTests(unittest.TestCase):
                 [self.detected_result],
                 [self.engine],
                 set(),
+                finalize_generation=1,
             )
 
         self.assertEqual(created, 0)
@@ -446,6 +586,7 @@ class NestedArchiveEnqueueTests(unittest.TestCase):
                 [self.detected_result],
                 [self.engine],
                 set(),
+                finalize_generation=1,
             )
 
         self.assertEqual(created, 0)
@@ -508,8 +649,14 @@ class NestedArchiveEnqueueTests(unittest.TestCase):
             "app.workers.scan_worker.extract_archive",
             return_value=extraction,
         ), patch(
-            "app.workers.scan_worker.create_scan_job",
-        ) as create_scan, patch(
+            "app.workers.scan_worker.new_staging_dir", return_value=Path("staging"),
+        ), patch(
+            "app.workers.scan_worker.promote_staged_file",
+        ), patch(
+            "app.workers.scan_worker.remove_staging_dir",
+        ), patch(
+            "app.workers.scan_worker.create_archive_child",
+        ) as create_child, patch(
             "app.workers.scan_worker.refresh_scan_batch_counts",
         ) as refresh_counts, patch(
             "app.workers.scan_worker.record_worker_timing_event",
@@ -520,10 +667,11 @@ class NestedArchiveEnqueueTests(unittest.TestCase):
                 [self.detected_result],
                 [self.engine],
                 set(),
+                finalize_generation=1,
             )
 
         self.assertEqual(created, 0)
-        create_scan.assert_not_called()
+        create_child.assert_not_called()
         refresh_counts.assert_called_once_with(42)
         record_event.assert_any_call(
             2,

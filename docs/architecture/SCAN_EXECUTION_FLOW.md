@@ -179,9 +179,13 @@ Run exactly that engine job.
 Then end this worker tick.
 ```
 
-The legacy scan-centric path still exists behind
-`MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED=1`, but it is disabled by default
-because it can reintroduce head-of-line and timeout/skipped races.
+The legacy scan-centric code path still exists in the tree, but the worker no
+longer runs it: `run_forever()` refuses to start (`SystemExit`) if either
+`MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED=1` or the engine-job queue is disabled
+(`MASP_ENGINE_JOB_QUEUE_ENABLED=0`). It reintroduces head-of-line and
+timeout/skipped races and, because it finalizes with the old
+completed-then-extract ordering, the archive completion/child crash gap the
+`finalizing` state machine closes. Only the fenced engine-job path is supported.
 
 ## Worker Capability Split
 

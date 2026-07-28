@@ -738,8 +738,8 @@ This helps distinguish:
 - missing-engine wait.
 
 The worker also records compact orchestration events in `scan_worker_events`.
-The status API exposes them as `worker_events`, and the benchmark report
-summarizes them in `worker_timing_ms`:
+Older internal benchmark payloads exposed them as `worker_events` and summarized
+them in `worker_timing_ms`:
 
 ```json
 {
@@ -753,10 +753,11 @@ summarizes them in `worker_timing_ms`:
 
 `engine_timings_ms` tells how long real adapter execution reported. It excludes
 `skipped` results so orchestration wait windows do not look like slow AV engine
-runtime. `worker_timing_ms` tells how long the worker spent around adapter
-execution, result persistence, context reload, and scan finalization. If both are low while
-`processing_duration_ms` is high, the remaining time is likely between worker
-ticks or waiting for another worker to produce missing engine results.
+runtime. The sanitized public `/api/v1` projection no longer exposes
+`worker_events`, worker IDs, or internal paths; therefore current public
+benchmark runs do not populate `worker_timing_ms`. The events remain in internal
+persistence/operator diagnostics. Historical reports that contain
+`worker_timing_ms` can still be read as worker-side orchestration timing.
 
 ## Correctness Rules That Must Not Break
 

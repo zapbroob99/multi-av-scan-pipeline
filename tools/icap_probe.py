@@ -69,7 +69,17 @@ def verdict(response: bytes) -> str:
     return f"?      ({status})"
 
 
-def main() -> None:
+def verdict_kind(response: bytes) -> str:
+    if response.startswith(b"ICAP/1.0 204"):
+        return "allow"
+    if response.startswith(b"ICAP/1.0 200") and b"403" in response:
+        return "block"
+    if response.startswith(b"ICAP/1.0 200"):
+        return "allow"
+    return "unknown"
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=1344)
@@ -84,12 +94,19 @@ def main() -> None:
         action="store_true",
         help="Omit Allow: 204 to exercise the RFC-required echo-unmodified allow path.",
     )
+    parser.add_argument(
+        "--expect",
+        choices=("allow", "block"),
+        help="Exit non-zero unless the REQMOD verdict matches.",
+    )
     args = parser.parse_args()
 
     opt = talk(args.host, args.port, options_message(args.host, args.port, args.service), args.timeout)
     print("OPTIONS  ->", opt.split(b"\r\n", 1)[0].decode(errors="replace"))
+    if not opt.startswith(b"ICAP/1.0 200"):
+        return 1
     if args.options:
-        return
+        return 0
 
     if args.eicar:
         filename, body = "eicar.com", EICAR
@@ -109,8 +126,15 @@ def main() -> None:
         ),
         args.timeout,
     )
+    actual = verdict_kind(resp)
     print(f"REQMOD   -> {verdict(resp)}   [{filename}, {len(body)} bytes]")
+    if actual == "unknown":
+        return 1
+    if args.expect and actual != args.expect:
+        print(f"Expected {args.expect}, received {actual}.")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

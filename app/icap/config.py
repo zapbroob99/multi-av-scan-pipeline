@@ -39,8 +39,13 @@ class IcapConfig:
     max_bytes: int | None = None
     fail_closed: bool = True
     block_on_review: bool = False
+    block_archives: bool = True
     allowed_ips: frozenset[str] = field(default_factory=frozenset)
     preview_bytes: int = 0
+    read_timeout_seconds: int = 60
+    body_timeout_seconds: int = 300
+    max_connections: int = 100
+    admission_timeout_seconds: float = 10.0
 
     @property
     def uri(self) -> str:
@@ -59,6 +64,11 @@ def load_icap_config() -> IcapConfig:
         max_bytes=effective_cap or None,
         fail_closed=_bool_env("MASP_ICAP_FAIL_MODE_CLOSED", True),
         block_on_review=_bool_env("MASP_ICAP_BLOCK_ON_REVIEW", False),
+        block_archives=_bool_env("MASP_ICAP_BLOCK_ARCHIVES", True),
         allowed_ips=_ip_allowlist("MASP_ICAP_ALLOWED_IPS"),
         preview_bytes=_int_env("MASP_ICAP_PREVIEW_BYTES", 0),
+        read_timeout_seconds=_int_env("MASP_ICAP_READ_TIMEOUT_SECONDS", 60),
+        body_timeout_seconds=_int_env("MASP_ICAP_BODY_TIMEOUT_SECONDS", 300),
+        max_connections=_int_env("MASP_ICAP_MAX_CONNECTIONS", 100, minimum=1),
+        admission_timeout_seconds=_int_env("MASP_ICAP_ADMISSION_TIMEOUT_SECONDS", 10),
     )

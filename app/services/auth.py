@@ -40,15 +40,19 @@ class LoginResult:
 
 
 def seed_default_users() -> None:
+    # No hardcoded default passwords: a user is seeded only when its password is
+    # provided via the environment. This keeps a fresh deployment from ever
+    # having a well-known credential. The pilot compose makes MASP_ADMIN_PASSWORD
+    # a required variable, so the stack refuses to start without one.
     default_users = [
         (
             os.getenv("MASP_ADMIN_USERNAME", "admin"),
-            os.getenv("MASP_ADMIN_PASSWORD", "admin123!"),
+            os.getenv("MASP_ADMIN_PASSWORD", ""),
             ROLE_ADMIN,
         ),
         (
             os.getenv("MASP_ANALYST_USERNAME", "analyst"),
-            os.getenv("MASP_ANALYST_PASSWORD", "analyst123!"),
+            os.getenv("MASP_ANALYST_PASSWORD", ""),
             ROLE_ANALYST,
         ),
     ]
@@ -56,22 +60,42 @@ def seed_default_users() -> None:
     for username, password, role in default_users:
         if not username or get_user_by_username(username) is not None:
             continue
+        if not password:
+            print(
+                f"[auth] {role} user '{username}' not seeded: set "
+                f"MASP_{role.upper()}_PASSWORD to create it.",
+                flush=True,
+            )
+            continue
+        if password.startswith("CHANGE_ME"):
+            # Defense in depth if the installer's placeholder check is bypassed.
+            print(
+                f"[auth] {role} user '{username}' not seeded: "
+                f"MASP_{role.upper()}_PASSWORD is still a placeholder.",
+                flush=True,
+            )
+            continue
         create_user(username, hash_password(password), role)
 
 
 def dev_login_hint() -> str | None:
-    show_hint = os.getenv("MASP_SHOW_DEV_LOGIN_HINTS", "1").strip().lower()
-    if show_hint in {"0", "false", "no", "off"}:
+    # Off by default; opt-in only, and never invents a password — it can only
+    # reflect credentials explicitly configured in the environment. There are no
+    # hardcoded defaults left to leak.
+    show_hint = os.getenv("MASP_SHOW_DEV_LOGIN_HINTS", "0").strip().lower()
+    if show_hint not in {"1", "true", "yes", "on"}:
         return None
 
     admin_username = os.getenv("MASP_ADMIN_USERNAME", "admin")
-    admin_password = os.getenv("MASP_ADMIN_PASSWORD", "admin123!")
+    admin_password = os.getenv("MASP_ADMIN_PASSWORD", "")
     analyst_username = os.getenv("MASP_ANALYST_USERNAME", "analyst")
-    analyst_password = os.getenv("MASP_ANALYST_PASSWORD", "analyst123!")
-    return (
-        f"{admin_username} / {admin_password} | "
-        f"{analyst_username} / {analyst_password}"
-    )
+    analyst_password = os.getenv("MASP_ANALYST_PASSWORD", "")
+    parts = []
+    if admin_password:
+        parts.append(f"{admin_username} / {admin_password}")
+    if analyst_password:
+        parts.append(f"{analyst_username} / {analyst_password}")
+    return " | ".join(parts) or None
 
 
 def hash_password(password: str) -> str:

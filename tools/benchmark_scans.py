@@ -499,7 +499,11 @@ def run_from_payload(
         skipped_engines = safe_int(engines_payload.get("skipped"))
         detections = safe_int(engines_payload.get("detections"))
     engine_durations_ms = extract_engine_durations(payload.get("engine_results"))
-    worker_event_durations_ms = extract_worker_event_durations(payload.get("worker_events"))
+    # Worker/orchestration telemetry is no longer exposed on the public API
+    # (worker_events was removed from the /api/v1 projection). Per-engine
+    # duration still comes from engine_results above; worker-event timing is
+    # simply absent here until a dedicated internal diagnostics surface exists.
+    worker_event_durations_ms = extract_worker_event_durations(payload.get("worker_events") or [])
 
     return BenchmarkRun(
         request_index=request_index,

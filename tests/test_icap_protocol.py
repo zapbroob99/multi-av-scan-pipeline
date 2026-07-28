@@ -149,6 +149,35 @@ class IcapResponseBuildTests(unittest.TestCase):
         self.assertTrue(raw.startswith(b"ICAP/1.0 400 Bad Request\r\n"))
         self.assertIn(b"ISTag:", raw)
 
+    def test_encapsulated_well_formed_accepts_valid_headers(self) -> None:
+        self.assertTrue(protocol.encapsulated_well_formed("req-hdr=0, req-body=42", "REQMOD"))
+        self.assertTrue(protocol.encapsulated_well_formed("req-hdr=0, res-hdr=20, res-body=40", "RESPMOD"))
+        self.assertTrue(protocol.encapsulated_well_formed("req-hdr=0, null-body=42", "REQMOD"))
+        self.assertTrue(protocol.encapsulated_well_formed("null-body=0", "REQMOD"))
+
+    def test_encapsulated_well_formed_rejects_malformed_headers(self) -> None:
+        self.assertFalse(protocol.encapsulated_well_formed("", "REQMOD"))
+        self.assertFalse(protocol.encapsulated_well_formed("req-hdr=0", "REQMOD"))  # no body
+        self.assertFalse(protocol.encapsulated_well_formed("req-hdr=0, req-body=xyz", "REQMOD"))
+        self.assertFalse(protocol.encapsulated_well_formed("bogus=0, req-body=5", "REQMOD"))
+        self.assertFalse(protocol.encapsulated_well_formed("req-body", "REQMOD"))
+
+    def test_encapsulated_well_formed_is_method_aware(self) -> None:
+        # opt-body belongs to OPTIONS only; it must not pass REQMOD/RESPMOD.
+        self.assertFalse(protocol.encapsulated_well_formed("opt-body=0", "REQMOD"))
+        self.assertFalse(protocol.encapsulated_well_formed("opt-body=0", "RESPMOD"))
+        # res-body is not legal in a REQMOD request; req-body not the modified body in RESPMOD.
+        self.assertFalse(protocol.encapsulated_well_formed("res-hdr=0, res-body=10", "REQMOD"))
+        self.assertFalse(protocol.encapsulated_well_formed("req-hdr=0, req-body=10", "RESPMOD"))
+        self.assertFalse(protocol.encapsulated_well_formed("null-body=0", "OPTIONS"))
+
+    def test_encapsulated_well_formed_enforces_structure(self) -> None:
+        self.assertFalse(protocol.encapsulated_well_formed("req-hdr=0, req-body=-1", "REQMOD"))
+        self.assertFalse(protocol.encapsulated_well_formed("req-body=0, req-hdr=1", "REQMOD"))  # body not last
+        self.assertFalse(protocol.encapsulated_well_formed("req-body=0, null-body=1", "REQMOD"))  # two bodies
+        self.assertFalse(protocol.encapsulated_well_formed("req-hdr=5, req-body=1", "REQMOD"))  # decreasing offsets
+        self.assertFalse(protocol.encapsulated_well_formed("req-hdr=0, req-hdr=1, req-body=2", "REQMOD"))  # duplicate
+
 
 if __name__ == "__main__":
     unittest.main()
