@@ -11,6 +11,22 @@ x-masp-service: &masp-service
   build:
     context: .
   restart: unless-stopped
+  # These three services parse untrusted samples in-process, so they are the
+  # blast radius of any archive/format parser exploit. Confine them:
+  #   user            unprivileged fixed id, matching the Dockerfile and the
+  #                   host storage directory ownership set by install.sh
+  #   cap_drop ALL    no Linux capabilities are needed (ports are >1024)
+  #   no-new-privs    a setuid binary can never raise privileges
+  #   read_only       the image filesystem is immutable at runtime; the only
+  #                   writable paths are the storage/rules bind mounts and /tmp
+  user: "10001:10001"
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  read_only: true
+  tmpfs:
+    - /tmp
   logging:
     driver: json-file
     options:
@@ -115,6 +131,11 @@ services:
   postgres:
     image: ${MASP_POSTGRES_IMAGE:-postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb}
     restart: unless-stopped
+    # Upstream images manage their own runtime user and need writable /var/run
+    # and /tmp, so they get the privilege-escalation block but not read_only or
+    # cap_drop.
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_DB: masp
       POSTGRES_USER: masp
@@ -135,6 +156,10 @@ services:
   clamav:
     image: ${MASP_CLAMAV_IMAGE:-clamav/clamav:stable@sha256:1b6443c4a7b456baa1abfaf9796815f8d21e2fb558dbaed5b682fd4552d8b0c3}
     restart: unless-stopped
+    # Samples reach clamd by TCP stream, not through a shared mount, so this
+    # container never sees the storage directory. See the postgres note above.
+    security_opt:
+      - no-new-privileges:true
     environment:
       CLAMD_CONF_StreamMaxLength: ${MASP_CLAMD_STREAM_MAX_LENGTH:-64M}
       CLAMD_CONF_MaxFileSize: ${MASP_CLAMD_MAX_FILE_SIZE:-64M}

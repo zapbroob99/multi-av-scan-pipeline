@@ -17,6 +17,25 @@
 
 name: masp-prod
 
+x-masp-hardening: &masp-hardening
+  # The app, worker and icap services parse untrusted samples in-process, so they
+  # are the blast radius of any archive/format parser exploit. Confine them:
+  #   user            unprivileged fixed id baked into the image; the host
+  #                   directories bound at /app/storage and /app/rules must be
+  #                   owned by this id or the services cannot write
+  #   cap_drop ALL    no Linux capabilities are needed (ports are >1024)
+  #   no-new-privs    a setuid binary can never raise privileges
+  #   read_only       the image filesystem is immutable at runtime; the only
+  #                   writable paths are the two bind mounts and /tmp
+  user: "10001:10001"
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  read_only: true
+  tmpfs:
+    - /tmp
+
 x-common-env: &common-env
   MASP_DATABASE_URL: ${MASP_DATABASE_URL:?set MASP_DATABASE_URL to the external PostgreSQL DSN}
   MASP_DB_POOL_ENABLED: ${MASP_DB_POOL_ENABLED:-1}
@@ -31,6 +50,7 @@ x-common-env: &common-env
 
 services:
   app:
+    <<: *masp-hardening
     build: .
     restart: unless-stopped
     ports:
@@ -54,6 +74,7 @@ services:
       retries: 10
 
   worker:
+    <<: *masp-hardening
     build: .
     restart: unless-stopped
     command: python -m app.workers.scan_worker
@@ -71,6 +92,7 @@ services:
       # advisory lock in init_postgres_db, so app and worker start in parallel.
 
   icap:
+    <<: *masp-hardening
     build: .
     restart: unless-stopped
     profiles:
@@ -101,6 +123,11 @@ services:
   clamav:
     image: clamav/clamav:stable
     restart: unless-stopped
+    # Samples reach clamd by TCP stream, not a shared mount, so this container
+    # never sees the storage directory. Upstream image manages its own user and
+    # needs writable /var/run and /tmp, so no read_only/cap_drop here.
+    security_opt:
+      - no-new-privileges:true
     environment:
       CLAMD_CONF_StreamMaxLength: ${MASP_CLAMD_STREAM_MAX_LENGTH:-64M}
       CLAMD_CONF_MaxFileSize: ${MASP_CLAMD_MAX_FILE_SIZE:-64M}

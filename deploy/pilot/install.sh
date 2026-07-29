@@ -77,6 +77,9 @@ chmod 600 "$PILOT_ENV_FILE"
 pilot_prepare_data_dir "$storage_dir"
 pilot_prepare_data_dir "$storage_dir/samples"
 [[ -d "$rules_dir" ]] || pilot_die "rules directory missing: $rules_dir"
+# The admin UI adds and removes YARA rule files, so the rules mount must also be
+# writable by the unprivileged container id.
+pilot_prepare_data_dir "$rules_dir"
 
 pilot_compose config --quiet
 

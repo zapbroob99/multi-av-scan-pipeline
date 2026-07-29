@@ -18,7 +18,16 @@ COPY rules ./rules
 # carries the License and the NOTICE attribution.
 COPY LICENSE NOTICE ./
 
-RUN mkdir -p /app/data /app/storage/samples /app/rules
+# Run as an unprivileged fixed UID. Samples are untrusted input parsed in-process
+# by archive/format libraries, so a parser exploit must not land on root. The id
+# is fixed rather than auto-assigned because the pilot bind-mounts a host storage
+# directory, and install.sh chowns that directory to this same id.
+RUN groupadd --system --gid 10001 masp \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /app --no-create-home masp \
+    && mkdir -p /app/data /app/storage/samples /app/rules \
+    && chown -R masp:masp /app
+
+USER masp
 
 EXPOSE 8000
 

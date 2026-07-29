@@ -63,12 +63,25 @@ pilot_rules_dir() {
     printf '%s\n' "$value"
 }
 
+# The MASP containers run as the unprivileged fixed id baked into the image
+# (Dockerfile: user/group 10001). Bind-mounted host directories keep their host
+# ownership inside the container, so they must be owned by that id or the
+# services cannot write samples, staging files, or rules.
+PILOT_CONTAINER_UID="${PILOT_CONTAINER_UID:-10001}"
+PILOT_CONTAINER_GID="${PILOT_CONTAINER_GID:-10001}"
+
 pilot_prepare_data_dir() {
     local path="$1"
     mkdir -p "$path"
     if ! chmod 0750 "$path" 2>/dev/null; then
         printf 'WARNING: could not set Unix mode 0750 on %s; enforce equivalent host/storage ACLs.\n' \
             "$path" >&2
+    fi
+    # 0750 keeps the directory off-limits to other host users; the owner is the
+    # container id so the unprivileged services can still write.
+    if ! chown "$PILOT_CONTAINER_UID:$PILOT_CONTAINER_GID" "$path" 2>/dev/null; then
+        printf 'WARNING: could not chown %s to %s:%s; the containers run as that id and need write access. Set it manually or the pilot will fail to store samples.\n' \
+            "$path" "$PILOT_CONTAINER_UID" "$PILOT_CONTAINER_GID" >&2
     fi
 }
 
