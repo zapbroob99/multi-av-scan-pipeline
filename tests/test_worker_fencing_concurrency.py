@@ -191,14 +191,18 @@ class _FencingConcurrencyContract:
         )
 
         lock_held = threading.Event()
-        steal_issued = threading.Event()
+        steal_completed = threading.Event()
         outcome: dict[str, object] = {}
 
         def while_locked() -> None:
             lock_held.set()
-            # Hold the parent lock until the steal has been issued (and is thus
-            # blocking), then let create_archive_child commit.
-            steal_issued.wait(timeout=10)
+            # The discriminating observation: while this transaction holds the
+            # parent row lock, the steal must NOT be able to finish. If it does,
+            # the lock is not actually excluding it. Asserting only on the final
+            # generation would pass either way -- the stealer ends at
+            # generation+1 whether it was blocked or not; what differs is
+            # whether it got there before or after the child was committed.
+            outcome["steal_completed_under_lock"] = steal_completed.wait(timeout=2.0)
 
         def creator() -> None:
             database._ARCHIVE_CHILD_LOCK_TEST_HOOK = while_locked
@@ -223,11 +227,12 @@ class _FencingConcurrencyContract:
                 database._ARCHIVE_CHILD_LOCK_TEST_HOOK = None
 
         def stealer() -> None:
-            # Lease claimed at now=1000 (120s) is expired at now=5000, so this
-            # would steal immediately if not blocked by the held lock.
+            # The lease claimed at now=1000 (120s) is expired at now=5000, so
+            # nothing but the row lock can hold this back.
             outcome["steal"] = database.claim_scan_finalization(
                 scan_id, "w-B", lease_seconds=120, now=5000
             )
+            steal_completed.set()
 
         creator_thread = threading.Thread(target=creator)
         creator_thread.start()
@@ -235,14 +240,17 @@ class _FencingConcurrencyContract:
 
         stealer_thread = threading.Thread(target=stealer)
         stealer_thread.start()
-        # Give the steal a moment to reach (and block on) the locked row, then
-        # release the creator.
-        _time.sleep(0.3)
-        steal_issued.set()
 
-        creator_thread.join(timeout=30)
-        stealer_thread.join(timeout=30)
+        creator_thread.join(timeout=60)
+        stealer_thread.join(timeout=60)
 
+        # The lock actually excluded the concurrent steal.
+        self.assertIs(
+            outcome.get("steal_completed_under_lock"),
+            False,
+            "the lease steal completed while the parent row was locked, so the "
+            "ownership check and the child insert are not atomic",
+        )
         # Creator held the lock first -> child registered, not fenced.
         self.assertIsNotNone(outcome.get("child"), f"creator should have won: {outcome}")
         self.assertFalse(outcome.get("stale"))
@@ -250,8 +258,7 @@ class _FencingConcurrencyContract:
             c for c in database.list_scan_batch_scans(batch_id, limit=100) if c.scan_role == "child"
         ]
         self.assertEqual(len(children), 1)
-        # Steal ran only AFTER the child committed, so it saw the committed state
-        # and took the next generation (proof it was serialized behind the lock).
+        # Serialized behind the lock, the steal then observed the committed row.
         self.assertEqual(outcome.get("steal"), generation + 1)
 
     def test_concurrent_commit_at_same_generation_writes_one_result(self) -> None:
