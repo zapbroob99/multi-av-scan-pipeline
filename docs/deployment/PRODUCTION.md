@@ -17,7 +17,18 @@ credentials) and must not be used in production.
 - For ICAP, a private routed network path to the MASP host. ICAP is plain RFC
   3507 TCP and must not be treated as HTTP by the API reverse proxy. Restrict
   it with the network firewall and `MASP_ICAP_ALLOWED_IPS`.
-- Persistent host directories for sample storage and YARA rules.
+- Persistent host directories for sample storage and YARA rules. They must be
+  owned by the unprivileged container id `10001:10001` and should be mounted
+  `noexec,nosuid,nodev`; the services run as that non-root id with a read-only
+  image filesystem and all Linux capabilities dropped.
+- A host antivirus exclusion for the storage tree, agreed with the security
+  team before the first sample arrives. The directory holds real malware by
+  design, so endpoint protection will otherwise quarantine or delete samples,
+  corrupting scan records and destroying evidence. Scope the exclusion to the
+  path only (for example `/srv/masp/storage/**`), never to the rest of the host,
+  and record it in the change ticket so a later endpoint-policy rollout does not
+  silently remove it. See the fuller rationale in
+  [PILOT.md](PILOT.md#host-antivirus-exclusion).
 
 Required network flows:
 
@@ -134,3 +145,12 @@ healthcheck has a 120s start period. Workers wait for clamd to be healthy.
 - [ ] `.env.production` is `chmod 600` and never committed.
 - [ ] Upload/ICAP size limits match the integration contract (v1: 50 MiB).
 - [ ] Database credentials scoped to the MASP database only.
+- [ ] Host antivirus exclusion for the storage tree is in place, scoped to that
+      path only, and recorded in the change ticket.
+- [ ] Storage and rules directories are owned by `10001:10001`, mode `0750`, on
+      a filesystem mounted `noexec,nosuid,nodev`.
+- [ ] Services run non-root with `read_only`, `cap_drop: ALL`, and
+      `no-new-privileges` (the shipped compose files set this; verify it was not
+      overridden locally).
+- [ ] `MASP_RETENTION_DAYS` is set above `0`. It defaults to `0`, which keeps
+      every sample forever; decide the retention window with the data owner.

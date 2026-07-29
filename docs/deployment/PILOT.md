@@ -29,6 +29,38 @@ workers. Opening PostgreSQL or sharing storage is not required for this pilot.
 - DNS and HTTPS certificate for the admin/REST endpoint.
 - Outbound DNS and HTTPS to the approved image registry and ClamAV update
   service, or an institution-managed mirror.
+- An agreed host antivirus exclusion for the storage directory (see below).
+
+## Host antivirus exclusion
+
+The storage directory holds real malware by design. Host endpoint protection
+will treat it as an active infection: it quarantines or deletes the samples,
+which corrupts scan records, destroys evidence, and can leave the platform
+looping on files that vanish underneath it. On some products it will also flag
+the MASP host itself as compromised.
+
+Before the first sample arrives, agree with the security team on an exclusion
+covering the whole storage tree, including the `samples/` and `staging/`
+subdirectories:
+
+```text
+/srv/masp/storage/**
+```
+
+Requirements for the exclusion:
+
+- **Scope it to the path, not to a process**, because samples are written by the
+  containerized services and read by the engine containers.
+- **Do not exclude the rest of the host.** The exclusion is for the sample store
+  only; the operating system, Docker, and MASP binaries stay protected.
+- **Compensating control:** the directory is `0750` and owned by the
+  unprivileged container id, samples are stored non-executable, and nothing in
+  MASP ever executes a sample. The engines are the intended reader.
+- **Record it** in the change ticket. An exclusion silently removed during a
+  later endpoint-policy rollout is a common cause of "MASP suddenly loses
+  samples"; if that symptom appears, re-check the exclusion first.
+- Mount the storage filesystem `noexec,nosuid,nodev` so an excluded directory
+  still cannot be used to run anything.
 
 Required inbound flows:
 
