@@ -68,6 +68,7 @@ from app.services.auth import (
 )
 from app.services.decisions import ScanDecision
 from app.services import api_schemas
+from app.services import metrics
 from app.services.engine_registry import (
     ADAPTERS,
     ROADMAP_ADAPTERS,
@@ -4245,6 +4246,34 @@ backfill_missing_assessments()
 )
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get(
+    "/metrics",
+    summary="Prometheus metrics",
+    description=(
+        "Queue depth and latency, worker liveness, and per-engine result counts in "
+        "the Prometheus text exposition format. Requires the API bearer token; "
+        "Prometheus sends it with the scrape config's bearer_token option."
+    ),
+    dependencies=[Security(API_BEARER_SCHEME)],
+    responses={
+        200: {"description": "Metrics in Prometheus text exposition format."},
+        404: {"description": "Metrics are disabled (MASP_METRICS_ENABLED=0)."},
+        **API_ERROR_RESPONSES,
+    },
+)
+def metrics_endpoint(request: Request) -> Response:
+    # Authenticated, unlike /health: the payload reports scan volumes and
+    # detection counts, which is operational detail about the institution's
+    # traffic rather than a liveness signal.
+    if not metrics.metrics_enabled():
+        raise HTTPException(status_code=404, detail="Metrics are disabled.")
+    require_api_token(request)
+    return Response(
+        content=metrics.render_metrics(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/login", response_class=HTMLResponse)

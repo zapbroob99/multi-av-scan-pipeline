@@ -3454,6 +3454,31 @@ def get_queue_metrics() -> dict[str, int]:
     }
 
 
+def get_oldest_active_scan_timestamps() -> dict[str, str | None]:
+    """``created_at`` of the oldest scan still queued and still running.
+
+    Counts alone cannot distinguish a healthy busy queue from a stalled one: a
+    steady depth of 20 is fine, 20 scans that have not moved in an hour is an
+    outage. Exposing the oldest entry's age makes that difference alertable.
+    """
+    with connect() as connection:
+        queued = connection.execute(
+            "SELECT MIN(created_at) AS oldest FROM scan_jobs WHERE status = 'queued'"
+        ).fetchone()
+        running = connection.execute(
+            """
+            SELECT MIN(created_at) AS oldest FROM scan_jobs
+            WHERE status IN ('running', 'finalizing')
+            """
+        ).fetchone()
+    oldest_queued = None if queued is None else row_value(queued, "oldest")
+    oldest_running = None if running is None else row_value(running, "oldest")
+    return {
+        "oldest_queued_at": None if oldest_queued is None else str(oldest_queued),
+        "oldest_running_at": None if oldest_running is None else str(oldest_running),
+    }
+
+
 def get_scan_queue_position(scan_id: int) -> int | None:
     with connect() as connection:
         row = connection.execute(
