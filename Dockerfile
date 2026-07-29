@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY rules ./rules
+# Apache-2.0 4(a)/4(d): the image is a distributed copy of the Work, so it
+# carries the License and the NOTICE attribution.
+COPY LICENSE NOTICE ./
 
 RUN mkdir -p /app/data /app/storage/samples /app/rules
 

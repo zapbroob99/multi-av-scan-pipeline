@@ -250,3 +250,15 @@ The worker capability split is:
 Each worker only writes results for engines it can run. A scan remains
 non-terminal through `queued`, `running`, and crash-safe `finalizing` states
 until every required engine result and any archive-finalization work is settled.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the
+full terms and [NOTICE](NOTICE) for attribution.
+
+MASP orchestrates third-party scanning engines rather than embedding them.
+ClamAV, YARA, Microsoft Defender, and ESET are obtained and licensed separately
+by the deploying party and remain subject to their own terms; Apache-2.0 covers
+only the source in this repository. Operators who build container images that
+bundle an engine are responsible for that engine's license obligations. See
+[NOTICE](NOTICE) for details.
