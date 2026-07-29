@@ -153,6 +153,12 @@ MASP's asynchronous service-integration surface is the file scan API:
 - `GET /api/v1/scans/{scan_id}`
 - `GET /api/v1/scans/{scan_id}/result`
 
+Two operational endpoints sit alongside it: `GET /health` is an unauthenticated
+liveness probe, and `GET /metrics` serves Prometheus text-format metrics (queue
+depth and latency, worker liveness, per-engine results) behind the same API
+bearer token. Alert conditions are listed in
+[docs/deployment/PRODUCTION.md](docs/deployment/PRODUCTION.md#monitoring-and-alerting).
+
 Use `POST /api/v1/scans` as an asynchronous submission endpoint. The response
 includes status and result links, `result_ready`, and a recommended polling
 interval when the scan is still running.

@@ -319,6 +319,31 @@ Restore is destructive and requires explicit confirmation:
 The previous sample directory is retained with a `.pre-restore.<timestamp>`
 suffix until the operator removes it.
 
+## Monitor
+
+`GET /health` is an unauthenticated liveness probe. `GET /metrics` serves
+Prometheus metrics and requires the API bearer token; it reports queue depth,
+the age of the oldest waiting scan, worker liveness, and per-engine result
+counts. Disable it with `MASP_METRICS_ENABLED=0` if the pilot has no scraper.
+
+Even in the pilot, set up the two alerts that correspond to a user-visible
+outage, because ICAP is fail-closed and a stalled MASP blocks uploads:
+
+- `masp_workers_online == 0` for 2 minutes,
+- `masp_scan_oldest_queued_age_seconds > 300` for 5 minutes.
+
+Queue depth alone is not a useful alert: a steady depth is normal under load,
+while the *age* of the oldest waiting scan is what separates busy from stalled.
+Watch host disk usage on the storage filesystem too. The full alert table is in
+[PRODUCTION.md](PRODUCTION.md#monitoring-and-alerting).
+
+Quick manual check:
+
+```bash
+curl -sS -H "Authorization: Bearer $MASP_API_TOKEN" \
+  http://127.0.0.1:8000/metrics | grep -E '^masp_(workers_online|scan_oldest_queued_age_seconds)'
+```
+
 ## Operate and upgrade
 
 ```bash

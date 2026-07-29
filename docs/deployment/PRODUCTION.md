@@ -132,6 +132,40 @@ healthcheck has a 120s start period. Workers wait for clamd to be healthy.
 - **Backups:** back up the external PostgreSQL and the `MASP_STORAGE_DIR`
   sample directory. The `clamav-db` volume is a rebuildable cache.
 
+## Monitoring and alerting
+
+`GET /health` is an unauthenticated liveness probe for the load balancer.
+`GET /metrics` serves Prometheus text-format metrics and **requires the API
+bearer token** (Prometheus sends it via `bearer_token` / `bearer_token_file` in
+the scrape config), because the payload reports scan volumes and detection
+counts. Set `MASP_METRICS_ENABLED=0` to disable the endpoint entirely.
+
+```yaml
+scrape_configs:
+  - job_name: masp
+    scheme: https
+    bearer_token_file: /etc/prometheus/masp-token
+    static_configs:
+      - targets: ["masp.internal:443"]
+```
+
+Alerting matters more here than in a typical service: **ICAP is fail-closed, so
+a stalled MASP blocks real user uploads.** A liveness check is not enough — the
+process can be up while nothing drains the queue. Alert on at least:
+
+| Condition | Expression | Why |
+|---|---|---|
+| No worker online | `masp_workers_online == 0` for 2m | Nothing will process scans; with ICAP fail-closed every upload is blocked. Page on this. |
+| Queue stalled | `masp_scan_oldest_queued_age_seconds > 300` for 5m | Distinguishes a stalled queue from a merely busy one. Depth alone does not: a steady depth of 20 is healthy, 20 scans untouched for an hour is an outage. |
+| Scan wedged | `masp_scan_oldest_running_age_seconds > 1800` for 10m | A scan running far past any engine timeout indicates a stuck or crashed worker whose lease has not been recovered. |
+| Engine failing | `increase(masp_engine_results_total{status="failed"}[15m]) > 0` | One broken engine drags every scan into partial coverage; catch it before the verdicts degrade. |
+| Heartbeat aging | `masp_worker_heartbeat_age_seconds > masp_worker_heartbeat_stale_after_seconds` | Early warning that a worker is about to be declared offline. |
+| Storage filling | host disk usage on `MASP_STORAGE_DIR` > 80% | Samples are retained until `MASP_RETENTION_DAYS` prunes them; a full disk fails ingest, and with ICAP fail-closed that blocks uploads. |
+
+Also monitor from the host, not from MASP: free disk on the storage
+filesystem, and the ClamAV signature age (a silently stale signature database
+degrades detection without failing anything).
+
 ## Security checklist
 
 - [ ] `MASP_API_TOKEN` is strong and unique; rotated on a schedule.
