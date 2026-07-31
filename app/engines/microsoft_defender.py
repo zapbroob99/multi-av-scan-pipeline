@@ -734,8 +734,15 @@ def engine_setting(key: str, fallback: str) -> str:
 
 
 def setting_value(config_override: dict[str, str], key: str, fallback: str) -> str:
+    """Resolve one setting, treating a blank override as "not configured".
+
+    Same trap as the ClamAV engine (see its copy): a present-but-empty value used
+    to beat the fallback, so saving the engine config form could persist an empty
+    executable path or scan type over an environment-provided one and break the
+    engine. None of these settings has a meaningful empty value.
+    """
     value = config_override.get(key)
-    if value is None:
+    if value is None or not value.strip():
         return fallback
     return value
 

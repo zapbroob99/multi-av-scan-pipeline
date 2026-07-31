@@ -14,6 +14,7 @@ from app.database import (
     update_engine_instance,
 )
 from app.engines.clamav import check_clamav_health, get_clamav_config, run_clamav_engine
+from app.engines.clamav import env_or_setting as clamav_env_or_setting
 from app.engines.microsoft_defender import (
     check_microsoft_defender_health,
     get_microsoft_defender_config,
@@ -459,19 +460,30 @@ def config_value(config: dict[str, str], key: str, fallback: str) -> str:
 
 
 def clamav_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
+    # Fall back to the same env-then-setting chain the engine itself resolves
+    # (env_or_setting), not to the stored setting alone. Otherwise a host coming
+    # from MASP_CLAMD_HOST renders as an empty field, and saving the form for an
+    # unrelated reason persists host="" over the env value -- which drops ClamAV
+    # into CLI mode and breaks every scan.
     config = engine_config(instance) if instance is not None else {}
     return {
-        "host": config_value(config, "host", get_setting("clamav.host", "") or ""),
-        "port": config_value(config, "port", get_setting("clamav.port", "3310") or "3310"),
+        "host": config_value(
+            config, "host", clamav_env_or_setting("MASP_CLAMD_HOST", "clamav.host", "")
+        ),
+        "port": config_value(
+            config, "port", clamav_env_or_setting("MASP_CLAMD_PORT", "clamav.port", "3310")
+        ),
         "command": config_value(
             config,
             "command",
-            get_setting("clamav.command", "clamscan") or "clamscan",
+            clamav_env_or_setting("MASP_CLAMAV_COMMAND", "clamav.command", "clamscan"),
         ),
         "timeout_seconds": config_value(
             config,
             "timeout_seconds",
-            get_setting("clamav.timeout_seconds", "60") or "60",
+            clamav_env_or_setting(
+                "MASP_CLAMD_TIMEOUT_SECONDS", "clamav.timeout_seconds", "60"
+            ),
         ),
         "max_file_size_bytes": config_value(
             config,

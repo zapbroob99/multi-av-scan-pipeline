@@ -740,8 +740,18 @@ def engine_setting_int(key: str, fallback: str, default: int) -> int:
 
 
 def setting_value(config_override: dict[str, str], key: str, fallback: str) -> str:
+    """Resolve one setting, treating a blank override as "not configured".
+
+    A present-but-empty value used to win over the fallback, which silently
+    disabled features rather than falling back: saving the engine config form
+    while the clamd host came from ``MASP_CLAMD_HOST`` persisted ``host=""``,
+    and an empty host drops this engine into ``clamscan`` CLI mode -- a binary
+    the app image does not contain, so every ClamAV scan failed. No setting here
+    (host, command, executable paths, scan type) has a meaningful empty value,
+    so blank now means unset for all of them.
+    """
     value = config_override.get(key)
-    if value is None:
+    if value is None or not value.strip():
         return fallback
     return value
 

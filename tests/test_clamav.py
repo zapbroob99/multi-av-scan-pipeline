@@ -1,3 +1,4 @@
+import os
 import socket
 import tempfile
 import unittest
@@ -19,6 +20,42 @@ class ClamAVConfigTests(unittest.TestCase):
         self.assertEqual(config["mode"], "clamd")
         self.assertEqual(config["ready_timeout_seconds"], 30)
         self.assertEqual(config["retry_interval_seconds"], 1.0)
+
+    def test_blank_host_override_falls_back_to_the_environment(self) -> None:
+        # Regression, found live on the pilot host: saving the engine config form
+        # persisted host="" over the env-provided host. A present-but-empty value
+        # used to win over the fallback, dropping ClamAV into clamscan CLI mode --
+        # a binary the app image does not ship -- so every scan failed. Under
+        # fail-closed ICAP that blocks otherwise-clean uploads.
+        with patch.dict(os.environ, {"MASP_CLAMD_HOST": "clamav"}, clear=False):
+            config = get_clamav_config({"host": ""})
+
+        self.assertEqual(config["mode"], "clamd")
+        self.assertEqual(config["host"], "clamav")
+
+    def test_whitespace_only_host_override_is_also_treated_as_unset(self) -> None:
+        with patch.dict(os.environ, {"MASP_CLAMD_HOST": "clamav"}, clear=False):
+            config = get_clamav_config({"host": "   "})
+
+        self.assertEqual(config["mode"], "clamd")
+        self.assertEqual(config["host"], "clamav")
+
+    def test_explicit_host_override_still_wins_over_the_environment(self) -> None:
+        # Blank means "unset", but a real value must still override the env.
+        with patch.dict(os.environ, {"MASP_CLAMD_HOST": "clamav"}, clear=False):
+            config = get_clamav_config({"host": "other-clamd"})
+
+        self.assertEqual(config["host"], "other-clamd")
+
+    def test_cli_mode_still_reachable_when_no_host_is_configured_anywhere(self) -> None:
+        # Blank-as-unset must not make CLI mode unreachable: with no override and
+        # no env, the engine still falls back to the clamscan CLI.
+        with patch.dict(os.environ, {"MASP_CLAMD_HOST": ""}, clear=False), patch(
+            "app.engines.clamav.engine_setting", side_effect=lambda key, fallback: fallback
+        ):
+            config = get_clamav_config({"host": ""})
+
+        self.assertEqual(config["mode"], "cli")
 
 
 class ClamAVRetryTests(unittest.TestCase):
