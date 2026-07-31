@@ -1,3 +1,5 @@
+import os
+from unittest.mock import patch
 import unittest
 from datetime import datetime, timezone
 
@@ -47,6 +49,54 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(decision.action, ROUTE_ACTION_SKIP)
         self.assertEqual(decision.reason_code, ROUTE_REASON_FILE_TOO_LARGE)
         self.assertEqual(decision.details["routing"]["max_file_size_bytes"], 100)
+
+    def test_clamd_own_limit_skips_before_streaming_and_names_the_source(self) -> None:
+        # The adapter cap is unlimited (0), but clamd enforces 64M. Routing must
+        # skip on the effective limit; otherwise the sample is streamed to clamd
+        # just to be rejected there, which surfaces as an engine failure and
+        # makes "I raised the adapter limit" look like it did nothing.
+        with patch.dict(
+            os.environ,
+            {
+                "MASP_CLAMD_HOST": "clamav",
+                "MASP_CLAMD_STREAM_MAX_LENGTH": "64M",
+                "MASP_CLAMD_MAX_FILE_SIZE": "64M",
+            },
+            clear=False,
+        ):
+            decision = route_engine_for_worker(
+                make_engine("clamav", "ClamAV", '{"max_file_size_bytes": "0"}'),
+                make_scan(size_bytes=100 * 1024**2),
+                {"clamav"},
+                platform_name="linux",
+            )
+
+        self.assertEqual(decision.action, ROUTE_ACTION_SKIP)
+        self.assertEqual(decision.reason_code, ROUTE_REASON_FILE_TOO_LARGE)
+        routing = decision.details["routing"]
+        self.assertEqual(routing["max_file_size_bytes"], 64 * 1024**2)
+        self.assertIn("clamd", routing["max_file_size_source"])
+        # The operator must be able to tell which setting to raise.
+        self.assertIn("clamd", decision.reason)
+
+    def test_engine_runs_when_within_both_limits(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "MASP_CLAMD_HOST": "clamav",
+                "MASP_CLAMD_STREAM_MAX_LENGTH": "64M",
+                "MASP_CLAMD_MAX_FILE_SIZE": "64M",
+            },
+            clear=False,
+        ):
+            decision = route_engine_for_worker(
+                make_engine("clamav", "ClamAV", '{"max_file_size_bytes": "0"}'),
+                make_scan(size_bytes=1024),
+                {"clamav"},
+                platform_name="linux",
+            )
+
+        self.assertEqual(decision.action, ROUTE_ACTION_RUN)
 
     def test_supported_engine_runs_when_eligible(self) -> None:
         decision = route_engine_for_worker(

@@ -45,6 +45,13 @@ x-common-env: &common-env
   MASP_CLAMD_HOST: clamav
   MASP_CLAMD_PORT: "3310"
   MASP_CLAMD_TIMEOUT_SECONDS: ${MASP_CLAMD_TIMEOUT_SECONDS:-180}
+  # Mirror of the caps configured on the clamav service below. The app and
+  # worker need them to decide, BEFORE streaming, that a sample exceeds what
+  # clamd will accept -- otherwise the sample is sent and rejected there, and a
+  # deliberate skip looks like an engine failure. Keep these in sync with the
+  # CLAMD_CONF_* values.
+  MASP_CLAMD_STREAM_MAX_LENGTH: ${MASP_CLAMD_STREAM_MAX_LENGTH:-64M}
+  MASP_CLAMD_MAX_FILE_SIZE: ${MASP_CLAMD_MAX_FILE_SIZE:-64M}
   MASP_CLAMD_READY_TIMEOUT_SECONDS: ${MASP_CLAMD_READY_TIMEOUT_SECONDS:-30}
   MASP_YARA_RULES_DIR: /app/rules
 

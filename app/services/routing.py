@@ -84,22 +84,26 @@ def route_engine_for_worker(
             ),
         )
 
-    max_file_size_bytes = engine_max_file_size_bytes(engine)
+    max_file_size_bytes, size_limit_source = engine_size_limit(engine)
     if max_file_size_bytes is not None and scan.size_bytes > max_file_size_bytes:
+        # Name the layer that actually binds, so "I raised the limit and nothing
+        # changed" is answerable from the result alone.
+        reason = f"Sample exceeds the effective max file size ({size_limit_source})."
         return EngineRouteDecision(
             engine=engine,
             action=ROUTE_ACTION_SKIP,
             reason_code=ROUTE_REASON_FILE_TOO_LARGE,
-            reason="Sample exceeds adapter max file size.",
+            reason=reason,
             details=route_details(
                 engine=engine,
                 scan=scan,
                 reason_code=ROUTE_REASON_FILE_TOO_LARGE,
-                reason="Sample exceeds adapter max file size.",
+                reason=reason,
                 current_platform=current_platform,
                 extra_details={
                     "sample_size_bytes": scan.size_bytes,
                     "max_file_size_bytes": max_file_size_bytes,
+                    "max_file_size_source": size_limit_source,
                 },
             ),
         )
@@ -120,12 +124,30 @@ def route_engine_for_worker(
 
 
 def engine_max_file_size_bytes(engine: EngineInstanceRecord) -> int | None:
-    configured_value = runtime_config(engine).get("max_file_size_bytes")
+    return engine_size_limit(engine)[0]
+
+
+def engine_size_limit(engine: EngineInstanceRecord) -> tuple[int | None, str]:
+    """The size cap routing enforces, plus which layer produced it.
+
+    Prefers ``effective_max_file_size_bytes`` when the adapter reports one. An
+    adapter's own cap is not the whole story: the underlying scanner may enforce
+    a smaller one (clamd's StreamMaxLength/MaxFileSize), and skipping only on the
+    adapter cap lets a file reach the scanner just to be rejected there, which
+    surfaces as an opaque engine failure. Adapters that report no effective limit
+    fall back to their plain cap, so this stays engine-agnostic.
+    """
+    config = runtime_config(engine)
+    value = config.get("effective_max_file_size_bytes")
+    source = str(config.get("effective_max_file_size_source") or "adapter max_file_size_bytes")
+    if value is None:
+        value = config.get("max_file_size_bytes")
+        source = "adapter max_file_size_bytes"
     try:
-        parsed = int(configured_value)  # type: ignore[arg-type]
+        parsed = int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        return None
-    return parsed if parsed > 0 else None
+        return None, source
+    return (parsed if parsed > 0 else None), source
 
 
 def build_skipped_engine_result(

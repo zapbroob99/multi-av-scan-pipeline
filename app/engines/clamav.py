@@ -23,6 +23,63 @@ CLAMD_LIMIT_HINT = (
     "clamd closed the scan stream. Check StreamMaxLength, MaxFileSize, "
     "MaxScanSize, and timeout settings for large samples."
 )
+# clamd enforces its own size caps (StreamMaxLength / MaxFileSize), configured on
+# the clamav container and defaulting to 64M. They are invisible to this process
+# unless the same values are also passed to the app and worker, which is what
+# these variables are for. Without them, raising only the adapter cap lets a file
+# through routing, reach clamd, and be rejected there -- surfacing as an opaque
+# engine failure instead of a deliberate skip.
+CLAMD_SIZE_LIMIT_ENV_VARS = ("MASP_CLAMD_STREAM_MAX_LENGTH", "MASP_CLAMD_MAX_FILE_SIZE")
+DEFAULT_CLAMD_SIZE_LIMIT = "64M"
+SIZE_SUFFIX_MULTIPLIERS = {"k": 1024, "m": 1024**2, "g": 1024**3}
+
+
+def parse_size_bytes(value: str) -> int:
+    """Parse a clamd-style size ("64M", "1G", "1048576") into bytes.
+
+    Returns 0 for anything unparseable or non-positive, which callers read as
+    "no limit configured" -- the same convention the adapter cap uses.
+    """
+    text = (value or "").strip().lower()
+    if not text:
+        return 0
+    multiplier = 1
+    if text[-1] in SIZE_SUFFIX_MULTIPLIERS:
+        multiplier = SIZE_SUFFIX_MULTIPLIERS[text[-1]]
+        text = text[:-1].strip()
+    try:
+        parsed = int(float(text) * multiplier)
+    except ValueError:
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def clamd_size_limit_bytes() -> int:
+    """The smallest size cap clamd itself will enforce, in bytes (0 = unknown)."""
+    limits = [
+        parse_size_bytes(env_or_setting(var, f"clamav.{var.lower()}", DEFAULT_CLAMD_SIZE_LIMIT))
+        for var in CLAMD_SIZE_LIMIT_ENV_VARS
+    ]
+    positive = [limit for limit in limits if limit > 0]
+    return min(positive) if positive else 0
+
+
+def effective_max_file_size(adapter_cap_bytes: int, clamd_cap_bytes: int) -> tuple[int, str]:
+    """Combine the adapter cap and clamd's own cap into the binding limit.
+
+    0 means "no limit" on either side, so the effective cap is the smallest
+    positive one. Returns the limit and which layer produced it, so the skip
+    reason can tell an operator *which* setting to raise -- the confusion FU-2
+    was about.
+    """
+    candidates = [
+        (adapter_cap_bytes, "adapter max_file_size_bytes"),
+        (clamd_cap_bytes, "clamd StreamMaxLength/MaxFileSize"),
+    ]
+    positive = [(limit, source) for limit, source in candidates if limit > 0]
+    if not positive:
+        return 0, "unlimited"
+    return min(positive, key=lambda item: item[0])
 
 
 def get_clamav_config(
@@ -35,6 +92,18 @@ def get_clamav_config(
         env_or_setting("MASP_CLAMD_HOST", "clamav.host", ""),
     ).strip()
     if clamd_host:
+        adapter_cap = setting_int(
+            override,
+            "max_file_size_bytes",
+            env_or_setting(
+                "MASP_CLAMAV_MAX_FILE_SIZE_BYTES",
+                "clamav.max_file_size_bytes",
+                str(DEFAULT_MAX_FILE_SIZE_BYTES),
+            ),
+            DEFAULT_MAX_FILE_SIZE_BYTES,
+        )
+        clamd_cap = clamd_size_limit_bytes()
+        effective_cap, effective_source = effective_max_file_size(adapter_cap, clamd_cap)
         return {
             "mode": "clamd",
             "host": clamd_host,
@@ -74,16 +143,13 @@ def get_clamav_config(
                 ),
                 DEFAULT_CLAMD_RETRY_INTERVAL_SECONDS,
             ),
-            "max_file_size_bytes": setting_int(
-                override,
-                "max_file_size_bytes",
-                env_or_setting(
-                    "MASP_CLAMAV_MAX_FILE_SIZE_BYTES",
-                    "clamav.max_file_size_bytes",
-                    str(DEFAULT_MAX_FILE_SIZE_BYTES),
-                ),
-                DEFAULT_MAX_FILE_SIZE_BYTES,
-            ),
+            "max_file_size_bytes": adapter_cap,
+            # The limit routing must actually enforce: the adapter cap alone lets
+            # a file reach clamd only to be rejected there. Reported alongside
+            # its source so a skip can name the setting that needs raising.
+            "effective_max_file_size_bytes": effective_cap,
+            "effective_max_file_size_source": effective_source,
+            "clamd_max_file_size_bytes": clamd_cap,
             "enabled": True,
         }
 
@@ -320,7 +386,42 @@ def run_clamd_scan(
             findings=clamav_findings(signature, raw_response),
         )
 
-    if raw_response.endswith(" ERROR") or "size limit exceeded" in raw_response.lower():
+    if "size limit exceeded" in raw_response.lower():
+        # clamd refused the sample for its own size cap. That is not an engine
+        # malfunction -- it is this engine declining to scan -- so it is recorded
+        # as a skip with the limit named, not as an opaque failure. Reaching here
+        # at all means the pre-flight effective limit did not match clamd's real
+        # configuration (see effective_max_file_size); the message says so, since
+        # the fix is a configuration change, not a retry. Coverage is unaffected:
+        # scoring counts skipped and failed alike as missing coverage, so the
+        # scan still lands on "review" rather than a clean allow.
+        return build_result(
+            status="skipped",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=0,
+            raw_output=raw_response,
+            error_message=(
+                "Sample exceeds clamd's own size limit (StreamMaxLength/MaxFileSize). "
+                "Raise it on the clamav service and mirror the value in "
+                "MASP_CLAMD_STREAM_MAX_LENGTH / MASP_CLAMD_MAX_FILE_SIZE so the "
+                "scan is skipped before streaming."
+            ),
+            duration_ms=elapsed_ms(started_at),
+            engine_version="clamd",
+            details=clamav_details(
+                "clamd",
+                scan,
+                host=host,
+                port=port,
+                timeout=timeout,
+                response=raw_response,
+                hint="exceeds_clamd_size_limit",
+            ),
+        )
+
+    if raw_response.endswith(" ERROR"):
         return build_result(
             status="failed",
             detected=False,

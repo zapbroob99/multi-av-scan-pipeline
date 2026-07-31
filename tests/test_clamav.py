@@ -6,8 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.engines.clamav import (
+    effective_max_file_size,
     get_clamav_config,
     is_retryable_clamd_connection_error,
+    parse_size_bytes,
     run_clamd_scan,
 )
 from app.models import ScanRecord
@@ -58,6 +60,103 @@ class ClamAVConfigTests(unittest.TestCase):
         self.assertEqual(config["mode"], "cli")
 
 
+class ClamAVSizeChainTests(unittest.TestCase):
+    """The adapter cap and clamd's own cap must reconcile into one limit.
+
+    Found live: raising the upload limit and the adapter's max_file_size let a
+    large sample through to clamd, which rejected it for its own 64M cap. The
+    result was an opaque engine failure, and raising "the limit" in one place
+    appeared to do nothing.
+    """
+
+    def _env(self, **values):
+        return patch.dict(os.environ, {"MASP_CLAMD_HOST": "clamav", **values}, clear=False)
+
+    def test_parses_clamd_style_sizes(self) -> None:
+        self.assertEqual(parse_size_bytes("64M"), 64 * 1024**2)
+        self.assertEqual(parse_size_bytes("1G"), 1024**3)
+        self.assertEqual(parse_size_bytes("512k"), 512 * 1024)
+        self.assertEqual(parse_size_bytes("1048576"), 1048576)
+
+    def test_unparseable_or_empty_size_means_no_limit(self) -> None:
+        for value in ("", "   ", "abc", "-5", "0"):
+            self.assertEqual(parse_size_bytes(value), 0, value)
+
+    def test_clamd_cap_binds_when_the_adapter_cap_is_larger(self) -> None:
+        with self._env(MASP_CLAMD_STREAM_MAX_LENGTH="64M", MASP_CLAMD_MAX_FILE_SIZE="64M"):
+            config = get_clamav_config({"max_file_size_bytes": str(500 * 1024**2)})
+
+        self.assertEqual(config["effective_max_file_size_bytes"], 64 * 1024**2)
+        self.assertIn("clamd", str(config["effective_max_file_size_source"]))
+
+    def test_unlimited_adapter_cap_still_respects_clamd(self) -> None:
+        # 0 means "no adapter limit" -- previously this sent everything to clamd.
+        with self._env(MASP_CLAMD_STREAM_MAX_LENGTH="64M", MASP_CLAMD_MAX_FILE_SIZE="64M"):
+            config = get_clamav_config({"max_file_size_bytes": "0"})
+
+        self.assertEqual(config["effective_max_file_size_bytes"], 64 * 1024**2)
+
+    def test_adapter_cap_binds_when_it_is_the_smaller_one(self) -> None:
+        with self._env(MASP_CLAMD_STREAM_MAX_LENGTH="64M", MASP_CLAMD_MAX_FILE_SIZE="64M"):
+            config = get_clamav_config({"max_file_size_bytes": str(1024**2)})
+
+        self.assertEqual(config["effective_max_file_size_bytes"], 1024**2)
+        self.assertIn("adapter", str(config["effective_max_file_size_source"]))
+
+    def test_smallest_clamd_limit_wins(self) -> None:
+        with self._env(MASP_CLAMD_STREAM_MAX_LENGTH="64M", MASP_CLAMD_MAX_FILE_SIZE="16M"):
+            config = get_clamav_config({"max_file_size_bytes": "0"})
+
+        self.assertEqual(config["effective_max_file_size_bytes"], 16 * 1024**2)
+
+    def test_effective_limit_helper_reports_unlimited_when_nothing_is_capped(self) -> None:
+        self.assertEqual(effective_max_file_size(0, 0), (0, "unlimited"))
+
+
+class ClamAVSizeLimitResultTests(unittest.TestCase):
+    def test_clamd_size_rejection_is_skipped_not_failed(self) -> None:
+        # An engine declining a sample for its own size cap is missing coverage,
+        # not a malfunction. Scoring counts skipped and failed alike as missing
+        # coverage, so the scan still lands on review -- this only stops the
+        # result reading as a broken engine.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sample_path = Path(temp_dir) / "large.bin"
+            sample_path.write_bytes(b"x")
+            with patch(
+                "app.engines.clamav.scan_with_clamd_when_ready",
+                return_value="INSTREAM: Size limit exceeded. ERROR",
+            ):
+                result = run_clamd_scan(
+                    scan_record(sample_path),
+                    host="clamav", port=3310, timeout=180,
+                    ready_timeout=30, retry_interval=1.0,
+                )
+
+        self.assertEqual(result.status, "skipped")
+        self.assertFalse(result.detected)
+        self.assertIn("clamd", (result.error_message or "").lower())
+        self.assertIn("MASP_CLAMD_STREAM_MAX_LENGTH", result.error_message or "")
+        # clamd's own words are kept for the operator.
+        self.assertIn("Size limit exceeded", result.raw_output)
+
+    def test_generic_clamd_error_is_still_a_failure(self) -> None:
+        # Only the size case becomes a skip; a real error must stay a failure.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sample_path = Path(temp_dir) / "s.bin"
+            sample_path.write_bytes(b"x")
+            with patch(
+                "app.engines.clamav.scan_with_clamd_when_ready",
+                return_value="INSTREAM: Can't allocate memory ERROR",
+            ):
+                result = run_clamd_scan(
+                    scan_record(sample_path),
+                    host="clamav", port=3310, timeout=180,
+                    ready_timeout=30, retry_interval=1.0,
+                )
+
+        self.assertEqual(result.status, "failed")
+
+
 class ClamAVRetryTests(unittest.TestCase):
     def test_connection_refused_is_retryable(self) -> None:
         self.assertTrue(
@@ -78,26 +177,8 @@ class ClamAVRetryTests(unittest.TestCase):
 
 
 class ClamAVLargeSampleTests(unittest.TestCase):
-    def test_clamd_size_limit_error_is_failed_with_hint(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            sample_path = Path(temp_dir) / "large.bin"
-            sample_path.write_bytes(b"x")
-            with patch(
-                "app.engines.clamav.scan_with_clamd_when_ready",
-                return_value="INSTREAM: Size limit exceeded. ERROR",
-            ):
-                result = run_clamd_scan(
-                    scan_record(sample_path),
-                    host="clamav",
-                    port=3310,
-                    timeout=180,
-                    ready_timeout=30,
-                    retry_interval=1.0,
-                )
-
-        self.assertEqual(result.status, "failed")
-        self.assertIn("StreamMaxLength", result.error_message or "")
-        self.assertIn("Size limit exceeded", result.raw_output)
+    # The size-limit response is now a skip, not a failure: see
+    # ClamAVSizeLimitResultTests.test_clamd_size_rejection_is_skipped_not_failed.
 
     def test_clamd_broken_pipe_is_failed_with_hint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
