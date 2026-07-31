@@ -33,6 +33,21 @@ class PilotBundleTests(unittest.TestCase):
         self.assertIn("docker-compose.pilot.yml", relative_paths)
         self.assertIn("deploy/pilot/install.sh", relative_paths)
         self.assertIn("docs/deployment/PILOT.md", relative_paths)
+        # Apache-2.0 4(a)/4(d): every distributed copy carries these.
+        self.assertIn("LICENSE", relative_paths)
+        self.assertIn("NOTICE", relative_paths)
+        # The PostgreSQL acceptance gate runs on the pilot host from the bundled
+        # suite (the image deliberately does not contain it), so the runbook's
+        # documented command is unrunnable without these.
+        self.assertIn("deploy/pilot/run_gated_tests.sh", relative_paths)
+        for module in (
+            "tests/test_db_concurrent_init.py",
+            "tests/test_reliability_postgres.py",
+            "tests/test_worker_heartbeat_concurrency.py",
+            "tests/test_worker_fencing_concurrency.py",
+            "tests/test_archive_finalization_integration.py",
+        ):
+            self.assertIn(module, relative_paths)
         self.assertFalse(any(path.startswith("storage/") for path in relative_paths))
         self.assertFalse(any(path.startswith("benchmark-results/") for path in relative_paths))
         self.assertFalse(any(path.startswith("benchmark-samples/") for path in relative_paths))

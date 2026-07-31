@@ -25,7 +25,11 @@ ROOT_FILES = (
     "docker-compose.pilot.yml",
     "requirements.txt",
 )
-TREE_DIRS = ("app", "rules", "deploy/pilot")
+# `tests` ships so the PostgreSQL acceptance gate can actually be executed on the
+# pilot host. It is bind-mounted into a throwaway container by
+# deploy/pilot/run_gated_tests.sh rather than baked into the image: the deployed
+# image handles untrusted samples, so its runtime surface stays minimal.
+TREE_DIRS = ("app", "rules", "deploy/pilot", "tests")
 EXTRA_FILES = (
     "docs/deployment/PILOT.md",
     "tools/icap_probe.py",

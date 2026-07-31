@@ -179,32 +179,25 @@ the real client framing check below.
 ### PostgreSQL concurrency gate
 
 The PostgreSQL-gated tests deliberately drop and recreate the target database's
-`public` schema. **Never point `MASP_TEST_POSTGRES_URL` at the bundled pilot or
-any persistent database.** Start a disposable PostgreSQL on the pilot Compose
-network, then run the tests inside the already-built application image (the
-host does not need a project virtual environment):
+`public` schema. **They must never touch the pilot database.** The script below
+therefore always creates its own throwaway PostgreSQL, runs the gated modules
+against it, and removes it afterwards -- it offers no way to point at an
+existing database:
 
 ```bash
-docker run -d --name masp-pg-acceptance \
-  -e POSTGRES_DB=masp -e POSTGRES_USER=masp -e POSTGRES_PASSWORD=testpw \
-  --network masp-pilot_default postgres:16-alpine
-until docker exec masp-pg-acceptance pg_isready -U masp -d masp; do sleep 1; done
-
-docker compose -p masp-pilot -f docker-compose.pilot.yml \
-  --env-file .env.pilot run --rm \
-  -e MASP_TEST_POSTGRES_URL='postgresql://masp:testpw@masp-pg-acceptance:5432/masp' \
-  app python -m unittest \
-  tests.test_db_concurrent_init \
-  tests.test_reliability_postgres \
-  tests.test_worker_heartbeat_concurrency \
-  tests.test_worker_fencing_concurrency \
-  tests.test_archive_finalization_integration -v
-
-docker rm -f masp-pg-acceptance
+./deploy/pilot/run_gated_tests.sh
 ```
 
-All PostgreSQL-gated cases must run rather than skip. Retain the test output in
-the pilot acceptance record.
+The application image does not contain the test suite, by design: it handles
+untrusted samples, so its runtime surface is kept minimal. The release bundle
+ships `tests/`, and the script bind-mounts it read-only into a one-off container
+started from the deployed image. The host does not need a project virtual
+environment.
+
+All PostgreSQL-gated cases must **run rather than skip** — a skip means the test
+database URL never reached the tests and the gate did not actually execute, so
+check the summary reports `0 skipped`. The script exits non-zero on failure.
+Retain the output in the pilot acceptance record.
 
 ### ICAP functional and fail-closed smoke
 
