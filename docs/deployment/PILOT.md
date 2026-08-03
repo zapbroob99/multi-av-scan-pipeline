@@ -73,6 +73,33 @@ Required inbound flows:
 ICAP is plain RFC 3507 TCP. Keep it on a private network and restrict the host
 firewall to the configured storage client nodes.
 
+### The host firewall is the authoritative source restriction
+
+`MASP_ICAP_ALLOWED_IPS` matches the source address the ICAP process *observes*,
+which is not always the client's real address. Docker's userland port proxy
+rewrites forwarded connections to the bridge gateway, so every client can arrive
+as the same private address (`172.18.0.1` was observed on this pilot). When that
+happens the allowlist cannot distinguish clients at all — it either accepts
+everything that reaches the port or rejects everything — and **only the host
+firewall actually restricts sources**. Configure the firewall accordingly and
+treat the allowlist as defense in depth, never as the primary control.
+
+MASP cannot determine this from inside the container, so it reports what it
+sees. Every connection logs its observed source, and private-range addresses are
+flagged as possibly rewritten:
+
+```bash
+docker compose -p masp-pilot -f docker-compose.pilot.yml \
+  --env-file .env.pilot logs icap | grep -E 'accepted connection|rejected connection'
+```
+
+**Verify during acceptance, from the real client node** (not from the host):
+connect and read that line. If it shows the client's real address, the allowlist
+works as intended. If it shows a gateway address, record that the firewall is
+the only source control, and either accept that or make the real address survive
+— bind ICAP to the private host interface, disable the userland proxy, or run
+the ICAP service with host networking.
+
 ## Release contents
 
 The release ZIP is generated from a fixed `masp-pilot` commit/tag:
@@ -112,7 +139,7 @@ Important settings:
 - `MASP_ICAP_BIND=<masp-private-ip>:1344` for the storage client connection.
 - `MASP_ICAP_ALLOWED_IPS=127.0.0.1,<client-ip-1>,<client-ip-2>`. The current
   allowlist accepts exact IP addresses, not CIDR ranges. Keep loopback for the
-  local acceptance probe.
+  local acceptance probe. **This allowlist is a secondary control — see below.**
 - `MASP_STORAGE_DIR=/srv/masp/storage`.
 - Keep the 50 MiB upload and ICAP limits for the synchronous pilot.
 
@@ -284,6 +311,8 @@ The pilot may receive controlled user traffic only after all of these pass:
 - disposable-PostgreSQL gated tests;
 - internal verification plus clean, EICAR, archive, and malformed ICAP smoke;
 - real client body/framing confirmation;
+- the observed ICAP source address checked from the real client node, with the
+  outcome recorded (real address, or firewall-only restriction);
 - fail-closed behavior for timeout, connection failure, block, and malformed
   response;
 - a retained backup/restore rehearsal.

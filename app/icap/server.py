@@ -43,6 +43,45 @@ def log(message: str) -> None:
     print(f"[icap] {message}", flush=True)
 
 
+# Docker's userland port proxy rewrites the source address of forwarded
+# connections to the bridge gateway, so every client can arrive as the same
+# private address. When that happens the app-level allowlist cannot tell clients
+# apart and the HOST FIREWALL is the only real source restriction. MASP cannot
+# detect this from inside the container with certainty -- it only ever sees the
+# address it is given -- so it reports the observed address on every connection
+# and flags the private-range case, which is what the operator has to check
+# against the real client during acceptance.
+_PRIVATE_IPV4_PREFIXES = ("10.", "192.168.", "172.")
+
+
+def looks_like_container_gateway(peer_ip: str | None) -> bool:
+    """Heuristic: does this source address look like a NAT/bridge gateway?
+
+    Deliberately conservative and advisory only -- it never changes the
+    allow/reject outcome, it only annotates the log so an operator can tell a
+    real client address from a rewritten one.
+    """
+    if not peer_ip:
+        return False
+    if peer_ip.startswith(("10.", "192.168.")):
+        return True
+    if peer_ip.startswith("172."):
+        try:
+            second = int(peer_ip.split(".")[1])
+        except (IndexError, ValueError):
+            return False
+        return 16 <= second <= 31
+    return False
+
+
+def describe_peer(peer_ip: str | None) -> str:
+    if peer_ip is None:
+        return "unknown source"
+    if looks_like_container_gateway(peer_ip):
+        return f"{peer_ip} (private address; may be a NAT/bridge gateway rather than the real client)"
+    return str(peer_ip)
+
+
 _READ_SUBBLOCK_BYTES = 64 * 1024
 
 
@@ -361,9 +400,21 @@ async def handle_connection(
     peer = writer.get_extra_info("peername")
     peer_ip = peer[0] if isinstance(peer, tuple) else None
     if config.allowed_ips and peer_ip not in config.allowed_ips:
-        log(f"rejected connection from {peer_ip} (not in allowlist)")
+        log(f"rejected connection from {describe_peer(peer_ip)} (not in allowlist)")
+        if looks_like_container_gateway(peer_ip):
+            log(
+                "hint: if this is a NAT/bridge gateway rather than the client's real "
+                "address, the allowlist cannot distinguish clients -- fix the network "
+                "path (bind ICAP to the private host interface, disable the userland "
+                "proxy or use host networking) and treat the host firewall as the "
+                "authoritative source restriction"
+            )
         writer.close()
         return
+    # Report the observed source on accepted connections too. Without this the
+    # only way to learn what address MASP actually sees is to be rejected by it,
+    # which is exactly the check the pilot acceptance has to perform.
+    log(f"accepted connection from {describe_peer(peer_ip)}")
 
     read_timeout = config.read_timeout_seconds
     try:
@@ -443,6 +494,19 @@ async def serve(config: IcapConfig | None = None) -> None:
         f"(service '{config.service_name}', wait {config.wait_seconds}s, "
         f"fail-{'closed' if config.fail_closed else 'open'})"
     )
+    if config.allowed_ips:
+        log(
+            f"source allowlist active ({len(config.allowed_ips)} entries); it matches the "
+            "address this process observes, which is not necessarily the client's real "
+            "address behind NAT or a container port proxy -- confirm with the "
+            "'accepted connection from ...' lines and keep the host firewall as the "
+            "authoritative restriction"
+        )
+    else:
+        log(
+            "source allowlist EMPTY: every source that can reach this port is accepted; "
+            "the host firewall is the only source restriction"
+        )
     async with server:
         await server.serve_forever()
 

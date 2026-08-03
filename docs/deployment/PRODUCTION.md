@@ -15,8 +15,13 @@ credentials) and must not be used in production.
 - A TLS-terminating HTTP reverse proxy or load balancer in front of the REST
   API. MASP itself serves plain HTTP.
 - For ICAP, a private routed network path to the MASP host. ICAP is plain RFC
-  3507 TCP and must not be treated as HTTP by the API reverse proxy. Restrict
-  it with the network firewall and `MASP_ICAP_ALLOWED_IPS`.
+  3507 TCP and must not be treated as HTTP by the API reverse proxy. Restrict it
+  with the network firewall, which is the **authoritative** source control:
+  `MASP_ICAP_ALLOWED_IPS` matches the address the ICAP process observes, and a
+  container port proxy or NAT can replace every client's address with a single
+  gateway address, leaving the allowlist unable to distinguish clients. The
+  gateway logs the observed source of every connection and flags private-range
+  addresses; confirm from the real client node before relying on the allowlist.
 - Persistent host directories for sample storage and YARA rules. They must be
   owned by the unprivileged container id `10001:10001` and should be mounted
   `noexec,nosuid,nodev`; the services run as that non-root id with a read-only
@@ -181,6 +186,10 @@ degrades detection without failing anything).
 - [ ] Database credentials scoped to the MASP database only.
 - [ ] Host antivirus exclusion for the storage tree is in place, scoped to that
       path only, and recorded in the change ticket.
+- [ ] ICAP source restriction verified **from the real client node**: the
+      gateway's `accepted connection from ...` log shows the client's real
+      address, not a NAT/bridge gateway. If it shows a gateway address, the host
+      firewall is the only source control — record that decision.
 - [ ] Storage and rules directories are owned by `10001:10001`, mode `0750`, on
       a filesystem mounted `noexec,nosuid,nodev`.
 - [ ] Services run non-root with `read_only`, `cap_drop: ALL`, and

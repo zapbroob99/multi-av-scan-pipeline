@@ -253,6 +253,67 @@ class IcapServerTests(unittest.TestCase):
         self.assertTrue(writer.closed)
 
 
+class IcapSourceAddressDiagnosticsTests(unittest.TestCase):
+    """The allowlist matches the address this process observes.
+
+    Behind Docker's userland port proxy that address can be the bridge gateway
+    instead of the real client, which silently makes the allowlist unable to
+    tell clients apart and leaves the host firewall as the only real control.
+    MASP cannot detect that with certainty from inside the container, so it must
+    at least make the observed address visible and flag the suspicious case.
+    """
+
+    def _run(self, config: IcapConfig, peer: tuple[str, int]) -> list[str]:
+        # OPTIONS exercises the accept path and returns immediately; a REQMOD
+        # here would run a real scan and make these tests wait on it.
+        writer = FakeWriter(peer=peer)
+        lines: list[str] = []
+
+        async def _go() -> None:
+            reader = await _make_reader(b"OPTIONS icap://s/masp ICAP/1.0\r\nHost: s\r\n\r\n")
+            with patch.object(server, "log", lambda message: lines.append(message)):
+                await server.handle_connection(reader, writer, config)
+
+        asyncio.run(_go())
+        return lines
+
+    def test_accepted_connection_reports_the_observed_source(self) -> None:
+        # Without this an operator can only discover the observed address by
+        # being rejected -- useless for confirming a working client.
+        lines = self._run(IcapConfig(allowed_ips=frozenset({"203.0.113.7"})), ("203.0.113.7", 5000))
+
+        self.assertTrue(
+            any("accepted connection from 203.0.113.7" in line for line in lines), lines
+        )
+
+    def test_private_source_is_flagged_as_possibly_rewritten(self) -> None:
+        lines = self._run(IcapConfig(allowed_ips=frozenset({"172.18.0.1"})), ("172.18.0.1", 5000))
+
+        accepted = next(line for line in lines if line.startswith("accepted connection"))
+        self.assertIn("may be a NAT/bridge gateway", accepted)
+
+    def test_rejection_of_a_gateway_address_explains_the_likely_cause(self) -> None:
+        # The exact live symptom: probes arrived as the bridge gateway and were
+        # rejected, with nothing explaining why the allowlist could not work.
+        lines = self._run(IcapConfig(allowed_ips=frozenset({"203.0.113.7"})), ("172.18.0.1", 5000))
+
+        self.assertTrue(any("rejected connection" in line for line in lines), lines)
+        self.assertTrue(
+            any("host firewall as the authoritative" in line for line in lines), lines
+        )
+
+    def test_public_source_is_not_flagged(self) -> None:
+        lines = self._run(IcapConfig(allowed_ips=frozenset({"203.0.113.7"})), ("203.0.113.7", 5000))
+
+        self.assertFalse(any("NAT/bridge gateway" in line for line in lines), lines)
+
+    def test_gateway_heuristic_covers_the_private_ranges_only(self) -> None:
+        for private in ("10.0.0.1", "192.168.1.1", "172.16.0.1", "172.18.0.1", "172.31.255.254"):
+            self.assertTrue(server.looks_like_container_gateway(private), private)
+        for public in ("203.0.113.7", "8.8.8.8", "172.15.0.1", "172.32.0.1", "", None):
+            self.assertFalse(server.looks_like_container_gateway(public), public)
+
+
 class IcapArchiveGateTests(unittest.TestCase):
     """Archive/container uploads are rejected on the ICAP path by default."""
 
