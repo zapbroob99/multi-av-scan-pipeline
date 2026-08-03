@@ -79,9 +79,18 @@ pilot_prepare_data_dir() {
     fi
     # 0750 keeps the directory off-limits to other host users; the owner is the
     # container id so the unprivileged services can still write.
-    if ! chown "$PILOT_CONTAINER_UID:$PILOT_CONTAINER_GID" "$path" 2>/dev/null; then
-        printf 'WARNING: could not chown %s to %s:%s; the containers run as that id and need write access. Set it manually or the pilot will fail to store samples.\n' \
-            "$path" "$PILOT_CONTAINER_UID" "$PILOT_CONTAINER_GID" >&2
+    #
+    # Recursive on purpose. Upgrading a host whose containers previously ran as
+    # root leaves the existing contents root-owned. Reads and deletes would still
+    # work (they depend on the directory, which is chowned above), but REPLACING
+    # an existing file fails -- overwriting a YARA rule from the admin UI is the
+    # case that breaks. A metadata-only walk is cheap next to an install, and it
+    # is idempotent, so it runs on every install rather than being a one-off
+    # migration someone has to remember.
+    if ! chown -R "$PILOT_CONTAINER_UID:$PILOT_CONTAINER_GID" "$path" 2>/dev/null; then
+        printf 'WARNING: could not chown %s to %s:%s; the containers run as that id and need write access. Set it manually (chown -R %s:%s %s) or the pilot will fail to store samples.\n' \
+            "$path" "$PILOT_CONTAINER_UID" "$PILOT_CONTAINER_GID" \
+            "$PILOT_CONTAINER_UID" "$PILOT_CONTAINER_GID" "$path" >&2
     fi
 }
 

@@ -379,6 +379,21 @@ Deploy upgrades only from another fixed pilot release. Back up first, load or
 build the new images, update `MASP_IMAGE`, run `up -d --wait`, and repeat all
 acceptance checks.
 
+**Upgrading from a release whose containers ran as root:** the services now run
+as the unprivileged id `10001`, so the existing storage and rules contents must
+change ownership or replacing an existing file fails (overwriting a YARA rule is
+the case that breaks; reads and deletes keep working because they depend on the
+directory). Re-running `install.sh` does this — `pilot_prepare_data_dir` chowns
+recursively and is idempotent. To do it by hand:
+
+```bash
+chown -R 10001:10001 /srv/masp/storage "$MASP_RULES_DIR"
+```
+
+This is the one upgrade step that is not just "swap the image", so verify it
+before running the smoke: `ls -l /srv/masp/storage/samples | head` should show
+`10001` as the owner.
+
 When more than one host is involved (remote Windows/ESET workers added later),
 upgrade in this order: **app/API host first, then the worker hosts.** Worker
 heartbeats are stored per worker; a new app reads both the new per-worker
