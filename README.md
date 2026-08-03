@@ -19,6 +19,49 @@ shows analyst-friendly scan results.
 - Database-backed scan queue with separate worker processes
 - Bulk scan deletion with stored sample cleanup
 
+## Tests
+
+```powershell
+python -m unittest discover -s tests
+```
+
+Some tests are gated on a throwaway PostgreSQL and skip without one, because
+they cover behavior SQLite cannot express (`SELECT ... FOR UPDATE`,
+`SKIP LOCKED`, and the concurrency races around job leasing and scan
+finalization). Point them at a disposable database — never a real one, they drop
+and recreate the `public` schema:
+
+```powershell
+docker run -d --name masp-pg -p 55432:5432 `
+  -e POSTGRES_DB=masptest -e POSTGRES_USER=masptest -e POSTGRES_PASSWORD=masptestpw `
+  postgres:16-alpine
+$env:MASP_TEST_POSTGRES_URL="postgresql://masptest:masptestpw@127.0.0.1:55432/masptest"
+python -m unittest discover -s tests
+```
+
+With the URL set, nothing should skip. On a deployed pilot host, run the same
+gate through `./deploy/pilot/run_gated_tests.sh`, which creates and destroys its
+own throwaway database.
+
+## Security posture
+
+MASP stores real malware by design, so the sample store and the processes that
+parse it are treated as the blast radius:
+
+- The app, worker, and ICAP services run as an unprivileged fixed uid with
+  `cap_drop: ALL`, `no-new-privileges`, and a read-only image filesystem; only
+  the storage and rules mounts and `/tmp` are writable.
+- Samples are stored non-executable and are never served over HTTP; MASP itself
+  never executes a sample — engines only read it.
+- Archive extraction rejects absolute paths, drive prefixes, `..` segments, and
+  non-regular members (symlinks, devices), and enforces count, size, and nesting
+  limits. Members are extracted to a staging directory and promoted atomically.
+- ICAP defaults to fail-closed: a timeout, oversize body, malformed request, or
+  engine error blocks the upload rather than releasing it.
+- The sample store needs a host antivirus exclusion, or endpoint protection will
+  quarantine the evidence. See
+  [docs/deployment/PILOT.md](docs/deployment/PILOT.md#host-antivirus-exclusion).
+
 ## Single-host pilot deployment
 
 The first supported deployment target is a single Ubuntu 22.04 VM running the
@@ -100,11 +143,14 @@ MASP_CLAMD_HOST=clamav
 MASP_CLAMD_PORT=3310
 MASP_CLAMD_TIMEOUT_SECONDS=180
 MASP_CLAMD_READY_TIMEOUT_SECONDS=30
+MASP_CLAMD_STREAM_MAX_LENGTH=512M
+MASP_CLAMD_MAX_FILE_SIZE=512M
 MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS=120
 MASP_YARA_RULES_DIR=/app/rules
 MASP_API_TOKEN=replace-with-a-long-random-token
 MASP_API_MAX_WAIT_SECONDS=15
 MASP_API_RETRY_AFTER_SECONDS=2
+MASP_METRICS_ENABLED=1
 MASP_UPLOAD_MAX_BYTES=0
 MASP_RETENTION_DAYS=0
 MASP_RETENTION_BATCH_SIZE=100
@@ -198,20 +244,37 @@ python tools\icap_probe.py --host 127.0.0.1 --port 1344 --eicar --expect block
 ```
 
 The service URI is `icap://<host>:1344/masp`; use `REQMOD` for upload gating.
-ICAP is unencrypted TCP, so expose it only on a private network and restrict it
-to approved client IPs. A production client must retain the upload on block,
-review, timeout, connection failure, or malformed response. The full deployment
-and ICAP configuration contract is in
+ICAP is unencrypted TCP, so expose it only on a private network. Restrict
+sources with the **host firewall** — that is the authoritative control.
+`MASP_ICAP_ALLOWED_IPS` is defense in depth: it matches the address the gateway
+observes, and a container port proxy or NAT can replace every client's address
+with one gateway address, leaving the allowlist unable to tell clients apart.
+The gateway logs the observed source of each connection and flags private-range
+addresses, so this can be confirmed from the real client node.
+
+A production client must retain the upload on block, review, timeout,
+connection failure, or malformed response. The full deployment and ICAP
+configuration contract is in
 [docs/deployment/PILOT.md](docs/deployment/PILOT.md).
 
 ClamAV may take time to initialize and download/update signatures on first
 startup. MASP waits briefly for clamd to accept TCP connections before recording
 the ClamAV result. If clamd is still unreachable after that readiness window,
 MASP records the ClamAV result as skipped instead of failing the upload.
-The Docker ClamAV service raises `StreamMaxLength`, `MaxFileSize`, and
-`MaxScanSize` to `512M` so larger samples can be streamed to clamd. If clamd
-still closes the stream during a scan, MASP records a failed ClamAV result with
-a limit/timeout hint instead of reporting it as a generic connection failure.
+The local Docker ClamAV service raises `StreamMaxLength`, `MaxFileSize`, and
+`MaxScanSize` to `512M` so larger samples can be streamed to clamd; the pilot
+and production profiles default to `64M`.
+
+clamd enforces those caps itself, so MASP is told about them through
+`MASP_CLAMD_STREAM_MAX_LENGTH` / `MASP_CLAMD_MAX_FILE_SIZE` and combines them
+with the ClamAV adapter's own `max_file_size_bytes` into a single effective
+limit. A sample above that limit is skipped *before* it is streamed, and the
+skip names the layer that produced the limit — so raising a cap in one place and
+seeing no change is diagnosable from the result. If clamd rejects a sample
+anyway (its real configuration drifted from what MASP was told), that is
+recorded as a **skipped** ClamAV result naming the setting to raise, not as a
+generic failure. A genuine clamd error is still a failure. Either way the scan
+counts as missing coverage and lands on `review`, never a clean allow.
 
 If one or more enabled engines never report back, MASP does not leave the scan
 running forever. After the orchestration wait window expires, missing engines
