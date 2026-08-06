@@ -116,7 +116,17 @@ def checked_payloads(paths: list[Path]) -> list[tuple[str, bytes]]:
     violations: list[str] = []
     for path in paths:
         relative = str(path.relative_to(ROOT_DIR)).replace("\\", "/")
-        data = path.read_bytes()
+        # Normalize to Unix line endings. Releases are packaged on a Windows
+        # machine, where git checks the tree out with CRLF, and every shipped
+        # file is text destined for a Linux host. A CRLF shell script does not
+        # run there at all -- the kernel reads the shebang as `/usr/bin/env
+        # bash\r` and reports "No such file or directory", which points at bash
+        # rather than at the line endings. Normalizing every payload rather than
+        # just `.sh` avoids the same bug reappearing through a file type nobody
+        # thought about; the allowlist ships text only, so there is nothing
+        # binary to corrupt. Done before hashing so SHA256SUMS matches the bytes
+        # actually written into the archive.
+        data = path.read_bytes().replace(b"\r\n", b"\n")
         text = data.decode("utf-8", errors="replace")
         for label, pattern in FORBIDDEN_PATTERNS:
             if pattern.search(text):

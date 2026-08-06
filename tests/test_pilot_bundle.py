@@ -59,6 +59,18 @@ class PilotBundleTests(unittest.TestCase):
         self.assertFalse(any(path.startswith("sample_") for path in relative_paths))
         self.assertNotIn(".env.pilot", relative_paths)
 
+    def test_shipped_files_have_unix_line_endings(self) -> None:
+        # The release is built on Windows (git checks the tree out with CRLF) and
+        # runs on Linux. A CRLF shell script fails with "/usr/bin/env: 'bash\r':
+        # No such file or directory" -- an error that names bash, not the line
+        # endings, so it costs real time on a live host. Every shipped file is
+        # text, so none of them may carry CRLF.
+        offenders = [
+            name for name, data in checked_payloads(collect_files()) if b"\r\n" in data
+        ]
+
+        self.assertEqual(offenders, [], f"CRLF in shipped files: {offenders}")
+
     def test_checksum_sidecar_uses_unix_line_endings(self) -> None:
         # Releases are built on a Windows machine and verified on the Linux pilot
         # host with `sha256sum -c`. Text-mode writing turns the trailing \n into
