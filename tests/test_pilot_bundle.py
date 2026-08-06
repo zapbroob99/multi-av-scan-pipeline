@@ -1,7 +1,12 @@
+import tempfile
 import unittest
 from pathlib import Path
 
-from tools.package_pilot_release import checked_payloads, collect_files
+from tools.package_pilot_release import (
+    checked_payloads,
+    collect_files,
+    write_checksum_sidecar,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -53,6 +58,21 @@ class PilotBundleTests(unittest.TestCase):
         self.assertFalse(any(path.startswith("benchmark-samples/") for path in relative_paths))
         self.assertFalse(any(path.startswith("sample_") for path in relative_paths))
         self.assertNotIn(".env.pilot", relative_paths)
+
+    def test_checksum_sidecar_uses_unix_line_endings(self) -> None:
+        # Releases are built on a Windows machine and verified on the Linux pilot
+        # host with `sha256sum -c`. Text-mode writing turns the trailing \n into
+        # \r\n there, and the carriage return becomes part of the parsed
+        # filename, so verification fails on a perfectly good archive. (This
+        # assertion only fails on a Windows builder -- on Linux both spellings
+        # produce the same bytes -- which is exactly where the release is made.)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sidecar = Path(temp_dir) / "release.zip.sha256"
+            write_checksum_sidecar(sidecar, "a" * 64, "release.zip")
+            raw = sidecar.read_bytes()
+
+        self.assertEqual(raw, b"a" * 64 + b"  release.zip\n")
+        self.assertNotIn(b"\r", raw)
 
     def test_release_inputs_pass_secret_scan(self) -> None:
         payloads = checked_payloads(collect_files())

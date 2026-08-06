@@ -127,6 +127,19 @@ def checked_payloads(paths: list[Path]) -> list[tuple[str, bytes]]:
     return payloads
 
 
+def write_checksum_sidecar(sidecar: Path, digest: str, archive_name: str) -> None:
+    """Write the `sha256sum -c` sidecar with Unix line endings.
+
+    write_bytes, not write_text: on a Windows builder text mode rewrites the
+    trailing newline to CRLF, and `sha256sum -c` on the Linux pilot host then
+    reports the file as missing because the carriage return becomes part of the
+    parsed filename -- a perfectly good archive fails verification. Releases are
+    built on Windows and verified on Linux, so this path is always
+    cross-platform.
+    """
+    sidecar.write_bytes(f"{digest}  {archive_name}\n".encode("ascii"))
+
+
 def write_entry(archive: zipfile.ZipFile, name: str, data: bytes, *, executable: bool = False) -> None:
     info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
     info.create_system = 3
@@ -189,7 +202,7 @@ def main() -> int:
 
     digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     sidecar = zip_path.with_suffix(".zip.sha256")
-    sidecar.write_text(f"{digest}  {zip_path.name}\n", encoding="ascii")
+    write_checksum_sidecar(sidecar, digest, zip_path.name)
     print(f"Packaged {len(payloads)} files -> {zip_path}")
     print(f"SHA-256({zip_path.name}) = {digest}")
     return 0
