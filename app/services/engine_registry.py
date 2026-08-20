@@ -22,13 +22,23 @@ from app.engines.microsoft_defender import (
 )
 from app.engines.static_metadata import ENGINE_NAME as STATIC_METADATA_NAME
 from app.engines.static_metadata import run_static_metadata_engine
+from app.engines.virustotal import (
+    check_virustotal_health,
+    get_virustotal_config,
+    run_virustotal_file_hash_engine,
+    run_virustotal_hash_engine,
+    test_virustotal_connection,
+)
+from app.services.hash_scanning import HashEngineExecution
 from app.engines.yara_engine import check_yara_health, get_yara_config, run_yara_engine
 from app.models import EngineInstanceRecord, EngineResultInput, ScanRecord
 
 
 RuntimeConfigFactory = Callable[[dict[str, str] | None], dict[str, str | int | float | bool]]
 HealthCheckFunction = Callable[[dict[str, str] | None], dict[str, str | bool]]
+ConnectionTestFunction = Callable[[dict[str, str] | None], dict[str, str | bool]]
 ScanFunction = Callable[[ScanRecord, dict[str, str] | None], EngineResultInput]
+HashScanFunction = Callable[[str, dict[str, str] | None], HashEngineExecution]
 
 
 @dataclass(frozen=True)
@@ -72,6 +82,7 @@ class EngineCapabilityProfile:
     supports_archives: bool = False
     requires_network: bool = False
     max_file_size_bytes: int | None = None
+    supports_file_hash_scan: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,7 +91,9 @@ class RegisteredEngineAdapter:
     capabilities: EngineCapabilityProfile
     runtime_config_factory: RuntimeConfigFactory
     health_check_function: HealthCheckFunction
-    scan_function: ScanFunction
+    scan_function: ScanFunction | None
+    hash_scan_function: HashScanFunction | None = None
+    connection_test_function: ConnectionTestFunction | None = None
 
     @property
     def key(self) -> str:
@@ -92,8 +105,24 @@ class RegisteredEngineAdapter:
     def health_check(self, config_override: dict[str, str] | None = None) -> dict[str, str | bool]:
         return self.health_check_function(config_override)
 
+    def test_connection(self, config_override: dict[str, str] | None = None) -> dict[str, str | bool]:
+        if self.connection_test_function is None:
+            return self.health_check(config_override)
+        return self.connection_test_function(config_override)
+
     def scan(self, scan: ScanRecord, config_override: dict[str, str] | None = None) -> EngineResultInput:
+        if self.scan_function is None:
+            raise RuntimeError(f"Adapter {self.key} does not support file-backed scans.")
         return self.scan_function(scan, config_override)
+
+    def scan_hash(
+        self,
+        sha256: str,
+        config_override: dict[str, str] | None = None,
+    ) -> HashEngineExecution:
+        if self.hash_scan_function is None:
+            raise RuntimeError(f"Adapter {self.key} does not support hash-only scans.")
+        return self.hash_scan_function(sha256, config_override)
 
     def supports_platform(self, platform_name: str) -> bool:
         return platform_name in self.capabilities.supported_platforms
@@ -160,7 +189,7 @@ REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
             supported_platforms=("linux", "windows"),
             execution_model="sync",
             supports_file_upload=True,
-            supports_hash_lookup=True,
+            supports_hash_lookup=False,
             supports_archives=False,
             requires_network=False,
         ),
@@ -278,6 +307,55 @@ REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
         health_check_function=check_microsoft_defender_health,
         scan_function=run_microsoft_defender_engine,
     ),
+    "virustotal": RegisteredEngineAdapter(
+        definition=EngineAdapterDefinition(
+            key="virustotal",
+            label="VirusTotal",
+            short_label="VT",
+            category="reputation",
+            description="SHA-256 reputation lookup without file upload.",
+            vendor="Google/VirusTotal",
+            product="VirusTotal API v3",
+            integration_method="REST API hash lookup",
+            support_state="blocked",
+            detection=True,
+            configurable=True,
+            docs_path="docs/integrations/API_SCAN_GATEWAY.md",
+            config_fields=(
+                EngineConfigField(
+                    "api_key",
+                    "API key",
+                    "password",
+                    True,
+                    secret=True,
+                    help_text="Stored encrypted; leave blank to keep the current key.",
+                ),
+                EngineConfigField("timeout_seconds", "timeout seconds", "number", False, "10"),
+                EngineConfigField("cache_seconds", "known-result cache seconds", "number", False, "3600"),
+                EngineConfigField("unknown_cache_seconds", "unknown-result cache seconds", "number", False, "300"),
+                EngineConfigField("cache_max_entries", "cache maximum entries", "number", False, "10000"),
+                EngineConfigField("malicious_threshold", "malicious threshold", "number", False, "1"),
+                EngineConfigField("allow_undetected", "allow fresh undetected reports", "checkbox", False, "false"),
+                EngineConfigField("max_age_days", "maximum report age days", "number", False, "30"),
+            ),
+        ),
+        capabilities=EngineCapabilityProfile(
+            input_modes=("hash", "file hash"),
+            deployment="api worker",
+            supported_platforms=("linux", "windows"),
+            execution_model="sync",
+            supports_file_upload=False,
+            supports_hash_lookup=True,
+            supports_archives=False,
+            requires_network=True,
+            supports_file_hash_scan=True,
+        ),
+        runtime_config_factory=get_virustotal_config,
+        health_check_function=check_virustotal_health,
+        scan_function=run_virustotal_file_hash_engine,
+        hash_scan_function=run_virustotal_hash_engine,
+        connection_test_function=test_virustotal_connection,
+    ),
 }
 
 ADAPTERS: dict[str, EngineAdapterDefinition] = {
@@ -355,7 +433,24 @@ def configured_engines() -> list[EngineInstanceRecord]:
 
 
 def enabled_engines() -> list[EngineInstanceRecord]:
-    return [engine for engine in configured_engines() if engine.enabled]
+    """Enabled engines eligible for ordinary file-backed scan intake."""
+    return [
+        engine
+        for engine in configured_engines()
+        if engine.enabled
+        and (
+            adapter_capabilities(engine.adapter_key).supports_file_upload
+            or adapter_capabilities(engine.adapter_key).supports_file_hash_scan
+        )
+    ]
+
+
+def enabled_hash_engines() -> list[EngineInstanceRecord]:
+    return [
+        engine
+        for engine in configured_engines()
+        if engine.enabled and adapter_capabilities(engine.adapter_key).supports_hash_lookup
+    ]
 
 
 def detection_engine_names() -> list[str]:
@@ -447,9 +542,19 @@ def engine_health(instance: EngineInstanceRecord) -> dict[str, str | bool]:
     return adapter_registry_entry(instance.adapter_key).health_check(config)
 
 
+def test_engine_connection(instance: EngineInstanceRecord) -> dict[str, str | bool]:
+    config = engine_config(instance)
+    return adapter_registry_entry(instance.adapter_key).test_connection(config)
+
+
 def run_engine(instance: EngineInstanceRecord, scan: ScanRecord) -> EngineResultInput:
     config = engine_config(instance)
     return adapter_registry_entry(instance.adapter_key).scan(scan, config)
+
+
+def run_hash_engine(instance: EngineInstanceRecord, sha256: str) -> HashEngineExecution:
+    config = engine_config(instance)
+    return adapter_registry_entry(instance.adapter_key).scan_hash(sha256, config)
 
 
 def config_value(config: dict[str, str], key: str, fallback: str) -> str:

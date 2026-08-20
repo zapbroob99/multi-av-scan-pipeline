@@ -32,6 +32,7 @@ ROOT_FILES = (
 TREE_DIRS = ("app", "rules", "deploy/pilot", "tests")
 EXTRA_FILES = (
     "docs/deployment/PILOT.md",
+    "tools/generate_secret_key.py",
     "tools/icap_probe.py",
     "tools/verify_scan_api.py",
 )
@@ -60,6 +61,14 @@ FORBIDDEN_PATTERNS = (
     (
         "real database password",
         re.compile(r"(?m)^MASP_POSTGRES_PASSWORD=(?!CHANGE_ME)[^\s$<{]{16,}$"),
+    ),
+    (
+        "real VirusTotal API key",
+        re.compile(r"(?m)^MASP_VIRUSTOTAL_API_KEY=(?!\s*$|CHANGE_ME)[^\s$<{]{16,}$"),
+    ),
+    (
+        "real secret encryption key",
+        re.compile(r"(?m)^MASP_SECRET_ENCRYPTION_KEY=(?!\s*$|CHANGE_ME)[^\s$<{]{32,}$"),
     ),
 )
 

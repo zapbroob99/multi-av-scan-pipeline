@@ -272,6 +272,7 @@ class OpenApiContractTests(unittest.TestCase):
         ("/api/v1/scans/{scan_id}/result", "get"),
         ("/api/v1/batches/{batch_id}", "get"),
         ("/api/v1/batches/{batch_id}/result", "get"),
+        ("/api/v1/hashes/{sha256}", "get"),
     )
 
     @classmethod

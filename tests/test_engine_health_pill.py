@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from app.main import health_tone_for, worker_backed_engine_health
+from app.main import health_tone_for, render_engine_card, worker_backed_engine_health
 from app.models import EngineInstanceRecord
 
 
@@ -65,6 +65,31 @@ class WorkerBackedEngineHealthTests(unittest.TestCase):
 
         self.assertEqual(health["status"], "unsupported")
         worker_status.assert_not_called()
+
+
+class VirusTotalEngineCardTests(unittest.TestCase):
+    def test_hash_only_engine_card_exposes_lifecycle_without_rendering_secret(self) -> None:
+        engine = make_engine("virustotal", "VirusTotal")
+        with patch.dict(
+            "os.environ",
+            {
+                "MASP_VIRUSTOTAL_ENABLED": "1",
+                "MASP_VIRUSTOTAL_API_KEY": "ui-secret-must-not-render",
+            },
+            clear=False,
+        ):
+            rendered = render_engine_card(engine, {})
+
+        self.assertIn("SHA-256 hash-only reputation", rendered)
+        self.assertIn("GET /api/v1/hashes/{sha256}", rendered)
+        self.assertIn('class="engine-logo engine-logo-virustotal"', rendered)
+        self.assertIn('viewBox="0 0 24 24"', rendered)
+        self.assertIn("Disable", rendered)
+        self.assertIn("Remove", rendered)
+        self.assertIn("Test connection", rendered)
+        self.assertIn('action="/engines/virustotal/config"', rendered)
+        self.assertIn('type="password" name="virustotal_api_key"', rendered)
+        self.assertNotIn("ui-secret-must-not-render", rendered)
 
 
 if __name__ == "__main__":

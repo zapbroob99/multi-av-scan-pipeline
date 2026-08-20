@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from tools.package_pilot_release import (
+    FORBIDDEN_PATTERNS,
     checked_payloads,
     collect_files,
     write_checksum_sidecar,
@@ -28,6 +29,7 @@ class PilotBundleTests(unittest.TestCase):
 
         self.assertIn("MASP_POSTGRES_PASSWORD=CHANGE_ME", env_text)
         self.assertIn("MASP_API_TOKEN=CHANGE_ME", env_text)
+        self.assertIn("MASP_SECRET_ENCRYPTION_KEY=CHANGE_ME", env_text)
         self.assertIn("MASP_ICAP_ALLOWED_IPS=127.0.0.1", env_text)
 
     def test_release_allowlist_excludes_local_and_benchmark_files(self) -> None:
@@ -89,6 +91,32 @@ class PilotBundleTests(unittest.TestCase):
     def test_release_inputs_pass_secret_scan(self) -> None:
         payloads = checked_payloads(collect_files())
         self.assertGreater(len(payloads), 10)
+
+    def test_secret_scan_recognizes_a_real_virustotal_key(self) -> None:
+        pattern = next(
+            pattern for label, pattern in FORBIDDEN_PATTERNS if label == "real VirusTotal API key"
+        )
+
+        self.assertIsNotNone(
+            pattern.search("MASP_VIRUSTOTAL_API_KEY=" + "a" * 64)
+        )
+        self.assertIsNone(pattern.search("MASP_VIRUSTOTAL_API_KEY="))
+        self.assertIsNone(
+            pattern.search("MASP_VIRUSTOTAL_API_KEY=CHANGE_ME_LICENSED_API_KEY")
+        )
+
+    def test_secret_scan_recognizes_a_real_encryption_key(self) -> None:
+        pattern = next(
+            pattern for label, pattern in FORBIDDEN_PATTERNS
+            if label == "real secret encryption key"
+        )
+
+        self.assertIsNotNone(
+            pattern.search("MASP_SECRET_ENCRYPTION_KEY=" + "a" * 44)
+        )
+        self.assertIsNone(
+            pattern.search("MASP_SECRET_ENCRYPTION_KEY=CHANGE_ME_FERNET_KEY")
+        )
 
 
 if __name__ == "__main__":

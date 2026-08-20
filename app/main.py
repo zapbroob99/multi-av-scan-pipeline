@@ -80,16 +80,25 @@ from app.services.engine_registry import (
     configured_engines,
     detection_engine_names,
     enabled_engines,
+    enabled_hash_engines,
+    engine_config,
     engine_health,
     microsoft_defender_form_values,
     runtime_config,
+    run_hash_engine,
     seed_default_engines,
+    test_engine_connection,
     toggle_engine,
     update_engine_config,
     yara_form_values,
     remove_engine,
 )
 from app.services.ingest import UploadTooLargeError, store_upload
+from app.services.hash_scanning import (
+    HashEngineError,
+    HashEngineRun,
+    build_hash_scan_payload,
+)
 from app.services import scan_policy
 from app.services.scan_intake import (
     DEFAULT_ARCHIVE_MODE,
@@ -101,6 +110,7 @@ from app.services.scan_intake import (
 from app.services.scan_assessment import (
     detection_engine_results,
     detection_summary,
+    engine_policy_action,
     required_engine_coverage,
     scan_decision,
 )
@@ -121,6 +131,16 @@ from app.services.reports import (
 from app.services.scoring import calculate_risk
 from app.services.timing import build_scan_timing_payload
 from app.services.worker_runtime import get_worker_status
+from app.services.virustotal import (
+    InvalidSha256Error,
+    clear_virustotal_cache,
+    normalize_sha256,
+)
+from app.services.secret_store import (
+    SecretStoreError,
+    encrypt_secret,
+    secret_encryption_available,
+)
 from app.services.yara_rules import (
     delete_yara_rule,
     list_yara_rules,
@@ -177,6 +197,14 @@ def nav_icon(icon_key: str) -> str:
           <path d="M4 19h16"></path>
           <path d="M8 8v8"></path>
           <path d="M16 8v8"></path>
+        </svg>
+        """,
+        "hash_scan": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M10 3 7 21"></path>
+          <path d="m17 3-3 18"></path>
+          <path d="M4 9h16"></path>
+          <path d="M3 15h16"></path>
         </svg>
         """,
         "account": """
@@ -247,6 +275,7 @@ def page_shell(
     primary_nav = [
         ("dashboard", "/", "Dashboard"),
         ("new_scan", "/scans/new", "New Scan"),
+        ("hash_scan", "/hash-scan", "Scan Hash"),
         ("api_ledger", "/api-ledger", "API Ledger"),
     ]
     admin_nav: list[tuple[str, str, str]] = []
@@ -1694,6 +1723,15 @@ def render_engine_logo(label: str, key: str) -> str:
         </span>
         """
 
+    if key == "virustotal":
+        return """
+        <span class="engine-logo engine-logo-virustotal" aria-hidden="true">
+          <svg viewBox="0 0 24 24" role="img" focusable="false">
+            <path d="M10.87 12 0 22.68h24V1.32H0Zm10.73 8.52H5.28l8.637-8.448L5.28 3.48H21.6Z" fill="currentColor"></path>
+          </svg>
+        </span>
+        """
+
     return f'<span class="engine-logo engine-logo-text" aria-hidden="true">{safe_label}</span>'
 
 
@@ -1887,6 +1925,8 @@ def health_tone_for(adapter_key: str, health: dict[str, str | bool]) -> str:
         "unexpected",
         "unavailable",
     }:
+        return "danger"
+    if adapter_key == "virustotal" and health["status"] in {"not configured", "unavailable"}:
         return "danger"
     return "neutral"
 
@@ -2281,6 +2321,132 @@ def render_engine_card(
             focus_adapter_key=focus_adapter_key,
         )
 
+    if instance.adapter_key == "virustotal":
+        stored_config = engine_config(instance)
+        stored_secret = bool(stored_config.get("api_key_encrypted", "").strip())
+        credential_source = (
+            "Encrypted engine setting"
+            if stored_secret
+            else "Environment"
+            if bool(runtime["configured"])
+            else "Not configured"
+        )
+        fields = [
+            ("Adapter", "VirusTotal API v3"),
+            ("Mode", "SHA-256 hash-only reputation"),
+            ("Credentials", credential_source),
+            ("Malicious threshold", str(runtime["malicious_threshold"])),
+            (
+                "Undetected policy",
+                "Allow" if bool(runtime["allow_undetected"]) else "Review",
+            ),
+            ("Maximum report age", f'{runtime["max_age_days"]} days'),
+            ("Known-result cache", f'{runtime["cache_seconds"]}s'),
+            ("Unknown-result cache", f'{runtime["unknown_cache_seconds"]}s'),
+            ("Support state", definition.support_state.title()),
+        ]
+        fields = append_capability_fields(fields, instance.adapter_key)
+        field_html = "\n".join(
+            f"""
+            <div>
+              <span>{html.escape(label)}</span>
+              <strong>{html.escape(value)}</strong>
+            </div>
+            """
+            for label, value in fields
+        )
+        allow_undetected_checked = " checked" if bool(runtime["allow_undetected"]) else ""
+        secret_placeholder = "Configured — leave blank to keep" if stored_secret else "Paste API key"
+        secret_store_note = (
+            "UI secret storage is ready. The API key is encrypted before it is written to the database."
+            if secret_encryption_available()
+            else (
+                "Set MASP_SECRET_ENCRYPTION_KEY on the app service before saving an API key here. "
+                "Environment-based MASP_VIRUSTOTAL_API_KEY remains supported."
+            )
+        )
+        body = f"""
+            <div class="config-grid">{field_html}</div>
+            <div class="engine-health">
+              <div>
+                <span>Configuration</span>
+                <strong>{html.escape(str(health["detail"]))}</strong>
+              </div>
+              {render_engine_actions(instance, show_test=instance.enabled)}
+            </div>
+            <details class="engine-settings-drawer">
+              <summary>
+                <span>Settings</span>
+                <span class="engine-expand-indicator" aria-hidden="true"></span>
+              </summary>
+              <form class="settings-form embedded" action="/engines/virustotal/config" method="post" data-action-form data-preserve-scroll>
+                <div class="settings-section">
+                  <div>
+                    <h3>Credentials and reputation policy</h3>
+                    <p>{html.escape(secret_store_note)}</p>
+                  </div>
+                  <div class="settings-grid">
+                    <label>
+                      API key
+                      <input type="password" name="virustotal_api_key" value="" placeholder="{html.escape(secret_placeholder)}" autocomplete="new-password">
+                    </label>
+                    <label>
+                      timeout seconds
+                      <input type="number" name="virustotal_timeout_seconds" value="{runtime['timeout_seconds']}" min="1" max="60">
+                    </label>
+                    <label>
+                      malicious threshold
+                      <input type="number" name="virustotal_malicious_threshold" value="{runtime['malicious_threshold']}" min="1" max="100">
+                    </label>
+                    <label>
+                      maximum report age days
+                      <input type="number" name="virustotal_max_age_days" value="{runtime['max_age_days']}" min="1" max="3650">
+                    </label>
+                    <label>
+                      known-result cache seconds
+                      <input type="number" name="virustotal_cache_seconds" value="{runtime['cache_seconds']}" min="0" max="86400">
+                    </label>
+                    <label>
+                      unknown-result cache seconds
+                      <input type="number" name="virustotal_unknown_cache_seconds" value="{runtime['unknown_cache_seconds']}" min="0" max="3600">
+                    </label>
+                    <label>
+                      cache maximum entries
+                      <input type="number" name="virustotal_cache_max_entries" value="{runtime['cache_max_entries']}" min="1" max="100000">
+                    </label>
+                    <label class="checkbox-field">
+                      <input type="checkbox" name="virustotal_allow_undetected" value="true"{allow_undetected_checked}>
+                      allow fresh reports with zero detections
+                    </label>
+                    <label class="checkbox-field">
+                      <input type="checkbox" name="virustotal_clear_api_key" value="true">
+                      remove the encrypted API key
+                    </label>
+                  </div>
+                </div>
+                <div class="settings-actions">
+                  <button class="primary-action" type="submit" data-busy-label="Saving...">Save VirusTotal settings</button>
+                </div>
+              </form>
+            </details>
+            <div class="engine-subsection">
+              <div class="engine-subsection-header">
+                <div>
+                  <h3>Hash-only execution</h3>
+                  <p>Used by the generic hash lookup API at <code>GET /api/v1/hashes/{{sha256}}</code>. The file is never uploaded to MASP or VirusTotal, and the API key is never rendered back to the browser.</p>
+                </div>
+              </div>
+            </div>
+        """
+        return render_engine_details_shell(
+            instance,
+            status_html=status_html,
+            meta=meta,
+            body=body,
+            health_overrides=health_overrides,
+            focus_adapter_key=focus_adapter_key,
+        )
+
     fields = [
         ("Adapter", "built-in"),
         ("Category", "metadata"),
@@ -2529,6 +2695,11 @@ def status_pill(status: str) -> str:
         "starting": "warning",
         "running": "warning",
         "partial": "warning",
+        "malicious": "danger",
+        "suspicious": "warning",
+        "undetected": "neutral",
+        "stale": "warning",
+        "unknown": "warning",
     }
     tone = tone_by_status.get(status, "warning")
     return f'<span class="pill {tone}">{html.escape(display_verdict(status))}</span>'
@@ -2590,6 +2761,14 @@ def detected_pill(status: str, detected: bool) -> str:
     if detected:
         return '<span class="pill danger">Detected</span>'
     return '<span class="pill success">Clean</span>'
+
+
+def engine_result_verdict_pill(result: EngineResultRecord) -> str:
+    """Render an adapter policy verdict without mislabeling Review as Clean."""
+    policy_action = engine_policy_action(result)
+    if result.status == "completed" and policy_action == "review":
+        return '<span class="pill warning">Review</span>'
+    return detected_pill(result.status, result.detected)
 
 
 
@@ -3386,7 +3565,7 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
                 <small>{html.escape(result.engine_version or "version unknown")}</small>
               </td>
               <td>{status_pill(result.status)}</td>
-              <td>{detected_pill(result.status, result.detected)}</td>
+              <td>{engine_result_verdict_pill(result)}</td>
               <td>{severity_pill(result.severity)}</td>
               <td>{result.confidence}%</td>
               <td>{html.escape(signature)}</td>
@@ -3880,7 +4059,7 @@ def render_report_page(scan: ScanRecord, engine_results: list[EngineResultRecord
         <tr{' class="engine-detected-row"' if result.detected and result.status == 'completed' else ''}>
           <td><strong>{html.escape(result.engine_name)}</strong></td>
           <td>{status_pill(result.status)}</td>
-          <td>{detected_pill(result.status, result.detected)}</td>
+          <td>{engine_result_verdict_pill(result)}</td>
           <td>{severity_pill(result.severity)}</td>
           <td>{result.confidence}%</td>
           <td>{html.escape(result.signature or '-')}</td>
@@ -5054,6 +5233,340 @@ def update_account_password_route(
     return response
 
 
+def execute_hash_scan(
+    sha256: str,
+    engines: list[EngineInstanceRecord],
+) -> list[HashEngineRun]:
+    return [
+        HashEngineRun(
+            engine=engine,
+            support_state=adapter_definition(engine.adapter_key).support_state,
+            execution=run_hash_engine(engine, sha256),
+        )
+        for engine in engines
+    ]
+
+
+def hash_scan_decision_pill(action: str) -> str:
+    tone = {"allow": "success", "block": "danger", "review": "warning"}.get(
+        action,
+        "neutral",
+    )
+    return f'<span class="pill {tone}">{html.escape(display_verdict(action))}</span>'
+
+
+def hash_scan_verdict_icon(action: str) -> str:
+    if action == "allow":
+        path = '<path d="m8.5 12.5 2.2 2.2 4.8-5.2"></path>'
+    elif action == "block":
+        path = '<path d="m9.5 9.5 5 5m0-5-5 5"></path>'
+    else:
+        path = '<path d="M12 8.5v4.2"></path><path d="M12 16h.01"></path>'
+    return f"""
+    <span class="hash-verdict-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3.5 19 6v5.1c0 4.5-2.5 7.8-7 9.4-4.5-1.6-7-4.9-7-9.4V6l7-2.5Z"></path>
+        {path}
+      </svg>
+    </span>
+    """
+
+
+def hash_scan_guidance(action: str) -> tuple[str, str]:
+    if action == "block":
+        return (
+            "Threat signal detected",
+            "Do not release this file. Reject or quarantine it according to your gateway policy.",
+        )
+    if action == "allow":
+        return (
+            "Reputation policy passed",
+            "All enabled hash engines returned an allow decision under the configured policy.",
+        )
+    return (
+        "Manual review required",
+        "Keep the file quarantined until an analyst or a full content scan resolves the uncertainty.",
+    )
+
+
+def render_hash_scan_page(
+    user: UserRecord,
+    *,
+    engines: list[EngineInstanceRecord],
+    sha256: str = "",
+    runs: list[HashEngineRun] | None = None,
+    error: str = "",
+) -> str:
+    safe_hash = html.escape(sha256)
+    engine_rows: list[str] = []
+    ready_count = 0
+    for engine in engines:
+        public_config = runtime_config(engine)
+        configured = bool(public_config.get("configured", True))
+        ready_count += 1 if configured else 0
+        engine_status = (
+            '<span class="pill success">Ready</span>'
+            if configured
+            else '<span class="pill danger">Not configured</span>'
+        )
+        definition = adapter_definition(engine.adapter_key)
+        engine_rows.append(
+            f"""
+            <div class="engine-row">
+              {render_engine_logo(definition.short_label, engine.adapter_key)}
+              <span><strong>{html.escape(engine.display_name)}</strong><small>{html.escape(definition.description)}</small></span>
+              {engine_status}
+            </div>
+            """
+        )
+    if not engine_rows:
+        engine_rows.append(
+            '<div class="empty-state compact"><strong>No hash engine enabled</strong>'
+            '<p>Add and enable a hash-capable adapter from Admin &gt; Engines.</p></div>'
+        )
+
+    error_notice = page_notice("Hash scan unavailable", error, "danger")
+    result_html = ""
+    completed_runs = runs or []
+    if completed_runs:
+        aggregate = build_hash_scan_payload(sha256, completed_runs)
+        overall_decision = aggregate["decision"]
+        action = str(overall_decision["action"])
+        reason = str(overall_decision["reason"])
+        guidance_title, guidance_text = hash_scan_guidance(action)
+        engine_cards: list[str] = []
+        reports_found = 0
+        total_duration_ms = 0
+        for run in completed_runs:
+            payload = run.execution.payload
+            result = run.execution.result
+            raw_decision = payload.get("decision")
+            decision = raw_decision if isinstance(raw_decision, dict) else {}
+            engine_action = str(decision.get("action", "review"))
+            engine_reason = str(decision.get("reason", payload.get("detail", "Review required.")))
+            status = str(payload.get("status", "unknown"))
+            found = bool(payload.get("found", False))
+            reports_found += 1 if found else 0
+            total_duration_ms += result.duration_ms
+            definition = adapter_definition(run.engine.adapter_key)
+            stats_value = payload.get("stats")
+            stats = stats_value if isinstance(stats_value, dict) else None
+            if stats is not None:
+                malicious_count = stats.get("malicious", 0)
+                suspicious_count = stats.get("suspicious", 0)
+                undetected_count = stats.get("undetected", 0)
+                stat_items = (
+                    ("Malicious", malicious_count, "danger" if malicious_count else "neutral"),
+                    ("Suspicious", suspicious_count, "warning" if suspicious_count else "neutral"),
+                    ("Undetected", undetected_count, "success" if undetected_count else "neutral"),
+                    ("Total", stats.get("total", 0), "neutral"),
+                )
+                stats_html = "".join(
+                    f'<div class="hash-stat is-{tone}"><span>{html.escape(label)}</span><strong>{html.escape(str(value))}</strong></div>'
+                    for label, value, tone in stat_items
+                )
+            else:
+                stats_html = (
+                    '<div class="hash-stat hash-stat-empty"><span>Report</span>'
+                    '<strong>Not found</strong><small>Unknown is never treated as clean.</small></div>'
+                )
+
+            cached_label = "Cache hit" if bool(payload.get("cached")) else "Live lookup"
+            analysis_date = str(payload.get("last_analysis_date") or "Unavailable")
+            permalink = payload.get("permalink")
+            report_link = ""
+            if isinstance(permalink, str) and permalink.startswith("https://"):
+                report_link = (
+                    f'<a class="secondary-action compact-action" href="{html.escape(permalink, quote=True)}" target="_blank" rel="noopener noreferrer">Open external report <span aria-hidden="true">↗</span></a>'
+                )
+            engine_cards.append(
+                f"""
+                <article class="hash-engine-result-card is-{html.escape(engine_action)}">
+                  <header class="hash-engine-result-header">
+                    <div class="hash-engine-identity">
+                      {render_engine_logo(definition.short_label, run.engine.adapter_key)}
+                      <div>
+                        <span class="hash-result-eyebrow">Reputation engine</span>
+                        <h3>{html.escape(run.engine.display_name)}</h3>
+                        <small>{html.escape(result.engine_version or definition.product)}</small>
+                      </div>
+                    </div>
+                    <div class="hash-engine-verdicts">
+                      {hash_scan_decision_pill(engine_action)}
+                      <span class="hash-status-label">{html.escape(display_verdict(status))}</span>
+                    </div>
+                  </header>
+                  <div class="hash-stat-grid">{stats_html}</div>
+                  <div class="hash-engine-reason">
+                    <span>Engine assessment</span>
+                    <strong>{html.escape(engine_reason)}</strong>
+                  </div>
+                  <dl class="hash-engine-meta">
+                    <div><dt>Report</dt><dd>{"Found" if found else "Not found"}</dd></div>
+                    <div><dt>Source</dt><dd>{html.escape(cached_label)}</dd></div>
+                    <div><dt>Last analysis</dt><dd>{html.escape(analysis_date)}</dd></div>
+                    <div><dt>Confidence</dt><dd>{result.confidence}%</dd></div>
+                    <div><dt>Duration</dt><dd>{result.duration_ms} ms</dd></div>
+                  </dl>
+                  <footer class="hash-engine-result-footer">
+                    <div>{report_link}</div>
+                    <details class="engine-raw-output hash-technical-details">
+                      <summary class="engine-raw-output-toggle">Technical details</summary>
+                      <pre>{html.escape(result.raw_output)}</pre>
+                    </details>
+                  </footer>
+                </article>
+                """
+            )
+
+        result_html = f"""
+        <section class="hash-scan-result hash-result-{html.escape(action)}" aria-live="polite">
+          <article class="panel hash-result-hero">
+            <div class="hash-result-verdict">
+              {hash_scan_verdict_icon(action)}
+              <div>
+                <span class="hash-result-eyebrow">Aggregate decision</span>
+                <h2>{html.escape(display_verdict(action))}</h2>
+                <p>{html.escape(guidance_title)}</p>
+              </div>
+            </div>
+            <div class="hash-result-overview">
+              <div><span>Engines</span><strong>{len(completed_runs)}</strong><small>completed</small></div>
+              <div><span>Reports</span><strong>{reports_found}</strong><small>found</small></div>
+              <div><span>Duration</span><strong>{total_duration_ms}</strong><small>milliseconds</small></div>
+            </div>
+          </article>
+
+          <article class="panel hash-result-context">
+            <div class="hash-result-hash">
+              <div>
+                <span class="hash-result-eyebrow">SHA-256 fingerprint</span>
+                <code class="copyable hash-scan-value" data-copy-value="{safe_hash}" aria-label="Copy SHA-256" title="Copy SHA-256">{safe_hash}</code>
+              </div>
+              <span class="hash-copy-hint">Click hash to copy</span>
+            </div>
+            <div class="hash-decision-explainer">
+              <span class="hash-result-eyebrow">Why this decision?</span>
+              <strong>{html.escape(reason)}</strong>
+              <p>{html.escape(guidance_text)}</p>
+            </div>
+            <div class="hash-privacy-note">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3.5 19 6v5.1c0 4.5-2.5 7.8-7 9.4-4.5-1.6-7-4.9-7-9.4V6l7-2.5Z"></path>
+                <path d="M9.5 12.2 11.2 14l3.5-4"></path>
+              </svg>
+              <span><strong>Hash-only lookup</strong> Only the SHA-256 digest was sent to enabled reputation engines. No file content was uploaded.</span>
+            </div>
+            <div class="hash-result-actions">
+              <a class="secondary-action compact-action" href="/hash-scan">Scan another hash</a>
+            </div>
+          </article>
+
+          <section class="hash-engine-results" aria-labelledby="hash-engine-results-title">
+            <div class="hash-engine-results-heading">
+              <div>
+                <span class="hash-result-eyebrow">Evidence</span>
+                <h2 id="hash-engine-results-title">Engine results</h2>
+                <p>Each engine result is shown independently. Expand technical details only when needed.</p>
+              </div>
+              <span class="pill neutral">{len(completed_runs)} result(s)</span>
+            </div>
+            <div class="hash-engine-result-list">
+              {''.join(engine_cards)}
+            </div>
+          </section>
+        </section>
+        """
+
+    scan_form_html = f"""
+    <section class="scan-layout hash-scan-layout">
+      <form class="panel upload-panel hash-scan-form" action="/hash-scan" method="post" data-action-form>
+        <div class="panel-header">
+          <div>
+            <h2>Submit SHA-256</h2>
+            <p>Query enabled hash-reputation engines without uploading the file.</p>
+          </div>
+          <span class="pill neutral">Hash only</span>
+        </div>
+
+        <label>
+          SHA-256 digest
+          <input class="hash-scan-input" type="text" name="sha256" value="{safe_hash}" placeholder="64 hexadecimal characters" minlength="64" maxlength="64" pattern="[0-9a-fA-F]{{64}}" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+          <small>Compute the digest on the source system. MASP receives only this value.</small>
+        </label>
+
+        <div class="form-actions">
+          <a class="secondary-action" href="/">Cancel</a>
+          <button class="primary-action" type="submit" data-busy-label="Scanning hash...">Scan Hash</button>
+        </div>
+      </form>
+
+      <aside class="panel">
+        <div class="panel-header compact">
+          <h2>Hash engines</h2>
+          <span class="pill neutral">{len(engines)} enabled</span>
+        </div>
+        <div class="engine-list">
+          {''.join(engine_rows)}
+        </div>
+        <div class="config-grid hash-engine-config">
+          <div><span>Ready engines</span><strong>{ready_count}/{len(engines)}</strong></div>
+          <div><span>File upload</span><strong>Never</strong></div>
+          <div class="hash-engine-detail"><span>Execution</span><strong>All enabled hash-capable adapters</strong></div>
+        </div>
+      </aside>
+    </section>
+    """
+    body = f"{error_notice}{result_html if completed_runs else scan_form_html}"
+    return page_shell("Scan Hash", "hash_scan", body, user)
+
+
+@app.get("/hash-scan", response_class=HTMLResponse)
+def hash_scan_page(request: Request) -> str:
+    user = require_user(request)
+    return render_hash_scan_page(user, engines=enabled_hash_engines())
+
+
+@app.post("/hash-scan", response_class=HTMLResponse)
+def hash_scan_submit(request: Request, sha256: str = Form("")) -> str:
+    user = require_user(request)
+    engines = enabled_hash_engines()
+    try:
+        normalized_sha256 = normalize_sha256(sha256)
+    except InvalidSha256Error as exc:
+        return render_hash_scan_page(
+            user,
+            engines=engines,
+            sha256=sha256.strip(),
+            error=str(exc),
+        )
+    if not engines:
+        return render_hash_scan_page(
+            user,
+            engines=[],
+            sha256=normalized_sha256,
+            error="No hash-capable engine is added and enabled in MASP.",
+        )
+    try:
+        runs = execute_hash_scan(normalized_sha256, engines)
+    except HashEngineError as exc:
+        detail = str(exc)
+        if exc.retry_after:
+            detail = f"{detail} Retry after {exc.retry_after} seconds."
+        return render_hash_scan_page(
+            user,
+            engines=engines,
+            sha256=normalized_sha256,
+            error=detail,
+        )
+    return render_hash_scan_page(
+        user,
+        engines=engines,
+        sha256=normalized_sha256,
+        runs=runs,
+    )
+
+
 @app.get("/scans/new", response_class=HTMLResponse)
 def new_scan(request: Request, message: str = "", error: str = "") -> str:
     user = require_user(request)
@@ -5334,6 +5847,68 @@ def api_batch_result(request: Request, batch_id: int) -> JSONResponse:
             headers={"Retry-After": str(configured_api_retry_after_seconds())},
         )
     return JSONResponse(build_scan_batch_result_payload(request, batch, scans))
+
+
+@app.get(
+    "/api/v1/hashes/{sha256}",
+    name="api_hash_lookup",
+    summary="Look up SHA-256 reputation",
+    description=(
+        "Sends only the supplied SHA-256 digest to every enabled hash-capable engine "
+        "and returns normalized per-engine results. MASP never uploads file content."
+    ),
+    dependencies=[Security(API_BEARER_SCHEME)],
+    responses={
+        200: {
+            "model": api_schemas.HashScanResponse,
+            "description": "Aggregated decision and normalized per-engine reputation results.",
+        },
+        400: {
+            "model": api_schemas.ApiErrorResponse,
+            "description": "The path value is not a valid SHA-256 digest.",
+        },
+        502: {
+            "model": api_schemas.ApiErrorResponse,
+            "description": "An enabled hash engine was unreachable or returned an invalid response.",
+        },
+        **API_ERROR_RESPONSES,
+        503: {
+            "model": api_schemas.ApiErrorResponse,
+            "description": (
+                "API authentication or an enabled hash engine is not configured, or "
+                "an upstream quota/rate limit prevents a reliable answer."
+            ),
+        },
+    },
+)
+def api_hash_lookup(request: Request, sha256: str) -> JSONResponse:
+    require_api_token(request)
+    try:
+        normalized_sha256 = normalize_sha256(sha256)
+    except InvalidSha256Error as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    engines = enabled_hash_engines()
+    if not engines:
+        raise HTTPException(
+            status_code=503,
+            detail="No hash-capable engine is added and enabled in MASP.",
+        )
+    try:
+        runs = execute_hash_scan(normalized_sha256, engines)
+    except HashEngineError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=str(exc),
+            headers=headers,
+        ) from exc
+    payload = build_hash_scan_payload(normalized_sha256, runs)
+    print(
+        f"[hash-scan] {normalized_sha256[:12]}...: "
+        f"{payload['decision']['action']} ({len(runs)} engine(s))",
+        flush=True,
+    )
+    return JSONResponse(payload)
 
 
 def delete_scan_record(scan_id: int) -> ScanRecord | None:
@@ -5630,7 +6205,7 @@ def test_engine_route(request: Request, adapter_key: str) -> str:
     matches = [engine for engine in configured_engines() if engine.adapter_key == adapter_key]
     if not matches:
         raise HTTPException(status_code=404, detail="Engine not found.")
-    health = engine_health(matches[0])
+    health = test_engine_connection(matches[0])
     tone = health_tone_for(adapter_key, health)
     notice_tone = tone if tone in {"success", "warning", "danger"} else "success"
     return render_engines_page(
@@ -5719,6 +6294,127 @@ def save_microsoft_defender_config(
             "/engines",
             message="Saved Microsoft Defender settings.",
             target="microsoft_defender",
+        ),
+        status_code=303,
+    )
+
+
+def _validated_int_setting(
+    raw_value: str,
+    *,
+    label: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> str:
+    normalized = raw_value.strip()
+    if not normalized:
+        return str(default)
+    try:
+        value = int(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an integer.") from exc
+    if value < minimum or value > maximum:
+        raise ValueError(f"{label} must be between {minimum} and {maximum}.")
+    return str(value)
+
+
+@app.post("/engines/virustotal/config")
+def save_virustotal_config(
+    request: Request,
+    virustotal_api_key: str = Form(""),
+    virustotal_timeout_seconds: str = Form("10"),
+    virustotal_cache_seconds: str = Form("3600"),
+    virustotal_unknown_cache_seconds: str = Form("300"),
+    virustotal_cache_max_entries: str = Form("10000"),
+    virustotal_malicious_threshold: str = Form("1"),
+    virustotal_allow_undetected: str = Form("false"),
+    virustotal_max_age_days: str = Form("30"),
+    virustotal_clear_api_key: str = Form("false"),
+) -> RedirectResponse:
+    require_admin(request)
+    instance = next(
+        (engine for engine in configured_engines() if engine.adapter_key == "virustotal"),
+        None,
+    )
+    if instance is None:
+        return RedirectResponse(
+            url=redirect_url("/engines", error="Add VirusTotal before configuring it."),
+            status_code=303,
+        )
+
+    config = engine_config(instance)
+    clear_requested = virustotal_clear_api_key.strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        if clear_requested:
+            config.pop("api_key_encrypted", None)
+        elif virustotal_api_key.strip():
+            config["api_key_encrypted"] = encrypt_secret(virustotal_api_key)
+
+        config.update(
+            {
+                "timeout_seconds": _validated_int_setting(
+                    virustotal_timeout_seconds,
+                    label="Timeout seconds",
+                    default=10,
+                    minimum=1,
+                    maximum=60,
+                ),
+                "cache_seconds": _validated_int_setting(
+                    virustotal_cache_seconds,
+                    label="Known-result cache seconds",
+                    default=3600,
+                    minimum=0,
+                    maximum=86400,
+                ),
+                "unknown_cache_seconds": _validated_int_setting(
+                    virustotal_unknown_cache_seconds,
+                    label="Unknown-result cache seconds",
+                    default=300,
+                    minimum=0,
+                    maximum=3600,
+                ),
+                "cache_max_entries": _validated_int_setting(
+                    virustotal_cache_max_entries,
+                    label="Cache maximum entries",
+                    default=10000,
+                    minimum=1,
+                    maximum=100000,
+                ),
+                "malicious_threshold": _validated_int_setting(
+                    virustotal_malicious_threshold,
+                    label="Malicious threshold",
+                    default=1,
+                    minimum=1,
+                    maximum=100,
+                ),
+                "allow_undetected": (
+                    "true"
+                    if virustotal_allow_undetected.strip().lower() in {"1", "true", "yes", "on"}
+                    else "false"
+                ),
+                "max_age_days": _validated_int_setting(
+                    virustotal_max_age_days,
+                    label="Maximum report age days",
+                    default=30,
+                    minimum=1,
+                    maximum=3650,
+                ),
+            }
+        )
+    except (ValueError, SecretStoreError) as exc:
+        return RedirectResponse(
+            url=redirect_url("/engines", error=str(exc), target="virustotal"),
+            status_code=303,
+        )
+
+    update_engine_config("virustotal", config)
+    clear_virustotal_cache()
+    return RedirectResponse(
+        url=redirect_url(
+            "/engines",
+            message="Saved VirusTotal credentials and policy.",
+            target="virustotal",
         ),
         status_code=303,
     )

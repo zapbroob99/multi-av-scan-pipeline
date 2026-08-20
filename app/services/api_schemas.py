@@ -65,6 +65,89 @@ class HashesPayload(ContractModel):
     sha256: str
 
 
+class VirusTotalDecisionPayload(ContractModel):
+    action: Literal["allow", "block", "review"]
+    reason: str
+
+
+class VirusTotalStatsPayload(ContractModel):
+    malicious: int
+    suspicious: int
+    undetected: int
+    harmless: int
+    timeout: int
+    failure: int
+    type_unsupported: int
+    confirmed_timeout: int
+    total: int
+
+
+class VirusTotalPolicyPayload(ContractModel):
+    malicious_threshold: int
+    allow_undetected: bool
+    max_age_days: int
+
+
+class VirusTotalEnginePayload(ContractModel):
+    key: Literal["virustotal"]
+    name: str
+    support_state: str
+
+
+class VirusTotalHashResponse(ContractModel):
+    """``GET /api/v1/hashes/{sha256}`` body.
+
+    ``unknown`` and ``undetected`` are intentionally distinct. Unknown means
+    VirusTotal has no usable report; undetected means a report exists but no
+    engine in its latest statistics flagged the file.
+    """
+
+    hash: str
+    algorithm: Literal["sha256"]
+    source: Literal["virustotal"]
+    found: bool
+    status: Literal["malicious", "suspicious", "undetected", "stale", "unknown"]
+    detail: str
+    decision: VirusTotalDecisionPayload
+    stats: VirusTotalStatsPayload | None
+    last_analysis_date: str | None
+    permalink: str | None
+    cached: bool
+    policy: VirusTotalPolicyPayload
+    engine: VirusTotalEnginePayload
+
+
+class HashEngineIdentityPayload(ContractModel):
+    key: str
+    name: str
+    support_state: str
+
+
+class HashEngineResultPayload(ContractModel):
+    engine: HashEngineIdentityPayload
+    status: str
+    found: bool
+    decision: VirusTotalDecisionPayload
+    duration_ms: int
+    data: dict[str, object]
+
+
+class HashEngineCountsPayload(ContractModel):
+    expected: int
+    completed: int
+    failed: int
+
+
+class HashScanResponse(ContractModel):
+    """Engine-neutral ``GET /api/v1/hashes/{sha256}`` response."""
+
+    hash: str
+    algorithm: Literal["sha256"]
+    decision: VirusTotalDecisionPayload
+    engines: HashEngineCountsPayload
+    results: list[HashEngineResultPayload]
+
+
 class TimingPayload(ContractModel):
     queue_wait_ms: int | None
     processing_duration_ms: int | None

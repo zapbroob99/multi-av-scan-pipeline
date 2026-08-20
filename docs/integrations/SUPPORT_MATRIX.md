@@ -26,6 +26,7 @@ These are not supported yet. They require official documentation review and prod
 
 | Candidate | Vendor | Product | Likely Method | State | Required Before Implementation |
 | --- | --- | --- | --- | --- | --- |
+| VirusTotal file reputation | Google/VirusTotal | VirusTotal API v3 | SHA-256 report lookup | blocked | Registry-managed hash-reputation adapter for direct hash queries and manual file scans, with encrypted admin-UI credentials, live connection test, environment fallback, and mock coverage. File scans reuse the locally computed SHA-256 and never upload content. Not production-supported until a licensed Premium/Enterprise key and real API fixtures validate found/unknown/auth/quota responses. Unknown/stale/undetected are review by default. |
 | Microsoft Defender via local CLI | Microsoft | Microsoft Defender Antivirus | PowerShell/CLI | lab | Adapter implemented and locally validated with healthy status, clean scan, and EICAR detection fixtures. Still needs broader failure/timeout fixtures before `supported`. |
 | ESET Server Security via ICAP | ESET | ESET Server Security or ICAP-capable gateway product | ICAP | research | Confirm exact product, ICAP service behavior, clean/detected responses, headers, licensing, and file size limits. |
 | ESET PROTECT via API | ESET | ESET PROTECT | REST API | research | Confirm whether file submission/scanning is supported or only management/telemetry APIs are available. |

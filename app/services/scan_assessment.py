@@ -6,6 +6,8 @@ server share the exact same decision logic without importing the web app.
 
 from __future__ import annotations
 
+import json
+
 from app.database import list_engine_results
 from app.models import EngineResultRecord, ScanRecord
 from app.services.decisions import ScanDecision, decide_scan_action
@@ -27,6 +29,23 @@ def engine_result_map(
     results: list[EngineResultRecord],
 ) -> dict[str, EngineResultRecord]:
     return {result.engine_name.lower(): result for result in results}
+
+
+def engine_policy_action(result: EngineResultRecord) -> str | None:
+    """Read an adapter's normalized policy action, when it provides one."""
+    if not result.details_json:
+        return None
+    try:
+        details = json.loads(result.details_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(details, dict):
+        return None
+    decision = details.get("decision")
+    if not isinstance(decision, dict):
+        return None
+    action = decision.get("action")
+    return str(action) if action in {"allow", "review", "block"} else None
 
 
 def detection_summary(results: list[EngineResultRecord]) -> tuple[int, int]:
@@ -54,6 +73,9 @@ def required_engine_coverage(
             continue
 
         if result.status == "completed":
+            if engine_policy_action(result) == "review":
+                unavailable.append(f"{engine_name} requires review")
+                continue
             ran += 1
             continue
 

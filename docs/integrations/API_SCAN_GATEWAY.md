@@ -40,12 +40,113 @@ There is no separate "scan and wait" endpoint — this is `POST /api/v1/scans`
 used with `wait_seconds` set, which the API already supports. Nothing else in
 the request shape changes.
 
-This pattern intentionally does not include a hash-only reputation lookup in
-v1: MASP can only answer for hashes it has already scanned, so a lookup-first
-step still requires a full-file fallback for anything unknown. For a first
-integration, submitting the file directly keeps the contract simple. A
-hash-based fast path was prototyped and can be revisited later without
-touching this contract (see `git log` / the `hash-lookup-api` branch).
+For a file above the upload cap, use the engine-neutral SHA-256 lookup described
+below. It sends no file bytes. A missing reputation report cannot create a new
+analysis, so `unknown` must go to review/quarantine rather than being allowed.
+
+## SHA-256 reputation lookup
+
+`GET /api/v1/hashes/{sha256}` runs every enabled adapter whose registry
+capabilities declare `supports_hash_lookup`. MASP sends only the normalized
+64-character SHA-256 digest and returns an aggregate decision plus normalized
+per-engine `results[]`. Decision precedence is `block`, then `review`, then
+`allow`. It never uploads file content.
+
+VirusTotal is managed as a hash-reputation engine in MASP. Before calling the
+endpoint, open **Admin > Engines**, choose **Browse catalog**, add
+**VirusTotal**, and leave the engine enabled. An administrator can configure its
+API key and policy in the engine card. UI-managed keys are encrypted before
+being stored; set `MASP_SECRET_ENCRYPTION_KEY` on the app service first. The
+legacy `MASP_VIRUSTOTAL_*` environment configuration remains supported. MASP
+never renders a saved key back to the browser. If no hash-capable engine is
+enabled, the endpoint returns `503`. An enabled VirusTotal engine also runs for
+ordinary file-backed scans: the worker submits only the SHA-256 already
+computed during intake, persists the normalized engine result in the scan
+ledger, and never uploads the file. The worker therefore needs the same stable
+`MASP_SECRET_ENCRYPTION_KEY` to decrypt UI-managed credentials.
+
+Interactive users can perform the same lookup from the **Scan Hash** navigation
+tab. The page requires an authenticated MASP session, validates and normalizes
+the SHA-256 value, executes every enabled hash-capable adapter through the same
+registry path, and displays the aggregate decision and engine results. The
+interactive result is immediate and is not persisted in the file-backed ledger.
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $MASP_API_TOKEN" \
+  "https://masp.example/api/v1/hashes/275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f"
+```
+
+Representative response:
+
+```json
+{
+  "hash": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f",
+  "algorithm": "sha256",
+  "decision": {
+    "action": "block",
+    "reason": "At least one enabled hash engine returned a block decision."
+  },
+  "engines": {
+    "expected": 1,
+    "completed": 1,
+    "failed": 0
+  },
+  "results": [{
+    "engine": {"key": "virustotal", "name": "VirusTotal", "support_state": "blocked"},
+    "status": "malicious",
+    "found": true,
+    "decision": {"action": "block", "reason": "VirusTotal threshold met."},
+    "duration_ms": 220,
+    "data": {
+      "source": "virustotal",
+      "stats": {"malicious": 1, "suspicious": 0, "undetected": 59, "total": 60},
+      "cached": false
+    }
+  }]
+}
+```
+
+Status and decision semantics:
+
+| Status | Meaning | Default action |
+|---|---|---|
+| `malicious` | Malicious count meets `MASP_VIRUSTOTAL_MALICIOUS_THRESHOLD` | `block` |
+| `suspicious` | Suspicious signal or a malicious count below the threshold | `review` |
+| `undetected` | A report exists with no malicious/suspicious engines | `review` |
+| `stale` | Zero detections, but the report is missing a date or older than the freshness limit | `review` |
+| `unknown` | No report exists, or the report has no usable engine statistics | `review` |
+
+`MASP_VIRUSTOTAL_ALLOW_UNDETECTED=1` changes only `undetected` to `allow`.
+This is deliberately off by default: zero detections is not proof that a file
+is clean. Even when enabled, the report must have an analysis date no older
+than `MASP_VIRUSTOTAL_MAX_AGE_DAYS` (default 30); older or undated reports are
+`stale + review`. It never changes `unknown`, `stale`, upstream errors, or quota
+failures into an allow result.
+
+Recommended large-file flow:
+
+```text
+1. Compute SHA-256 locally; do not send the large file to MASP.
+2. Call GET /api/v1/hashes/{sha256}.
+3. decision.action=block  -> reject/quarantine.
+4. decision.action=allow  -> allow only under the approved undetected policy.
+5. decision.action=review -> quarantine or manual review; never fail open.
+6. Any non-200 response   -> treat as unavailable and fail closed.
+```
+
+Responses are cached in the app process: known reports default to 3600 seconds
+and unknown hashes to 300 seconds. Configure with
+`MASP_VIRUSTOTAL_CACHE_SECONDS` and
+`MASP_VIRUSTOTAL_UNKNOWN_CACHE_SECONDS`; the LRU is bounded by
+`MASP_VIRUSTOTAL_CACHE_MAX_ENTRIES` (default 10000). Cache is intentionally
+lost on app restart; no third-party response is persisted in MASP's database.
+
+This organizational automation requires a VirusTotal Premium/Enterprise API
+plan whose license permits the workflow. VirusTotal's Public API must not be
+used in commercial products or business workflows that do not contribute new
+files. The MASP host also needs approved DNS and outbound HTTPS access to
+`www.virustotal.com:443`.
 
 ## Authentication
 
@@ -67,10 +168,27 @@ Common API-related settings:
 
 ```text
 MASP_API_TOKEN=replace-with-a-long-random-token
+MASP_SECRET_ENCRYPTION_KEY=CHANGE_ME_FERNET_KEY
 MASP_API_MAX_WAIT_SECONDS=15
 MASP_API_RETRY_AFTER_SECONDS=2
 MASP_UPLOAD_MAX_BYTES=0
+MASP_VIRUSTOTAL_ENABLED=0
+MASP_VIRUSTOTAL_API_KEY=
+MASP_VIRUSTOTAL_TIMEOUT_SECONDS=10
+MASP_VIRUSTOTAL_CACHE_SECONDS=3600
+MASP_VIRUSTOTAL_UNKNOWN_CACHE_SECONDS=300
+MASP_VIRUSTOTAL_CACHE_MAX_ENTRIES=10000
+MASP_VIRUSTOTAL_MALICIOUS_THRESHOLD=1
+MASP_VIRUSTOTAL_ALLOW_UNDETECTED=0
+MASP_VIRUSTOTAL_MAX_AGE_DAYS=30
 ```
+
+Generate the encryption key once with
+`python tools/generate_secret_key.py`, store it in the deployment secret
+manager, and keep it stable across restarts and restores. Losing or rotating it
+without re-entering integration keys makes existing encrypted credentials
+unreadable. `MASP_VIRUSTOTAL_API_KEY` is optional when the key is saved in the
+engine UI.
 
 - `MASP_API_MAX_WAIT_SECONDS`: upper bound for client-requested blocking wait time
 - `MASP_API_RETRY_AFTER_SECONDS`: recommended poll interval returned in API responses

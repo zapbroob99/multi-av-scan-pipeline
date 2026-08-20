@@ -1,6 +1,9 @@
 import unittest
+from unittest.mock import patch
 
+from app.models import EngineResultRecord
 from app.services.decisions import decide_scan_action
+from app.services.scan_assessment import required_engine_coverage
 
 
 class ScanDecisionTests(unittest.TestCase):
@@ -68,6 +71,34 @@ class ScanDecisionTests(unittest.TestCase):
 
         self.assertEqual(decision.action, "review")
         self.assertEqual(decision.policy, "metadata_only")
+
+    def test_completed_hash_engine_review_policy_reduces_coverage(self) -> None:
+        result = EngineResultRecord(
+            id=1,
+            scan_job_id=1,
+            engine_name="VirusTotal",
+            engine_version="api-v3",
+            signature_version=None,
+            status="completed",
+            detected=False,
+            signature=None,
+            severity="info",
+            confidence=75,
+            raw_output="{}",
+            error_message=None,
+            duration_ms=10,
+            created_at="",
+            details_json='{"decision":{"action":"review"}}',
+            findings_json="[]",
+        )
+        with patch(
+            "app.services.scan_assessment.detection_engine_names",
+            return_value=["VirusTotal"],
+        ):
+            ran, required, unavailable = required_engine_coverage([result])
+
+        self.assertEqual((ran, required), (0, 1))
+        self.assertEqual(unavailable, ["VirusTotal requires review"])
 
 
 if __name__ == "__main__":

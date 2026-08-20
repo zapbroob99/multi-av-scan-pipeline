@@ -14,6 +14,10 @@ credentials) and must not be used in production.
   CA when the database platform supports it).
 - A TLS-terminating HTTP reverse proxy or load balancer in front of the REST
   API. MASP itself serves plain HTTP.
+- When VirusTotal hash reputation is enabled, a licensed Premium/Enterprise
+  API key whose agreement permits this automated organizational workflow, plus
+  DNS and outbound HTTPS access from the app container to
+  `www.virustotal.com:443`. The Public API is not licensed for this workflow.
 - For ICAP, a private routed network path to the MASP host. ICAP is plain RFC
   3507 TCP and must not be treated as HTTP by the API reverse proxy. Restrict it
   with the network firewall, which is the **authoritative** source control:
@@ -43,6 +47,7 @@ Required network flows:
 | Storage ICAP client | MASP private host interface | 1344/TCP | ICAP REQMOD/RESPMOD |
 | MASP deployment host | PostgreSQL host | 5432/TCP | Jobs, results, and configuration |
 | MASP deployment host | Approved registry/update endpoints | 443/TCP and DNS | Images and ClamAV signatures |
+| MASP app container (optional) | `www.virustotal.com` | 443/TCP and DNS | SHA-256-only file reputation lookup |
 
 ## 1. Configure
 
@@ -51,12 +56,26 @@ cp .env.production.example .env.production
 # Edit .env.production and set at minimum:
 #   MASP_DATABASE_URL   external PostgreSQL DSN
 #   MASP_API_TOKEN      strong random token (openssl/secrets)
+#   MASP_SECRET_ENCRYPTION_KEY  output of tools/generate_secret_key.py
 #   MASP_UPLOAD_MAX_BYTES / MASP_ICAP_MAX_BYTES  size limits
 #   MASP_STORAGE_DIR / MASP_RULES_DIR            absolute persistent paths
+# Optional environment-based VirusTotal lookup (UI setup is also supported):
+#   MASP_VIRUSTOTAL_ENABLED=1
+#   MASP_VIRUSTOTAL_API_KEY=<licensed secret>
 ```
 
 `.env.production` is gitignored. Never commit real credentials. Restrict its
 permissions: `chmod 600 .env.production`.
+
+After the app service is restarted, open **Admin > Engines**, add and enable
+**VirusTotal**, and configure its API key and policy in the Settings drawer.
+UI-managed keys require the same stable `MASP_SECRET_ENCRYPTION_KEY` on both app
+and worker, are encrypted in the database, and are never rendered back to the
+browser. Use **Test connection** to validate credentials and outbound HTTPS.
+Disabling or removing the adapter disables `GET /api/v1/hashes/{sha256}` and
+its participation in manual file scans. File scans send only the SHA-256
+computed during intake; no file content is uploaded to VirusTotal. The engine
+card reports configuration state but never renders the API key.
 
 Compose fails fast if `MASP_DATABASE_URL`, `MASP_API_TOKEN`,
 `MASP_UPLOAD_MAX_BYTES`, or (for ICAP) `MASP_ICAP_MAX_BYTES` are unset — this

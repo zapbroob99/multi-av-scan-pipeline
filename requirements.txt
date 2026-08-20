@@ -1,4 +1,5 @@
 fastapi
+cryptography
 psycopg[binary,pool]
 py7zr
 python-multipart

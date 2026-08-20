@@ -306,6 +306,31 @@ does not extract an individual multipart file part. Captures can contain file
 content, hostnames, and addresses; store them only in the approved location,
 sanitize before moving them to development, and delete temporary copies.
 
+### Optional large-file VirusTotal lookup
+
+The hash-only endpoint is separate from ICAP: any integrating client computes the
+large file's SHA-256 locally and calls `GET /api/v1/hashes/{sha256}` over the
+authenticated REST API. MASP sends only that digest to VirusTotal; it does not
+receive or upload the large file. Generate `MASP_SECRET_ENCRYPTION_KEY` once
+with `python tools/generate_secret_key.py`, set it in `.env.pilot`, and restart
+the app and worker services. Then open **Admin > Engines**, add **VirusTotal**, enter the API
+key and policy in its Settings drawer, save, and use **Test connection**. Permit
+DNS plus outbound HTTPS to `www.virustotal.com:443`. The API key is encrypted
+in the database and is never displayed again; environment-based
+`MASP_VIRUSTOTAL_*` configuration remains supported. Disabling or removing the
+engine disables both the hash endpoint and its participation in manual file
+scans. For file scans, the worker sends only the locally computed SHA-256 and
+stores VirusTotal as a normal engine result; it never uploads file content.
+
+Use a licensed Premium/Enterprise API key approved for this organizational
+workflow. VirusTotal's Public API terms do not permit automated business
+workflows that do not contribute new files. Keep
+`MASP_VIRUSTOTAL_ALLOW_UNDETECTED=0` until the data owner explicitly accepts
+zero detections as an allow signal. Even then, the default 30-day
+`MASP_VIRUSTOTAL_MAX_AGE_DAYS` freshness gate applies. `unknown`, `stale`,
+`review`, timeouts, quota errors, and all non-200 responses must
+retain/quarantine the file.
+
 The pilot may receive controlled user traffic only after all of these pass:
 
 - disposable-PostgreSQL gated tests;
