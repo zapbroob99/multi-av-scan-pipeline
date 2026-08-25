@@ -8,6 +8,7 @@ computed during intake. It never uploads content or requests re-analysis.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from time import perf_counter
 
 from app.models import EngineResultInput, ScanRecord
@@ -70,9 +71,12 @@ def check_virustotal_health(
         "ok": True,
         "status": "configured",
         "detail": (
-            "Licensed credentials are configured. Use the SHA-256 lookup endpoint "
-            "to validate live connectivity without uploading a file."
+            "Licensed credentials are configured. Use Test connection or interactive "
+            "Scan Hash to validate live connectivity without uploading a file."
         ),
+        "product_version": "API v3",
+        "engine_version": "api-v3",
+        "service_state": "configured",
     }
 
 
@@ -137,13 +141,17 @@ def run_virustotal_hash_engine(
             signature_version=(
                 str(last_analysis_date) if last_analysis_date is not None else None
             ),
-            status="completed" if payload["found"] else "skipped",
+            # A 404/no-report response is a successful reputation lookup with
+            # an Unknown policy outcome. It is not an execution skip; keeping
+            # it completed preserves truthful engine coverage while the
+            # decision remains fail-closed through action=review.
+            status="completed",
             detected=detected,
             signature=signature,
             severity=severity,
             confidence=confidence,
             raw_output=serialized,
-            error_message=None if payload["found"] else str(payload["detail"]),
+            error_message=None,
             duration_ms=duration_ms,
             details_json=serialized,
             findings_json=json.dumps(findings, sort_keys=True),
@@ -160,11 +168,45 @@ def run_virustotal_file_hash_engine(
 
     ``scan.sha256`` is computed locally during intake. Hash-engine failures are
     normalized into a regular failed engine result so an upstream outage lowers
-    coverage and yields Review instead of crashing the whole scan worker.
+    coverage and yields Review instead of crashing the whole scan worker. A
+    successful lookup is enrichment: no-report, undetected, and stale
+    zero-signal responses do not override otherwise-clean local scan engines.
+    The dedicated Scan Hash workflow keeps its stricter fail-closed policy.
     """
     started_at = perf_counter()
     try:
-        return run_virustotal_hash_engine(scan.sha256, config_override).result
+        execution = run_virustotal_hash_engine(scan.sha256, config_override)
+        payload = dict(execution.payload)
+        payload["mode"] = "file_hash_lookup"
+        payload["file_uploaded"] = False
+        reputation_decision = payload.get("decision")
+        status = str(payload.get("status", "unknown"))
+        if status in {"unknown", "undetected", "stale"}:
+            payload["reputation_decision"] = reputation_decision
+            if status == "unknown":
+                reason = (
+                    "No VirusTotal report was found for this hash. "
+                    "This does not change the file scan decision."
+                )
+            elif status == "stale":
+                reason = (
+                    "VirusTotal has no malicious or suspicious detections in the "
+                    "available report. Its age does not change the file scan decision."
+                )
+            else:
+                reason = (
+                    "VirusTotal has no malicious or suspicious detections. "
+                    "This does not change the file scan decision."
+                )
+            payload["decision"] = {"action": "allow", "reason": reason}
+            payload["detail"] = reason
+
+        serialized = json.dumps(payload, sort_keys=True)
+        return replace(
+            execution.result,
+            raw_output=serialized,
+            details_json=serialized,
+        )
     except HashEngineError as exc:
         duration_ms = max(1, int((perf_counter() - started_at) * 1000))
         details = json.dumps(

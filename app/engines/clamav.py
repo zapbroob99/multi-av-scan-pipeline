@@ -206,6 +206,9 @@ def check_clamav_health(
             "ok": response == "PONG",
             "status": "reachable" if response == "PONG" else "unexpected",
             "detail": f"clamd responded with {response!r}",
+            "product_version": "ClamAV",
+            "engine_version": "clamd",
+            "service_state": "reachable" if response == "PONG" else "unexpected",
         }
 
     command = str(config["command"])
@@ -221,6 +224,9 @@ def check_clamav_health(
         "ok": True,
         "status": "available",
         "detail": f"{command} found at {path}.",
+        "product_version": "ClamAV",
+        "engine_version": "clamscan",
+        "service_state": "available",
     }
 
 

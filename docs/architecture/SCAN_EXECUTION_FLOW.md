@@ -16,6 +16,8 @@ The current flow is spread across a few key modules:
 - API entrypoints: [`app/main.py`](../../app/main.py)
 - Scan/job persistence: [`app/database.py`](../../app/database.py)
 - Worker loop: [`app/workers/scan_worker.py`](../../app/workers/scan_worker.py)
+- HTTPS worker agent: [`app/workers/control_api_worker.py`](../../app/workers/control_api_worker.py)
+- Worker control plane: [`app/services/worker_control.py`](../../app/services/worker_control.py)
 - Engine registry and adapter dispatch: [`app/services/engine_registry.py`](../../app/services/engine_registry.py)
 - Worker capability filtering: [`app/services/worker_capabilities.py`](../../app/services/worker_capabilities.py)
 - Engine routing/skip reasons: [`app/services/routing.py`](../../app/services/routing.py)
@@ -161,15 +163,17 @@ Current behavior:
 
 1. Worker discovers its engine keys via
    [`worker_engine_keys`](../../app/services/worker_capabilities.py#L23).
-2. With `MASP_ENGINE_JOB_QUEUE_ENABLED=1`, worker claims one compatible engine
-   job through [`claim_next_scan_engine_job`](../../app/database.py#L1376).
+2. A `database` transport worker claims directly through
+   `claim_next_scan_engine_job`; a `control_api` worker claims through the HTTPS
+   endpoint and receives no database credential.
 3. The claim is capability-specific: a Defender worker claims Defender jobs,
    a ClamAV worker claims ClamAV jobs, and so on.
-4. Worker marks the scan `running`, marks the engine job `running`, executes the
-   adapter, writes an idempotent engine result, and marks the engine job
-   terminal.
-5. Worker then attempts scan finalization. Finalization currently still checks
-   `engine_results` coverage.
+4. Control-API workers download the owned sample, enforce its declared size,
+   verify SHA-256, and scan a temporary local copy. Database workers retain the
+   shared-storage compatibility path.
+5. The adapter result and terminal transition commit under the same worker plus
+   attempt-generation fence. Control-API finalization runs on the MASP server;
+   the remote agent cannot mutate scoring or archive state directly.
 
 The scheduling model is now:
 
@@ -203,6 +207,11 @@ That means:
 - A Windows worker normally runs `static_metadata` and `microsoft_defender`.
 - `MASP_WORKER_ENGINE_KEYS` can override the engine assignment.
 - Unsupported engine/platform combinations are filtered out.
+
+The shipped dev/pilot/production Compose files explicitly add `virustotal` to
+the Linux worker assignment so explicitly initiated manual file scans can run
+the hash-reputation job. REST and ICAP source eligibility still excludes that
+quota-consuming adapter before jobs are created.
 
 This is why the system may have multiple workers but still behave as if one
 pipeline is the bottleneck. If ClamAV/YARA are slow and only one Linux worker is
@@ -585,7 +594,8 @@ Optimization options:
 
 Risks:
 
-- Shared sample storage must remain visible to all workers.
+- Direct-database workers require shared sample visibility. HTTPS control workers
+  instead stream only their owned sample and verify its size and SHA-256 locally.
 - Local AV engines may serialize internally.
 - More workers increase DB write contention.
 

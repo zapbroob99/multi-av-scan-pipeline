@@ -6,9 +6,17 @@ shows analyst-friendly scan results.
 
 ## Current capabilities
 
-- Web UI for file intake and scan history
+- Web UI for file intake, archive-aware scans, scan history, reports, and exports
+- Local admin/analyst accounts plus optional LDAP/Active Directory login with
+  directory-group role mapping
+- Admin-managed engine configuration, scan policy, users, YARA rules, and a
+  focused persisted security audit trail
+- Interactive **Scan Hash** reputation lookup and hash-only VirusTotal
+  enrichment for explicitly initiated manual file scans
 - Bearer-token file scan API for service-to-service integrations
 - RFC 3507 ICAP REQMOD gateway for synchronous upload gating
+- Source-aware engine eligibility: token/quota-consuming adapters are excluded
+  from REST and ICAP automation
 - Automation decision output: allow, block, review, or wait
 - PostgreSQL persistence for samples, scan jobs, and engine results in Docker
 - SQLite fallback for lightweight local development
@@ -17,7 +25,21 @@ shows analyst-friendly scan results.
 - Local `clamscan` fallback when clamd is not configured
 - YARA integration via local CLI and rules in `rules/`
 - Database-backed scan queue with separate worker processes
-- Bulk scan deletion with stored sample cleanup
+- Multi-instance engine foundation: separately named and configured ClamAV and
+  Defender deployments produce instance-specific queue jobs
+- Retention and bulk scan deletion with stored sample cleanup
+
+## Documentation
+
+- [Pilot deployment](docs/deployment/PILOT.md)
+- [Production deployment](docs/deployment/PRODUCTION.md)
+- [API scan gateway](docs/integrations/API_SCAN_GATEWAY.md)
+- [ICAP gateway](docs/integrations/ICAP_GATEWAY.md)
+- [Engine support matrix](docs/integrations/SUPPORT_MATRIX.md)
+- [Scan execution flow](docs/architecture/SCAN_EXECUTION_FLOW.md)
+- [Engine deployment and worker agent architecture](docs/architecture/ENGINE_DEPLOYMENT_AND_WORKER_AGENT.md)
+- [Audit trail](docs/security/AUDIT_TRAIL.md)
+- [LDAP and Active Directory authentication](docs/security/LDAP_AUTHENTICATION.md)
 
 ## Tests
 
@@ -58,6 +80,16 @@ parse it are treated as the blast radius:
   limits. Members are extracted to a staging directory and promoted atomically.
 - ICAP defaults to fail-closed: a timeout, oversize body, malformed request, or
   engine error blocks the upload rather than releasing it.
+- Admin > Audit provides a focused application-level trail for authentication,
+  user/password administration, policy and engine changes, retention, and
+  destructive scan deletion. Routine navigation, scan/hash submission, and API
+  polling are excluded. Request bodies and secrets are never recorded. See
+  [docs/security/AUDIT_TRAIL.md](docs/security/AUDIT_TRAIL.md) for its integrity
+  and best-effort delivery boundaries.
+- Optional LDAP/Active Directory login uses TLS search plus user bind, maps
+  directory groups to MASP roles, and keeps local break-glass accounts. LDAP
+  passwords are never stored. See
+  [docs/security/LDAP_AUTHENTICATION.md](docs/security/LDAP_AUTHENTICATION.md).
 - The sample store needs a host antivirus exclusion, or endpoint protection will
   quarantine the evidence. See
   [docs/deployment/PILOT.md](docs/deployment/PILOT.md#host-antivirus-exclusion).
@@ -68,6 +100,14 @@ The first supported deployment target is a single Ubuntu 22.04 VM running the
 admin/API application, ICAP gateway, one Linux worker, ClamAV, YARA, Static
 Metadata, and a private bundled PostgreSQL. Defender and ESET are intentionally
 out of scope for this first pilot and can be added later as remote workers.
+
+The queue supports multiple configured instances of worker-deployed adapters.
+Remote workers can use the authenticated HTTPS control API without PostgreSQL
+credentials or shared visibility of the sample store. Defender hosts have an SCM
+service package, lifecycle tooling, integrity verification, and an evidence-producing
+acceptance runner. The remote Defender path remains `lab` until its real-host matrix
+and organizational signing gate pass. See the
+[engine deployment architecture](docs/architecture/ENGINE_DEPLOYMENT_AND_WORKER_AGENT.md).
 
 Use [docs/deployment/PILOT.md](docs/deployment/PILOT.md) for host requirements,
 release packaging, installation, acceptance checks, ICAP configuration,
@@ -148,13 +188,40 @@ MASP_CLAMD_MAX_FILE_SIZE=512M
 MASP_SCAN_PARTIAL_RESULTS_MAX_WAIT_SECONDS=120
 MASP_YARA_RULES_DIR=/app/rules
 MASP_API_TOKEN=replace-with-a-long-random-token
+MASP_SECRET_ENCRYPTION_KEY=CHANGE_ME_FERNET_KEY
 MASP_API_MAX_WAIT_SECONDS=15
 MASP_API_RETRY_AFTER_SECONDS=2
 MASP_METRICS_ENABLED=1
 MASP_UPLOAD_MAX_BYTES=0
+MASP_LDAP_ENABLED=0
+MASP_LDAP_HOST=
+MASP_LDAP_PORT=636
+MASP_LDAP_TLS_MODE=ldaps
+MASP_LDAP_BIND_DN=
+MASP_LDAP_BIND_PASSWORD=
+MASP_LDAP_BASE_DN=
+MASP_LDAP_ADMIN_GROUP_DN=
+MASP_LDAP_ANALYST_GROUP_DN=
+MASP_VIRUSTOTAL_ENABLED=0
+MASP_VIRUSTOTAL_API_KEY=
 MASP_RETENTION_DAYS=0
 MASP_RETENTION_BATCH_SIZE=100
 MASP_WORKER_POLL_SECONDS=2
+MASP_WORKER_NODE_ID=local-worker
+MASP_WORKER_NODE_NAME=Local Worker
+MASP_WORKER_AGENT_VERSION=0.1.0
+MASP_WORKER_LABELS=site=local,os=linux
+MASP_WORKER_CAPACITY=1
+MASP_WORKER_HEALTH_INTERVAL_SECONDS=60
+MASP_WORKER_HEALTH_LEASE_SECONDS=1200
+MASP_WORKER_HEALTH_CHECKS_PER_TICK=2
+MASP_WORKER_ENROLLMENT_TOKEN=
+MASP_WORKER_AGENT_TOKEN_TTL_DAYS=
+MASP_WORKER_CONTROL_REQUIRE_HTTPS=0
+MASP_WORKER_TRANSPORT=database
+MASP_WORKER_CONTROL_URL=
+MASP_WORKER_AGENT_TOKEN_FILE=
+MASP_WORKER_CONTROL_CA_FILE=
 MASP_ENGINE_JOB_QUEUE_ENABLED=1
 MASP_ENGINE_JOB_LEASE_SECONDS=120
 MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED=0
@@ -173,6 +240,12 @@ MASP_ICAP_BODY_TIMEOUT_SECONDS=300
 MASP_ICAP_MAX_CONNECTIONS=100
 MASP_ICAP_ADMISSION_TIMEOUT_SECONDS=10
 ```
+
+This is the common runtime subset, not the complete configuration reference.
+Use [.env.example](.env.example), [.env.pilot.example](.env.pilot.example), or
+[.env.production.example](.env.production.example) for all LDAP, VirusTotal,
+engine, timeout, pool, and deployment settings. Keep bind passwords, API keys,
+and `MASP_SECRET_ENCRYPTION_KEY` outside version control.
 
 PostgreSQL connections are reused through a per-process pool (`psycopg_pool`).
 `MASP_DB_POOL_MAX` applies per process, so keep
@@ -198,6 +271,12 @@ MASP's asynchronous service-integration surface is the file scan API:
 - `POST /api/v1/scans`
 - `GET /api/v1/scans/{scan_id}`
 - `GET /api/v1/scans/{scan_id}/result`
+
+API and ICAP submissions use only engines eligible for automation. Registry
+adapters marked `consumes_external_quota` are excluded before engine jobs are
+created and are checked again by workers. VirusTotal is currently in this
+class, so it remains available for manual file scans and **Scan Hash**, but it
+does not consume tokens for REST file/hash requests or ICAP traffic.
 
 Two operational endpoints sit alongside it: `GET /health` is an unauthenticated
 liveness probe, and `GET /metrics` serves Prometheus text-format metrics (queue
@@ -304,6 +383,9 @@ $env:MASP_DATABASE_URL="postgresql://masp:masp_dev_password@127.0.0.1:5432/masp"
 $env:MASP_CLAMD_HOST="127.0.0.1"
 $env:MASP_CLAMD_PORT="3310"
 $env:MASP_WORKER_ENGINE_KEYS="microsoft_defender"
+$env:MASP_WORKER_NODE_ID="windows-defender-01"
+$env:MASP_WORKER_NODE_NAME="Windows Defender 01"
+$env:MASP_WORKER_LABELS="site=local,os=windows"
 python -m app.workers.scan_worker
 ```
 
@@ -311,10 +393,78 @@ In this mode, uploaded samples are stored through the Docker bind mount and the
 Windows worker maps `/app/storage/...` paths back to the local `storage\...`
 directory before scanning.
 
-The worker capability split is:
+For a remote worker that must not receive PostgreSQL credentials or mount MASP
+storage, use the HTTPS control transport. Configure a long random
+`MASP_WORKER_ENROLLMENT_TOKEN` on the app, publish MASP through a trusted TLS
+endpoint, then enroll once on the worker host:
 
-- Docker/Linux worker: `static_metadata`, `clamav`, `yara`
+```powershell
+$env:MASP_WORKER_CONTROL_URL="https://masp.example/api/v1/worker-control"
+$env:MASP_WORKER_ENROLLMENT_TOKEN="<bootstrap token from the MASP operator>"
+$env:MASP_WORKER_ENGINE_KEYS="microsoft_defender"
+$env:MASP_WORKER_NODE_ID="windows-defender-01"
+$env:MASP_WORKER_NODE_NAME="Windows Defender 01"
+$env:MASP_WORKER_LABELS="site=istanbul,os=windows"
+python -m app.workers.control_api_worker --enroll
+```
+
+The command prints the agent token exactly once. Store it in an ACL-protected
+file, remove the enrollment token from the worker environment, and start the
+normal worker entry point in control mode:
+
+```powershell
+$env:MASP_WORKER_TRANSPORT="control_api"
+$env:MASP_WORKER_AGENT_TOKEN_FILE="C:\ProgramData\MASP\agent.token"
+python -m app.workers.scan_worker
+```
+
+The URL must include `/api/v1/worker-control`. Public CA validation is used by
+default; set `MASP_WORKER_CONTROL_CA_FILE` for an internal CA. Plain HTTP is
+rejected unless `MASP_WORKER_CONTROL_ALLOW_INSECURE_HTTP=1` is explicitly set
+for local development. Re-enrolling the same stable node rotates the credential
+and immediately revokes its previous active token. The agent claims jobs and
+health checks through the control API, downloads only its currently owned sample,
+verifies byte count and SHA-256, scans the temporary file locally, and deletes it.
+An administrator can immediately invalidate a node token with **System > Managed
+worker nodes > Revoke agent**; the node must enroll again before reconnecting.
+
+For a persistent Defender host, build the Windows bundle with
+`python tools\package_windows_worker.py` and use its elevated PowerShell
+installer. It runs the agent as the `NT SERVICE\MASPWorker` virtual account,
+protects token/config files with Windows ACLs, records rotating logs under
+`C:\ProgramData\MASP\Worker`, and provides preflight, acceptance evidence,
+rotation, upgrade, and uninstall procedures. The acceptance command verifies the
+extracted manifest, service identity/startup, Defender/control health, clean and
+EICAR API decisions, and records Authenticode state without exposing tokens. See
+[Windows Worker Agent](docs/deployment/WINDOWS_WORKER_AGENT.md). The packaging is
+available for lab validation; Defender remains `lab` until the real-host
+acceptance matrix and release signing are complete.
+
+The worker assignment in the hybrid Compose setup is:
+
+- Docker/Linux worker: `static_metadata`, `clamav`, `yara`, `virustotal`
 - Windows worker: `microsoft_defender`
+
+Each worker registers its stable `MASP_WORKER_NODE_ID` in the System page. An
+admin can set a node to `draining` or `disabled`; it remains visible and keeps
+sending heartbeats but does not claim new jobs. `active` returns it to service.
+Offline is derived from heartbeat age and does not overwrite the admin lifecycle
+choice. Keep node ids unique and stable across process or container restarts.
+
+The **System** page also manages worker pools. A selector such as
+`site=istanbul,os=windows` matches the labels published through
+`MASP_WORKER_LABELS`; every selector field must match. Assign an engine instance
+to the pool to constrain its jobs to those nodes. Unbound engines continue to run
+on any active worker advertising the adapter. Node capacity is enforced across
+all worker processes sharing the same stable node id.
+
+Matching workers also execute periodic health probes for each assigned engine
+instance. The result includes service/adapter state, available version metadata,
+sample-storage access, failure streak, and the last successful real scan. Engine
+cards use these worker reports instead of testing Defender/YARA/ClamAV from the
+API host. Clicking **Test connection** on a worker-deployed engine requests a new
+worker probe. VirusTotal periodic health never performs a live reputation lookup
+and therefore does not spend API quota.
 
 Each worker only writes results for engines it can run. A scan remains
 non-terminal through `queued`, `running`, and crash-safe `finalizing` states

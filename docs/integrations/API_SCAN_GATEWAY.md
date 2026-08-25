@@ -32,7 +32,7 @@ MASP_API_MAX_WAIT_SECONDS=30        # upper bound a client may request to wait
 
 The client should pass `wait_seconds` explicitly on every request (it defaults
 to `0`, i.e. fire-and-poll, if omitted). 30 seconds comfortably covers a
-single small-file scan across all four engines under normal load; raise it if
+single small-file scan across all eligible engines under normal load; raise it if
 your engine mix or host is slower, but stay mindful that the request holds a
 connection open for the full wait.
 
@@ -40,36 +40,26 @@ There is no separate "scan and wait" endpoint — this is `POST /api/v1/scans`
 used with `wait_seconds` set, which the API already supports. Nothing else in
 the request shape changes.
 
-For a file above the upload cap, use the engine-neutral SHA-256 lookup described
-below. It sends no file bytes. A missing reputation report cannot create a new
-analysis, so `unknown` must go to review/quarantine rather than being allowed.
+For a file above the upload cap, the integrating system must follow its own
+approved fail-closed or manual-review policy. MASP does not invoke metered
+external reputation services from API or ICAP traffic.
 
 ## SHA-256 reputation lookup
 
-`GET /api/v1/hashes/{sha256}` runs every enabled adapter whose registry
-capabilities declare `supports_hash_lookup`. MASP sends only the normalized
-64-character SHA-256 digest and returns an aggregate decision plus normalized
-per-engine `results[]`. Decision precedence is `block`, then `review`, then
-`allow`. It never uploads file content.
+`GET /api/v1/hashes/{sha256}` runs enabled adapters whose registry capabilities
+declare `supports_hash_lookup` **and do not** declare
+`consumes_external_quota`. MASP never spends a third-party token/quota for API
+or ICAP automation. If no eligible non-metered hash adapter exists, the endpoint
+returns `503`.
 
-VirusTotal is managed as a hash-reputation engine in MASP. Before calling the
-endpoint, open **Admin > Engines**, choose **Browse catalog**, add
-**VirusTotal**, and leave the engine enabled. An administrator can configure its
-API key and policy in the engine card. UI-managed keys are encrypted before
-being stored; set `MASP_SECRET_ENCRYPTION_KEY` on the app service first. The
-legacy `MASP_VIRUSTOTAL_*` environment configuration remains supported. MASP
-never renders a saved key back to the browser. If no hash-capable engine is
-enabled, the endpoint returns `503`. An enabled VirusTotal engine also runs for
-ordinary file-backed scans: the worker submits only the SHA-256 already
-computed during intake, persists the normalized engine result in the scan
-ledger, and never uploads the file. The worker therefore needs the same stable
-`MASP_SECRET_ENCRYPTION_KEY` to decrypt UI-managed credentials.
+VirusTotal declares `consumes_external_quota=True`, so it is deliberately
+excluded from this endpoint, REST file scans, and ICAP scans. Adding or enabling
+VirusTotal does not change that automation policy.
 
-Interactive users can perform the same lookup from the **Scan Hash** navigation
-tab. The page requires an authenticated MASP session, validates and normalizes
-the SHA-256 value, executes every enabled hash-capable adapter through the same
-registry path, and displays the aggregate decision and engine results. The
-interactive result is immediate and is not persisted in the file-backed ledger.
+Interactive users can still perform an explicitly initiated lookup from the
+**Scan Hash** navigation tab. Manual file scans may also run VirusTotal using the
+locally computed SHA-256. Neither path uploads file content. UI-managed keys are
+encrypted and require a stable `MASP_SECRET_ENCRYPTION_KEY` on app and worker.
 
 ```bash
 curl -fsS \
@@ -77,37 +67,15 @@ curl -fsS \
   "https://masp.example/api/v1/hashes/275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f"
 ```
 
-Representative response:
+With VirusTotal as the only hash adapter, the automation response is:
 
 ```json
 {
-  "hash": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f",
-  "algorithm": "sha256",
-  "decision": {
-    "action": "block",
-    "reason": "At least one enabled hash engine returned a block decision."
-  },
-  "engines": {
-    "expected": 1,
-    "completed": 1,
-    "failed": 0
-  },
-  "results": [{
-    "engine": {"key": "virustotal", "name": "VirusTotal", "support_state": "blocked"},
-    "status": "malicious",
-    "found": true,
-    "decision": {"action": "block", "reason": "VirusTotal threshold met."},
-    "duration_ms": 220,
-    "data": {
-      "source": "virustotal",
-      "stats": {"malicious": 1, "suspicious": 0, "undetected": 59, "total": 60},
-      "cached": false
-    }
-  }]
+  "detail": "No non-metered hash-capable engine is available for API use."
 }
 ```
 
-Status and decision semantics:
+Interactive **Scan Hash** status and decision semantics:
 
 | Status | Meaning | Default action |
 |---|---|---|
@@ -117,6 +85,13 @@ Status and decision semantics:
 | `stale` | Zero detections, but the report is missing a date or older than the freshness limit | `review` |
 | `unknown` | No report exists, or the report has no usable engine statistics | `review` |
 
+A valid VirusTotal no-report response is a completed lookup. **Scan Hash** keeps
+it fail-closed as Review. In an ordinary manual file scan, VirusTotal is only
+reputation enrichment: `unknown`, `undetected`, and stale zero-signal reports do
+not override otherwise-clean local engines. They display as **No report** or
+**No detections**. Malicious still blocks, suspicious still reviews, and actual
+configuration/network/quota/timeout/malformed-response failures reduce coverage.
+
 `MASP_VIRUSTOTAL_ALLOW_UNDETECTED=1` changes only `undetected` to `allow`.
 This is deliberately off by default: zero detections is not proof that a file
 is clean. Even when enabled, the report must have an analysis date no older
@@ -124,29 +99,30 @@ than `MASP_VIRUSTOTAL_MAX_AGE_DAYS` (default 30); older or undated reports are
 `stale + review`. It never changes `unknown`, `stale`, upstream errors, or quota
 failures into an allow result.
 
-Recommended large-file flow:
+Recommended large-file automation flow:
 
 ```text
-1. Compute SHA-256 locally; do not send the large file to MASP.
-2. Call GET /api/v1/hashes/{sha256}.
-3. decision.action=block  -> reject/quarantine.
-4. decision.action=allow  -> allow only under the approved undetected policy.
-5. decision.action=review -> quarantine or manual review; never fail open.
-6. Any non-200 response   -> treat as unavailable and fail closed.
+1. Do not assume a VirusTotal lookup will run through MASP automation.
+2. Apply the integration owner's size-limit policy.
+3. Route oversized files to quarantine/manual review or another approved local,
+   non-metered engine path.
+4. Treat `503` from the hash endpoint as unavailable and fail closed.
 ```
 
-Responses are cached in the app process: known reports default to 3600 seconds
-and unknown hashes to 300 seconds. Configure with
+Interactive Scan Hash responses are cached in the app process; manual
+file-scan reputation responses are cached in the worker process. Known reports
+default to 3600 seconds and unknown hashes to 300 seconds. Configure with
 `MASP_VIRUSTOTAL_CACHE_SECONDS` and
 `MASP_VIRUSTOTAL_UNKNOWN_CACHE_SECONDS`; the LRU is bounded by
 `MASP_VIRUSTOTAL_CACHE_MAX_ENTRIES` (default 10000). Cache is intentionally
-lost on app restart; no third-party response is persisted in MASP's database.
+process-local and is lost on restart. Interactive Scan Hash lookups are not
+persisted as scan records. Ordinary manual file scans do persist their
+normalized VirusTotal engine result and bounded technical details with the scan
+report, just like other engine results.
 
-This organizational automation requires a VirusTotal Premium/Enterprise API
-plan whose license permits the workflow. VirusTotal's Public API must not be
-used in commercial products or business workflows that do not contribute new
-files. The MASP host also needs approved DNS and outbound HTTPS access to
-`www.virustotal.com:443`.
+Manual VirusTotal use still requires an appropriately licensed plan and approved
+DNS/outbound HTTPS access. The Public API must not be used for an organizational
+workflow that its license does not permit.
 
 ## Authentication
 

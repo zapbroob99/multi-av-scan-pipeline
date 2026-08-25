@@ -98,7 +98,8 @@ worker can do for each missing engine:
 
 This is what makes the hybrid model work:
 
-- The Docker/Linux worker can run `static_metadata`, `clamav`, and `yara`.
+- The current Docker/Linux worker assignment can run `static_metadata`,
+  `clamav`, `yara`, and manual-scan `virustotal` hash reputation.
 - The Windows worker can run `microsoft_defender`.
 - Both workers can look at the same scan and write the engine results they are
   responsible for.

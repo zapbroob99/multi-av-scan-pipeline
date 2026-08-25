@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform as platform_module
 import socket
 import threading
 import time
@@ -11,8 +12,12 @@ from typing import Iterator
 from app.database import (
     DatabaseOperationalError,
     delete_settings_if_values_match,
+    get_worker_node,
+    list_engine_node_health,
+    list_worker_nodes,
     list_settings_by_prefix,
     set_setting,
+    upsert_worker_node_heartbeat,
 )
 from app.services.worker_capabilities import worker_engine_keys
 
@@ -32,6 +37,47 @@ WORKER_HEARTBEAT_QUERY_PREFIX = "worker.scan_worker.heartbeat"
 
 _HEARTBEAT_CLEANUP_LOCK = threading.Lock()
 _last_heartbeat_cleanup_at = 0.0
+
+
+def current_worker_node_id() -> str:
+    configured = os.getenv("MASP_WORKER_NODE_ID", "").strip()
+    return (configured or socket.gethostname().strip() or "unnamed-worker")[:128]
+
+
+def current_worker_process_id() -> str:
+    configured = os.getenv("MASP_WORKER_ID", "").strip()
+    return configured or f"{current_worker_node_id()}:{os.getpid()}"
+
+
+def worker_node_labels() -> dict[str, str]:
+    raw = os.getenv("MASP_WORKER_LABELS", "").strip()
+    if not raw:
+        return {}
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return {
+                str(key).strip(): str(value).strip()
+                for key, value in parsed.items()
+                if str(key).strip()
+            }
+        return {}
+    labels: dict[str, str] = {}
+    for item in raw.split(","):
+        key, separator, value = item.partition("=")
+        if separator and key.strip():
+            labels[key.strip()] = value.strip()
+    return labels
+
+
+def worker_node_capacity() -> int:
+    try:
+        return max(1, int(os.getenv("MASP_WORKER_CAPACITY", "1")))
+    except ValueError:
+        return 1
 
 
 def worker_poll_seconds() -> float:
@@ -65,14 +111,44 @@ def record_worker_heartbeat(state: str, active_scan_id: int | None = None) -> bo
     hostname = socket.gethostname()
     pid = os.getpid()
     timestamp = int(time.time())
+    node_id = current_worker_node_id()
+    engine_keys = sorted(worker_engine_keys())
+    labels = worker_node_labels()
+    capacity = worker_node_capacity()
+    try:
+        node = upsert_worker_node_heartbeat(
+            node_id=node_id,
+            display_name=os.getenv("MASP_WORKER_NODE_NAME", "").strip() or hostname,
+            hostname=hostname,
+            platform=platform_module.system().lower() or "unknown",
+            agent_version=os.getenv("MASP_WORKER_AGENT_VERSION", "0.1.0").strip()
+            or "unknown",
+            labels_json=json.dumps(labels, sort_keys=True),
+            capacity=capacity,
+            advertised_engine_keys_json=json.dumps(engine_keys),
+            runtime_state=state,
+            active_scan_id=active_scan_id,
+            process_id=pid,
+            last_heartbeat_at=timestamp,
+        )
+    except DatabaseOperationalError as exc:
+        print(f"Worker node heartbeat could not be recorded: {exc}", flush=True)
+        return False
     payload = {
         "state": state,
+        "node_id": node_id,
+        "node_name": node.display_name,
+        "lifecycle_state": node.lifecycle_state,
         "hostname": hostname,
         "pid": pid,
         "timestamp": timestamp,
         "active_scan_id": active_scan_id,
         "poll_seconds": worker_poll_seconds(),
-        "engine_keys": sorted(worker_engine_keys()),
+        "engine_keys": engine_keys,
+        "platform": node.platform,
+        "agent_version": node.agent_version,
+        "labels": labels,
+        "capacity": capacity,
     }
     row_key = f"{WORKER_HEARTBEAT_ROW_PREFIX}{worker_identity(payload)}"
     try:
@@ -91,7 +167,21 @@ def record_worker_heartbeat(state: str, active_scan_id: int | None = None) -> bo
 def get_worker_status(now: int | None = None) -> dict[str, object]:
     current_time = int(time.time()) if now is None else now
     workers = get_worker_heartbeats(current_time)
+    nodes = get_worker_node_statuses(current_time)
+    lifecycle_by_node_id = {
+        str(node["node_id"]): str(node["lifecycle_state"])
+        for node in nodes
+    }
+    for worker in workers:
+        node_lifecycle = lifecycle_by_node_id.get(str(worker.get("node_id") or ""))
+        if node_lifecycle is not None:
+            worker["lifecycle_state"] = node_lifecycle
     online_workers = [worker for worker in workers if bool(worker["online"])]
+    schedulable_workers = [
+        worker
+        for worker in online_workers
+        if str(worker.get("lifecycle_state") or "active") == "active"
+    ]
     if workers:
         active_scan_id = next(
             (
@@ -105,7 +195,7 @@ def get_worker_status(now: int | None = None) -> dict[str, object]:
         engine_keys = sorted(
             {
                 engine_key
-                for worker in online_workers
+                for worker in schedulable_workers
                 for engine_key in normalize_engine_keys(worker.get("engine_keys"))
             }
         )
@@ -134,13 +224,17 @@ def get_worker_status(now: int | None = None) -> dict[str, object]:
             "stale_after_seconds": worker_stale_seconds(),
             "workers": workers,
             "online_count": len(online_workers),
+            "schedulable_count": len(schedulable_workers),
             "total_worker_records": len(workers),
+            "nodes": nodes,
         }
 
-    return offline_worker_status()
+    return offline_worker_status(nodes=nodes)
 
 
-def offline_worker_status() -> dict[str, object]:
+def offline_worker_status(
+    *, nodes: list[dict[str, object]] | None = None
+) -> dict[str, object]:
     """Status payload when no heartbeat record of any shape is present."""
     return {
         "online": False,
@@ -154,7 +248,9 @@ def offline_worker_status() -> dict[str, object]:
         "stale_after_seconds": worker_stale_seconds(),
         "workers": [],
         "online_count": 0,
+        "schedulable_count": 0,
         "total_worker_records": 0,
+        "nodes": get_worker_node_statuses() if nodes is None else nodes,
     }
 
 
@@ -197,6 +293,8 @@ def get_worker_heartbeats(current_time: int) -> list[dict[str, object]]:
         age_seconds = max(0, current_time - timestamp)
         stale = age_seconds > worker_stale_seconds()
         worker["worker_id"] = identity
+        worker["node_id"] = str(worker.get("node_id") or worker.get("hostname") or identity)
+        worker["lifecycle_state"] = str(worker.get("lifecycle_state") or "active")
         worker["online"] = not stale
         worker["age_seconds"] = age_seconds
         worker["engine_keys"] = normalize_engine_keys(worker.get("engine_keys"))
@@ -314,7 +412,84 @@ def worker_is_running_scan_engine(
 
 
 def worker_identity(payload: dict[str, object]) -> str:
-    return f'{payload.get("hostname", "-")}:{payload.get("pid", 0)}'
+    return f'{payload.get("node_id") or payload.get("hostname", "-")}:{payload.get("pid", 0)}'
+
+
+def worker_accepts_new_work(node_id: str | None = None) -> bool:
+    """Fail open for rollout compatibility; known draining/disabled nodes pause."""
+    try:
+        node = get_worker_node(node_id or current_worker_node_id())
+    except DatabaseOperationalError:
+        return True
+    return node is None or node.lifecycle_state == "active"
+
+
+def get_worker_node_statuses(now: int | None = None) -> list[dict[str, object]]:
+    current_time = int(time.time()) if now is None else now
+    try:
+        nodes = list_worker_nodes()
+        health_records = list_engine_node_health()
+    except DatabaseOperationalError:
+        return []
+    health_by_node: dict[str, list[object]] = {}
+    for record in health_records:
+        health_by_node.setdefault(record.node_id, []).append(record)
+    statuses: list[dict[str, object]] = []
+    for node in nodes:
+        age_seconds = max(0, current_time - node.last_heartbeat_at)
+        online = age_seconds <= worker_stale_seconds()
+        lifecycle_state = node.lifecycle_state
+        effective_state = (
+            "offline"
+            if not online
+            else lifecycle_state
+            if lifecycle_state != "active"
+            else node.runtime_state
+        )
+        try:
+            labels = json.loads(node.labels_json)
+        except json.JSONDecodeError:
+            labels = {}
+        try:
+            engine_keys = normalize_engine_keys(json.loads(node.advertised_engine_keys_json))
+        except json.JSONDecodeError:
+            engine_keys = []
+        statuses.append(
+            {
+                "node_id": node.node_id,
+                "display_name": node.display_name,
+                "hostname": node.hostname,
+                "platform": node.platform,
+                "agent_version": node.agent_version,
+                "labels": labels if isinstance(labels, dict) else {},
+                "capacity": node.capacity,
+                "engine_keys": engine_keys,
+                "lifecycle_state": lifecycle_state,
+                "runtime_state": node.runtime_state,
+                "effective_state": effective_state,
+                "active_scan_id": node.active_scan_id,
+                "process_id": node.process_id,
+                "last_heartbeat_at": node.last_heartbeat_at,
+                "last_seen_at": datetime.fromtimestamp(node.last_heartbeat_at).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "age_seconds": age_seconds,
+                "online": online,
+                "schedulable": online and lifecycle_state == "active",
+                "health_total": len(health_by_node.get(node.node_id, [])),
+                "health_healthy": sum(
+                    1
+                    for record in health_by_node.get(node.node_id, [])
+                    if getattr(record, "status", "") in {"healthy", "degraded"}
+                ),
+                "health_failed": sum(
+                    1
+                    for record in health_by_node.get(node.node_id, [])
+                    if getattr(record, "status", "") == "unhealthy"
+                ),
+            }
+        )
+    return statuses
 
 
 def summarize_worker_state(online_workers: list[dict[str, object]]) -> str:

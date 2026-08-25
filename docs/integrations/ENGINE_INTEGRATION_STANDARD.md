@@ -89,6 +89,25 @@ Shared services own reusable mechanics:
 - JSON/XML parsing helpers
 - Common finding/evidence constructors
 
+## Capability and Submission-Source Eligibility
+
+Every adapter must declare capabilities in the registry instead of relying on
+endpoint-specific vendor checks. At minimum, document and implement:
+
+- Whether it is a detection engine.
+- Supported input modes and operating-system platforms.
+- File-upload, hash-lookup, and file-hash-scan support.
+- Archive support and network requirements.
+- Execution model and worker/deployment placement.
+- Whether a call consumes a paid token, licensed quota, or another externally
+  metered resource (`consumes_external_quota`).
+
+REST and ICAP automation must exclude adapters that consume external quota
+before jobs are created, with worker/finalization checks as defense in depth.
+Interactive/manual workflows may use them when explicitly initiated and
+licensed. New adapters inherit this source policy from capabilities; routes,
+workers, or reports must not hard-code a vendor name to enforce it.
+
 ## Required Adapter Contract
 
 Every engine adapter must produce `EngineResultInput` with these fields normalized:
@@ -137,6 +156,8 @@ Required fields:
 - Rate limits or concurrency limits
 - Supported deployment modes
 - Known unsupported modes
+- Submission-source eligibility (`manual`, `api`, `icap`)
+- External token/quota consumption
 
 ## Config Schema Requirements
 

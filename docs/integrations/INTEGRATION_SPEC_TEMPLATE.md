@@ -21,6 +21,21 @@ Copy this file when starting a new vendor/product integration.
 - Network direction:
 - Required ports:
 
+## Registry Capabilities
+
+- Detection engine: `yes/no`
+- Input modes:
+- Supported platforms:
+- Execution model:
+- Supports file upload: `yes/no`
+- Supports hash lookup: `yes/no`
+- Supports file-hash scan: `yes/no`
+- Supports archives: `yes/no`
+- Requires network: `yes/no`
+- Consumes external token/quota: `yes/no`
+- Eligible submission sources: `manual/api/icap`
+- Source exclusions and reason:
+
 ## Documentation
 
 - Official documentation:
@@ -116,6 +131,7 @@ Additional fixtures:
 
 - [ ] Spec completed.
 - [ ] Config schema implemented.
+- [ ] Registry capabilities and source eligibility implemented.
 - [ ] Health check implemented.
 - [ ] Scan flow implemented.
 - [ ] Parser fixtures added.

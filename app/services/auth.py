@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import time
@@ -20,16 +21,22 @@ from app.database import (
     get_setting,
     get_user_by_session,
     get_user_by_username,
+    sync_external_user,
 )
 from app.models import UserRecord
+from app.services.auth_roles import ROLE_ADMIN, ROLE_ANALYST
+from app.services.ldap_auth import (
+    LdapConfigurationError,
+    LdapUnavailableError,
+    authenticate_ldap,
+)
 
 
-ROLE_ADMIN = "admin"
-ROLE_ANALYST = "analyst"
 SESSION_COOKIE = "masp_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
 PASSWORD_ITERATIONS = 260_000
 API_TOKENS_SETTING_KEY = "api.tokens"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -137,12 +144,42 @@ def verify_password(password: str, stored_hash: str) -> bool:
 
 
 def authenticate(username: str, password: str) -> UserRecord | None:
-    user = get_user_by_username(username.strip())
-    if user is None:
+    clean_username = username.strip()
+    if (
+        not clean_username
+        or not password
+        or len(clean_username) > 255
+        or len(password) > 4_096
+    ):
         return None
-    if not verify_password(password, user.password_hash):
+
+    user = get_user_by_username(clean_username)
+    if user is not None and user.auth_source == "local":
+        if not verify_password(password, user.password_hash):
+            return None
+        return user
+
+    try:
+        identity = authenticate_ldap(clean_username, password)
+    except (LdapConfigurationError, LdapUnavailableError) as exc:
+        LOGGER.error("LDAP authentication unavailable: %s", exc)
         return None
-    return user
+    if identity is None:
+        return None
+    try:
+        return sync_external_user(
+            username=identity.username,
+            role=identity.role,
+            external_id=identity.external_id,
+            display_name=identity.display_name,
+        )
+    except ValueError:
+        # A directory identity must never claim an existing local account.
+        LOGGER.warning(
+            "LDAP login rejected because the directory username conflicts "
+            "with a local account."
+        )
+        return None
 
 
 def login(username: str, password: str) -> LoginResult | None:

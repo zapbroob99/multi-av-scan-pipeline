@@ -235,7 +235,7 @@ class VirusTotalEngineAdapterTests(unittest.TestCase):
         self.assertEqual(findings[0]["type"], "hash_reputation")
         self.assertEqual(findings[0]["matched_evidence"]["sha256"], SHA256)
 
-    def test_unknown_hash_is_a_skipped_review_result_not_a_clean_detection(self) -> None:
+    def test_unknown_hash_is_a_completed_review_result_not_a_clean_detection(self) -> None:
         payload = build_reputation_payload(SHA256, None, config(), cached=False)
         with patch(
             "app.engines.virustotal.lookup_virustotal_hash", return_value=payload
@@ -243,8 +243,10 @@ class VirusTotalEngineAdapterTests(unittest.TestCase):
             execution = run_virustotal_hash_engine(SHA256)
 
         self.assertFalse(execution.result.detected)
-        self.assertEqual(execution.result.status, "skipped")
-        self.assertIn("no report", execution.result.error_message or "")
+        self.assertEqual(execution.result.status, "completed")
+        self.assertIsNone(execution.result.error_message)
+        self.assertEqual(payload["decision"]["action"], "review")
+        self.assertIn("no report", str(payload["detail"]))
         self.assertEqual(json.loads(execution.result.findings_json), [])
 
     def test_file_scan_uses_the_precomputed_sha256(self) -> None:
@@ -263,6 +265,41 @@ class VirusTotalEngineAdapterTests(unittest.TestCase):
         lookup.assert_called_once_with(SHA256, None)
         self.assertEqual(result.engine_name, "VirusTotal")
         self.assertTrue(result.detected)
+
+    def test_file_scan_treats_no_report_as_neutral_enrichment(self) -> None:
+        payload = build_reputation_payload(SHA256, None, config(), cached=False)
+        scan = SimpleNamespace(sha256=SHA256)
+        with patch(
+            "app.engines.virustotal.lookup_virustotal_hash", return_value=payload
+        ):
+            result = run_virustotal_file_hash_engine(scan)  # type: ignore[arg-type]
+
+        details = json.loads(result.details_json)
+        self.assertEqual(result.status, "completed")
+        self.assertFalse(result.detected)
+        self.assertEqual(details["status"], "unknown")
+        self.assertEqual(details["decision"]["action"], "allow")
+        self.assertEqual(details["reputation_decision"]["action"], "review")
+        self.assertEqual(details["mode"], "file_hash_lookup")
+        self.assertFalse(details["file_uploaded"])
+
+    def test_file_scan_does_not_turn_zero_detections_into_review(self) -> None:
+        payload = build_reputation_payload(
+            SHA256,
+            report(undetected=60),
+            config(allow_undetected=False),
+            cached=False,
+        )
+        scan = SimpleNamespace(sha256=SHA256)
+        with patch(
+            "app.engines.virustotal.lookup_virustotal_hash", return_value=payload
+        ):
+            result = run_virustotal_file_hash_engine(scan)  # type: ignore[arg-type]
+
+        details = json.loads(result.details_json)
+        self.assertEqual(details["status"], "undetected")
+        self.assertEqual(details["decision"]["action"], "allow")
+        self.assertEqual(details["reputation_decision"]["action"], "review")
 
     def test_file_scan_normalizes_upstream_failure_as_an_engine_failure(self) -> None:
         scan = SimpleNamespace(sha256=SHA256)

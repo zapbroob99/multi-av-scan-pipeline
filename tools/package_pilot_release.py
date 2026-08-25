@@ -32,6 +32,7 @@ ROOT_FILES = (
 TREE_DIRS = ("app", "rules", "deploy/pilot", "tests")
 EXTRA_FILES = (
     "docs/deployment/PILOT.md",
+    "docs/security/LDAP_AUTHENTICATION.md",
     "tools/generate_secret_key.py",
     "tools/icap_probe.py",
     "tools/verify_scan_api.py",
@@ -69,6 +70,10 @@ FORBIDDEN_PATTERNS = (
     (
         "real secret encryption key",
         re.compile(r"(?m)^MASP_SECRET_ENCRYPTION_KEY=(?!\s*$|CHANGE_ME)[^\s$<{]{32,}$"),
+    ),
+    (
+        "real LDAP bind password",
+        re.compile(r"(?m)^MASP_LDAP_BIND_PASSWORD=(?!\s*$|CHANGE_ME)[^\s$<{]{12,}$"),
     ),
 )
 

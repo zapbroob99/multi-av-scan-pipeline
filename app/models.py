@@ -164,6 +164,73 @@ class EngineInstanceRecord:
 
 
 @dataclass(frozen=True)
+class WorkerNodeRecord:
+    node_id: str
+    display_name: str
+    hostname: str
+    platform: str
+    agent_version: str
+    labels_json: str
+    capacity: int
+    advertised_engine_keys_json: str
+    lifecycle_state: str
+    runtime_state: str
+    active_scan_id: int | None
+    process_id: int | None
+    last_heartbeat_at: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class WorkerAgentCredentialRecord:
+    id: int
+    node_id: str
+    token_hash: str
+    token_prefix: str
+    created_at: str
+    last_used_at: int | None
+    expires_at: int | None
+    revoked_at: int | None
+
+
+@dataclass(frozen=True)
+class WorkerPoolRecord:
+    id: int
+    name: str
+    selector_json: str
+    enabled: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class EngineNodeHealthRecord:
+    node_id: str
+    engine_instance_id: int
+    status: str
+    ok: bool
+    health_status: str
+    detail: str
+    product_version: str | None
+    engine_version: str | None
+    signature_version: str | None
+    service_state: str | None
+    storage_readable: bool | None
+    storage_writable: bool | None
+    consecutive_failures: int
+    last_checked_at: int | None
+    last_success_at: int | None
+    last_scan_success_at: int | None
+    details_json: str
+    check_worker_id: str | None
+    check_generation: int
+    check_lease_expires_at: int | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class UserRecord:
     id: int
     username: str
@@ -171,3 +238,23 @@ class UserRecord:
     role: str
     created_at: str
     updated_at: str
+    auth_source: str = "local"
+    external_id: str | None = None
+    display_name: str | None = None
+    last_login_at: str | None = None
+
+
+@dataclass(frozen=True)
+class AuditEventRecord:
+    id: int
+    created_at: str
+    actor_type: str
+    actor_id: str | None
+    actor_name: str | None
+    action: str
+    target_type: str
+    target_id: str | None
+    outcome: str
+    source_ip: str | None
+    request_id: str
+    details_json: str

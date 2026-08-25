@@ -74,42 +74,42 @@ def get_microsoft_defender_config(
         "execution_mode": setting_value(
             override,
             "execution_mode",
-            engine_setting("microsoft_defender.execution_mode", "powershell"),
+            "powershell",
         ).strip().lower()
         or "powershell",
         "powershell_path": setting_value(
             override,
             "powershell_path",
-            engine_setting("microsoft_defender.powershell_path", "powershell.exe"),
+            "powershell.exe",
         ).strip()
         or "powershell.exe",
         "mpcmdrun_path": setting_value(
             override,
             "mpcmdrun_path",
-            engine_setting("microsoft_defender.mpcmdrun_path", "auto"),
+            "auto",
         ).strip()
         or "auto",
         "default_scan_type": setting_value(
             override,
             "default_scan_type",
-            engine_setting("microsoft_defender.default_scan_type", DEFAULT_SCAN_TYPE),
+            DEFAULT_SCAN_TYPE,
         ).strip().lower()
         or DEFAULT_SCAN_TYPE,
         "timeout_seconds": setting_int(
             override,
             "timeout_seconds",
-            engine_setting("microsoft_defender.timeout_seconds", str(DEFAULT_TIMEOUT_SECONDS)),
+            str(DEFAULT_TIMEOUT_SECONDS),
             DEFAULT_TIMEOUT_SECONDS,
         ),
         "update_before_scan": setting_bool(
             override,
             "update_before_scan",
-            engine_setting("microsoft_defender.update_before_scan", "false"),
+            "false",
         ),
         "require_real_time_enabled": setting_bool(
             override,
             "require_real_time_enabled",
-            engine_setting("microsoft_defender.require_real_time_enabled", "true"),
+            "true",
         ),
     }
 
@@ -670,24 +670,37 @@ def evaluate_status_payload(
     antivirus_enabled = bool(payload.get("AntivirusEnabled"))
     real_time_enabled = bool(payload.get("RealTimeProtectionEnabled"))
     signature_age = safe_int(payload.get("AntivirusSignatureAge"))
+    metadata: dict[str, str | bool] = {
+        "product_version": str(payload.get("AMProductVersion") or "unknown"),
+        "engine_version": str(payload.get("AMEngineVersion") or "unknown"),
+        "signature_version": str(
+            payload.get("AntivirusSignatureVersion") or "unknown"
+        ),
+        "service_state": "enabled" if am_service_enabled else "disabled",
+        "real_time_state": "enabled" if real_time_enabled else "disabled",
+        "signature_age_days": str(signature_age) if signature_age is not None else "unknown",
+    }
 
     if not am_service_enabled:
         return {
             "ok": False,
             "status": "disabled",
             "detail": "Microsoft Defender service is installed but disabled on this node.",
+            **metadata,
         }
     if not antivirus_enabled:
         return {
             "ok": False,
             "status": "disabled",
             "detail": "Microsoft Defender Antivirus is disabled on this node.",
+            **metadata,
         }
     if require_real_time_enabled and not real_time_enabled:
         return {
             "ok": True,
             "status": "degraded",
             "detail": "Microsoft Defender is available, but real-time protection is disabled.",
+            **metadata,
         }
     if signature_age is not None and signature_age > DEFAULT_SIGNATURE_STALE_DAYS:
         return {
@@ -697,6 +710,7 @@ def evaluate_status_payload(
                 "Microsoft Defender is available, but antivirus signatures appear stale "
                 f"({signature_age} days old)."
             ),
+            **metadata,
         }
 
     version_bits = []
@@ -712,7 +726,7 @@ def evaluate_status_payload(
     detail = "Microsoft Defender is available."
     if version_bits:
         detail = f"Microsoft Defender is available ({', '.join(version_bits)})."
-    return {"ok": True, "status": "available", "detail": detail}
+    return {"ok": True, "status": "available", "detail": detail, **metadata}
 
 
 def safe_int(value: object) -> int | None:
@@ -733,7 +747,7 @@ def engine_setting(key: str, fallback: str) -> str:
     return fallback if value is None else value
 
 
-def setting_value(config_override: dict[str, str], key: str, fallback: str) -> str:
+def setting_value(config_override: dict[str, str], key: str, default: str) -> str:
     """Resolve one setting, treating a blank override as "not configured".
 
     Same trap as the ClamAV engine (see its copy): a present-but-empty value used
@@ -742,23 +756,23 @@ def setting_value(config_override: dict[str, str], key: str, fallback: str) -> s
     engine. None of these settings has a meaningful empty value.
     """
     value = config_override.get(key)
-    if value is None or not value.strip():
-        return fallback
-    return value
+    if value is not None and value.strip():
+        return value
+    return engine_setting(f"microsoft_defender.{key}", default)
 
 
 def setting_int(
     config_override: dict[str, str],
     key: str,
-    fallback: str,
+    default_value: str,
     default: int,
 ) -> int:
     try:
-        return int(setting_value(config_override, key, fallback))
+        return int(setting_value(config_override, key, default_value))
     except ValueError:
         return default
 
 
-def setting_bool(config_override: dict[str, str], key: str, fallback: str) -> bool:
-    value = setting_value(config_override, key, fallback).strip().lower()
+def setting_bool(config_override: dict[str, str], key: str, default_value: str) -> bool:
+    value = setting_value(config_override, key, default_value).strip().lower()
     return value in {"1", "true", "yes", "on"}

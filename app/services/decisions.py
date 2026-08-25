@@ -24,6 +24,7 @@ def decide_scan_action(
     detected_engines: int,
     detection_engines: int,
     unavailable_engines: list[str],
+    policy_review_reasons: list[str] | None = None,
 ) -> ScanDecision:
     if scan_status in ACTIVE_SCAN_STATUSES:
         return ScanDecision(
@@ -87,6 +88,20 @@ def decide_scan_action(
             reasons=[
                 "One or more required engines did not complete.",
                 "; ".join(unavailable_engines),
+            ],
+        )
+
+    if policy_review_reasons:
+        return ScanDecision(
+            action="review",
+            label="Review",
+            tone="warning",
+            confidence="medium",
+            policy="engine_policy_review",
+            reason="One or more completed engines require review under configured policy.",
+            reasons=[
+                "All required engines completed, but an engine policy withheld an allow decision.",
+                "; ".join(policy_review_reasons),
             ],
         )
 

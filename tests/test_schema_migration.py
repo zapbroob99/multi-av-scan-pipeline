@@ -86,6 +86,37 @@ class SchemaMigrationTests(unittest.TestCase):
                     "UPDATE scan_jobs SET archive_member_ordinal = 0 WHERE id = ?", (c2,)
                 )
 
+    def test_legacy_engine_adapter_uniqueness_is_migrated(self) -> None:
+        database.DB_PATH = Path(self.temp_dir.name) / "legacy.db"
+        with sqlite3.connect(database.DB_PATH) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE engine_instances (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    adapter_key TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO engine_instances (adapter_key, display_name)
+                VALUES ('clamav', 'ClamAV Primary');
+                """
+            )
+
+        database.init_db()
+        second_id = database.create_engine_instance("clamav", "ClamAV DR")
+        instances = database.list_engine_instances_for_adapter("clamav")
+
+        self.assertGreater(second_id, 0)
+        self.assertEqual(
+            [instance.display_name for instance in instances],
+            ["ClamAV Primary", "ClamAV DR"],
+        )
+        with database.connect() as connection:
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

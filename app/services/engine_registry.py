@@ -7,11 +7,14 @@ from typing import Callable
 from app.database import (
     create_engine_instance,
     delete_engine_instance,
+    delete_engine_instance_by_id,
     get_engine_instance,
+    get_engine_instance_by_id,
     get_setting,
     list_engine_instances,
     set_setting,
     update_engine_instance,
+    update_engine_instance_by_id,
 )
 from app.engines.clamav import check_clamav_health, get_clamav_config, run_clamav_engine
 from app.engines.clamav import env_or_setting as clamav_env_or_setting
@@ -83,6 +86,8 @@ class EngineCapabilityProfile:
     requires_network: bool = False
     max_file_size_bytes: int | None = None
     supports_file_hash_scan: bool = False
+    consumes_external_quota: bool = False
+    allows_multiple_instances: bool = False
 
 
 @dataclass(frozen=True)
@@ -157,6 +162,9 @@ def static_metadata_health_check(
         "ok": True,
         "status": "available",
         "detail": "Built-in analyzer is available.",
+        "product_version": "builtin",
+        "engine_version": "builtin",
+        "service_state": "available",
     }
 
 
@@ -228,6 +236,7 @@ REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
             supports_hash_lookup=False,
             supports_archives=True,
             requires_network=True,
+            allows_multiple_instances=True,
         ),
         runtime_config_factory=get_clamav_config,
         health_check_function=check_clamav_health,
@@ -302,6 +311,7 @@ REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
             supports_hash_lookup=False,
             supports_archives=True,
             requires_network=False,
+            allows_multiple_instances=True,
         ),
         runtime_config_factory=get_microsoft_defender_config,
         health_check_function=check_microsoft_defender_health,
@@ -349,6 +359,7 @@ REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
             supports_archives=False,
             requires_network=True,
             supports_file_hash_scan=True,
+            consumes_external_quota=True,
         ),
         runtime_config_factory=get_virustotal_config,
         health_check_function=check_virustotal_health,
@@ -432,12 +443,26 @@ def configured_engines() -> list[EngineInstanceRecord]:
     return list_engine_instances()
 
 
-def enabled_engines() -> list[EngineInstanceRecord]:
-    """Enabled engines eligible for ordinary file-backed scan intake."""
+def _allowed_for_source(engine: EngineInstanceRecord, source: str) -> bool:
+    capabilities = adapter_capabilities(engine.adapter_key)
+    return not (
+        source.strip().lower() in {"api", "icap"}
+        and capabilities.consumes_external_quota
+    )
+
+
+def enabled_engines(*, source: str = "manual") -> list[EngineInstanceRecord]:
+    """Enabled file engines allowed for the submission source.
+
+    Automated API/ICAP traffic never consumes a metered external service. The
+    capability is adapter-level so future quota/token engines inherit the same
+    policy without endpoint-specific hardcoding.
+    """
     return [
         engine
         for engine in configured_engines()
         if engine.enabled
+        and _allowed_for_source(engine, source)
         and (
             adapter_capabilities(engine.adapter_key).supports_file_upload
             or adapter_capabilities(engine.adapter_key).supports_file_hash_scan
@@ -445,17 +470,19 @@ def enabled_engines() -> list[EngineInstanceRecord]:
     ]
 
 
-def enabled_hash_engines() -> list[EngineInstanceRecord]:
+def enabled_hash_engines(*, source: str = "manual") -> list[EngineInstanceRecord]:
     return [
         engine
         for engine in configured_engines()
-        if engine.enabled and adapter_capabilities(engine.adapter_key).supports_hash_lookup
+        if engine.enabled
+        and _allowed_for_source(engine, source)
+        and adapter_capabilities(engine.adapter_key).supports_hash_lookup
     ]
 
 
-def detection_engine_names() -> list[str]:
+def detection_engine_names(*, source: str = "manual") -> list[str]:
     names = []
-    for engine in enabled_engines():
+    for engine in enabled_engines(source=source):
         definition = adapter_definition(engine.adapter_key)
         if definition.detection:
             names.append(engine.display_name)
@@ -486,40 +513,82 @@ def available_adapter_definitions() -> list[EngineAdapterDefinition]:
         definition
         for definition in ADAPTERS.values()
         if definition.key not in configured_keys
+        or adapter_capabilities(definition.key).allows_multiple_instances
     ]
 
 
-def add_engine(adapter_key: str) -> None:
+def add_engine(adapter_key: str) -> int:
     definition = adapter_definition(adapter_key)
-    if get_engine_instance(adapter_key) is not None:
-        return
-    create_engine_instance(
+    existing = [
+        engine for engine in configured_engines() if engine.adapter_key == adapter_key
+    ]
+    if existing and not adapter_capabilities(adapter_key).allows_multiple_instances:
+        return existing[0].id
+    display_name = next_engine_display_name(definition.label)
+    return create_engine_instance(
         adapter_key=definition.key,
-        display_name=definition.label,
+        display_name=display_name,
         enabled=True,
         config_json="{}",
     )
 
 
-def toggle_engine(adapter_key: str) -> None:
-    instance = get_engine_instance(adapter_key)
+def next_engine_display_name(base_name: str) -> str:
+    used = {engine.display_name.casefold() for engine in configured_engines()}
+    if base_name.casefold() not in used:
+        return base_name
+    suffix = 2
+    while f"{base_name} {suffix}".casefold() in used:
+        suffix += 1
+    return f"{base_name} {suffix}"
+
+
+def toggle_engine(adapter_key: str, instance_id: int | None = None) -> None:
+    instance = (
+        get_engine_instance_by_id(instance_id)
+        if instance_id is not None
+        else get_engine_instance(adapter_key)
+    )
     if instance is None:
         return
-    update_engine_instance(adapter_key, enabled=not instance.enabled)
+    if instance.adapter_key != adapter_key:
+        raise ValueError("Engine instance does not belong to this adapter.")
+    update_engine_instance_by_id(instance.id, enabled=not instance.enabled)
 
 
-def remove_engine(adapter_key: str) -> None:
-    delete_engine_instance(adapter_key)
-
-
-def update_engine_config(adapter_key: str, config: dict[str, str]) -> None:
-    instance = get_engine_instance(adapter_key)
-    if instance is None:
-        add_engine(adapter_key)
-        instance = get_engine_instance(adapter_key)
+def remove_engine(adapter_key: str, instance_id: int | None = None) -> None:
+    if instance_id is None:
+        delete_engine_instance(adapter_key)
+        return
+    instance = get_engine_instance_by_id(instance_id)
     if instance is None:
         return
-    update_engine_instance(adapter_key, config_json=json.dumps(config, sort_keys=True))
+    if instance.adapter_key != adapter_key:
+        raise ValueError("Engine instance does not belong to this adapter.")
+    delete_engine_instance_by_id(instance.id)
+
+
+def update_engine_config(
+    adapter_key: str,
+    config: dict[str, str],
+    instance_id: int | None = None,
+) -> None:
+    instance = (
+        get_engine_instance_by_id(instance_id)
+        if instance_id is not None
+        else get_engine_instance(adapter_key)
+    )
+    if instance is None:
+        created_id = add_engine(adapter_key)
+        instance = get_engine_instance_by_id(created_id)
+    if instance is None:
+        return
+    if instance.adapter_key != adapter_key:
+        raise ValueError("Engine instance does not belong to this adapter.")
+    update_engine_instance_by_id(
+        instance.id,
+        config_json=json.dumps(config, sort_keys=True),
+    )
 
 
 def engine_config(instance: EngineInstanceRecord) -> dict[str, str]:

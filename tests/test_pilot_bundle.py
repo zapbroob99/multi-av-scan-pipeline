@@ -40,6 +40,7 @@ class PilotBundleTests(unittest.TestCase):
         self.assertIn("docker-compose.pilot.yml", relative_paths)
         self.assertIn("deploy/pilot/install.sh", relative_paths)
         self.assertIn("docs/deployment/PILOT.md", relative_paths)
+        self.assertIn("docs/security/LDAP_AUTHENTICATION.md", relative_paths)
         # Apache-2.0 4(a)/4(d): every distributed copy carries these.
         self.assertIn("LICENSE", relative_paths)
         self.assertIn("NOTICE", relative_paths)
@@ -116,6 +117,18 @@ class PilotBundleTests(unittest.TestCase):
         )
         self.assertIsNone(
             pattern.search("MASP_SECRET_ENCRYPTION_KEY=CHANGE_ME_FERNET_KEY")
+        )
+
+    def test_secret_scan_recognizes_a_real_ldap_bind_password(self) -> None:
+        pattern = next(
+            pattern for label, pattern in FORBIDDEN_PATTERNS
+            if label == "real LDAP bind password"
+        )
+
+        self.assertIsNotNone(pattern.search("MASP_LDAP_BIND_PASSWORD=" + "a" * 24))
+        self.assertIsNone(pattern.search("MASP_LDAP_BIND_PASSWORD="))
+        self.assertIsNone(
+            pattern.search("MASP_LDAP_BIND_PASSWORD=CHANGE_ME_DIRECTORY_SECRET")
         )
 
 

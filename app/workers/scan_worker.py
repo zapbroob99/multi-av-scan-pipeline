@@ -33,6 +33,7 @@ from app.database import (
     skip_pending_scan_engine_job,
     refresh_scan_batch_counts,
     recover_running_scan_jobs,
+    record_engine_node_scan_success,
     filter_referenced_storage_paths,
     get_scan_statuses,
     remove_orphan_child_sample,
@@ -81,10 +82,18 @@ from app.services.worker_capabilities import (
     worker_engine_keys,
 )
 from app.services.worker_runtime import (
+    current_worker_node_id,
+    current_worker_process_id,
     get_worker_status,
     record_worker_heartbeat,
+    worker_accepts_new_work,
     worker_is_running_scan_engine,
 )
+from app.services.worker_scheduling import (
+    eligible_engine_instance_ids_for_node,
+    schedulable_engine_instance_ids,
+)
+from app.services.worker_health import run_due_worker_health_checks
 
 
 POLL_INTERVAL_SECONDS = float(os.getenv("MASP_WORKER_POLL_SECONDS", "2"))
@@ -132,12 +141,8 @@ MAINTENANCE_INTERVAL_SECONDS = max(
 )
 ENGINE_JOB_TERMINAL_STATUSES = {"completed", "failed", "skipped"}
 LAZY_ARCHIVE_TRIGGER_VERDICTS = {"medium", "high", "critical"}
-WORKER_ID = (
-    os.getenv("MASP_WORKER_ID")
-    or os.getenv("HOSTNAME")
-    or os.getenv("COMPUTERNAME")
-    or f"pid-{os.getpid()}"
-)
+WORKER_ID = current_worker_process_id()
+WORKER_NODE_ID = current_worker_node_id()
 
 
 def elapsed_ms(started_at: float) -> int:
@@ -269,9 +274,15 @@ def run_engine_with_lease_renewal(
 
 def process_next_scan_engine_job() -> bool:
     engine_keys = worker_engine_keys()
+    eligible_instance_ids = eligible_engine_instance_ids_for_node(
+        WORKER_NODE_ID,
+        engine_keys,
+    )
     job = claim_next_scan_engine_job(
         engine_keys,
         WORKER_ID,
+        worker_node_id=WORKER_NODE_ID,
+        eligible_engine_instance_ids=eligible_instance_ids,
         lease_seconds=ENGINE_JOB_LEASE_SECONDS,
         max_attempts=ENGINE_JOB_MAX_ATTEMPTS,
     )
@@ -325,7 +336,7 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
 
     record_worker_heartbeat("running", active_scan_id=scan.id)
 
-    engines = enabled_engines()
+    engines = enabled_engines(source=scan.source)
     engine = find_engine_for_job(job, engines)
     if engine is None:
         mark_scan_engine_job_terminal_if_owned(
@@ -453,6 +464,13 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
             details={"engine_job_id": job.id, "stage": "post_run"},
         )
         return True
+    if result.status == "completed":
+        record_engine_node_scan_success(
+            WORKER_NODE_ID,
+            engine.id,
+            engine_version=result.engine_version,
+            signature_version=result.signature_version,
+        )
     record_worker_timing_event(
         scan.id,
         "engine_job_run",
@@ -492,7 +510,7 @@ def process_scan(scan: ScanRecord, engine_keys: set[str]) -> bool:
     record_worker_heartbeat("running", active_scan_id=scan.id)
 
     stage_started_at = time.perf_counter()
-    engines = enabled_engines()
+    engines = enabled_engines(source=scan.source)
     engine_results = list_engine_results(scan.id)
     existing_engine_names = {result.engine_name for result in engine_results}
     missing_enabled_engines = missing_enabled_engine_instances(engines, existing_engine_names)
@@ -971,10 +989,10 @@ def required_engine_job_result_names(
     return {
         job.engine_name
         for job in jobs
-        if job.engine_key in enabled_engine_keys
-        or (
-            job.engine_instance_id is not None
-            and job.engine_instance_id in enabled_engine_ids
+        if (
+            job.engine_instance_id in enabled_engine_ids
+            if job.engine_instance_id is not None
+            else job.engine_key in enabled_engine_keys
         )
     }
 
@@ -983,9 +1001,14 @@ def find_engine_for_job(
     job: ScanEngineJobRecord,
     engines: list[EngineInstanceRecord],
 ) -> EngineInstanceRecord | None:
+    if job.engine_instance_id is not None:
+        return next(
+            (engine for engine in engines if engine.id == job.engine_instance_id),
+            None,
+        )
+    # Legacy rows created before engine_instance_id existed can still be routed
+    # by adapter key. New jobs always carry the immutable database id.
     for engine in engines:
-        if job.engine_instance_id is not None and engine.id == job.engine_instance_id:
-            return engine
         if engine.adapter_key == job.engine_key:
             return engine
     return None
@@ -1135,9 +1158,9 @@ def sweep_finalize_stuck_scans() -> int:
     completion transition, so running this on several workers at once is safe —
     only one wins and no duplicate results or children are produced.
     """
-    engines = enabled_engines()
     finalized = 0
     for scan in list_active_scans(limit=ACTIVE_SCAN_LIMIT):
+        engines = enabled_engines(source=scan.source)
         engine_jobs = list_scan_engine_jobs(scan.id)
         if not engine_jobs or not all_scan_engine_jobs_terminal(engine_jobs):
             continue
@@ -1157,23 +1180,23 @@ def reap_orphaned_engine_jobs(engine_keys: set[str]) -> bool:
     orchestration wait window has elapsed, mirroring the legacy timeout path so
     the scan finishes with partial coverage instead of hanging indefinitely.
     """
-    covered_engine_keys = online_worker_engine_keys()
-    engines = enabled_engines()
-    engines_by_key = {engine.adapter_key: engine for engine in engines}
+    worker_status = get_worker_status()
     reaped_any = False
 
     for scan in list_active_scans(limit=ACTIVE_SCAN_LIMIT):
+        engines = enabled_engines(source=scan.source)
+        covered_instance_ids = schedulable_engine_instance_ids(worker_status, engines)
         engine_jobs = list_scan_engine_jobs(scan.id)
         if not engine_jobs:
             continue
 
-        orphan_jobs = [
-            (job, engines_by_key[job.engine_key])
-            for job in engine_jobs
-            if job.status == "pending"
-            and job.engine_key not in covered_engine_keys
-            and job.engine_key in engines_by_key
-        ]
+        orphan_jobs: list[tuple[ScanEngineJobRecord, EngineInstanceRecord]] = []
+        for job in engine_jobs:
+            if job.status != "pending":
+                continue
+            engine = find_engine_for_job(job, engines)
+            if engine is not None and engine.id not in covered_instance_ids:
+                orphan_jobs.append((job, engine))
         if not orphan_jobs:
             continue
 
@@ -1217,6 +1240,9 @@ def reap_orphaned_engine_jobs(engine_keys: set[str]) -> bool:
 
 
 def process_next_scan_job() -> bool:
+    if not worker_accepts_new_work():
+        record_worker_heartbeat("idle")
+        return False
     if ENGINE_JOB_QUEUE_ENABLED:
         processed = process_next_scan_engine_job()
         if processed or not LEGACY_SCAN_WORKER_FALLBACK_ENABLED:
@@ -1346,6 +1372,7 @@ def run_maintenance() -> int:
         reap_orphaned_engine_jobs(engine_keys)
     if ENGINE_JOB_RECOVERY_ENABLED:
         sweep_finalize_stuck_scans()
+    run_due_worker_health_checks()
     # Remove archive-extraction staging dirs orphaned by a crash mid-extraction,
     # and deterministic child-* sample files no scan references (a fenced-out
     # stale finalizer can leave one).
@@ -1358,6 +1385,16 @@ def run_maintenance() -> int:
 
 
 def run_forever() -> None:
+    transport = os.getenv("MASP_WORKER_TRANSPORT", "database").strip().lower()
+    if transport == "control_api":
+        from app.workers.control_api_worker import run_forever as run_control_api_worker
+
+        run_control_api_worker()
+        return
+    if transport != "database":
+        raise SystemExit(
+            "MASP_WORKER_TRANSPORT must be 'database' or 'control_api'."
+        )
     # The legacy process_scan path finalizes with the old completed-then-extract
     # ordering (no finalizing state machine), reintroducing the completion/child
     # crash gap. It is entered when the engine-job queue is off OR the fallback is
@@ -1371,8 +1408,8 @@ def run_forever() -> None:
     init_db()
     seed_default_engines()
     engine_keys = worker_engine_keys()
-    recovered = run_maintenance()
     record_worker_heartbeat("starting")
+    recovered = run_maintenance()
     print(
         "MASP scan worker started "
         f"(engines: {', '.join(sorted(engine_keys)) or 'none'})",

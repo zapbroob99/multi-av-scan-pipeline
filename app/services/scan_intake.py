@@ -59,9 +59,12 @@ def enqueue_scan_from_stored_sample(
     normalized by the caller.
     """
     try:
-        engines = enabled_engines()
+        engines = enabled_engines(source=source)
         if not engines:
-            raise NoEligibleEnginesError("No scan engines are enabled; intake rejected.")
+            raise NoEligibleEnginesError(
+                f"No eligible scan engines are available for source {source!r}; "
+                "intake rejected."
+            )
         archive_format = detect_archive_format(stored_sample.storage_path)
         scan_id = create_scan_intake(
             sample=stored_sample,

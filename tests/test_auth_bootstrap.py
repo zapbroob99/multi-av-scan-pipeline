@@ -36,6 +36,7 @@ class AuthBootstrapTests(unittest.TestCase):
             "MASP_ADMIN_PASSWORD": "",
             "MASP_ANALYST_PASSWORD": "",
             "MASP_SHOW_DEV_LOGIN_HINTS": "",
+            "MASP_LDAP_ENABLED": "0",
         }
         base.update(overrides)
         return patch.dict(os.environ, base, clear=False)

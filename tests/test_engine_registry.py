@@ -87,6 +87,7 @@ class EngineRegistryTests(unittest.TestCase):
         self.assertFalse(capabilities.supports_file_upload)
         self.assertTrue(capabilities.supports_file_hash_scan)
         self.assertTrue(capabilities.requires_network)
+        self.assertTrue(capabilities.consumes_external_quota)
 
     def test_hash_reputation_engine_participates_in_file_scan_intake(self) -> None:
         virustotal = EngineInstanceRecord(
@@ -103,6 +104,9 @@ class EngineRegistryTests(unittest.TestCase):
         ):
             self.assertEqual(enabled_engines(), [virustotal])
             self.assertEqual(enabled_hash_engines(), [virustotal])
+            self.assertEqual(enabled_engines(source="api"), [])
+            self.assertEqual(enabled_engines(source="icap"), [])
+            self.assertEqual(enabled_hash_engines(source="api"), [])
 
     def test_virustotal_runtime_config_never_exposes_the_api_key(self) -> None:
         adapter = adapter_registry_entry("virustotal")

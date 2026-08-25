@@ -24,6 +24,8 @@ except ImportError:  # pragma: no cover - pool is optional; falls back to direct
 
 from app.models import (
     ACTIVE_SCAN_STATUSES,
+    AuditEventRecord,
+    EngineNodeHealthRecord,
     EngineInstanceRecord,
     EngineResultInput,
     EngineResultRecord,
@@ -34,6 +36,9 @@ from app.models import (
     StoredSample,
     TERMINAL_SCAN_STATUSES,
     UserRecord,
+    WorkerAgentCredentialRecord,
+    WorkerNodeRecord,
+    WorkerPoolRecord,
 )
 
 
@@ -433,19 +438,112 @@ def init_sqlite_db() -> None:
 
             CREATE TABLE IF NOT EXISTS engine_instances (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                adapter_key TEXT NOT NULL UNIQUE,
-                display_name TEXT NOT NULL,
+                adapter_key TEXT NOT NULL,
+                display_name TEXT NOT NULL UNIQUE,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 config_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS worker_nodes (
+                node_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                hostname TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                agent_version TEXT NOT NULL,
+                labels_json TEXT NOT NULL DEFAULT '{}',
+                capacity INTEGER NOT NULL DEFAULT 1 CHECK (capacity > 0),
+                advertised_engine_keys_json TEXT NOT NULL DEFAULT '[]',
+                lifecycle_state TEXT NOT NULL DEFAULT 'active'
+                    CHECK (lifecycle_state IN ('active', 'draining', 'disabled')),
+                runtime_state TEXT NOT NULL DEFAULT 'starting',
+                active_scan_id INTEGER,
+                process_id INTEGER,
+                last_heartbeat_at INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_worker_nodes_lifecycle_heartbeat
+            ON worker_nodes (lifecycle_state, last_heartbeat_at);
+
+            CREATE TABLE IF NOT EXISTS worker_agent_credentials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                token_prefix TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at INTEGER,
+                expires_at INTEGER,
+                revoked_at INTEGER,
+                FOREIGN KEY (node_id) REFERENCES worker_nodes (node_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_worker_agent_credentials_node_active
+            ON worker_agent_credentials (node_id, revoked_at, expires_at);
+
+            CREATE TABLE IF NOT EXISTS worker_pools (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                selector_json TEXT NOT NULL DEFAULT '{}',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS engine_instance_worker_pools (
+                engine_instance_id INTEGER PRIMARY KEY,
+                worker_pool_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (engine_instance_id) REFERENCES engine_instances (id) ON DELETE CASCADE,
+                FOREIGN KEY (worker_pool_id) REFERENCES worker_pools (id) ON DELETE RESTRICT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_engine_instance_worker_pools_pool
+            ON engine_instance_worker_pools (worker_pool_id, engine_instance_id);
+
+            CREATE TABLE IF NOT EXISTS engine_node_health (
+                node_id TEXT NOT NULL,
+                engine_instance_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'unknown',
+                ok INTEGER NOT NULL DEFAULT 0,
+                health_status TEXT NOT NULL DEFAULT 'unknown',
+                detail TEXT NOT NULL DEFAULT '',
+                product_version TEXT,
+                engine_version TEXT,
+                signature_version TEXT,
+                service_state TEXT,
+                storage_readable INTEGER,
+                storage_writable INTEGER,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                last_checked_at INTEGER,
+                last_success_at INTEGER,
+                last_scan_success_at INTEGER,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                check_worker_id TEXT,
+                check_generation INTEGER NOT NULL DEFAULT 0,
+                check_lease_expires_at INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (node_id, engine_instance_id),
+                FOREIGN KEY (node_id) REFERENCES worker_nodes (node_id) ON DELETE CASCADE,
+                FOREIGN KEY (engine_instance_id) REFERENCES engine_instances (id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_engine_node_health_due
+            ON engine_node_health (node_id, check_lease_expires_at, last_checked_at);
+
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('admin', 'analyst')),
+                auth_source TEXT NOT NULL DEFAULT 'local',
+                external_id TEXT,
+                display_name TEXT,
+                last_login_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -458,6 +556,27 @@ def init_sqlite_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                actor_type TEXT NOT NULL,
+                actor_id TEXT,
+                actor_name TEXT,
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id TEXT,
+                outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure', 'denied')),
+                source_ip TEXT,
+                request_id TEXT NOT NULL,
+                details_json TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_audit_events_created
+            ON audit_events (created_at DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_audit_events_action
+            ON audit_events (action, outcome, id DESC);
             """
         )
         ensure_column(connection, "scan_jobs", "started_at", "TEXT")
@@ -475,6 +594,24 @@ def init_sqlite_db() -> None:
         ensure_column(connection, "scan_jobs", "archive_member_ordinal", "INTEGER")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_engine_jobs_worker_node_status
+            ON scan_engine_jobs (worker_node_id, status, id)
+            """
+        )
+        ensure_column(connection, "users", "auth_source", "TEXT NOT NULL DEFAULT 'local'")
+        ensure_column(connection, "users", "external_id", "TEXT")
+        ensure_column(connection, "users", "display_name", "TEXT")
+        ensure_column(connection, "users", "last_login_at", "TEXT")
+        migrate_engine_instances_for_multiple_instances(connection)
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id
+            ON users (external_id) WHERE external_id IS NOT NULL
+            """
+        )
         connection.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_results_scan_engine
@@ -525,8 +662,8 @@ def init_sqlite_db() -> None:
         )
         connection.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_engine
-            ON scan_engine_jobs (scan_job_id, engine_key)
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_instance
+            ON scan_engine_jobs (scan_job_id, engine_instance_id)
             """
         )
         connection.execute(
@@ -675,13 +812,102 @@ def init_postgres_db() -> None:
             -- so a fresh database fails to bootstrap with the reverse order.
             CREATE TABLE IF NOT EXISTS engine_instances (
                 id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-                adapter_key TEXT NOT NULL UNIQUE,
-                display_name TEXT NOT NULL,
+                adapter_key TEXT NOT NULL,
+                display_name TEXT NOT NULL UNIQUE,
                 enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 config_json TEXT NOT NULL DEFAULT '{}',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS worker_nodes (
+                node_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                hostname TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                agent_version TEXT NOT NULL,
+                labels_json TEXT NOT NULL DEFAULT '{}',
+                capacity INTEGER NOT NULL DEFAULT 1 CHECK (capacity > 0),
+                advertised_engine_keys_json TEXT NOT NULL DEFAULT '[]',
+                lifecycle_state TEXT NOT NULL DEFAULT 'active'
+                    CHECK (lifecycle_state IN ('active', 'draining', 'disabled')),
+                runtime_state TEXT NOT NULL DEFAULT 'starting',
+                active_scan_id INTEGER,
+                process_id INTEGER,
+                last_heartbeat_at INTEGER NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_worker_nodes_lifecycle_heartbeat
+            ON worker_nodes (lifecycle_state, last_heartbeat_at);
+
+            CREATE TABLE IF NOT EXISTS worker_agent_credentials (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                node_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                token_prefix TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at INTEGER,
+                expires_at INTEGER,
+                revoked_at INTEGER,
+                FOREIGN KEY (node_id) REFERENCES worker_nodes (node_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_worker_agent_credentials_node_active
+            ON worker_agent_credentials (node_id, revoked_at, expires_at);
+
+            CREATE TABLE IF NOT EXISTS worker_pools (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                selector_json TEXT NOT NULL DEFAULT '{}',
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS engine_instance_worker_pools (
+                engine_instance_id INTEGER PRIMARY KEY,
+                worker_pool_id INTEGER NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (engine_instance_id) REFERENCES engine_instances (id) ON DELETE CASCADE,
+                FOREIGN KEY (worker_pool_id) REFERENCES worker_pools (id) ON DELETE RESTRICT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_engine_instance_worker_pools_pool
+            ON engine_instance_worker_pools (worker_pool_id, engine_instance_id);
+
+            CREATE TABLE IF NOT EXISTS engine_node_health (
+                node_id TEXT NOT NULL,
+                engine_instance_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'unknown',
+                ok BOOLEAN NOT NULL DEFAULT FALSE,
+                health_status TEXT NOT NULL DEFAULT 'unknown',
+                detail TEXT NOT NULL DEFAULT '',
+                product_version TEXT,
+                engine_version TEXT,
+                signature_version TEXT,
+                service_state TEXT,
+                storage_readable BOOLEAN,
+                storage_writable BOOLEAN,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                last_checked_at INTEGER,
+                last_success_at INTEGER,
+                last_scan_success_at INTEGER,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                check_worker_id TEXT,
+                check_generation INTEGER NOT NULL DEFAULT 0,
+                check_lease_expires_at INTEGER,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (node_id, engine_instance_id),
+                FOREIGN KEY (node_id) REFERENCES worker_nodes (node_id) ON DELETE CASCADE,
+                FOREIGN KEY (engine_instance_id) REFERENCES engine_instances (id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_engine_node_health_due
+            ON engine_node_health (node_id, check_lease_expires_at, last_checked_at);
 
             CREATE TABLE IF NOT EXISTS scan_engine_jobs (
                 id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -703,8 +929,8 @@ def init_postgres_db() -> None:
                 FOREIGN KEY (engine_instance_id) REFERENCES engine_instances (id) ON DELETE SET NULL
             );
 
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_engine
-            ON scan_engine_jobs (scan_job_id, engine_key);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_instance
+            ON scan_engine_jobs (scan_job_id, engine_instance_id);
 
             CREATE INDEX IF NOT EXISTS idx_scan_engine_jobs_claim
             ON scan_engine_jobs (status, engine_key, lease_expires_at, id);
@@ -720,6 +946,10 @@ def init_postgres_db() -> None:
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('admin', 'analyst')),
+                auth_source TEXT NOT NULL DEFAULT 'local',
+                external_id TEXT,
+                display_name TEXT,
+                last_login_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -732,6 +962,27 @@ def init_postgres_db() -> None:
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                actor_type TEXT NOT NULL,
+                actor_id TEXT,
+                actor_name TEXT,
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id TEXT,
+                outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure', 'denied')),
+                source_ip TEXT,
+                request_id TEXT NOT NULL,
+                details_json TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_audit_events_created
+            ON audit_events (created_at DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_audit_events_action
+            ON audit_events (action, outcome, id DESC);
             """
         )
         ensure_column(connection, "scan_jobs", "started_at", "TIMESTAMPTZ")
@@ -749,6 +1000,24 @@ def init_postgres_db() -> None:
         ensure_column(connection, "scan_jobs", "archive_member_ordinal", "INTEGER")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_scan_engine_jobs_worker_node_status
+            ON scan_engine_jobs (worker_node_id, status, id)
+            """
+        )
+        ensure_column(connection, "users", "auth_source", "TEXT NOT NULL DEFAULT 'local'")
+        ensure_column(connection, "users", "external_id", "TEXT")
+        ensure_column(connection, "users", "display_name", "TEXT")
+        ensure_column(connection, "users", "last_login_at", "TIMESTAMPTZ")
+        migrate_engine_instances_for_multiple_instances(connection)
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id
+            ON users (external_id) WHERE external_id IS NOT NULL
+            """
+        )
         connection.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_results_scan_engine
@@ -799,8 +1068,8 @@ def init_postgres_db() -> None:
         )
         connection.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_engine
-            ON scan_engine_jobs (scan_job_id, engine_key)
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_instance
+            ON scan_engine_jobs (scan_job_id, engine_instance_id)
             """
         )
         connection.execute(
@@ -848,22 +1117,158 @@ def ensure_column(
         connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
 
-def create_user(username: str, password_hash: str, role: str) -> int:
+def migrate_engine_instances_for_multiple_instances(connection: Any) -> None:
+    """Lift the legacy one-row-per-adapter constraint without losing instances.
+
+    ``adapter_key`` describes executable behavior, not a configured deployment.
+    Multiple deployments may therefore share one adapter while retaining distinct
+    names and configuration. Existing jobs are backfilled to their legacy instance
+    before the queue uniqueness rule moves from adapter key to instance id.
+    """
+    if using_postgres():
+        connection.execute(
+            "ALTER TABLE engine_instances "
+            "DROP CONSTRAINT IF EXISTS engine_instances_adapter_key_key"
+        )
+    elif sqlite_engine_instances_has_legacy_adapter_uniqueness(connection):
+        # SQLite cannot drop a UNIQUE table constraint. Rebuild only this small
+        # configuration table, preserving ids so existing job foreign keys remain
+        # valid. PRAGMA foreign_keys must be changed outside an active transaction.
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE engine_instances_multi (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    adapter_key TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO engine_instances_multi (
+                    id, adapter_key, display_name, enabled, config_json,
+                    created_at, updated_at
+                )
+                SELECT
+                    id, adapter_key, display_name, enabled, config_json,
+                    created_at, updated_at
+                FROM engine_instances;
+                DROP TABLE engine_instances;
+                ALTER TABLE engine_instances_multi RENAME TO engine_instances;
+                """
+            )
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+
+    make_engine_display_names_unique(connection)
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_instances_display_name
+        ON engine_instances (display_name)
+        """
+    )
+    connection.execute(
+        """
+        UPDATE scan_engine_jobs
+        SET engine_instance_id = (
+            SELECT MIN(engine_instances.id)
+            FROM engine_instances
+            WHERE engine_instances.adapter_key = scan_engine_jobs.engine_key
+        )
+        WHERE engine_instance_id IS NULL
+        """
+    )
+    connection.execute("DROP INDEX IF EXISTS idx_scan_engine_jobs_scan_engine")
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_engine_jobs_scan_instance
+        ON scan_engine_jobs (scan_job_id, engine_instance_id)
+        """
+    )
+
+
+def sqlite_engine_instances_has_legacy_adapter_uniqueness(connection: Any) -> bool:
+    for index_row in connection.execute("PRAGMA index_list(engine_instances)").fetchall():
+        if not bool(row_value(index_row, "unique")):
+            continue
+        index_name = str(row_value(index_row, "name"))
+        quoted_name = index_name.replace('"', '""')
+        columns = tuple(
+            str(row_value(column_row, "name"))
+            for column_row in connection.execute(
+                f'PRAGMA index_info("{quoted_name}")'
+            ).fetchall()
+        )
+        if columns == ("adapter_key",):
+            return True
+    return False
+
+
+def make_engine_display_names_unique(connection: Any) -> None:
+    """Deterministically repair legacy duplicate labels before adding uniqueness."""
+    rows = connection.execute(
+        "SELECT id, display_name FROM engine_instances ORDER BY id ASC"
+    ).fetchall()
+    used: set[str] = set()
+    for row in rows:
+        instance_id = int(row_value(row, "id"))
+        base_name = str(row_value(row, "display_name")).strip() or f"Engine {instance_id}"
+        candidate = base_name
+        suffix = 2
+        while candidate.casefold() in used:
+            candidate = f"{base_name} {suffix}"
+            suffix += 1
+        used.add(candidate.casefold())
+        if candidate != str(row_value(row, "display_name")):
+            connection.execute(
+                "UPDATE engine_instances SET display_name = ? WHERE id = ?",
+                (candidate, instance_id),
+            )
+
+
+def create_user(
+    username: str,
+    password_hash: str,
+    role: str,
+    *,
+    auth_source: str = "local",
+    external_id: str | None = None,
+    display_name: str | None = None,
+) -> int:
     try:
         with connect() as connection:
             cursor = connection.execute(
                 f"""
-                INSERT INTO users (username, password_hash, role)
-                VALUES (?, ?, ?)
+                INSERT INTO users (
+                    username, password_hash, role, auth_source, external_id, display_name
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 {returning_id_clause()}
                 """,
-                (username, password_hash, role),
+                (
+                    username,
+                    password_hash,
+                    role,
+                    auth_source,
+                    external_id,
+                    display_name,
+                ),
             )
     except sqlite3.OperationalError as exc:
         if not is_missing_users_table(exc):
             raise
         init_db()
-        return create_user(username, password_hash, role)
+        return create_user(
+            username,
+            password_hash,
+            role,
+            auth_source=auth_source,
+            external_id=external_id,
+            display_name=display_name,
+        )
     return require_lastrowid(cursor)
 
 
@@ -872,7 +1277,9 @@ def list_users() -> list[UserRecord]:
         with connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, username, password_hash, role, created_at, updated_at
+                SELECT id, username, password_hash, role, auth_source,
+                       external_id, display_name, last_login_at,
+                       created_at, updated_at
                 FROM users
                 ORDER BY username ASC
                 """
@@ -890,7 +1297,9 @@ def get_user_by_username(username: str) -> UserRecord | None:
         with connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, username, password_hash, role, created_at, updated_at
+                SELECT id, username, password_hash, role, auth_source,
+                       external_id, display_name, last_login_at,
+                       created_at, updated_at
                 FROM users
                 WHERE username = ?
                 """,
@@ -909,7 +1318,9 @@ def get_user_by_id(user_id: int) -> UserRecord | None:
         with connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, username, password_hash, role, created_at, updated_at
+                SELECT id, username, password_hash, role, auth_source,
+                       external_id, display_name, last_login_at,
+                       created_at, updated_at
                 FROM users
                 WHERE id = ?
                 """,
@@ -954,6 +1365,65 @@ def update_user(
         init_db()
 
 
+def sync_external_user(
+    *,
+    username: str,
+    role: str,
+    external_id: str,
+    display_name: str | None,
+) -> UserRecord:
+    """Create/update a passwordless LDAP shadow user after a successful bind.
+
+    A local username collision is rejected so directory authentication can
+    never claim or upgrade a break-glass/local account.
+    """
+    normalized_external_id = external_id.strip()
+    if not normalized_external_id:
+        raise ValueError("External user identity is required.")
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, username, auth_source
+            FROM users
+            WHERE external_id = ? OR LOWER(username) = LOWER(?)
+            ORDER BY CASE WHEN external_id = ? THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            (normalized_external_id, username, normalized_external_id),
+        ).fetchone()
+        if row is None:
+            cursor = connection.execute(
+                f"""
+                INSERT INTO users (
+                    username, password_hash, role, auth_source, external_id,
+                    display_name, last_login_at
+                )
+                VALUES (?, '!ldap', ?, 'ldap', ?, ?, CURRENT_TIMESTAMP)
+                {returning_id_clause()}
+                """,
+                (username, role, normalized_external_id, display_name),
+            )
+            user_id = require_lastrowid(cursor)
+        else:
+            if str(row_value(row, "auth_source")) != "ldap":
+                raise ValueError("Directory username conflicts with a local account.")
+            user_id = int(row_value(row, "id"))
+            connection.execute(
+                """
+                UPDATE users
+                SET role = ?, external_id = ?, display_name = ?,
+                    last_login_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (role, normalized_external_id, display_name, user_id),
+            )
+    user = get_user_by_id(user_id)
+    if user is None:
+        raise RuntimeError("LDAP shadow user could not be loaded after synchronization.")
+    return user
+
+
 def delete_user(user_id: int) -> None:
     try:
         with connect() as connection:
@@ -964,13 +1434,19 @@ def delete_user(user_id: int) -> None:
         init_db()
 
 
-def count_users_by_role(role: str) -> int:
+def count_users_by_role(role: str, auth_source: str | None = None) -> int:
     try:
         with connect() as connection:
-            row = connection.execute(
-                "SELECT COUNT(*) FROM users WHERE role = ?",
-                (role,),
-            ).fetchone()
+            if auth_source is None:
+                row = connection.execute(
+                    "SELECT COUNT(*) FROM users WHERE role = ?",
+                    (role,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT COUNT(*) FROM users WHERE role = ? AND auth_source = ?",
+                    (role, auth_source),
+                ).fetchone()
     except sqlite3.OperationalError as exc:
         if not is_missing_users_table(exc):
             raise
@@ -979,6 +1455,106 @@ def count_users_by_role(role: str) -> int:
     if row is None:
         return 0
     return int(row[0])
+
+
+def create_audit_event(
+    *,
+    actor_type: str,
+    actor_id: str | None,
+    actor_name: str | None,
+    action: str,
+    target_type: str,
+    target_id: str | None,
+    outcome: str,
+    source_ip: str | None,
+    request_id: str,
+    details_json: str = "{}",
+) -> int:
+    """Append an audit event.
+
+    Deliberately paired with read APIs only: audit rows are not mutable or
+    deletable through the application data layer.
+    """
+    with connect() as connection:
+        cursor = connection.execute(
+            f"""
+            INSERT INTO audit_events (
+                actor_type, actor_id, actor_name, action, target_type,
+                target_id, outcome, source_ip, request_id, details_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            {returning_id_clause()}
+            """,
+            (
+                actor_type,
+                actor_id,
+                actor_name,
+                action,
+                target_type,
+                target_id,
+                outcome,
+                source_ip,
+                request_id,
+                details_json,
+            ),
+        )
+    return require_lastrowid(cursor)
+
+
+def _audit_filter_clause(query: str, outcome: str) -> tuple[str, list[object]]:
+    clauses: list[str] = []
+    params: list[object] = []
+    normalized_query = query.strip().lower()
+    if normalized_query:
+        clauses.append(
+            "(" + " OR ".join(
+                f"LOWER(COALESCE({column}, '')) LIKE ?"
+                for column in (
+                    "actor_name",
+                    "actor_id",
+                    "action",
+                    "target_type",
+                    "target_id",
+                    "request_id",
+                )
+            ) + ")"
+        )
+        params.extend([f"%{normalized_query}%"] * 6)
+    if outcome in {"success", "failure", "denied"}:
+        clauses.append("outcome = ?")
+        params.append(outcome)
+    return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+
+def list_audit_events(
+    *, query: str = "", outcome: str = "all", limit: int = 50, offset: int = 0
+) -> list[AuditEventRecord]:
+    where_sql, params = _audit_filter_clause(query, outcome)
+    safe_limit = max(1, min(limit, 200))
+    safe_offset = max(0, offset)
+    with connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT id, created_at, actor_type, actor_id, actor_name, action,
+                   target_type, target_id, outcome, source_ip, request_id, details_json
+            FROM audit_events
+            {where_sql}
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, safe_limit, safe_offset),
+        ).fetchall()
+    return [row_to_audit_event_record(row) for row in rows]
+
+
+def count_audit_events(*, query: str = "", outcome: str = "all") -> int:
+    where_sql, params = _audit_filter_clause(query, outcome)
+    with connect() as connection:
+        row = connection.execute(
+            f"SELECT COUNT(*) AS event_count FROM audit_events{where_sql}",
+            params,
+        ).fetchone()
+    return 0 if row is None else int(row_value(row, "event_count"))
 
 
 def create_auth_session(user_id: int, token_hash: str, expires_at: int) -> int:
@@ -1010,6 +1586,10 @@ def get_user_by_session(token_hash: str, now: int) -> UserRecord | None:
                     users.username,
                     users.password_hash,
                     users.role,
+                    users.auth_source,
+                    users.external_id,
+                    users.display_name,
+                    users.last_login_at,
                     users.created_at,
                     users.updated_at
                 FROM auth_sessions
@@ -1257,6 +1837,8 @@ def get_engine_instance(adapter_key: str) -> EngineInstanceRecord | None:
                     updated_at
                 FROM engine_instances
                 WHERE adapter_key = ?
+                ORDER BY id ASC
+                LIMIT 1
                 """,
                 (adapter_key,),
             ).fetchone()
@@ -1277,12 +1859,42 @@ def get_engine_instance(adapter_key: str) -> EngineInstanceRecord | None:
                     updated_at
                 FROM engine_instances
                 WHERE adapter_key = ?
+                ORDER BY id ASC
+                LIMIT 1
                 """,
                 (adapter_key,),
             ).fetchone()
     if row is None:
         return None
     return row_to_engine_instance_record(row)
+
+
+def get_engine_instance_by_id(instance_id: int) -> EngineInstanceRecord | None:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT
+                id,
+                adapter_key,
+                display_name,
+                enabled,
+                config_json,
+                created_at,
+                updated_at
+            FROM engine_instances
+            WHERE id = ?
+            """,
+            (instance_id,),
+        ).fetchone()
+    return None if row is None else row_to_engine_instance_record(row)
+
+
+def list_engine_instances_for_adapter(adapter_key: str) -> list[EngineInstanceRecord]:
+    return [
+        instance
+        for instance in list_engine_instances()
+        if instance.adapter_key == adapter_key
+    ]
 
 
 def create_engine_instance(
@@ -1335,13 +1947,13 @@ def update_engine_instance(
                     enabled = ?,
                     config_json = ?,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE adapter_key = ?
+                WHERE id = ?
                 """,
                 (
                     display_name if display_name is not None else instance.display_name,
                     db_bool(enabled if enabled is not None else instance.enabled),
                     config_json if config_json is not None else instance.config_json,
-                    adapter_key,
+                    instance.id,
                 ),
             )
     except sqlite3.OperationalError as exc:
@@ -1351,22 +1963,619 @@ def update_engine_instance(
         update_engine_instance(adapter_key, display_name, enabled, config_json)
 
 
+def update_engine_instance_by_id(
+    instance_id: int,
+    display_name: str | None = None,
+    enabled: bool | None = None,
+    config_json: str | None = None,
+) -> None:
+    instance = get_engine_instance_by_id(instance_id)
+    if instance is None:
+        return
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE engine_instances
+            SET
+                display_name = ?,
+                enabled = ?,
+                config_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                display_name if display_name is not None else instance.display_name,
+                db_bool(enabled if enabled is not None else instance.enabled),
+                config_json if config_json is not None else instance.config_json,
+                instance_id,
+            ),
+        )
+
+
 def delete_engine_instance(adapter_key: str) -> None:
+    instance = get_engine_instance(adapter_key)
+    if instance is None:
+        return
     try:
         with connect() as connection:
             connection.execute(
-                "DELETE FROM engine_instances WHERE adapter_key = ?",
-                (adapter_key,),
+                "DELETE FROM engine_instances WHERE id = ?",
+                (instance.id,),
             )
     except sqlite3.OperationalError as exc:
         if not is_missing_engine_instances_table(exc):
             raise
         init_db()
-        with connect() as connection:
-            connection.execute(
-                "DELETE FROM engine_instances WHERE adapter_key = ?",
-                (adapter_key,),
+        delete_engine_instance(adapter_key)
+
+
+def delete_engine_instance_by_id(instance_id: int) -> None:
+    with connect() as connection:
+        connection.execute("DELETE FROM engine_instances WHERE id = ?", (instance_id,))
+
+
+WORKER_NODE_LIFECYCLE_STATES = frozenset({"active", "draining", "disabled"})
+
+
+def upsert_worker_node_heartbeat(
+    *,
+    node_id: str,
+    display_name: str,
+    hostname: str,
+    platform: str,
+    agent_version: str,
+    labels_json: str,
+    capacity: int,
+    advertised_engine_keys_json: str,
+    runtime_state: str,
+    active_scan_id: int | None,
+    process_id: int,
+    last_heartbeat_at: int,
+) -> WorkerNodeRecord:
+    """Register or refresh a node without overriding an admin lifecycle choice."""
+    with connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO worker_nodes (
+                node_id, display_name, hostname, platform, agent_version,
+                labels_json, capacity, advertised_engine_keys_json,
+                lifecycle_state, runtime_state, active_scan_id, process_id,
+                last_heartbeat_at, updated_at
             )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (node_id) DO UPDATE SET
+                display_name = excluded.display_name,
+                hostname = excluded.hostname,
+                platform = excluded.platform,
+                agent_version = excluded.agent_version,
+                labels_json = excluded.labels_json,
+                capacity = excluded.capacity,
+                advertised_engine_keys_json = excluded.advertised_engine_keys_json,
+                runtime_state = excluded.runtime_state,
+                active_scan_id = excluded.active_scan_id,
+                process_id = excluded.process_id,
+                last_heartbeat_at = excluded.last_heartbeat_at,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                node_id,
+                display_name,
+                hostname,
+                platform,
+                agent_version,
+                labels_json,
+                capacity,
+                advertised_engine_keys_json,
+                runtime_state,
+                active_scan_id,
+                process_id,
+                last_heartbeat_at,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM worker_nodes WHERE node_id = ?",
+            (node_id,),
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("Worker node heartbeat was not persisted.")
+    return row_to_worker_node_record(row)
+
+
+def get_worker_node(node_id: str) -> WorkerNodeRecord | None:
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM worker_nodes WHERE node_id = ?",
+            (node_id,),
+        ).fetchone()
+    return None if row is None else row_to_worker_node_record(row)
+
+
+def create_worker_agent_credential(
+    *,
+    node_id: str,
+    token_hash: str,
+    token_prefix: str,
+    expires_at: int | None = None,
+    revoke_existing: bool = True,
+) -> WorkerAgentCredentialRecord:
+    """Persist a high-entropy agent credential hash, never its plaintext token."""
+    with connect() as connection:
+        if not using_postgres():
+            connection.execute("BEGIN IMMEDIATE")
+        node = connection.execute(
+            "SELECT 1 FROM worker_nodes WHERE node_id = ?",
+            (node_id,),
+        ).fetchone()
+        if node is None:
+            raise ValueError("Worker node must be registered before issuing a credential.")
+        if revoke_existing:
+            connection.execute(
+                """
+                UPDATE worker_agent_credentials
+                SET revoked_at = ?
+                WHERE node_id = ? AND revoked_at IS NULL
+                """,
+                (int(time.time()), node_id),
+            )
+        cursor = connection.execute(
+            f"""
+            INSERT INTO worker_agent_credentials (
+                node_id, token_hash, token_prefix, expires_at
+            )
+            VALUES (?, ?, ?, ?)
+            {returning_id_clause()}
+            """,
+            (node_id, token_hash, token_prefix, expires_at),
+        )
+        credential_id = require_lastrowid(cursor)
+        row = connection.execute(
+            "SELECT * FROM worker_agent_credentials WHERE id = ?",
+            (credential_id,),
+        ).fetchone()
+    if row is None:  # pragma: no cover - the row was just inserted
+        raise RuntimeError("Worker credential was not persisted.")
+    return row_to_worker_agent_credential_record(row)
+
+
+def authenticate_worker_agent_credential(
+    token_hash: str,
+    *,
+    now: int | None = None,
+) -> WorkerAgentCredentialRecord | None:
+    """Resolve and touch an active credential by its deterministic token hash."""
+    current_time = int(time.time()) if now is None else now
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT * FROM worker_agent_credentials
+            WHERE token_hash = ?
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            (token_hash, current_time),
+        ).fetchone()
+        if row is not None:
+            last_used = row_value(row, "last_used_at")
+            # Credential use is operational metadata, not an access log. Touch
+            # it at most once per minute so heartbeat/lease polling does not
+            # create a database write for every control-plane request.
+            if last_used is None or int(last_used) <= current_time - 60:
+                connection.execute(
+                    """
+                    UPDATE worker_agent_credentials
+                    SET last_used_at = ?
+                    WHERE id = ?
+                    """,
+                    (current_time, int(row_value(row, "id"))),
+                )
+    return None if row is None else row_to_worker_agent_credential_record(row)
+
+
+def revoke_worker_agent_credentials(node_id: str, *, now: int | None = None) -> int:
+    current_time = int(time.time()) if now is None else now
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE worker_agent_credentials
+            SET revoked_at = ?
+            WHERE node_id = ? AND revoked_at IS NULL
+            """,
+            (current_time, node_id),
+        )
+    return max(0, int(cursor.rowcount or 0))
+
+
+def list_worker_agent_credentials(node_id: str) -> list[WorkerAgentCredentialRecord]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM worker_agent_credentials
+            WHERE node_id = ?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (node_id,),
+        ).fetchall()
+    return [row_to_worker_agent_credential_record(row) for row in rows]
+
+
+def list_worker_nodes() -> list[WorkerNodeRecord]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM worker_nodes
+            ORDER BY display_name ASC, node_id ASC
+            """
+        ).fetchall()
+    return [row_to_worker_node_record(row) for row in rows]
+
+
+def update_worker_node_lifecycle(node_id: str, lifecycle_state: str) -> bool:
+    normalized_state = lifecycle_state.strip().lower()
+    if normalized_state not in WORKER_NODE_LIFECYCLE_STATES:
+        raise ValueError(f"Unsupported worker lifecycle state: {lifecycle_state}")
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE worker_nodes
+            SET lifecycle_state = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE node_id = ?
+            """,
+            (normalized_state, node_id),
+        )
+    return int(cursor.rowcount or 0) > 0
+
+
+def create_worker_pool(name: str, selector_json: str = "{}") -> int:
+    with connect() as connection:
+        duplicate = connection.execute(
+            "SELECT id FROM worker_pools WHERE LOWER(name) = LOWER(?) LIMIT 1",
+            (name,),
+        ).fetchone()
+        if duplicate is not None:
+            raise ValueError("A worker pool with this name already exists.")
+        cursor = connection.execute(
+            f"""
+            INSERT INTO worker_pools (name, selector_json, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            {returning_id_clause()}
+            """,
+            (name, selector_json),
+        )
+        return require_lastrowid(cursor)
+
+
+def get_worker_pool(pool_id: int) -> WorkerPoolRecord | None:
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM worker_pools WHERE id = ?",
+            (pool_id,),
+        ).fetchone()
+    return None if row is None else row_to_worker_pool_record(row)
+
+
+def list_worker_pools() -> list[WorkerPoolRecord]:
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT * FROM worker_pools ORDER BY name ASC, id ASC"
+        ).fetchall()
+    return [row_to_worker_pool_record(row) for row in rows]
+
+
+def update_worker_pool(
+    pool_id: int,
+    *,
+    name: str,
+    selector_json: str,
+    enabled: bool,
+) -> bool:
+    with connect() as connection:
+        duplicate = connection.execute(
+            """
+            SELECT id FROM worker_pools
+            WHERE LOWER(name) = LOWER(?) AND id <> ?
+            LIMIT 1
+            """,
+            (name, pool_id),
+        ).fetchone()
+        if duplicate is not None:
+            raise ValueError("A worker pool with this name already exists.")
+        cursor = connection.execute(
+            """
+            UPDATE worker_pools
+            SET name = ?, selector_json = ?, enabled = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (name, selector_json, db_bool(enabled), pool_id),
+        )
+    return int(cursor.rowcount or 0) > 0
+
+
+def delete_worker_pool(pool_id: int) -> bool:
+    """Delete an unused pool; bindings must be removed explicitly first."""
+    with connect() as connection:
+        binding = connection.execute(
+            """
+            SELECT engine_instance_id
+            FROM engine_instance_worker_pools
+            WHERE worker_pool_id = ?
+            LIMIT 1
+            """,
+            (pool_id,),
+        ).fetchone()
+        if binding is not None:
+            raise ValueError("Worker pool is still assigned to an engine instance.")
+        cursor = connection.execute("DELETE FROM worker_pools WHERE id = ?", (pool_id,))
+    return int(cursor.rowcount or 0) > 0
+
+
+def set_engine_instance_worker_pool(
+    engine_instance_id: int,
+    worker_pool_id: int | None,
+) -> None:
+    with connect() as connection:
+        engine = connection.execute(
+            "SELECT id FROM engine_instances WHERE id = ?",
+            (engine_instance_id,),
+        ).fetchone()
+        if engine is None:
+            raise ValueError("Engine instance not found.")
+        if worker_pool_id is None:
+            connection.execute(
+                "DELETE FROM engine_instance_worker_pools WHERE engine_instance_id = ?",
+                (engine_instance_id,),
+            )
+            return
+        pool = connection.execute(
+            "SELECT id FROM worker_pools WHERE id = ?",
+            (worker_pool_id,),
+        ).fetchone()
+        if pool is None:
+            raise ValueError("Worker pool not found.")
+        connection.execute(
+            """
+            INSERT INTO engine_instance_worker_pools (
+                engine_instance_id, worker_pool_id, updated_at
+            )
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (engine_instance_id) DO UPDATE SET
+                worker_pool_id = excluded.worker_pool_id,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (engine_instance_id, worker_pool_id),
+        )
+
+
+def list_engine_instance_worker_pool_bindings() -> dict[int, int]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT engine_instance_id, worker_pool_id
+            FROM engine_instance_worker_pools
+            ORDER BY engine_instance_id ASC
+            """
+        ).fetchall()
+    return {
+        int(row_value(row, "engine_instance_id")): int(row_value(row, "worker_pool_id"))
+        for row in rows
+    }
+
+
+def ensure_engine_node_health_rows(node_id: str, engine_instance_ids: set[int]) -> None:
+    if not engine_instance_ids:
+        return
+    with connect() as connection:
+        for instance_id in sorted(engine_instance_ids):
+            connection.execute(
+                """
+                INSERT INTO engine_node_health (node_id, engine_instance_id)
+                VALUES (?, ?)
+                ON CONFLICT (node_id, engine_instance_id) DO NOTHING
+                """,
+                (node_id, instance_id),
+            )
+
+
+def claim_due_engine_node_health(
+    node_id: str,
+    worker_id: str,
+    engine_instance_ids: set[int],
+    *,
+    interval_seconds: int,
+    lease_seconds: int,
+    now: int | None = None,
+) -> EngineNodeHealthRecord | None:
+    if not engine_instance_ids:
+        return None
+    current_time = int(time.time()) if now is None else now
+    due_before = current_time - max(1, interval_seconds)
+    lease_expires_at = current_time + max(5, lease_seconds)
+    sorted_ids = sorted(engine_instance_ids)
+    placeholders = ", ".join("?" for _ in sorted_ids)
+    with connect() as connection:
+        if not using_postgres():
+            connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            f"""
+            SELECT node_id, engine_instance_id
+            FROM engine_node_health
+            WHERE node_id = ?
+              AND engine_instance_id IN ({placeholders})
+              AND (last_checked_at IS NULL OR last_checked_at <= ?)
+              AND (check_lease_expires_at IS NULL OR check_lease_expires_at <= ?)
+            ORDER BY last_checked_at ASC, engine_instance_id ASC
+            LIMIT 1
+            {"FOR UPDATE SKIP LOCKED" if using_postgres() else ""}
+            """,
+            (node_id, *sorted_ids, due_before, current_time),
+        ).fetchone()
+        if row is None:
+            return None
+        instance_id = int(row_value(row, "engine_instance_id"))
+        connection.execute(
+            """
+            UPDATE engine_node_health
+            SET status = 'checking', check_worker_id = ?,
+                check_generation = check_generation + 1,
+                check_lease_expires_at = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE node_id = ? AND engine_instance_id = ?
+            """,
+            (worker_id, lease_expires_at, node_id, instance_id),
+        )
+        claimed = connection.execute(
+            """
+            SELECT * FROM engine_node_health
+            WHERE node_id = ? AND engine_instance_id = ?
+            """,
+            (node_id, instance_id),
+        ).fetchone()
+    return None if claimed is None else row_to_engine_node_health_record(claimed)
+
+
+def commit_engine_node_health_if_owned(
+    *,
+    node_id: str,
+    engine_instance_id: int,
+    worker_id: str,
+    check_generation: int,
+    ok: bool,
+    health_status: str,
+    detail: str,
+    product_version: str | None,
+    engine_version: str | None,
+    signature_version: str | None,
+    service_state: str | None,
+    storage_readable: bool | None,
+    storage_writable: bool | None,
+    details_json: str,
+    now: int | None = None,
+) -> bool:
+    current_time = int(time.time()) if now is None else now
+    normalized_status = "healthy" if ok else "unhealthy"
+    if ok and health_status.strip().lower() == "degraded":
+        normalized_status = "degraded"
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE engine_node_health
+            SET status = ?, ok = ?, health_status = ?, detail = ?,
+                product_version = ?, engine_version = ?, signature_version = ?,
+                service_state = ?, storage_readable = ?, storage_writable = ?,
+                consecutive_failures = CASE WHEN ? THEN 0 ELSE consecutive_failures + 1 END,
+                last_checked_at = ?,
+                last_success_at = CASE WHEN ? THEN ? ELSE last_success_at END,
+                details_json = ?, check_worker_id = NULL,
+                check_lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE node_id = ? AND engine_instance_id = ?
+              AND check_worker_id = ? AND check_generation = ?
+            """,
+            (
+                normalized_status,
+                db_bool(ok),
+                health_status,
+                detail,
+                product_version,
+                engine_version,
+                signature_version,
+                service_state,
+                None if storage_readable is None else db_bool(storage_readable),
+                None if storage_writable is None else db_bool(storage_writable),
+                db_bool(ok),
+                current_time,
+                db_bool(ok),
+                current_time,
+                details_json,
+                node_id,
+                engine_instance_id,
+                worker_id,
+                check_generation,
+            ),
+        )
+    return int(cursor.rowcount or 0) > 0
+
+
+def record_engine_node_scan_success(
+    node_id: str,
+    engine_instance_id: int,
+    *,
+    engine_version: str | None,
+    signature_version: str | None,
+    now: int | None = None,
+) -> None:
+    current_time = int(time.time()) if now is None else now
+    with connect() as connection:
+        node_exists = connection.execute(
+            "SELECT 1 FROM worker_nodes WHERE node_id = ?",
+            (node_id,),
+        ).fetchone()
+        engine_exists = connection.execute(
+            "SELECT 1 FROM engine_instances WHERE id = ?",
+            (engine_instance_id,),
+        ).fetchone()
+        if node_exists is None or engine_exists is None:
+            return
+        connection.execute(
+            """
+            INSERT INTO engine_node_health (
+                node_id, engine_instance_id, engine_version, signature_version,
+                last_scan_success_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (node_id, engine_instance_id) DO UPDATE SET
+                engine_version = COALESCE(excluded.engine_version, engine_node_health.engine_version),
+                signature_version = COALESCE(excluded.signature_version, engine_node_health.signature_version),
+                last_scan_success_at = excluded.last_scan_success_at,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                node_id,
+                engine_instance_id,
+                engine_version,
+                signature_version,
+                current_time,
+            ),
+        )
+
+
+def request_engine_node_health_check(engine_instance_id: int) -> int:
+    with connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE engine_node_health
+            SET last_checked_at = NULL, check_worker_id = NULL,
+                check_lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE engine_instance_id = ?
+            """,
+            (engine_instance_id,),
+        )
+    return max(0, int(cursor.rowcount or 0))
+
+
+def list_engine_node_health(
+    *,
+    node_id: str | None = None,
+    engine_instance_id: int | None = None,
+) -> list[EngineNodeHealthRecord]:
+    clauses: list[str] = []
+    params: list[object] = []
+    if node_id is not None:
+        clauses.append("node_id = ?")
+        params.append(node_id)
+    if engine_instance_id is not None:
+        clauses.append("engine_instance_id = ?")
+        params.append(engine_instance_id)
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT * FROM engine_node_health
+            {where_sql}
+            ORDER BY node_id ASC, engine_instance_id ASC
+            """,
+            tuple(params),
+        ).fetchall()
+    return [row_to_engine_node_health_record(row) for row in rows]
 
 
 def _insert_sample(connection: Any, sample: StoredSample) -> int:
@@ -2163,7 +3372,7 @@ def _insert_engine_jobs(
                     engine_name
                 )
                 VALUES (?, ?, ?, ?)
-                ON CONFLICT (scan_job_id, engine_key) DO NOTHING
+                ON CONFLICT (scan_job_id, engine_instance_id) DO NOTHING
                 RETURNING id
                 """,
                 (scan_job_id, engine.id, engine.adapter_key, engine.display_name),
@@ -2499,21 +3708,61 @@ def claim_next_scan_engine_job(
     engine_keys: set[str],
     worker_id: str,
     *,
+    worker_node_id: str | None = None,
+    eligible_engine_instance_ids: set[int] | None = None,
     lease_seconds: int = 120,
     now: int | None = None,
     max_attempts: int = 5,
 ) -> ScanEngineJobRecord | None:
     if not engine_keys:
         return None
+    if eligible_engine_instance_ids is not None and not eligible_engine_instance_ids:
+        return None
 
     current_time = int(time.time()) if now is None else now
     lease_expires_at = current_time + max(1, lease_seconds)
     sorted_engine_keys = sorted(engine_keys)
     placeholders = ", ".join("?" for _ in sorted_engine_keys)
+    sorted_instance_ids = sorted(eligible_engine_instance_ids or set())
+    instance_clause = ""
+    if eligible_engine_instance_ids is not None:
+        instance_placeholders = ", ".join("?" for _ in sorted_instance_ids)
+        instance_clause = (
+            f"AND scan_engine_jobs.engine_instance_id IN ({instance_placeholders})"
+        )
 
     with connect() as connection:
         if not using_postgres():
             connection.execute("BEGIN IMMEDIATE")
+
+        if worker_node_id:
+            node = connection.execute(
+                f"""
+                SELECT lifecycle_state, capacity
+                FROM worker_nodes
+                WHERE node_id = ?
+                {"FOR UPDATE" if using_postgres() else ""}
+                """,
+                (worker_node_id,),
+            ).fetchone()
+            if node is not None:
+                if str(row_value(node, "lifecycle_state")) != "active":
+                    return None
+                capacity = max(1, int(row_value(node, "capacity")))
+                active_row = connection.execute(
+                    """
+                    SELECT COUNT(*) AS active_count
+                    FROM scan_engine_jobs
+                    WHERE worker_node_id = ?
+                      AND status IN ('claimed', 'running')
+                    """,
+                    (worker_node_id,),
+                ).fetchone()
+                active_count = (
+                    0 if active_row is None else int(row_value(active_row, "active_count"))
+                )
+                if active_count >= capacity:
+                    return None
 
         # Only ``pending`` jobs are claimed. An expired ``claimed``/``running``
         # job is NOT reclaimed here — reviving a possibly-still-live owner inside
@@ -2528,13 +3777,14 @@ def claim_next_scan_engine_job(
             JOIN scan_jobs ON scan_jobs.id = scan_engine_jobs.scan_job_id
             WHERE scan_jobs.status IN ('queued', 'running')
               AND scan_engine_jobs.engine_key IN ({placeholders})
+              {instance_clause}
               AND scan_engine_jobs.status = 'pending'
               AND scan_engine_jobs.attempt_count < ?
             ORDER BY scan_jobs.created_at ASC, scan_jobs.id ASC, scan_engine_jobs.id ASC
             LIMIT 1
             {"FOR UPDATE SKIP LOCKED" if using_postgres() else ""}
             """,
-            (*sorted_engine_keys, max(1, max_attempts)),
+            (*sorted_engine_keys, *sorted_instance_ids, max(1, max_attempts)),
         ).fetchone()
         if row is None:
             return None
@@ -2546,6 +3796,7 @@ def claim_next_scan_engine_job(
             SET
                 status = 'claimed',
                 worker_id = ?,
+                worker_node_id = ?,
                 claimed_at = CURRENT_TIMESTAMP,
                 started_at = NULL,
                 finished_at = NULL,
@@ -2555,7 +3806,7 @@ def claim_next_scan_engine_job(
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (worker_id, lease_expires_at, job_id),
+            (worker_id, worker_node_id, lease_expires_at, job_id),
         )
         return get_scan_engine_job_with_connection(connection, job_id)
 
@@ -3649,6 +4900,7 @@ def recover_running_scan_jobs(
             SET
                 status = 'pending',
                 worker_id = NULL,
+                worker_node_id = NULL,
                 claimed_at = NULL,
                 started_at = NULL,
                 lease_expires_at = NULL,
@@ -3830,6 +5082,121 @@ def row_to_engine_instance_record(row: sqlite3.Row) -> EngineInstanceRecord:
     )
 
 
+def row_to_worker_node_record(row: Any) -> WorkerNodeRecord:
+    return WorkerNodeRecord(
+        node_id=str(row_value(row, "node_id")),
+        display_name=str(row_value(row, "display_name")),
+        hostname=str(row_value(row, "hostname")),
+        platform=str(row_value(row, "platform")),
+        agent_version=str(row_value(row, "agent_version")),
+        labels_json=str(row_value(row, "labels_json")),
+        capacity=int(row_value(row, "capacity")),
+        advertised_engine_keys_json=str(
+            row_value(row, "advertised_engine_keys_json")
+        ),
+        lifecycle_state=str(row_value(row, "lifecycle_state")),
+        runtime_state=str(row_value(row, "runtime_state")),
+        active_scan_id=(
+            None
+            if row_value(row, "active_scan_id") is None
+            else int(row_value(row, "active_scan_id"))
+        ),
+        process_id=(
+            None
+            if row_value(row, "process_id") is None
+            else int(row_value(row, "process_id"))
+        ),
+        last_heartbeat_at=int(row_value(row, "last_heartbeat_at")),
+        created_at=str(row_value(row, "created_at")),
+        updated_at=str(row_value(row, "updated_at")),
+    )
+
+
+def row_to_worker_agent_credential_record(row: Any) -> WorkerAgentCredentialRecord:
+    return WorkerAgentCredentialRecord(
+        id=int(row_value(row, "id")),
+        node_id=str(row_value(row, "node_id")),
+        token_hash=str(row_value(row, "token_hash")),
+        token_prefix=str(row_value(row, "token_prefix")),
+        created_at=str(row_value(row, "created_at")),
+        last_used_at=(
+            None
+            if row_value(row, "last_used_at") is None
+            else int(row_value(row, "last_used_at"))
+        ),
+        expires_at=(
+            None
+            if row_value(row, "expires_at") is None
+            else int(row_value(row, "expires_at"))
+        ),
+        revoked_at=(
+            None
+            if row_value(row, "revoked_at") is None
+            else int(row_value(row, "revoked_at"))
+        ),
+    )
+
+
+def row_to_worker_pool_record(row: Any) -> WorkerPoolRecord:
+    return WorkerPoolRecord(
+        id=int(row_value(row, "id")),
+        name=str(row_value(row, "name")),
+        selector_json=str(row_value(row, "selector_json")),
+        enabled=bool(int(row_value(row, "enabled"))),
+        created_at=str(row_value(row, "created_at")),
+        updated_at=str(row_value(row, "updated_at")),
+    )
+
+
+def row_to_engine_node_health_record(row: Any) -> EngineNodeHealthRecord:
+    return EngineNodeHealthRecord(
+        node_id=str(row_value(row, "node_id")),
+        engine_instance_id=int(row_value(row, "engine_instance_id")),
+        status=str(row_value(row, "status")),
+        ok=bool(int(row_value(row, "ok"))),
+        health_status=str(row_value(row, "health_status")),
+        detail=str(row_value(row, "detail")),
+        product_version=None
+        if row_value(row, "product_version") is None
+        else str(row_value(row, "product_version")),
+        engine_version=None
+        if row_value(row, "engine_version") is None
+        else str(row_value(row, "engine_version")),
+        signature_version=None
+        if row_value(row, "signature_version") is None
+        else str(row_value(row, "signature_version")),
+        service_state=None
+        if row_value(row, "service_state") is None
+        else str(row_value(row, "service_state")),
+        storage_readable=None
+        if row_value(row, "storage_readable") is None
+        else bool(int(row_value(row, "storage_readable"))),
+        storage_writable=None
+        if row_value(row, "storage_writable") is None
+        else bool(int(row_value(row, "storage_writable"))),
+        consecutive_failures=int(row_value(row, "consecutive_failures")),
+        last_checked_at=None
+        if row_value(row, "last_checked_at") is None
+        else int(row_value(row, "last_checked_at")),
+        last_success_at=None
+        if row_value(row, "last_success_at") is None
+        else int(row_value(row, "last_success_at")),
+        last_scan_success_at=None
+        if row_value(row, "last_scan_success_at") is None
+        else int(row_value(row, "last_scan_success_at")),
+        details_json=str(row_value(row, "details_json")),
+        check_worker_id=None
+        if row_value(row, "check_worker_id") is None
+        else str(row_value(row, "check_worker_id")),
+        check_generation=int(row_value(row, "check_generation")),
+        check_lease_expires_at=None
+        if row_value(row, "check_lease_expires_at") is None
+        else int(row_value(row, "check_lease_expires_at")),
+        created_at=str(row_value(row, "created_at")),
+        updated_at=str(row_value(row, "updated_at")),
+    )
+
+
 def row_to_user_record(row: sqlite3.Row) -> UserRecord:
     return UserRecord(
         id=int(row_value(row, "id")),
@@ -3838,4 +5205,43 @@ def row_to_user_record(row: sqlite3.Row) -> UserRecord:
         role=str(row_value(row, "role")),
         created_at=str(row_value(row, "created_at")),
         updated_at=str(row_value(row, "updated_at")),
+        auth_source=str(row_value(row, "auth_source") or "local"),
+        external_id=(
+            None
+            if row_value(row, "external_id") is None
+            else str(row_value(row, "external_id"))
+        ),
+        display_name=(
+            None
+            if row_value(row, "display_name") is None
+            else str(row_value(row, "display_name"))
+        ),
+        last_login_at=(
+            None
+            if row_value(row, "last_login_at") is None
+            else str(row_value(row, "last_login_at"))
+        ),
+    )
+
+
+def row_to_audit_event_record(row: sqlite3.Row) -> AuditEventRecord:
+    return AuditEventRecord(
+        id=int(row_value(row, "id")),
+        created_at=str(row_value(row, "created_at")),
+        actor_type=str(row_value(row, "actor_type")),
+        actor_id=None if row_value(row, "actor_id") is None else str(row_value(row, "actor_id")),
+        actor_name=None
+        if row_value(row, "actor_name") is None
+        else str(row_value(row, "actor_name")),
+        action=str(row_value(row, "action")),
+        target_type=str(row_value(row, "target_type")),
+        target_id=None
+        if row_value(row, "target_id") is None
+        else str(row_value(row, "target_id")),
+        outcome=str(row_value(row, "outcome")),
+        source_ip=None
+        if row_value(row, "source_ip") is None
+        else str(row_value(row, "source_ip")),
+        request_id=str(row_value(row, "request_id")),
+        details_json=str(row_value(row, "details_json")),
     )

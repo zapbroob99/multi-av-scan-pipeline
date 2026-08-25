@@ -16,18 +16,22 @@ Support states:
 | Integration | Vendor | Product | Method | State | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Static Metadata | MASP | Built-in metadata analyzer | local | supported | Extracts hashes, size, content type, and storage metadata. Not a detection engine. |
-| ClamAV via clamd | Cisco Talos | ClamAV clamd | TCP clamd protocol | supported | Preferred ClamAV runtime in Docker/on-prem deployments. |
+| ClamAV via clamd | Cisco Talos | ClamAV clamd | TCP clamd protocol | supported | Preferred ClamAV runtime in Docker/on-prem deployments. Multiple named clamd instances may use distinct host, port, timeout, and size settings. |
 | ClamAV via clamscan | Cisco Talos | ClamAV CLI | local CLI | supported | Local fallback when `clamscan` exists on PATH. |
 | YARA via local CLI | VirusTotal/community | YARA | local CLI | supported | Requires local YARA binary and local rule files. |
 
-## Candidate Commercial Integrations
+## Validation and Candidate Commercial Integrations
 
-These are not supported yet. They require official documentation review and product/lab validation before appearing as addable engines in production UI.
+These are not production-supported yet. An implemented `lab` or `blocked`
+adapter may be visible for controlled validation when its support state and
+operational blocker are explicit; visibility is not a production support claim.
+Research/planned rows have no usable adapter until implementation and lab gates
+are complete.
 
 | Candidate | Vendor | Product | Likely Method | State | Required Before Implementation |
 | --- | --- | --- | --- | --- | --- |
-| VirusTotal file reputation | Google/VirusTotal | VirusTotal API v3 | SHA-256 report lookup | blocked | Registry-managed hash-reputation adapter for direct hash queries and manual file scans, with encrypted admin-UI credentials, live connection test, environment fallback, and mock coverage. File scans reuse the locally computed SHA-256 and never upload content. Not production-supported until a licensed Premium/Enterprise key and real API fixtures validate found/unknown/auth/quota responses. Unknown/stale/undetected are review by default. |
-| Microsoft Defender via local CLI | Microsoft | Microsoft Defender Antivirus | PowerShell/CLI | lab | Adapter implemented and locally validated with healthy status, clean scan, and EICAR detection fixtures. Still needs broader failure/timeout fixtures before `supported`. |
+| VirusTotal file reputation | Google/VirusTotal | VirusTotal API v3 | SHA-256 report lookup | blocked | Registry-managed, quota-consuming reputation adapter for interactive Scan Hash and manual file scans only. REST and ICAP automation exclude it before job creation. Includes encrypted admin-UI credentials, live connection test, environment fallback, and mock coverage. File scans reuse the locally computed SHA-256 and never upload content. Not production-supported until a licensed Premium/Enterprise key and real API fixtures validate found/unknown/auth/quota responses. Scan Hash is fail-closed; manual file scans treat unknown/zero-signal reputation as neutral enrichment while malicious blocks and suspicious reviews. |
+| Microsoft Defender via local CLI | Microsoft | Microsoft Defender Antivirus | PowerShell/CLI | lab | Multiple named configurations are supported. The HTTPS Windows service agent uses a node-bound token, no database credential, authenticated size/SHA-256-verified sample download, a virtual service identity, ACL-protected config, rotating logs, preflight, lifecycle scripts, bundle-integrity verification, and an evidence-producing clean/EICAR acceptance runner; direct-queue/shared-storage remains compatible. Real-host failure/timeout/failover/lifecycle acceptance and signed releases are still required before `supported`. See [Windows Worker Agent](../deployment/WINDOWS_WORKER_AGENT.md). |
 | ESET Server Security via ICAP | ESET | ESET Server Security or ICAP-capable gateway product | ICAP | research | Confirm exact product, ICAP service behavior, clean/detected responses, headers, licensing, and file size limits. |
 | ESET PROTECT via API | ESET | ESET PROTECT | REST API | research | Confirm whether file submission/scanning is supported or only management/telemetry APIs are available. |
 | Trellix ATD via API | Trellix | Advanced Threat Defense / Malware Analysis | REST API | research | Confirm submission flow, polling model, verdict schema, auth, rate limits, and report retrieval. |
@@ -84,5 +88,18 @@ report_malicious.json
 ## Notes
 
 - Static metadata should not count toward required detection engine coverage.
+- Worker-deployed integrations register durable node identity, platform,
+  version, labels, capacity, advertised adapters, lifecycle, and heartbeat.
+  Exact-match worker pools and engine-instance bindings use that inventory for
+  placement and capacity-aware scheduling. Worker-executed probes separately
+  persist per-node/per-instance service, version, signature, storage, failure,
+  and last-scan health. Vendor support state still requires the adapter-specific
+  validation gates above; a green generic probe does not promote a lab adapter.
+- Control-API workers receive no PostgreSQL credentials. Their one-time agent
+  token is stored server-side only as a hash; job/result/health writes retain
+  lease-generation fencing, and sample download is limited to the current owner.
 - Generic ICAP, generic REST, and custom command engines are internal engineering tools only unless a future product decision explicitly changes this.
-- UI should not expose commercial vendor integrations until they are at least `lab` quality, and production builds should only show `supported` engines by default.
+- Implemented `lab` or `blocked` integrations may be exposed for controlled
+  validation with an explicit support-state warning. Production operators must
+  enable only integrations approved for their license, network, and acceptance
+  test scope.

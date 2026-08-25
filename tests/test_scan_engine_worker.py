@@ -108,7 +108,7 @@ class RunMaintenanceTests(unittest.TestCase):
 
 class ScanEngineWorkerTests(unittest.TestCase):
     def test_process_scan_engine_job_runs_adapter_and_marks_terminal(self) -> None:
-        scan = make_scan()
+        scan = replace(make_scan(), source="api")
         engine = make_engine("static_metadata", "Static Metadata")
         job = make_job(scan.id, engine)
         result = EngineResultInput(
@@ -128,7 +128,7 @@ class ScanEngineWorkerTests(unittest.TestCase):
         ), patch(
             "app.workers.scan_worker.enabled_engines",
             return_value=[engine],
-        ), patch(
+        ) as enabled_engines, patch(
             "app.workers.scan_worker.route_engine_for_worker",
             return_value=EngineRouteDecision(
                 engine=engine,
@@ -157,6 +157,7 @@ class ScanEngineWorkerTests(unittest.TestCase):
             processed = process_scan_engine_job(job, {"static_metadata"})
 
         self.assertTrue(processed)
+        enabled_engines.assert_called_once_with(source="api")
         mark_running.assert_called_once()
         run_engine.assert_called_once_with(engine, scan)
         commit_result.assert_called_once()
@@ -168,7 +169,9 @@ class ScanEngineWorkerTests(unittest.TestCase):
         finalize.assert_called_once()
 
     def test_process_next_scan_job_does_not_use_legacy_fallback_by_default(self) -> None:
-        with patch("app.workers.scan_worker.ENGINE_JOB_QUEUE_ENABLED", True), patch(
+        with patch(
+            "app.workers.scan_worker.worker_accepts_new_work", return_value=True
+        ), patch("app.workers.scan_worker.ENGINE_JOB_QUEUE_ENABLED", True), patch(
             "app.workers.scan_worker.LEGACY_SCAN_WORKER_FALLBACK_ENABLED",
             False,
         ), patch(
@@ -181,6 +184,20 @@ class ScanEngineWorkerTests(unittest.TestCase):
 
         self.assertFalse(processed)
         list_active.assert_not_called()
+
+    def test_draining_worker_does_not_claim_new_work(self) -> None:
+        with patch(
+            "app.workers.scan_worker.worker_accepts_new_work", return_value=False
+        ), patch(
+            "app.workers.scan_worker.process_next_scan_engine_job"
+        ) as process_engine_job, patch(
+            "app.workers.scan_worker.record_worker_heartbeat"
+        ) as heartbeat:
+            processed = process_next_scan_job()
+
+        self.assertFalse(processed)
+        process_engine_job.assert_not_called()
+        heartbeat.assert_called_once_with("idle")
 
     def test_finalize_scan_waits_for_terminal_engine_jobs(self) -> None:
         scan = make_scan()
@@ -691,8 +708,12 @@ class ReapOrphanedEngineJobsTests(unittest.TestCase):
 
     def _reap(self, **overrides):
         scan = make_scan()
-        static_engine = make_engine("static_metadata", "Static Metadata")
-        defender_engine = make_engine("microsoft_defender", "Microsoft Defender")
+        static_engine = replace(
+            make_engine("static_metadata", "Static Metadata"), id=10
+        )
+        defender_engine = replace(
+            make_engine("microsoft_defender", "Microsoft Defender"), id=11
+        )
         static_job = replace(
             make_job(scan.id, static_engine), id=1, status="completed"
         )
@@ -796,6 +817,63 @@ class ReapOrphanedEngineJobsTests(unittest.TestCase):
         skip_pending.assert_called_once()
         create_result.assert_not_called()
         finalize.assert_not_called()
+
+    def test_reaper_preserves_instance_identity_for_shared_adapter(self) -> None:
+        scan = make_scan()
+        clamav_primary = replace(
+            make_engine("clamav", "ClamAV Primary"), id=10
+        )
+        clamav_dr = replace(make_engine("clamav", "ClamAV DR"), id=11)
+        jobs = [
+            replace(
+                make_job(scan.id, clamav_primary),
+                id=1,
+                status="pending",
+                worker_id=None,
+            ),
+            replace(
+                make_job(scan.id, clamav_dr),
+                id=2,
+                status="pending",
+                worker_id=None,
+            ),
+        ]
+
+        with patch(
+            "app.workers.scan_worker.get_worker_status",
+            return_value={"engine_keys": ["static_metadata"]},
+        ), patch(
+            "app.workers.scan_worker.enabled_engines",
+            return_value=[clamav_primary, clamav_dr],
+        ), patch(
+            "app.workers.scan_worker.list_active_scans", return_value=[scan]
+        ), patch(
+            "app.workers.scan_worker.list_scan_engine_jobs", return_value=jobs
+        ), patch(
+            "app.workers.scan_worker.should_finalize_scan_with_partial_results",
+            return_value=True,
+        ), patch(
+            "app.workers.scan_worker.partial_results_wait_seconds", return_value=30
+        ), patch(
+            "app.workers.scan_worker.skip_pending_scan_engine_job", return_value=True
+        ), patch(
+            "app.workers.scan_worker.skipped_engine_result",
+            side_effect=lambda _scan, engine, _keys, _wait: engine.display_name,
+        ), patch(
+            "app.workers.scan_worker.create_engine_result_if_missing"
+        ) as create_result, patch(
+            "app.workers.scan_worker.finalize_scan_if_complete", return_value=True
+        ), patch("app.workers.scan_worker.record_worker_timing_event"):
+            reaped = reap_orphaned_engine_jobs(self.WORKER_KEYS)
+
+        self.assertTrue(reaped)
+        self.assertEqual(
+            [entry.args for entry in create_result.call_args_list],
+            [
+                (scan.id, "ClamAV Primary"),
+                (scan.id, "ClamAV DR"),
+            ],
+        )
 
 
 def make_engine(adapter_key: str, display_name: str) -> EngineInstanceRecord:

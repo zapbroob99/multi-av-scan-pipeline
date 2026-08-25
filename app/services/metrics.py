@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from app.database import (
     get_oldest_active_scan_timestamps,
     get_queue_metrics,
+    list_engine_node_health,
     list_engine_result_metrics,
 )
 from app.services.timing import parse_timestamp
@@ -127,6 +128,19 @@ def render_metrics(now: datetime | None = None) -> str:
         [({}, online_count)],
     )
     lines += _metric_lines(
+        "masp_worker_nodes_schedulable",
+        "Managed worker nodes online and accepting new jobs.",
+        "gauge",
+        [({}, int(worker_status.get("schedulable_count", 0) or 0))],
+    )
+    nodes = worker_status.get("nodes")
+    lines += _metric_lines(
+        "masp_worker_nodes_registered",
+        "Durable worker node records known to MASP.",
+        "gauge",
+        [({}, len(nodes) if isinstance(nodes, list) else 0)],
+    )
+    lines += _metric_lines(
         "masp_worker_heartbeat_stale_after_seconds",
         "Seconds without a heartbeat after which a worker counts as offline.",
         "gauge",
@@ -138,6 +152,39 @@ def render_metrics(now: datetime | None = None) -> str:
         "Age of the freshest worker heartbeat; -1 when no worker is online.",
         "gauge",
         [({}, int(age_seconds) if age_seconds is not None else -1)],
+    )
+
+    health_records = list_engine_node_health()
+    lines += _metric_lines(
+        "masp_engine_node_health",
+        "Latest worker-executed engine health by durable node and instance.",
+        "gauge",
+        [
+            (
+                {
+                    "node": record.node_id,
+                    "engine_instance": str(record.engine_instance_id),
+                    "status": record.status,
+                },
+                1,
+            )
+            for record in health_records
+        ],
+    )
+    lines += _metric_lines(
+        "masp_engine_node_health_consecutive_failures",
+        "Consecutive failed worker health checks by node and engine instance.",
+        "gauge",
+        [
+            (
+                {
+                    "node": record.node_id,
+                    "engine_instance": str(record.engine_instance_id),
+                },
+                record.consecutive_failures,
+            )
+            for record in health_records
+        ],
     )
 
     engine_samples: list[tuple[dict[str, str], float | int]] = []

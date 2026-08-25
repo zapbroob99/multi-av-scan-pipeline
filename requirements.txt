@@ -1,6 +1,8 @@
 fastapi
 cryptography
+ldap3>=2.9.1,<3
 psycopg[binary,pool]
 py7zr
 python-multipart
 uvicorn
+pywin32>=311; sys_platform == "win32"

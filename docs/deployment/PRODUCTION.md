@@ -72,10 +72,15 @@ After the app service is restarted, open **Admin > Engines**, add and enable
 UI-managed keys require the same stable `MASP_SECRET_ENCRYPTION_KEY` on both app
 and worker, are encrypted in the database, and are never rendered back to the
 browser. Use **Test connection** to validate credentials and outbound HTTPS.
-Disabling or removing the adapter disables `GET /api/v1/hashes/{sha256}` and
-its participation in manual file scans. File scans send only the SHA-256
-computed during intake; no file content is uploaded to VirusTotal. The engine
-card reports configuration state but never renders the API key.
+VirusTotal participates only in explicitly initiated manual file scans and the
+interactive **Scan Hash** page. Its `consumes_external_quota` capability excludes
+it from REST file scans, REST hash lookup, and ICAP before engine jobs are
+created. File scans send only the SHA-256 computed during intake; no file content
+is uploaded to VirusTotal. The engine card reports both this automation exclusion
+and configuration state but never renders the API key. In a manual file scan,
+no-report, undetected, and stale zero-signal responses are neutral enrichment;
+malicious reputation blocks and suspicious reputation reviews. The dedicated
+Scan Hash workflow retains its stricter fail-closed reputation policy.
 
 Compose fails fast if `MASP_DATABASE_URL`, `MASP_API_TOKEN`,
 `MASP_UPLOAD_MAX_BYTES`, or (for ICAP) `MASP_ICAP_MAX_BYTES` are unset — this
@@ -153,6 +158,37 @@ healthcheck has a 120s start period. Workers wait for clamd to be healthy.
 - **Upgrade:** pull/rebuild, then
   `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`
 - **Scale workers:** `--scale worker=N` (all workers share the external DB).
+- **Remote engine hosts:** prefer `MASP_WORKER_TRANSPORT=control_api`. Set a
+  strong app-side `MASP_WORKER_ENROLLMENT_TOKEN`, enroll with
+  `python -m app.workers.control_api_worker --enroll`, remove the bootstrap
+  token from the host, and store the returned agent token in an ACL-protected
+  file referenced by `MASP_WORKER_AGENT_TOKEN_FILE`. The control URL includes
+  `/api/v1/worker-control`; use `MASP_WORKER_CONTROL_CA_FILE` for an internal CA.
+  Re-enrollment rotates and revokes the previous node credential.
+  Persistent Defender nodes use the packaged SCM service, integrity verifier,
+  lifecycle process, and evidence-producing acceptance runner in
+  [Windows Worker Agent](WINDOWS_WORKER_AGENT.md); it remains a lab deployment
+  until that document's real-host acceptance and signing gates pass.
+- **Node identity:** keep `MASP_WORKER_NODE_ID` stable across restarts and unique
+  per independently managed host. Processes intentionally have separate lease
+  identities under that node.
+- **Maintenance:** set the node to `draining` in **System > Managed worker
+  nodes**, wait for its active scan to clear, then stop or upgrade it. `disabled`
+  also blocks new claims; `active` restores scheduling.
+- **Placement:** publish stable `MASP_WORKER_LABELS`, create exact-match pools in
+  **System > Worker pools**, and assign engine instances under **Engine
+  placement**. Leave an engine unbound only when any worker advertising that
+  adapter is an acceptable target. A disabled pool intentionally has no eligible
+  workers.
+- **Capacity:** `MASP_WORKER_CAPACITY` is enforced per stable node id across all
+  processes on that node. Scale processes and set capacity together; additional
+  matching nodes provide failover when one node is full or draining.
+- **Engine health:** workers probe matching instances every
+  `MASP_WORKER_HEALTH_INTERVAL_SECONDS` and publish service, version, signature,
+  storage-access, failure-streak, and last-scan metadata. Alert on
+  `masp_engine_node_health{status="unhealthy"}` and sustained
+  `masp_engine_node_health_consecutive_failures`; a healthy heartbeat alone is
+  not sufficient evidence that the antivirus is usable.
 - **Backups:** back up the external PostgreSQL and the `MASP_STORAGE_DIR`
   sample directory. The `clamav-db` volume is a rebuildable cache.
 
@@ -179,7 +215,7 @@ process can be up while nothing drains the queue. Alert on at least:
 
 | Condition | Expression | Why |
 |---|---|---|
-| No worker online | `masp_workers_online == 0` for 2m | Nothing will process scans; with ICAP fail-closed every upload is blocked. Page on this. |
+| No worker schedulable | `masp_worker_nodes_schedulable == 0` for 2m | Nodes may still send heartbeats while draining or disabled, but nothing will claim scans; with ICAP fail-closed every upload is blocked. Page on this. |
 | Queue stalled | `masp_scan_oldest_queued_age_seconds > 300` for 5m | Distinguishes a stalled queue from a merely busy one. Depth alone does not: a steady depth of 20 is healthy, 20 scans untouched for an hour is an outage. |
 | Scan wedged | `masp_scan_oldest_running_age_seconds > 1800` for 10m | A scan running far past any engine timeout indicates a stuck or crashed worker whose lease has not been recovered. |
 | Engine failing | `increase(masp_engine_results_total{status="failed"}[15m]) > 0` | One broken engine drags every scan into partial coverage; catch it before the verdicts degrade. |
@@ -197,10 +233,19 @@ degrades detection without failing anything).
       public.
 - [ ] PostgreSQL transport uses the database team's required TLS mode and CA;
       the configured pool budget stays below the database connection limit.
+- [ ] Remote engine hosts use the HTTPS control transport and have no PostgreSQL
+      credential or MASP storage mount. `MASP_WORKER_CONTROL_REQUIRE_HTTPS=1` is
+      set on the app, proxy forwarding preserves the HTTPS scheme, agent tokens
+      are stored in ACL-protected files, and bootstrap enrollment tokens are
+      removed from agents after use.
 - [ ] ICAP left at `MASP_ICAP_FAIL_MODE_CLOSED=1` and
       `MASP_ICAP_BLOCK_ON_REVIEW=1` (block on timeout/oversize/error and on
       review verdicts). ICAP is private-network-only and its allowlist is set.
 - [ ] `.env.production` is `chmod 600` and never committed.
+- [ ] If LDAP is enabled: only LDAPS/StartTLS is used, certificate hostname and
+      chain validation pass inside the app container, the bind account is
+      read-only, group mappings were tested, and a local break-glass admin still
+      works. See [LDAP authentication](../security/LDAP_AUTHENTICATION.md).
 - [ ] Upload/ICAP size limits match the integration contract (v1: 50 MiB).
 - [ ] Database credentials scoped to the MASP database only.
 - [ ] Host antivirus exclusion for the storage tree is in place, scoped to that
@@ -216,3 +261,7 @@ degrades detection without failing anything).
       overridden locally).
 - [ ] `MASP_RETENTION_DAYS` is set above `0`. It defaults to `0`, which keeps
       every sample forever; decide the retention window with the data owner.
+- [ ] Admin > Audit is reviewed after acceptance tests; audit retention, backup,
+      export/SIEM forwarding, and legal-hold ownership are documented. The local
+      trail is application-level append-only and best effort, not immutable
+      storage; see [Audit trail](../security/AUDIT_TRAIL.md).

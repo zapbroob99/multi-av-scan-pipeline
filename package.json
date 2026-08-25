@@ -8,5 +8,8 @@
   },
   "devDependencies": {
     "tailwindcss": "^3.4.13"
+  },
+  "dependencies": {
+    "cloc": "^2.6.0-cloc"
   }
 }

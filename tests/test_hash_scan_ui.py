@@ -8,6 +8,7 @@ from app.main import (
     engine_result_verdict_pill,
     hash_scan_page,
     hash_scan_submit,
+    render_engine_result_rows,
     render_hash_scan_page,
 )
 from app.models import EngineInstanceRecord, EngineResultInput, UserRecord
@@ -25,6 +26,82 @@ class FileScanVirusTotalUiTests(unittest.TestCase):
         )
 
         self.assertIn("Review", engine_result_verdict_pill(result))  # type: ignore[arg-type]
+
+    def test_file_result_shows_a_compact_reputation_summary(self) -> None:
+        payload = dict(execution(action="allow").payload)
+        payload["mode"] = "file_hash_lookup"
+        payload["file_uploaded"] = False
+        payload["decision"] = {
+            "action": "allow",
+            "reason": "No malicious or suspicious detections.",
+        }
+        result = SimpleNamespace(
+            engine_name="VirusTotal",
+            engine_version="api-v3",
+            status="completed",
+            detected=False,
+            severity="info",
+            confidence=75,
+            signature=None,
+            duration_ms=12,
+            error_message=None,
+            raw_output=json.dumps(payload),
+            details_json=json.dumps(payload),
+        )
+
+        rendered = render_engine_result_rows([result])  # type: ignore[list-item]
+
+        self.assertIn("VirusTotal", rendered)
+        self.assertIn("No detections", rendered)
+        self.assertIn("Last analysis", rendered)
+        self.assertIn("Live lookup", rendered)
+        self.assertIn(">60</strong>", rendered)
+        self.assertIn(f"https://www.virustotal.com/gui/file/{SHA256}", rendered)
+        self.assertIn("Only the hash was queried", rendered)
+        self.assertIn("Technical details", rendered)
+        self.assertNotIn("Undetected policy", rendered)
+        self.assertNotIn("Freshness limit", rendered)
+        self.assertNotIn("Why this verdict?", rendered)
+
+    def test_file_result_treats_no_report_as_neutral_enrichment(self) -> None:
+        payload = dict(execution(action="allow", status="unknown").payload)
+        payload.update(
+            {
+                "found": False,
+                "stats": None,
+                "mode": "file_hash_lookup",
+                "file_uploaded": False,
+                # Legacy file results persisted the strict hash-policy review.
+                # The manual result UI must still present this as neutral.
+                "decision": {
+                    "action": "review",
+                    "reason": "No report; hash policy requires review.",
+                },
+                "last_analysis_date": None,
+                "permalink": None,
+            }
+        )
+        result = SimpleNamespace(
+            engine_name="VirusTotal",
+            engine_version="api-v3",
+            status="completed",
+            detected=False,
+            severity="info",
+            confidence=0,
+            signature=None,
+            duration_ms=12,
+            error_message=None,
+            raw_output=json.dumps(payload),
+            details_json=json.dumps(payload),
+        )
+
+        rendered = render_engine_result_rows([result])  # type: ignore[list-item]
+
+        self.assertIn("No report", rendered)
+        self.assertIn("No VirusTotal report found", rendered)
+        self.assertIn("does not change the file scan decision", rendered)
+        self.assertNotIn("· Review", rendered)
+        self.assertNotIn("Why this verdict?", rendered)
 
 
 def user() -> UserRecord:

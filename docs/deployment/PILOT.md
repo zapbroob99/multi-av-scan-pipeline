@@ -306,30 +306,45 @@ does not extract an individual multipart file part. Captures can contain file
 content, hostnames, and addresses; store them only in the approved location,
 sanitize before moving them to development, and delete temporary copies.
 
-### Optional large-file VirusTotal lookup
+### Optional LDAP / Active Directory login
 
-The hash-only endpoint is separate from ICAP: any integrating client computes the
-large file's SHA-256 locally and calls `GET /api/v1/hashes/{sha256}` over the
-authenticated REST API. MASP sends only that digest to VirusTotal; it does not
-receive or upload the large file. Generate `MASP_SECRET_ENCRYPTION_KEY` once
+LDAP login is app-only and can coexist with local MASP accounts. Configure the
+`MASP_LDAP_*` values in `.env.pilot`, ensure the app container trusts the
+directory certificate chain, and restart the app. MASP requires LDAPS or
+StartTLS, performs a service-account search followed by a user bind, and maps
+direct directory group membership to `admin` or `analyst`. Keep the bootstrap
+local admin as a tested break-glass account. See
+[LDAP and Active Directory authentication](../security/LDAP_AUTHENTICATION.md)
+for the complete variables, CA mount example, limitations, and acceptance test.
+
+### Optional manual VirusTotal lookup
+
+VirusTotal is reserved for explicitly initiated manual file scans and the
+interactive **Scan Hash** page. API and ICAP submissions never invoke it because
+the adapter consumes external quota; the restriction is applied before engine
+jobs are created and enforced again by workers. Generate
+`MASP_SECRET_ENCRYPTION_KEY` once
 with `python tools/generate_secret_key.py`, set it in `.env.pilot`, and restart
 the app and worker services. Then open **Admin > Engines**, add **VirusTotal**, enter the API
 key and policy in its Settings drawer, save, and use **Test connection**. Permit
 DNS plus outbound HTTPS to `www.virustotal.com:443`. The API key is encrypted
 in the database and is never displayed again; environment-based
 `MASP_VIRUSTOTAL_*` configuration remains supported. Disabling or removing the
-engine disables both the hash endpoint and its participation in manual file
-scans. For file scans, the worker sends only the locally computed SHA-256 and
-stores VirusTotal as a normal engine result; it never uploads file content.
+engine disables its participation in manual file/hash scans. For manual file
+scans, the worker sends only the locally computed SHA-256 and stores VirusTotal
+as a normal engine result; it never uploads file content. For this file-scan
+view, VirusTotal is enrichment: no report, zero detections, or a stale
+zero-signal report does not turn an otherwise-clean local scan into Review.
+Malicious reputation still blocks and suspicious reputation still reviews.
 
 Use a licensed Premium/Enterprise API key approved for this organizational
 workflow. VirusTotal's Public API terms do not permit automated business
 workflows that do not contribute new files. Keep
 `MASP_VIRUSTOTAL_ALLOW_UNDETECTED=0` until the data owner explicitly accepts
-zero detections as an allow signal. Even then, the default 30-day
-`MASP_VIRUSTOTAL_MAX_AGE_DAYS` freshness gate applies. `unknown`, `stale`,
-`review`, timeouts, quota errors, and all non-200 responses must
-retain/quarantine the file.
+zero detections as an allow signal for the dedicated **Scan Hash** workflow.
+Even then, the default 30-day `MASP_VIRUSTOTAL_MAX_AGE_DAYS` freshness gate
+applies there. Timeouts, quota errors, and all non-200 upstream failures remain
+real engine failures and reduce file-scan coverage.
 
 The pilot may receive controlled user traffic only after all of these pass:
 
@@ -419,11 +434,52 @@ This is the one upgrade step that is not just "swap the image", so verify it
 before running the smoke: `ls -l /srv/masp/storage/samples | head` should show
 `10001` as the owner.
 
-When more than one host is involved (remote Windows/ESET workers added later),
-upgrade in this order: **app/API host first, then the worker hosts.** Worker
-heartbeats are stored per worker; a new app reads both the new per-worker
-records and any old shared record, so a new app tolerates not-yet-upgraded
-workers, but an old app cannot see the new per-worker records. Upgrading app
-first keeps worker coverage continuously visible across the transition. A
-single-host pilot upgrades app and worker together, so this ordering only
-matters once workers run on separate hosts.
+When more than one host is involved (for example a remote Windows Defender worker),
+upgrade in this order: **app/API host first, then the worker hosts.** New workers
+register a durable `worker_nodes` row and still publish compatible per-process
+heartbeats. A new app reads those rows plus the legacy single/bulk heartbeat
+shapes, so it tolerates not-yet-upgraded workers; an old app cannot understand
+the managed node inventory. Upgrading app first keeps worker coverage visible
+across the transition. Assign every host a unique, restart-stable
+`MASP_WORKER_NODE_ID`. The System page can then drain or disable that node
+without stopping its heartbeat process.
+
+Do not distribute the pilot PostgreSQL credential or mount pilot sample storage
+on a remote engine host. Configure the app-side enrollment token and HTTPS
+requirement, then enroll the host against
+`https://<pilot-host>/api/v1/worker-control`:
+
+```powershell
+$env:MASP_WORKER_CONTROL_URL="https://<pilot-host>/api/v1/worker-control"
+$env:MASP_WORKER_ENROLLMENT_TOKEN="<pilot bootstrap token>"
+$env:MASP_WORKER_ENGINE_KEYS="microsoft_defender"
+$env:MASP_WORKER_NODE_ID="pilot-defender-01"
+python -m app.workers.control_api_worker --enroll
+```
+
+Store the returned token in an ACL-protected file, remove the enrollment token,
+and run `app.workers.scan_worker` with `MASP_WORKER_TRANSPORT=control_api` and
+`MASP_WORKER_AGENT_TOKEN_FILE` set. An internal CA is supplied through
+`MASP_WORKER_CONTROL_CA_FILE`; disabling certificate verification is not a
+supported pilot configuration. Re-enrollment is credential rotation and revokes
+the prior active token for that node.
+
+For a persistent Windows pilot node, use the SCM package, virtual service
+identity, ACL, preflight, rotation, logging, and uninstall flow in
+[Windows Worker Agent](WINDOWS_WORKER_AGENT.md). Do not promote the Defender
+integration beyond lab status until every acceptance item there has evidence
+from the target Windows image and Defender policy.
+
+After every remote node has registered, create worker pools in the System page
+from the labels published in `MASP_WORKER_LABELS`, then assign each remote engine
+instance under **Engine placement**. Existing engines are deliberately unbound
+after upgrade and retain adapter-key routing until an administrator assigns them.
+Verify that every bound instance shows at least one active matching node before
+enabling production scan traffic.
+
+Wait for the first worker health interval and verify the managed node reports
+healthy engine checks. Control-API workers report authenticated sample delivery
+instead of shared-storage access. Use **Engines > Test
+connection** to request an immediate worker-side refresh. Confirm the version and
+last successful scan fields after the EICAR acceptance scan; heartbeat-only
+coverage is not an engine-health acceptance result.

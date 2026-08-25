@@ -37,6 +37,7 @@ EXPECTED_TABLES = {
     "app_settings",
     "users",
     "auth_sessions",
+    "audit_events",
 }
 
 

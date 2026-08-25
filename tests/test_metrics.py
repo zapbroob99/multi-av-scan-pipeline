@@ -140,6 +140,7 @@ class MetricsPayloadTests(_MetricsDbFixture):
     def test_worker_heartbeat_age_is_negative_when_no_worker_is_online(self) -> None:
         body = metrics.render_metrics()
         self.assertIn("masp_workers_online 0", body)
+        self.assertIn("masp_worker_nodes_schedulable 0", body)
         self.assertIn("masp_worker_heartbeat_age_seconds -1", body)
 
     def test_engine_label_values_are_escaped(self) -> None:

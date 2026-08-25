@@ -1,5 +1,6 @@
 import html
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -8,15 +9,19 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Security, Uploa
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import HTTPBearer
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from app.database import (
+    count_audit_events,
     count_scan_history,
     count_scans_older_than,
     count_users_by_role,
+    create_worker_pool,
     create_scan_engine_jobs,
     create_user,
     delete_scan,
     delete_user,
+    delete_worker_pool,
     get_scan,
     get_scan_batch,
     get_scan_queue_position,
@@ -26,7 +31,9 @@ from app.database import (
     get_user_by_username,
     init_db,
     list_active_scans,
+    list_audit_events,
     list_engine_result_metrics,
+    list_engine_node_health,
     list_engine_results,
     list_engine_results_by_scan_ids,
     list_recent_scans,
@@ -35,18 +42,27 @@ from app.database import (
     list_scan_history,
     list_scans_older_than,
     list_users,
+    list_worker_pools,
+    list_engine_instance_worker_pool_bindings,
     retry_scan_job as retry_scan_job_record,
     refresh_scan_batch_counts,
+    request_engine_node_health_check,
+    revoke_worker_agent_credentials,
     update_scan_assessment,
     update_user,
+    update_worker_node_lifecycle,
+    update_worker_pool,
+    set_engine_instance_worker_pool,
 )
 from app.models import (
     ACTIVE_SCAN_STATUSES,
+    AuditEventRecord,
     EngineInstanceRecord,
     EngineResultRecord,
     ScanBatchRecord,
     ScanRecord,
     UserRecord,
+    WorkerPoolRecord,
 )
 from app.services.cleanup import delete_sample_file
 from app.services.auth import (
@@ -65,6 +81,13 @@ from app.services.auth import (
     session_cookie_secure,
     seed_default_users,
     verify_password,
+)
+from app.services.ldap_auth import ldap_enabled
+from app.services.audit import (
+    append_http_audit_event,
+    request_id_for,
+    set_audit_context,
+    should_audit_request,
 )
 from app.services.decisions import ScanDecision
 from app.services import api_schemas
@@ -131,6 +154,12 @@ from app.services.reports import (
 from app.services.scoring import calculate_risk
 from app.services.timing import build_scan_timing_payload
 from app.services.worker_runtime import get_worker_status
+from app.services.worker_control import router as worker_control_router
+from app.services.worker_scheduling import (
+    eligible_worker_node_ids_for_engine_instance,
+    parse_worker_pool_selector,
+    schedulable_engine_instance_ids,
+)
 from app.services.virustotal import (
     InvalidSha256Error,
     clear_virustotal_cache,
@@ -157,6 +186,7 @@ app = FastAPI(
     ),
     version="0.1.0",
 )
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -171,7 +201,54 @@ init_db()
 seed_default_users()
 seed_default_engines()
 
+app.include_router(worker_control_router)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def audit_http_requests(request: Request, call_next):
+    request.state.audit_request_id = request_id_for(request)
+    audited = should_audit_request(request)
+    session_user = None
+    if audited:
+        try:
+            # Snapshot before the handler so logout remains attributable after
+            # its session row has been revoked.
+            session_user = await run_in_threadpool(current_user, request)
+        except Exception:
+            logger.exception("Unable to resolve audit actor")
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        if audited:
+            try:
+                await run_in_threadpool(
+                    append_http_audit_event,
+                    request,
+                    status_code=500,
+                    session_user=session_user,
+                    error_type=type(exc).__name__,
+                )
+            except Exception:
+                logger.exception("Unable to append failed-request audit event")
+        raise
+
+    response.headers["X-Request-ID"] = request.state.audit_request_id
+    if audited:
+        try:
+            await run_in_threadpool(
+                append_http_audit_event,
+                request,
+                status_code=response.status_code,
+                session_user=session_user,
+            )
+        except Exception:
+            # Phase-one audit is best effort and must not make an otherwise
+            # successful operation appear to have failed.
+            logger.exception("Unable to append HTTP audit event")
+    return response
 
 
 def nav_icon(icon_key: str) -> str:
@@ -254,6 +331,13 @@ def nav_icon(icon_key: str) -> str:
           <path d="M23 11h-6"></path>
         </svg>
         """,
+        "audit": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6z"></path>
+          <path d="M9 12h6"></path>
+          <path d="M12 9v6"></path>
+        </svg>
+        """,
     }
     return icons.get(icon_key, "")
 
@@ -284,6 +368,7 @@ def page_shell(
             ("engines", "/engines", "Engines"),
             ("scan_policy", "/scan-policy", "Scan Policy"),
             ("users", "/users", "Users"),
+            ("audit", "/audit", "Audit"),
             ("system", "/system", "System"),
         ]
 
@@ -1092,7 +1177,7 @@ def build_api_scan_status_payload(
         scan_payload=build_scan_summary_payload(scan),
         queue_metrics=queue_metrics,
         queue_position=queue_position,
-        expected_engines=len(enabled_engines()),
+        expected_engines=len(enabled_engines(source=scan.source)),
         results=results,
         links=api_scan_links(request, scan.id),
     )
@@ -1152,7 +1237,7 @@ async def enqueue_scan_from_upload(
     except NoEligibleEnginesError as exc:
         raise HTTPException(
             status_code=503,
-            detail="No scan engines are enabled; the scan could not be accepted.",
+            detail="No eligible scan engines are available for this submission source.",
         ) from exc
 
 
@@ -1176,6 +1261,16 @@ def render_login_page(next_url: str = "/", error: str = "", message: str = "") -
         </div>
         """
         if login_hint
+        else ""
+    )
+    directory_hint_html = (
+        """
+        <div class="auth-hint">
+          <strong>Directory sign-in enabled</strong>
+          <span>Use your organization username and password. Local break-glass accounts remain available.</span>
+        </div>
+        """
+        if ldap_enabled()
         else ""
     )
     body = f"""
@@ -1209,6 +1304,7 @@ def render_login_page(next_url: str = "/", error: str = "", message: str = "") -
           </label>
           <button class="primary-action" type="submit">Sign in</button>
         </form>
+        {directory_hint_html}
         {login_hint_html}
       </section>
     </main>
@@ -1372,6 +1468,173 @@ def render_system_worker_rows(worker_status: dict[str, object]) -> str:
     return "\n".join(rows)
 
 
+def render_worker_node_rows(worker_status: dict[str, object]) -> str:
+    nodes = worker_status.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        return """
+        <tr>
+          <td class="empty-cell" colspan="9">No durable worker node has registered yet.</td>
+        </tr>
+        """
+
+    rows = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_id = str(node.get("node_id") or "")
+        lifecycle_state = str(node.get("lifecycle_state") or "active")
+        effective_state = str(node.get("effective_state") or "offline")
+        engine_keys = ", ".join(str(item) for item in node.get("engine_keys", [])) or "-"
+        labels = node.get("labels")
+        label_text = (
+            ", ".join(f"{key}={value}" for key, value in sorted(labels.items()))
+            if isinstance(labels, dict) and labels
+            else "No labels"
+        )
+        active_scan_id = node.get("active_scan_id")
+        active_scan = f"#{active_scan_id}" if active_scan_id else "-"
+        health_total = int(node.get("health_total", 0) or 0)
+        health_healthy = int(node.get("health_healthy", 0) or 0)
+        health_failed = int(node.get("health_failed", 0) or 0)
+        health_text = (
+            f"Health {health_healthy}/{health_total} ready"
+            + (f", {health_failed} failed" if health_failed else "")
+            if health_total
+            else "Health checks pending"
+        )
+        options = "".join(
+            f'<option value="{state}" {"selected" if state == lifecycle_state else ""}>'
+            f'{state.title()}</option>'
+            for state in ("active", "draining", "disabled")
+        )
+        rows.append(
+            f"""
+            <tr>
+              <td>{status_pill(effective_state)}</td>
+              <td>
+                <strong>{html.escape(str(node.get("display_name") or node_id))}</strong>
+                <small>{html.escape(node_id)}</small>
+              </td>
+              <td>
+                <strong>{html.escape(str(node.get("platform") or "unknown").title())}</strong>
+                <small>{html.escape(str(node.get("hostname") or "-"))}</small>
+              </td>
+              <td><span>{html.escape(engine_keys)}</span><small>{html.escape(label_text)}</small><small>{html.escape(health_text)}</small></td>
+              <td>{html.escape(str(node.get("capacity") or 1))}</td>
+              <td>{html.escape(active_scan)}</td>
+              <td>{html.escape(str(node.get("agent_version") or "unknown"))}</td>
+              <td>
+                <span>{html.escape(str(node.get("last_seen_at") or "-"))}</span>
+                <small>{html.escape(str(node.get("age_seconds") if node.get("age_seconds") is not None else "-"))}s ago</small>
+              </td>
+              <td>
+                <form action="/workers/state" method="post" class="inline-actions" data-action-form data-preserve-scroll>
+                  <input type="hidden" name="node_id" value="{html.escape(node_id)}">
+                  <select name="lifecycle_state" aria-label="Lifecycle for {html.escape(node_id)}">{options}</select>
+                  <button class="secondary-action compact-action" type="submit" data-busy-label="Saving...">Save</button>
+                </form>
+                <form action="/workers/credentials/revoke" method="post" class="inline-actions" data-action-form data-preserve-scroll data-confirm="Revoke this node's active agent credential? Running control-API work will lose authorization.">
+                  <input type="hidden" name="node_id" value="{html.escape(node_id)}">
+                  <button class="secondary-action compact-action" type="submit" data-busy-label="Revoking...">Revoke agent</button>
+                </form>
+              </td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def worker_pool_selector_text(pool: WorkerPoolRecord) -> str:
+    try:
+        selector = json.loads(pool.selector_json)
+    except json.JSONDecodeError:
+        return pool.selector_json
+    if not isinstance(selector, dict):
+        return pool.selector_json
+    return ",".join(f"{key}={value}" for key, value in sorted(selector.items()))
+
+
+def render_worker_pool_rows(
+    pools: list[WorkerPoolRecord],
+    bindings: dict[int, int],
+    engines: list[EngineInstanceRecord],
+) -> str:
+    if not pools:
+        return '<tr><td class="empty-cell" colspan="5">No worker pools configured yet.</td></tr>'
+    engine_names_by_pool: dict[int, list[str]] = {}
+    for engine in engines:
+        pool_id = bindings.get(engine.id)
+        if pool_id is not None:
+            engine_names_by_pool.setdefault(pool_id, []).append(engine.display_name)
+    rows: list[str] = []
+    for pool in pools:
+        assigned_names = engine_names_by_pool.get(pool.id, [])
+        assignment_text = ", ".join(assigned_names) if assigned_names else "No assignments"
+        selector_text = worker_pool_selector_text(pool)
+        rows.append(
+            f"""
+            <tr>
+              <td><strong>{html.escape(pool.name)}</strong><small>Pool #{pool.id}</small></td>
+              <td><code>{html.escape(selector_text)}</code></td>
+              <td>{status_pill("active" if pool.enabled else "disabled")}</td>
+              <td>{html.escape(assignment_text)}</td>
+              <td>
+                <form action="/worker-pools/{pool.id}/update" method="post" class="inline-actions" data-action-form data-preserve-scroll>
+                  <input name="pool_name" value="{html.escape(pool.name)}" aria-label="Pool name">
+                  <input name="pool_selector" value="{html.escape(selector_text)}" aria-label="Pool selector">
+                  <select name="pool_state" aria-label="Pool state">
+                    <option value="enabled" {"selected" if pool.enabled else ""}>Enabled</option>
+                    <option value="disabled" {"selected" if not pool.enabled else ""}>Disabled</option>
+                  </select>
+                  <button class="secondary-action compact-action" type="submit" data-busy-label="Saving...">Save</button>
+                </form>
+                <form action="/worker-pools/{pool.id}/delete" method="post" class="inline-actions" data-action-form data-preserve-scroll>
+                  <button class="danger-action compact-action" type="submit" data-busy-label="Deleting...">Delete</button>
+                </form>
+              </td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_engine_placement_rows(
+    engines: list[EngineInstanceRecord],
+    pools: list[WorkerPoolRecord],
+    bindings: dict[int, int],
+) -> str:
+    if not engines:
+        return '<tr><td class="empty-cell" colspan="3">No engines configured.</td></tr>'
+    rows: list[str] = []
+    for engine in engines:
+        assigned_pool_id = bindings.get(engine.id)
+        options = ['<option value="0">Any compatible worker</option>']
+        for pool in pools:
+            selected = "selected" if assigned_pool_id == pool.id else ""
+            state_note = "" if pool.enabled else " (disabled)"
+            options.append(
+                f'<option value="{pool.id}" {selected}>{html.escape(pool.name + state_note)}</option>'
+            )
+        if assigned_pool_id is None:
+            options[0] = '<option value="0" selected>Any compatible worker</option>'
+        rows.append(
+            f"""
+            <tr>
+              <td><strong>{html.escape(engine.display_name)}</strong><small>{html.escape(engine.adapter_key)}</small></td>
+              <td>{html.escape(next((pool.name for pool in pools if pool.id == assigned_pool_id), "Unbound"))}</td>
+              <td>
+                <form action="/engines/pool" method="post" class="inline-actions" data-action-form data-preserve-scroll>
+                  <input type="hidden" name="engine_instance_id" value="{engine.id}">
+                  <select name="worker_pool_id" aria-label="Worker pool for {html.escape(engine.display_name)}">{"".join(options)}</select>
+                  <button class="secondary-action compact-action" type="submit" data-busy-label="Assigning...">Assign</button>
+                </form>
+              </td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
 def render_system_engine_rows(
     engines: list[EngineInstanceRecord],
     metrics: list[dict[str, object]],
@@ -1500,6 +1763,8 @@ def render_system_page(user: UserRecord, message: str = "", error: str = "") -> 
     queue_metrics = get_queue_metrics()
     engine_metrics = list_engine_result_metrics()
     engines = configured_engines()
+    worker_pools = list_worker_pools()
+    worker_pool_bindings = list_engine_instance_worker_pool_bindings()
     active_scans = list_active_scans(limit=50)
     supported_engine_count = len(set(str(item) for item in worker_status.get("engine_keys", [])))
     retention_policy = retention_policy_from_env()
@@ -1511,13 +1776,77 @@ def render_system_page(user: UserRecord, message: str = "", error: str = "") -> 
     body = f"""
     {notice_html}
     <section class="metric-grid">
-      {metric_card("Workers", str(worker_status.get("online_count", 0)), "Online worker processes")}
+      {metric_card("Worker nodes", str(worker_status.get("schedulable_count", 0)), "Online nodes accepting work")}
       {metric_card("Queue", str(queue_metrics["queued"]), "Waiting scan jobs", "tone-blue")}
       {metric_card("Running", str(queue_metrics["running"]), "Currently active jobs", "tone-green")}
       {metric_card("Failures", str(queue_metrics["failed"]), "Failed scan jobs", "tone-red")}
     </section>
 
     <section class="system-layout">
+      <div class="panel system-wide">
+        <div class="panel-header compact">
+          <div>
+            <h2>Managed worker nodes</h2>
+            <p>Stable identity, lifecycle, capacity, labels, and advertised engine capabilities.</p>
+          </div>
+          <span class="pill neutral">{len(worker_status.get("nodes", [])) if isinstance(worker_status.get("nodes"), list) else 0} registered</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Node</th>
+                <th>Platform</th>
+                <th>Engines / labels</th>
+                <th>Capacity</th>
+                <th>Active scan</th>
+                <th>Agent</th>
+                <th>Last heartbeat</th>
+                <th>Lifecycle</th>
+              </tr>
+            </thead>
+            <tbody>{render_worker_node_rows(worker_status)}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel system-wide">
+        <div class="panel-header compact">
+          <div>
+            <h2>Worker pools</h2>
+            <p>Route engine instances to active nodes whose labels match every selector.</p>
+          </div>
+          <span class="pill neutral">{len(worker_pools)} configured</span>
+        </div>
+        <form action="/worker-pools/create" method="post" class="inline-actions" data-action-form data-preserve-scroll>
+          <input name="pool_name" placeholder="Istanbul Windows" required aria-label="Pool name">
+          <input name="pool_selector" placeholder="site=istanbul,os=windows" required aria-label="Pool selector">
+          <button class="primary-action compact-action" type="submit" data-busy-label="Creating...">Create pool</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Pool</th><th>Selector</th><th>State</th><th>Engines</th><th>Actions</th></tr></thead>
+            <tbody>{render_worker_pool_rows(worker_pools, worker_pool_bindings, engines)}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel system-wide">
+        <div class="panel-header compact">
+          <div>
+            <h2>Engine placement</h2>
+            <p>Unbound engines keep compatibility routing; assigned engines run only in their matching pool.</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Engine instance</th><th>Current pool</th><th>Assignment</th></tr></thead>
+            <tbody>{render_engine_placement_rows(engines, worker_pools, worker_pool_bindings)}</tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-header compact">
           <div>
@@ -1773,6 +2102,10 @@ def append_capability_fields(
             ("Platforms", format_engine_platforms(capability.supported_platforms)),
             ("Execution", capability.execution_model.title()),
             ("Network", "Required" if capability.requires_network else "Local only"),
+            (
+                "API / ICAP",
+                "Excluded (metered)" if capability.consumes_external_quota else "Eligible",
+            ),
         ]
     )
     return fields
@@ -1880,28 +2213,55 @@ def worker_backed_engine_health(
     Replace that with a status derived from worker heartbeats so the settings
     page shows whether a capable worker is actually online.
     """
-    if str(health.get("status")) != "unsupported":
-        return health
     if adapter_capabilities(instance.adapter_key).deployment != "worker":
         return health
 
-    advertised_keys = get_worker_status().get("engine_keys", [])
-    online_engine_keys = (
-        {str(key) for key in advertised_keys}
-        if isinstance(advertised_keys, (list, tuple, set))
-        else set()
+    worker_status = get_worker_status()
+    schedulable_node_ids = eligible_worker_node_ids_for_engine_instance(
+        worker_status,
+        instance,
     )
-    if instance.adapter_key in online_engine_keys:
+    health_records = sorted(
+        (
+            record
+            for record in list_engine_node_health(engine_instance_id=instance.id)
+            if record.node_id in schedulable_node_ids and record.last_checked_at is not None
+        ),
+        key=lambda record: int(record.last_checked_at or 0),
+        reverse=True,
+    )
+    if health_records:
+        record = health_records[0]
+        version_bits = [
+            value
+            for value in (
+                record.product_version,
+                record.engine_version,
+                record.signature_version,
+            )
+            if value
+        ]
+        version_note = f" Versions: {', '.join(version_bits)}." if version_bits else ""
+        return {
+            "ok": record.ok,
+            "status": record.health_status,
+            "detail": (
+                f"{record.detail} Checked on {record.node_id}."
+                f"{version_note}"
+            ),
+        }
+    if instance.id in schedulable_engine_instance_ids(worker_status, [instance]):
         return {
             "ok": True,
             "status": "worker online",
-            "detail": "A worker advertising this engine is online and sending heartbeats.",
+            "detail": "A schedulable worker matches this engine's adapter and pool placement.",
         }
     return {
         "ok": False,
         "status": "no online worker",
         "detail": (
-            "No online worker runs this engine. Scans that require it wait, then "
+            "No active worker matches this engine's adapter and pool placement. "
+            "Scans that require it wait, then "
             "are skipped once the orchestration timeout expires."
         ),
     }
@@ -1937,16 +2297,19 @@ def render_engine_actions(instance: EngineInstanceRecord, show_test: bool) -> st
     if show_test:
         test_button = f"""
         <form action="/engines/{html.escape(instance.adapter_key)}/test" method="post" data-action-form data-preserve-scroll>
+          <input type="hidden" name="engine_instance_id" value="{instance.id}">
           <button class="secondary-action engine-action-primary" type="submit" data-busy-label="Testing...">Test connection</button>
         </form>
         """
     toggle_button = f"""
     <form action="/engines/{html.escape(instance.adapter_key)}/toggle" method="post" data-action-form data-preserve-scroll>
+      <input type="hidden" name="engine_instance_id" value="{instance.id}">
       <button class="secondary-action engine-action-compact" type="submit" data-busy-label="{toggle_busy_label}">{"Disable" if instance.enabled else "Enable"}</button>
     </form>
     """
     remove_button = f"""
     <form action="/engines/{html.escape(instance.adapter_key)}/delete" method="post" data-action-form data-preserve-scroll>
+      <input type="hidden" name="engine_instance_id" value="{instance.id}">
       <button class="danger-action engine-action-compact" type="submit" data-busy-label="Removing...">Remove</button>
     </form>
     """
@@ -1997,9 +2360,15 @@ def render_engine_details_shell(
     focus_adapter_key: str = "",
 ) -> str:
     disabled_class = " is-disabled" if not instance.enabled else ""
-    open_attr = " open" if instance.adapter_key in health_overrides or instance.adapter_key == focus_adapter_key else ""
+    instance_token = str(instance.id)
+    open_attr = " open" if (
+        instance_token in health_overrides
+        or instance.adapter_key in health_overrides
+        or instance_token == focus_adapter_key
+        or instance.adapter_key == focus_adapter_key
+    ) else ""
     return f"""
-    <details id="engine-{html.escape(instance.adapter_key)}" class="panel engine-secondary engine-card{disabled_class}"{open_attr}>
+    <details id="engine-{instance.id}" class="panel engine-secondary engine-card{disabled_class}"{open_attr}>
       {render_engine_summary(instance, status_html, meta)}
       <div class="engine-config">
         {body}
@@ -2022,7 +2391,17 @@ def render_engine_card(
         if not instance.enabled
         else worker_backed_engine_health(
             instance,
-            health_overrides.get(instance.adapter_key) or engine_health(instance),
+            health_overrides.get(str(instance.id))
+            or health_overrides.get(instance.adapter_key)
+            or (
+                {
+                    "ok": False,
+                    "status": "worker check pending",
+                    "detail": "Waiting for a matching worker to report engine health.",
+                }
+                if capability.deployment == "worker"
+                else engine_health(instance)
+            ),
         )
     )
     tone = health_tone_for(instance.adapter_key, health)
@@ -2078,6 +2457,7 @@ def render_engine_card(
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
               </summary>
               <form class="settings-form embedded" action="/engines/clamav/config" method="post" data-action-form data-preserve-scroll>
+                <input type="hidden" name="engine_instance_id" value="{instance.id}">
                 <div class="settings-section">
                   <div>
                     <h3>Connection settings</h3>
@@ -2155,6 +2535,7 @@ def render_engine_card(
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
               </summary>
               <form class="settings-form embedded" action="/engines/yara/config" method="post" data-action-form data-preserve-scroll>
+                <input type="hidden" name="engine_instance_id" value="{instance.id}">
                 <div class="settings-section">
                   <div>
                     <h3>Runtime settings</h3>
@@ -2263,6 +2644,7 @@ def render_engine_card(
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
               </summary>
               <form class="settings-form embedded" action="/engines/microsoft_defender/config" method="post" data-action-form data-preserve-scroll>
+                <input type="hidden" name="engine_instance_id" value="{instance.id}">
                 <div class="settings-section">
                   <div>
                     <h3>Runtime settings</h3>
@@ -2337,10 +2719,10 @@ def render_engine_card(
             ("Credentials", credential_source),
             ("Malicious threshold", str(runtime["malicious_threshold"])),
             (
-                "Undetected policy",
+                "Scan Hash: undetected",
                 "Allow" if bool(runtime["allow_undetected"]) else "Review",
             ),
-            ("Maximum report age", f'{runtime["max_age_days"]} days'),
+            ("Scan Hash: maximum age", f'{runtime["max_age_days"]} days'),
             ("Known-result cache", f'{runtime["cache_seconds"]}s'),
             ("Unknown-result cache", f'{runtime["unknown_cache_seconds"]}s'),
             ("Support state", definition.support_state.title()),
@@ -2380,6 +2762,7 @@ def render_engine_card(
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
               </summary>
               <form class="settings-form embedded" action="/engines/virustotal/config" method="post" data-action-form data-preserve-scroll>
+                <input type="hidden" name="engine_instance_id" value="{instance.id}">
                 <div class="settings-section">
                   <div>
                     <h3>Credentials and reputation policy</h3>
@@ -2416,7 +2799,7 @@ def render_engine_card(
                     </label>
                     <label class="checkbox-field">
                       <input type="checkbox" name="virustotal_allow_undetected" value="true"{allow_undetected_checked}>
-                      allow fresh reports with zero detections
+                      allow fresh zero-detection reports in Scan Hash
                     </label>
                     <label class="checkbox-field">
                       <input type="checkbox" name="virustotal_clear_api_key" value="true">
@@ -2432,8 +2815,8 @@ def render_engine_card(
             <div class="engine-subsection">
               <div class="engine-subsection-header">
                 <div>
-                  <h3>Hash-only execution</h3>
-                  <p>Used by the generic hash lookup API at <code>GET /api/v1/hashes/{{sha256}}</code>. The file is never uploaded to MASP or VirusTotal, and the API key is never rendered back to the browser.</p>
+                  <h3>Manual hash-only execution</h3>
+                  <p>Used by interactive Scan Hash and manual file scans. File scans treat no-report and zero-signal reputation as neutral enrichment; malicious blocks and suspicious reviews. REST and ICAP automation exclude this metered engine. The file is never uploaded to VirusTotal.</p>
                 </div>
               </div>
             </div>
@@ -2513,8 +2896,22 @@ def render_user_rows(current_admin: UserRecord) -> str:
     rows = []
     for user in list_users():
         is_current_user = user.id == current_admin.id
+        is_directory_user = user.auth_source == "ldap"
+        display_name_html = (
+            f"<small>{html.escape(user.display_name)}</small>"
+            if user.display_name
+            else ""
+        )
         admin_badge = '<span class="pill neutral">Current session</span>' if is_current_user else ""
         management_html = (
+            """
+            <div class="user-inline-readonly">
+              <span class="pill neutral">Directory managed</span>
+              <small>Role and password are synchronized from LDAP at sign-in.</small>
+            </div>
+            """
+            if is_directory_user
+            else
             f"""
             <form class="user-inline-form" action="/users/{user.id}" method="post">
               <label>
@@ -2552,7 +2949,9 @@ def render_user_rows(current_admin: UserRecord) -> str:
             <div class="user-row">
               <div>
                 <strong>{html.escape(user.username)}</strong>
+                {display_name_html}
                 <small>Created {html.escape(user.created_at)}</small>
+                <span class="pill neutral">{'LDAP' if is_directory_user else 'Local'}</span>
                 {admin_badge}
               </div>
               {management_html}
@@ -2607,7 +3006,7 @@ def render_users_page(user: UserRecord, message: str = "", error: str = "") -> s
 
       <section class="panel">
         <div class="panel-header compact">
-          <h2>Local users</h2>
+          <h2>Users</h2>
           <span class="pill neutral">{len(users)} accounts</span>
         </div>
         <div class="user-table">
@@ -2619,11 +3018,179 @@ def render_users_page(user: UserRecord, message: str = "", error: str = "") -> s
     return page_shell("Users", "users", body, user)
 
 
+def audit_page_url(*, page: int, query: str, outcome: str) -> str:
+    params = {"page": max(1, page)}
+    if query.strip():
+        params["q"] = query.strip()
+    if outcome != "all":
+        params["outcome"] = outcome
+    return f"/audit?{urlencode(params)}"
+
+
+def render_audit_event_rows(events: list[AuditEventRecord]) -> str:
+    if not events:
+        return '<tr><td class="empty-cell" colspan="8">No audit events match these filters.</td></tr>'
+
+    rows: list[str] = []
+    for event in events:
+        actor = event.actor_name or event.actor_id or "Anonymous"
+        target = event.target_type
+        if event.target_id:
+            target += f" #{event.target_id}"
+        try:
+            detail_value = json.loads(event.details_json)
+            pretty_details = json.dumps(detail_value, ensure_ascii=False, indent=2, sort_keys=True)
+        except (TypeError, ValueError):
+            pretty_details = event.details_json
+        tone = {"success": "success", "failure": "danger", "denied": "warning"}.get(
+            event.outcome, "neutral"
+        )
+        rows.append(
+            f"""
+            <tr>
+              <td><strong>#{event.id}</strong><small>{html.escape(event.created_at)}</small></td>
+              <td><strong>{html.escape(actor)}</strong><small>{html.escape(event.actor_type)}</small></td>
+              <td><code>{html.escape(event.action)}</code></td>
+              <td>{html.escape(target)}</td>
+              <td><span class="pill {tone}">{html.escape(event.outcome.title())}</span></td>
+              <td><code>{html.escape(event.source_ip or "-")}</code></td>
+              <td><code>{html.escape(event.request_id)}</code></td>
+              <td>
+                <details class="audit-details">
+                  <summary>Inspect</summary>
+                  <pre>{html.escape(pretty_details)}</pre>
+                </details>
+              </td>
+            </tr>
+            """
+        )
+    return "\n".join(rows)
+
+
+def render_audit_page(
+    user: UserRecord,
+    *,
+    query: str = "",
+    outcome: str = "all",
+    page: int = 1,
+) -> str:
+    page_size = 50
+    normalized_outcome = outcome if outcome in {"all", "success", "failure", "denied"} else "all"
+    total_items = count_audit_events(query=query, outcome=normalized_outcome)
+    total_pages = max(1, (total_items + page_size - 1) // page_size)
+    current_page = max(1, min(page, total_pages))
+    events = list_audit_events(
+        query=query,
+        outcome=normalized_outcome,
+        limit=page_size,
+        offset=(current_page - 1) * page_size,
+    )
+    previous_link = (
+        f'<a class="secondary-action compact-action" href="{html.escape(audit_page_url(page=current_page - 1, query=query, outcome=normalized_outcome))}">Previous</a>'
+        if current_page > 1
+        else '<span class="secondary-action compact-action is-disabled">Previous</span>'
+    )
+    next_link = (
+        f'<a class="secondary-action compact-action" href="{html.escape(audit_page_url(page=current_page + 1, query=query, outcome=normalized_outcome))}">Next</a>'
+        if current_page < total_pages
+        else '<span class="secondary-action compact-action is-disabled">Next</span>'
+    )
+    body = f"""
+    <section class="panel audit-intro">
+      <div class="panel-header">
+        <div>
+          <h2>Security audit trail</h2>
+          <p>Authentication, administrative changes, and destructive actions. Routine navigation and scan/API traffic are excluded.</p>
+        </div>
+        <span class="pill neutral">{total_items} events</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <form class="scan-filter-bar audit-filter-bar" action="/audit" method="get">
+        <label class="scan-search-field">
+          <span>Search</span>
+          <input type="search" name="q" value="{html.escape(query)}" placeholder="Actor, action, target, request ID">
+        </label>
+        <label>
+          <span>Outcome</span>
+          <select name="outcome">
+            {select_option("all", "All outcomes", normalized_outcome)}
+            {select_option("success", "Success", normalized_outcome)}
+            {select_option("failure", "Failure", normalized_outcome)}
+            {select_option("denied", "Denied", normalized_outcome)}
+          </select>
+        </label>
+        <div class="scan-filter-actions">
+          <button class="primary-action compact-action" type="submit">Apply</button>
+          <a class="secondary-action compact-action" href="/audit">Reset</a>
+        </div>
+      </form>
+      <div class="audit-pagination">
+        <span>Page {current_page} of {total_pages}</span>
+        <div>{previous_link}{next_link}</div>
+      </div>
+      <div class="table-wrap audit-table-wrap">
+        <table>
+          <thead><tr><th>Event</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th><th>Source IP</th><th>Request ID</th><th>Details</th></tr></thead>
+          <tbody>{render_audit_event_rows(events)}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+    return page_shell("Audit", "audit", body, user)
+
+
 def render_account_page(user: UserRecord, message: str = "", error: str = "") -> str:
     ttl_hours = max(1, SESSION_TTL_SECONDS // 3600)
+    is_directory_user = user.auth_source == "ldap"
     notice_html = (
         page_notice("Account updated", message, "success")
         + page_notice("Action blocked", error, "danger")
+    )
+    password_panel = (
+        """
+        <section class="panel user-create-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Directory-managed account</h2>
+              <p>Your password and role are managed by your organization directory. Change your password through the directory provider.</p>
+            </div>
+            <span class="pill neutral">LDAP</span>
+          </div>
+        </section>
+        """
+        if is_directory_user
+        else """
+        <form class="panel user-create-panel" action="/account/password" method="post">
+          <div class="panel-header">
+            <div>
+              <h2>Change password</h2>
+              <p>Updating your password signs out active sessions for this user.</p>
+            </div>
+            <span class="pill neutral">Self service</span>
+          </div>
+          <div class="settings-form embedded">
+            <div class="settings-grid three">
+              <label>
+                Current password
+                <input type="password" name="current_password" autocomplete="current-password" required>
+              </label>
+              <label>
+                New password
+                <input type="password" name="new_password" autocomplete="new-password" required>
+              </label>
+              <label>
+                Confirm password
+                <input type="password" name="confirm_password" autocomplete="new-password" required>
+              </label>
+            </div>
+            <div class="settings-actions">
+              <button class="primary-action" type="submit">Update password</button>
+            </div>
+          </div>
+        </form>
+        """
     )
     body = f"""
     {notice_html}
@@ -2635,41 +3202,17 @@ def render_account_page(user: UserRecord, message: str = "", error: str = "") ->
         </div>
         <div class="config-grid">
           <div><span>Username</span><strong>{html.escape(user.username)}</strong></div>
+          <div><span>Display name</span><strong>{html.escape(user.display_name or 'Not set')}</strong></div>
           <div><span>Role</span><strong>{html.escape(user.role.title())}</strong></div>
+          <div><span>Authentication</span><strong>{'LDAP directory' if is_directory_user else 'Local MASP account'}</strong></div>
+          <div><span>Last directory login</span><strong>{html.escape(user.last_login_at or 'Not applicable')}</strong></div>
           <div><span>Created</span><strong>{html.escape(user.created_at)}</strong></div>
           <div><span>Updated</span><strong>{html.escape(user.updated_at)}</strong></div>
           <div><span>Session policy</span><strong>{ttl_hours}h login window</strong></div>
         </div>
       </section>
 
-      <form class="panel user-create-panel" action="/account/password" method="post">
-        <div class="panel-header">
-          <div>
-            <h2>Change password</h2>
-            <p>Updating your password signs out active sessions for this user.</p>
-          </div>
-          <span class="pill neutral">Self service</span>
-        </div>
-        <div class="settings-form embedded">
-          <div class="settings-grid three">
-            <label>
-              Current password
-              <input type="password" name="current_password" autocomplete="current-password" required>
-            </label>
-            <label>
-              New password
-              <input type="password" name="new_password" autocomplete="new-password" required>
-            </label>
-            <label>
-              Confirm password
-              <input type="password" name="confirm_password" autocomplete="new-password" required>
-            </label>
-          </div>
-          <div class="settings-actions">
-            <button class="primary-action" type="submit">Update password</button>
-          </div>
-        </div>
-      </form>
+      {password_panel}
     </section>
     """
     return page_shell("Account", "account", body, user)
@@ -2690,6 +3233,9 @@ def status_pill(status: str) -> str:
         "skipped": "neutral",
         "failed": "danger",
         "offline": "danger",
+        "disabled": "danger",
+        "draining": "warning",
+        "active": "success",
         "error": "danger",
         "idle": "success",
         "starting": "warning",
@@ -2733,7 +3279,7 @@ def dashboard_verdict_pill(scan: ScanRecord, results: list[EngineResultRecord]) 
     if scan.status in ACTIVE_SCAN_STATUSES:
         return '<span class="pill neutral">Pending</span>'
 
-    detected, total = detection_summary(results)
+    detected, total = detection_summary(results, source=scan.source)
     if total == 0:
         return '<span class="pill neutral">Metadata Only</span>'
     if detected > 0:
@@ -2765,7 +3311,23 @@ def detected_pill(status: str, detected: bool) -> str:
 
 def engine_result_verdict_pill(result: EngineResultRecord) -> str:
     """Render an adapter policy verdict without mislabeling Review as Clean."""
+    details = parse_json_value(result.details_json, {})
     policy_action = engine_policy_action(result)
+    if isinstance(details, dict) and details.get("source") == "virustotal":
+        raw_reputation_status = str(details.get("status") or "unknown")
+        reputation_status = raw_reputation_status.replace("_", " ").title()
+        if details.get("found") is False or raw_reputation_status == "unknown":
+            return '<span class="pill neutral">No report</span>'
+        if raw_reputation_status in {"undetected", "stale"}:
+            return '<span class="pill success">No detections</span>'
+        if policy_action == "block":
+            return f'<span class="pill danger">{html.escape(reputation_status)}</span>'
+        if policy_action == "review":
+            return (
+                f'<span class="pill warning">{html.escape(reputation_status)} · Review</span>'
+            )
+        if policy_action == "allow":
+            return f'<span class="pill success">{html.escape(reputation_status)}</span>'
     if result.status == "completed" and policy_action == "review":
         return '<span class="pill warning">Review</span>'
     return detected_pill(result.status, result.detected)
@@ -2781,8 +3343,10 @@ def detected_engine_names(results: list[EngineResultRecord]) -> list[str]:
     ]
 
 
-def detection_summary_text(results: list[EngineResultRecord]) -> str:
-    detected, total = detection_summary(results)
+def detection_summary_text(
+    results: list[EngineResultRecord], *, source: str = "manual"
+) -> str:
+    detected, total = detection_summary(results, source=source)
     if total == 0:
         return "No detection engines configured"
     if detected == 0:
@@ -2805,8 +3369,10 @@ def detection_summary_pill(results: list[EngineResultRecord]) -> str:
     return f'<span class="pill {tone}">{html.escape(detection_summary_text(results))}</span>'
 
 
-def detection_meter(results: list[EngineResultRecord]) -> str:
-    detected, total = detection_summary(results)
+def detection_meter(
+    results: list[EngineResultRecord], *, source: str = "manual"
+) -> str:
+    detected, total = detection_summary(results, source=source)
     meter_angle = 0 if total == 0 else round((detected / total) * 360)
     if total == 0:
         tone = "neutral"
@@ -2831,26 +3397,26 @@ def detection_meter(results: list[EngineResultRecord]) -> str:
 def detection_summary_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
     if scan.status in ACTIVE_SCAN_STATUSES:
         return "Pending engine results"
-    return detection_summary_text(results)
+    return detection_summary_text(results, source=scan.source)
 
 
 def detection_summary_tone_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
     if scan.status in ACTIVE_SCAN_STATUSES:
         return "neutral"
-    return detection_summary_tone(results)
+    return detection_summary_tone(results, source=scan.source)
 
 
 def detection_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
     if scan.status in ACTIVE_SCAN_STATUSES:
         return "Detection engines have not completed yet."
-    return detection_detail_text(results)
+    return detection_detail_text(results, source=scan.source)
 
 
 def detection_meter_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
     if scan.status not in ACTIVE_SCAN_STATUSES:
-        return detection_meter(results)
+        return detection_meter(results, source=scan.source)
 
-    total = len(detection_engine_names())
+    total = len(detection_engine_names(source=scan.source))
     label = "Pending engine results"
     return f"""
     <div class="detection-meter neutral" style="--meter-angle: 0deg" aria-label="{html.escape(label)}" title="{html.escape(label)}">
@@ -2862,8 +3428,10 @@ def detection_meter_for_scan(scan: ScanRecord, results: list[EngineResultRecord]
     """
 
 
-def detection_summary_tone(results: list[EngineResultRecord]) -> str:
-    detected, total = detection_summary(results)
+def detection_summary_tone(
+    results: list[EngineResultRecord], *, source: str = "manual"
+) -> str:
+    detected, total = detection_summary(results, source=source)
     if total == 0:
         return "neutral"
     if detected > 0:
@@ -2871,15 +3439,19 @@ def detection_summary_tone(results: list[EngineResultRecord]) -> str:
     return "success"
 
 
-def coverage_summary_text(results: list[EngineResultRecord]) -> str:
-    ran, total, _ = required_engine_coverage(results)
+def coverage_summary_text(
+    results: list[EngineResultRecord], *, source: str = "manual"
+) -> str:
+    ran, total, _ = required_engine_coverage(results, source=source)
     if total == 0:
         return "No required detection engines configured"
     return f"{ran} of {total} required engines ran"
 
 
-def coverage_detail_text(results: list[EngineResultRecord]) -> str:
-    _, total, unavailable = required_engine_coverage(results)
+def coverage_detail_text(
+    results: list[EngineResultRecord], *, source: str = "manual"
+) -> str:
+    _, total, unavailable = required_engine_coverage(results, source=source)
     if total == 0:
         return "Only metadata analyzers are enabled for this scan."
     if not unavailable:
@@ -2887,8 +3459,10 @@ def coverage_detail_text(results: list[EngineResultRecord]) -> str:
     return "; ".join(unavailable)
 
 
-def coverage_tone(results: list[EngineResultRecord]) -> str:
-    ran, total, unavailable = required_engine_coverage(results)
+def coverage_tone(
+    results: list[EngineResultRecord], *, source: str = "manual"
+) -> str:
+    ran, total, unavailable = required_engine_coverage(results, source=source)
     if total == 0:
         return "neutral"
     if not unavailable:
@@ -2903,7 +3477,7 @@ def coverage_summary_text_for_scan(scan: ScanRecord, results: list[EngineResultR
         return "Waiting for worker"
     if scan.status == "running":
         return "Engines are running"
-    return coverage_summary_text(results)
+    return coverage_summary_text(results, source=scan.source)
 
 
 def coverage_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
@@ -2911,7 +3485,7 @@ def coverage_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRe
         return "Required engines have not started yet."
     if scan.status == "running":
         return "Required engines are being executed by the worker. Missing engines may be marked skipped after the orchestration wait window."
-    return coverage_detail_text(results)
+    return coverage_detail_text(results, source=scan.source)
 
 
 def coverage_tone_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
@@ -2919,7 +3493,7 @@ def coverage_tone_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) 
         return "warning"
     if scan.status == "failed":
         return "danger"
-    return coverage_tone(results)
+    return coverage_tone(results, source=scan.source)
 
 
 def coverage_status_pill(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
@@ -2943,26 +3517,30 @@ def coverage_status_detail_for_scan(scan: ScanRecord, results: list[EngineResult
     tone = coverage_tone_for_scan(scan, results)
     if tone in {"success", "neutral"}:
         return ""
-    return coverage_detail_text(results)
+    return coverage_detail_text(results, source=scan.source)
 
 
 def coverage_summary_card_class(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
     return f"summary-wide coverage-summary-card {coverage_tone_for_scan(scan, results)}"
 
 
-def detection_detail_text(results: list[EngineResultRecord]) -> str:
+def detection_detail_text(
+    results: list[EngineResultRecord], *, source: str = "manual"
+) -> str:
     names = detected_engine_names(results)
     if names:
         return ", ".join(names)
 
-    _, total = detection_summary(results)
+    _, total = detection_summary(results, source=source)
     if total == 0:
         return "Add a detection adapter from Engines to populate this."
     return "No detection engine flagged this sample."
 
 
-def detection_summary_card_class(results: list[EngineResultRecord]) -> str:
-    detected, total = detection_summary(results)
+def detection_summary_card_class(
+    results: list[EngineResultRecord], *, source: str = "manual"
+) -> str:
+    detected, total = detection_summary(results, source=source)
     if total == 0:
         return "summary-wide detection-summary-card neutral"
     if detected > 0:
@@ -2974,7 +3552,7 @@ def dashboard_verdict_key(scan: ScanRecord, results: list[EngineResultRecord]) -
     if scan.status in ACTIVE_SCAN_STATUSES:
         return "pending"
 
-    detected, total = detection_summary(results)
+    detected, total = detection_summary(results, source=scan.source)
     if total == 0:
         return "metadata_only"
     if detected > 0:
@@ -3557,6 +4135,8 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
             if result.status == "completed" and result.detected
             else "raw-output-row"
         )
+        insight_html = render_virustotal_file_result_insight(result)
+        technical_label = "Technical details" if insight_html else "Raw output"
         rows.append(
             f"""
             <tr{row_class}>
@@ -3573,8 +4153,9 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
             </tr>
             <tr class="{raw_row_class}">
               <td colspan="7">
+                {insight_html}
                 <details class="engine-raw-output">
-                  <summary class="engine-raw-output-toggle">Raw output</summary>
+                  <summary class="engine-raw-output-toggle">{technical_label}</summary>
                   <pre>{html.escape(result.raw_output)}</pre>
                   {f'<small>Skip reason: {html.escape(skip_reason)}</small>' if skip_reason else ''}
                   <small>{html.escape(error)}</small>
@@ -3584,6 +4165,107 @@ def render_engine_result_rows(results: list[EngineResultRecord]) -> str:
             """
         )
     return "\n".join(rows)
+
+
+def render_virustotal_file_result_insight(result: EngineResultRecord) -> str:
+    """Render a compact VirusTotal reputation summary for file scans."""
+    details = parse_json_value(result.details_json, {})
+    if not isinstance(details, dict) or details.get("source") != "virustotal":
+        return ""
+
+    raw_decision = details.get("decision")
+    decision = raw_decision if isinstance(raw_decision, dict) else {}
+    action = str(decision.get("action", "review"))
+    if action not in {"allow", "review", "block"}:
+        action = "review"
+    reason = str(decision.get("reason") or details.get("detail") or "")
+    found = bool(details.get("found"))
+    report_source = "Cache" if bool(details.get("cached")) else "Live lookup"
+
+    permalink = details.get("permalink")
+    report_link = ""
+    if isinstance(permalink, str) and permalink.startswith(
+        "https://www.virustotal.com/"
+    ):
+        report_link = (
+            f'<a class="secondary-action compact-action" href="{html.escape(permalink, quote=True)}" '
+            'target="_blank" rel="noopener noreferrer">Open VirusTotal report '
+            '<span aria-hidden="true">↗</span></a>'
+        )
+
+    if not found:
+        return f"""
+        <article class="vt-file-insight is-neutral">
+          <header class="vt-file-insight-header">
+            <div>
+              <span class="hash-result-eyebrow">SHA-256 reputation</span>
+              <strong>VirusTotal</strong>
+              <small>Only the hash was queried; the file was not uploaded.</small>
+            </div>
+            <span class="pill neutral">No report</span>
+          </header>
+          <div class="vt-no-report">
+            <strong>No VirusTotal report found</strong>
+            <p>This is not a detection and does not change the file scan decision. Local scan engines determine the result.</p>
+            <span>{html.escape(report_source)}</span>
+          </div>
+        </article>
+        """
+
+    raw_stats = details.get("stats")
+    stats = raw_stats if isinstance(raw_stats, dict) else {}
+    malicious = stats.get("malicious", 0)
+    suspicious = stats.get("suspicious", 0)
+    undetected = stats.get("undetected", 0)
+    total = stats.get("total", 0)
+    stat_items = (
+        ("Malicious", malicious, "danger" if malicious else "neutral"),
+        ("Suspicious", suspicious, "warning" if suspicious else "neutral"),
+        ("Undetected", undetected, "success" if undetected else "neutral"),
+        ("Total", total, "neutral"),
+    )
+    stats_html = "".join(
+        f'<div class="hash-stat is-{tone}"><span>{html.escape(label)}</span>'
+        f'<strong>{html.escape(str(value))}</strong></div>'
+        for label, value, tone in stat_items
+    )
+
+    analysis_date = str(details.get("last_analysis_date") or "Unavailable")
+    verdict_label = (
+        "Malicious"
+        if action == "block"
+        else "Suspicious"
+        if action == "review"
+        else "No detections"
+    )
+    verdict_tone = {"block": "danger", "review": "warning", "allow": "success"}[
+        action
+    ]
+    reason_html = (
+        f'<p class="vt-file-insight-alert">{html.escape(reason)}</p>'
+        if action in {"block", "review"} and reason
+        else ""
+    )
+
+    return f"""
+    <article class="vt-file-insight is-{html.escape(action)}">
+      <header class="vt-file-insight-header">
+        <div>
+          <span class="hash-result-eyebrow">SHA-256 reputation</span>
+          <strong>VirusTotal</strong>
+          <small>Only the hash was queried; the file was not uploaded.</small>
+        </div>
+        <span class="pill {verdict_tone}">{html.escape(verdict_label)}</span>
+      </header>
+      <div class="hash-stat-grid">{stats_html}</div>
+      {reason_html}
+      <div class="vt-file-insight-meta">
+        <span><strong>Last analysis</strong>{html.escape(analysis_date)}</span>
+        <span><strong>Source</strong>{html.escape(report_source)}</span>
+        {report_link}
+      </div>
+    </article>
+    """
 
 
 def engine_result_skip_reason_label(result: EngineResultRecord) -> str:
@@ -3976,7 +4658,9 @@ def build_scan_report_payload(
     verdict = scan.verdict if scan.risk_score is not None else assessment.verdict
     risk_score = scan.risk_score if scan.risk_score is not None else assessment.score
     findings = report_finding_rows(engine_results)
-    coverage_ran, coverage_total, coverage_unavailable = required_engine_coverage(engine_results)
+    coverage_ran, coverage_total, coverage_unavailable = required_engine_coverage(
+        engine_results, source=scan.source
+    )
     decision = scan_decision(
         scan,
         engine_results,
@@ -4332,7 +5016,7 @@ def render_scan_result(
           <div><span>Scan type</span><strong>{html.escape(scan_type_label(scan))}</strong></div>
           <div><span>Path</span><strong>{html.escape(scan.relative_path or scan.original_filename)}</strong></div>
           <div><span>{html.escape(runtime_label)}</span><strong>{html.escape(runtime_value)}</strong></div>
-          <div class="{detection_summary_card_class(engine_results)}">
+          <div class="{detection_summary_card_class(engine_results, source=scan.source)}">
             <span>Engine detections</span>
             <strong>{html.escape(detection_summary_text_for_scan(scan, engine_results))}</strong>
             <small>{html.escape(detection_detail_text_for_scan(scan, engine_results))}</small>
@@ -4471,6 +5155,12 @@ def login_route(
 ):
     result = login(username, password)
     if result is None:
+        set_audit_context(
+            request,
+            action="auth.login",
+            target_type="user",
+            details={"attempted_username": username.strip()},
+        )
         return HTMLResponse(
             render_login_page(
                 next_url=next_url,
@@ -4478,6 +5168,15 @@ def login_route(
             ),
             status_code=401,
         )
+
+    set_audit_context(
+        request,
+        action="auth.login",
+        target_type="user",
+        target_id=result.user.id,
+        actor=result.user,
+        details={"auth_source": result.user.auth_source},
+    )
 
     response = RedirectResponse(url=safe_next_url(next_url), status_code=303)
     response.set_cookie(
@@ -4495,6 +5194,7 @@ def login_route(
 
 @app.post("/logout")
 def logout_route(request: Request) -> RedirectResponse:
+    set_audit_context(request, action="auth.logout", target_type="session")
     logout(request.cookies.get(SESSION_COOKIE))
     response = RedirectResponse(url="/login", status_code=303)
     response.delete_cookie(SESSION_COOKIE, path="/")
@@ -5097,12 +5797,224 @@ def system_page(request: Request, message: str = "", error: str = "") -> str:
     return render_system_page(user, message=message, error=error)
 
 
+def normalized_worker_pool_form(name: str, selector: str) -> tuple[str, str]:
+    clean_name = name.strip()
+    if not clean_name or len(clean_name) > 100:
+        raise ValueError("Worker pool name must be between 1 and 100 characters.")
+    parsed_selector = parse_worker_pool_selector(selector)
+    return clean_name, json.dumps(parsed_selector, sort_keys=True)
+
+
+@app.post("/worker-pools/create")
+def create_worker_pool_route(
+    request: Request,
+    pool_name: str = Form(...),
+    pool_selector: str = Form(...),
+) -> RedirectResponse:
+    require_admin(request)
+    set_audit_context(
+        request,
+        action="worker_pool.create",
+        target_type="worker_pool",
+        target_id=pool_name.strip(),
+    )
+    try:
+        clean_name, selector_json = normalized_worker_pool_form(pool_name, pool_selector)
+        create_worker_pool(clean_name, selector_json)
+    except ValueError as exc:
+        set_audit_context(request, outcome="failure", details={"reason": "validation"})
+        return RedirectResponse(
+            url=redirect_url("/system", error=str(exc)), status_code=303
+        )
+    return RedirectResponse(
+        url=redirect_url("/system", message=f"Created worker pool {clean_name}."),
+        status_code=303,
+    )
+
+
+@app.post("/worker-pools/{pool_id}/update")
+def update_worker_pool_route(
+    request: Request,
+    pool_id: int,
+    pool_name: str = Form(...),
+    pool_selector: str = Form(...),
+    pool_state: str = Form("enabled"),
+) -> RedirectResponse:
+    require_admin(request)
+    set_audit_context(
+        request,
+        action="worker_pool.update",
+        target_type="worker_pool",
+        target_id=str(pool_id),
+    )
+    try:
+        clean_name, selector_json = normalized_worker_pool_form(pool_name, pool_selector)
+        updated = update_worker_pool(
+            pool_id,
+            name=clean_name,
+            selector_json=selector_json,
+            enabled=pool_state.strip().lower() == "enabled",
+        )
+    except ValueError as exc:
+        set_audit_context(request, outcome="failure", details={"reason": "validation"})
+        return RedirectResponse(
+            url=redirect_url("/system", error=str(exc)), status_code=303
+        )
+    if not updated:
+        set_audit_context(request, outcome="failure", details={"reason": "not_found"})
+        return RedirectResponse(
+            url=redirect_url("/system", error="Worker pool not found."), status_code=303
+        )
+    return RedirectResponse(
+        url=redirect_url("/system", message=f"Updated worker pool {clean_name}."),
+        status_code=303,
+    )
+
+
+@app.post("/worker-pools/{pool_id}/delete")
+def delete_worker_pool_route(request: Request, pool_id: int) -> RedirectResponse:
+    require_admin(request)
+    set_audit_context(
+        request,
+        action="worker_pool.delete",
+        target_type="worker_pool",
+        target_id=str(pool_id),
+    )
+    try:
+        deleted = delete_worker_pool(pool_id)
+    except ValueError as exc:
+        set_audit_context(request, outcome="failure", details={"reason": "assigned"})
+        return RedirectResponse(
+            url=redirect_url("/system", error=str(exc)), status_code=303
+        )
+    if not deleted:
+        set_audit_context(request, outcome="failure", details={"reason": "not_found"})
+        return RedirectResponse(
+            url=redirect_url("/system", error="Worker pool not found."), status_code=303
+        )
+    return RedirectResponse(
+        url=redirect_url("/system", message="Deleted worker pool."), status_code=303
+    )
+
+
+@app.post("/engines/pool")
+def assign_engine_worker_pool_route(
+    request: Request,
+    engine_instance_id: int = Form(...),
+    worker_pool_id: int = Form(0),
+) -> RedirectResponse:
+    require_admin(request)
+    target_pool_id = worker_pool_id if worker_pool_id > 0 else None
+    set_audit_context(
+        request,
+        action="engine.worker_pool.assign",
+        target_type="engine",
+        target_id=str(engine_instance_id),
+        details={"worker_pool_id": target_pool_id},
+    )
+    try:
+        set_engine_instance_worker_pool(engine_instance_id, target_pool_id)
+    except ValueError as exc:
+        set_audit_context(request, outcome="failure", details={"reason": "not_found"})
+        return RedirectResponse(
+            url=redirect_url("/system", error=str(exc)), status_code=303
+        )
+    message = "Updated engine worker placement."
+    return RedirectResponse(url=redirect_url("/system", message=message), status_code=303)
+
+
+@app.post("/workers/state")
+def update_worker_node_state_route(
+    request: Request,
+    node_id: str = Form(...),
+    lifecycle_state: str = Form(...),
+) -> RedirectResponse:
+    require_admin(request)
+    clean_node_id = node_id.strip()
+    clean_state = lifecycle_state.strip().lower()
+    set_audit_context(
+        request,
+        action="worker.lifecycle.update",
+        target_type="worker_node",
+        target_id=clean_node_id,
+        details={"lifecycle_state": clean_state},
+    )
+    try:
+        updated = update_worker_node_lifecycle(clean_node_id, clean_state)
+    except ValueError as exc:
+        set_audit_context(request, outcome="failure", details={"reason": "invalid_state"})
+        return RedirectResponse(
+            url=redirect_url("/system", error=str(exc)),
+            status_code=303,
+        )
+    if not updated:
+        set_audit_context(request, outcome="failure", details={"reason": "not_found"})
+        return RedirectResponse(
+            url=redirect_url("/system", error="Worker node not found."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=redirect_url(
+            "/system",
+            message=f"Worker node {clean_node_id} is now {clean_state}.",
+        ),
+        status_code=303,
+    )
+
+
+@app.post("/workers/credentials/revoke")
+def revoke_worker_node_credentials_route(
+    request: Request,
+    node_id: str = Form(...),
+) -> RedirectResponse:
+    require_admin(request)
+    clean_node_id = node_id.strip()
+    set_audit_context(
+        request,
+        action="worker.credential.revoke",
+        target_type="worker_node",
+        target_id=clean_node_id,
+    )
+    revoked = revoke_worker_agent_credentials(clean_node_id)
+    if revoked <= 0:
+        set_audit_context(
+            request,
+            outcome="failure",
+            details={"reason": "no_active_credential"},
+        )
+        return RedirectResponse(
+            url=redirect_url("/system", error="No active agent credential found."),
+            status_code=303,
+        )
+    set_audit_context(request, details={"revoked_count": revoked})
+    return RedirectResponse(
+        url=redirect_url(
+            "/system",
+            message=f"Revoked the active agent credential for {clean_node_id}.",
+        ),
+        status_code=303,
+    )
+
+
+@app.get("/audit", response_class=HTMLResponse)
+def audit_page(
+    request: Request,
+    q: str = "",
+    outcome: str = "all",
+    page: int = 1,
+) -> str:
+    user = require_admin(request)
+    return render_audit_page(user, query=q, outcome=outcome, page=page)
+
+
 @app.post("/system/retention/run")
 def run_retention_cleanup(request: Request) -> RedirectResponse:
     require_admin(request)
+    set_audit_context(request, action="retention.run", target_type="scan")
     policy = retention_policy_from_env()
     cutoff_value = retention_cutoff_value(policy)
     if cutoff_value is None:
+        set_audit_context(request, outcome="failure", details={"reason": "disabled"})
         return RedirectResponse(
             url=redirect_url("/system", error="Retention cleanup is disabled."),
             status_code=303,
@@ -5113,6 +6025,12 @@ def run_retention_cleanup(request: Request) -> RedirectResponse:
     for scan in expired_scans:
         if delete_scan_record(scan.id) is not None:
             deleted_count += 1
+    set_audit_context(
+        request,
+        action="retention.run",
+        target_type="scan",
+        details={"deleted_count": deleted_count, "batch_size": policy.batch_size},
+    )
 
     message = (
         "No scans matched the retention policy."
@@ -5138,17 +6056,33 @@ def create_user_route(
 ) -> RedirectResponse:
     require_admin(request)
     clean_username = username.strip()
+    set_audit_context(
+        request,
+        action="user.create",
+        target_type="user",
+        details={"username": clean_username, "role": normalize_role(role)},
+    )
     if not clean_username:
+        set_audit_context(request, outcome="failure", details={"reason": "username_required"})
         return RedirectResponse(url="/users?error=Username%20is%20required.", status_code=303)
     if len(password) < 8:
+        set_audit_context(request, outcome="failure", details={"reason": "password_policy"})
         return RedirectResponse(url="/users?error=Password%20must%20be%20at%20least%208%20characters.", status_code=303)
     if get_user_by_username(clean_username) is not None:
+        set_audit_context(request, outcome="failure", details={"reason": "username_exists"})
         return RedirectResponse(url="/users?error=Username%20already%20exists.", status_code=303)
 
-    create_user(
+    created_user_id = create_user(
         username=clean_username,
         password_hash=hash_password(password),
         role=normalize_role(role),
+    )
+    set_audit_context(
+        request,
+        action="user.create",
+        target_type="user",
+        target_id=created_user_id,
+        details={"username": clean_username, "role": normalize_role(role)},
     )
     return RedirectResponse(url=f"/users?message={quote(f'Created user {clean_username}.')}", status_code=303)
 
@@ -5161,22 +6095,44 @@ def update_user_route(
     password: str = Form(""),
 ) -> RedirectResponse:
     admin_user = require_admin(request)
+    set_audit_context(request, action="user.update", target_type="user", target_id=user_id)
     target_user = get_user_by_id(user_id)
     if target_user is None:
+        set_audit_context(request, outcome="failure", details={"reason": "not_found"})
         return RedirectResponse(url="/users?error=User%20not%20found.", status_code=303)
     if admin_user.id == user_id:
+        set_audit_context(request, outcome="denied", details={"reason": "self_management_blocked"})
         return RedirectResponse(url="/users?error=Use%20Account%20to%20manage%20your%20own%20credentials.", status_code=303)
+    if target_user.auth_source == "ldap":
+        set_audit_context(request, outcome="denied", details={"reason": "directory_managed"})
+        return RedirectResponse(
+            url="/users?error=LDAP%20users%20are%20managed%20by%20the%20directory.",
+            status_code=303,
+        )
 
     normalized_role = normalize_role(role)
     if password and len(password) < 8:
+        set_audit_context(request, outcome="failure", details={"reason": "password_policy"})
         return RedirectResponse(url="/users?error=Password%20must%20be%20at%20least%208%20characters.", status_code=303)
-    if target_user.role == ROLE_ADMIN and normalized_role != ROLE_ADMIN and count_users_by_role(ROLE_ADMIN) <= 1:
+    if (
+        target_user.role == ROLE_ADMIN
+        and normalized_role != ROLE_ADMIN
+        and count_users_by_role(ROLE_ADMIN, "local") <= 1
+    ):
+        set_audit_context(request, outcome="denied", details={"reason": "last_admin"})
         return RedirectResponse(url="/users?error=At%20least%20one%20admin%20must%20remain%20active.", status_code=303)
 
     new_password_hash = hash_password(password) if password else None
     update_user(user_id, normalized_role, new_password_hash)
     if new_password_hash is not None:
         revoke_user_sessions(user_id)
+    set_audit_context(
+        request,
+        action="user.update",
+        target_type="user",
+        target_id=user_id,
+        details={"username": target_user.username, "role": normalized_role, "password_changed": bool(password)},
+    )
     return RedirectResponse(
         url=f"/users?message={quote(f'Updated user {target_user.username}.')}",
         status_code=303,
@@ -5186,14 +6142,31 @@ def update_user_route(
 @app.post("/users/{user_id}/delete")
 def delete_user_route(request: Request, user_id: int) -> RedirectResponse:
     user = require_admin(request)
+    set_audit_context(request, action="user.delete", target_type="user", target_id=user_id)
     if user.id == user_id:
+        set_audit_context(request, outcome="denied", details={"reason": "self_delete"})
         return RedirectResponse(url="/users?error=You%20cannot%20delete%20your%20current%20user.", status_code=303)
     target_user = get_user_by_id(user_id)
     if target_user is None:
+        set_audit_context(request, outcome="failure", details={"reason": "not_found"})
         return RedirectResponse(url="/users?error=User%20not%20found.", status_code=303)
-    if target_user.role == ROLE_ADMIN and count_users_by_role(ROLE_ADMIN) <= 1:
+    if target_user.role == ROLE_ADMIN and (
+        count_users_by_role(ROLE_ADMIN) <= 1
+        or (
+            target_user.auth_source == "local"
+            and count_users_by_role(ROLE_ADMIN, "local") <= 1
+        )
+    ):
+        set_audit_context(request, outcome="denied", details={"reason": "last_admin"})
         return RedirectResponse(url="/users?error=At%20least%20one%20admin%20must%20remain%20active.", status_code=303)
     delete_user(user_id)
+    set_audit_context(
+        request,
+        action="user.delete",
+        target_type="user",
+        target_id=user_id,
+        details={"username": target_user.username, "role": target_user.role},
+    )
     return RedirectResponse(
         url=f"/users?message={quote(f'Deleted user {target_user.username}.')}",
         status_code=303,
@@ -5214,17 +6187,39 @@ def update_account_password_route(
     confirm_password: str = Form(...),
 ) -> RedirectResponse:
     user = require_user(request)
+    set_audit_context(
+        request,
+        action="user.password_change",
+        target_type="user",
+        target_id=user.id,
+    )
+    if user.auth_source == "ldap":
+        set_audit_context(request, outcome="denied", details={"reason": "directory_managed"})
+        return RedirectResponse(
+            url="/account?error=LDAP%20passwords%20are%20managed%20by%20the%20directory.",
+            status_code=303,
+        )
     if not verify_password(current_password, user.password_hash):
+        set_audit_context(request, outcome="denied", details={"reason": "current_password_invalid"})
         return RedirectResponse(url="/account?error=Current%20password%20is%20incorrect.", status_code=303)
     if len(new_password) < 8:
+        set_audit_context(request, outcome="failure", details={"reason": "password_policy"})
         return RedirectResponse(url="/account?error=Password%20must%20be%20at%20least%208%20characters.", status_code=303)
     if new_password != confirm_password:
+        set_audit_context(request, outcome="failure", details={"reason": "confirmation_mismatch"})
         return RedirectResponse(url="/account?error=New%20password%20and%20confirmation%20must%20match.", status_code=303)
     if verify_password(new_password, user.password_hash):
+        set_audit_context(request, outcome="failure", details={"reason": "password_reuse"})
         return RedirectResponse(url="/account?error=Choose%20a%20different%20password%20than%20your%20current%20one.", status_code=303)
 
     update_user(user.id, user.role, hash_password(new_password))
     revoke_user_sessions(user.id)
+    set_audit_context(
+        request,
+        action="user.password_change",
+        target_type="user",
+        target_id=user.id,
+    )
     response = RedirectResponse(
         url="/login?message=Password%20updated.%20Please%20sign%20in%20again.",
         status_code=303,
@@ -5854,8 +6849,9 @@ def api_batch_result(request: Request, batch_id: int) -> JSONResponse:
     name="api_hash_lookup",
     summary="Look up SHA-256 reputation",
     description=(
-        "Sends only the supplied SHA-256 digest to every enabled hash-capable engine "
-        "and returns normalized per-engine results. MASP never uploads file content."
+        "Sends only the supplied SHA-256 digest to enabled non-metered hash-capable "
+        "engines and returns normalized per-engine results. MASP never uploads file "
+        "content or invokes quota-consuming engines from this API endpoint."
     ),
     dependencies=[Security(API_BEARER_SCHEME)],
     responses={
@@ -5875,8 +6871,8 @@ def api_batch_result(request: Request, batch_id: int) -> JSONResponse:
         503: {
             "model": api_schemas.ApiErrorResponse,
             "description": (
-                "API authentication or an enabled hash engine is not configured, or "
-                "an upstream quota/rate limit prevents a reliable answer."
+                "API authentication is not configured, no eligible non-metered hash "
+                "engine is enabled, or an eligible upstream engine is unavailable."
             ),
         },
     },
@@ -5887,11 +6883,11 @@ def api_hash_lookup(request: Request, sha256: str) -> JSONResponse:
         normalized_sha256 = normalize_sha256(sha256)
     except InvalidSha256Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    engines = enabled_hash_engines()
+    engines = enabled_hash_engines(source="api")
     if not engines:
         raise HTTPException(
             status_code=503,
-            detail="No hash-capable engine is added and enabled in MASP.",
+            detail="No non-metered hash-capable engine is available for API use.",
         )
     try:
         runs = execute_hash_scan(normalized_sha256, engines)
@@ -5930,6 +6926,12 @@ async def delete_selected_scans(
     for scan_id in scan_ids:
         if delete_scan_record(scan_id) is not None:
             deleted_count += 1
+    set_audit_context(
+        request,
+        action="scan.bulk_delete",
+        target_type="scan",
+        details={"requested_count": len(scan_ids), "deleted_count": deleted_count},
+    )
     message = f"Deleted {deleted_count} scan." if deleted_count == 1 else f"Deleted {deleted_count} scans."
     return RedirectResponse(url=redirect_url("/", message=message), status_code=303)
 
@@ -5940,6 +6942,7 @@ async def delete_single_scan(request: Request, scan_id: int) -> RedirectResponse
     deleted_scan = delete_scan_record(scan_id)
     if deleted_scan is None:
         return RedirectResponse(url=redirect_url("/", error="Scan not found."), status_code=303)
+    set_audit_context(request, action="scan.delete", target_type="scan", target_id=scan_id)
     return RedirectResponse(
         url=redirect_url("/", message=f"Deleted scan {deleted_scan.original_filename}."),
         status_code=303,
@@ -5949,12 +6952,18 @@ async def delete_single_scan(request: Request, scan_id: int) -> RedirectResponse
 @app.post("/scans/{scan_id}/retry")
 async def retry_single_scan(request: Request, scan_id: int) -> RedirectResponse:
     require_user(request)
+    scan = get_scan(scan_id)
+    if scan is None:
+        return RedirectResponse(
+            url=redirect_url("/", error="Scan not found."),
+            status_code=303,
+        )
     if not retry_scan_job_record(scan_id):
         return RedirectResponse(
             url=redirect_url(f"/scans/{scan_id}", error="Only completed or failed scans can be retried."),
             status_code=303,
         )
-    create_scan_engine_jobs(scan_id, enabled_engines())
+    create_scan_engine_jobs(scan_id, enabled_engines(source=scan.source))
     return RedirectResponse(
         url=redirect_url(f"/scans/{scan_id}", message="Scan was queued for another run."),
         status_code=303,
@@ -6111,6 +7120,7 @@ def save_scan_policy(
     upload_max_bytes: str = Form(""),
 ) -> RedirectResponse:
     admin = require_admin(request)
+    set_audit_context(request, action="scan_policy.update", target_type="scan_policy")
     submitted = {
         "api_max_wait_seconds": api_max_wait_seconds,
         "api_retry_after_seconds": api_retry_after_seconds,
@@ -6126,6 +7136,11 @@ def save_scan_policy(
             resolved[key] = value
 
     if errors:
+        set_audit_context(
+            request,
+            outcome="failure",
+            details={"reason": "validation_failed", "error_count": len(errors)},
+        )
         return RedirectResponse(
             url=redirect_url("/scan-policy", error=" ".join(errors)),
             status_code=303,
@@ -6138,6 +7153,10 @@ def save_scan_policy(
             f"{'default' if value is None else value}",
             flush=True,
         )
+    set_audit_context(
+        request,
+        details={"settings": resolved},
+    )
     return RedirectResponse(
         url=redirect_url("/scan-policy", message="Saved scan policy settings."),
         status_code=303,
@@ -6150,49 +7169,92 @@ def engines(request: Request, message: str = "", error: str = "", target: str = 
     return render_engines_page(user, message=message, error=error, target=target)
 
 
+def normalized_engine_instance_id(value: object) -> int | None:
+    """Return a positive instance id, including for directly-called route functions."""
+    return value if isinstance(value, int) and value > 0 else None
+
+
 @app.post("/engines/add")
 def add_engine_route(request: Request, adapter_key: str = Form(...)) -> RedirectResponse:
     require_admin(request)
+    set_audit_context(request, action="engine.add", target_type="engine", target_id=adapter_key)
     try:
-        add_engine(adapter_key)
+        instance_id = add_engine(adapter_key)
     except KeyError as exc:
+        set_audit_context(request, outcome="failure", details={"reason": "unknown_adapter"})
         return RedirectResponse(
             url=redirect_url("/engines", error="Unknown engine adapter."),
             status_code=303,
         )
     definition = adapter_definition(adapter_key)
     return RedirectResponse(
-        url=redirect_url("/engines", message=f"Added {definition.label}.", target=adapter_key),
+        url=redirect_url("/engines", message=f"Added {definition.label}.", target=str(instance_id)),
         status_code=303,
     )
 
 
 @app.post("/engines/{adapter_key}/toggle")
-def toggle_engine_route(request: Request, adapter_key: str) -> RedirectResponse:
+def toggle_engine_route(
+    request: Request,
+    adapter_key: str,
+    engine_instance_id: int = Form(0),
+) -> RedirectResponse:
     require_admin(request)
-    toggle_engine(adapter_key)
+    target_instance_id = normalized_engine_instance_id(engine_instance_id)
+    toggle_engine(adapter_key, target_instance_id)
     updated_instance = next(
-        (engine for engine in configured_engines() if engine.adapter_key == adapter_key),
+        (
+            engine
+            for engine in configured_engines()
+            if engine.adapter_key == adapter_key
+            and (target_instance_id is None or engine.id == target_instance_id)
+        ),
         None,
     )
     if updated_instance is None:
+        set_audit_context(
+            request,
+            action="engine.toggle",
+            target_type="engine",
+            target_id=str(target_instance_id or adapter_key),
+            outcome="failure",
+            details={"reason": "not_found"},
+        )
         return RedirectResponse(url=redirect_url("/engines", error="Engine not found."), status_code=303)
     state_label = "enabled" if updated_instance.enabled else "disabled"
+    set_audit_context(
+        request,
+        action="engine.toggle",
+        target_type="engine",
+        target_id=str(updated_instance.id),
+        details={"enabled": updated_instance.enabled},
+    )
     return RedirectResponse(
         url=redirect_url(
             "/engines",
             message=f"{updated_instance.display_name} {state_label}.",
-            target=adapter_key,
+            target=str(updated_instance.id),
         ),
         status_code=303,
     )
 
 
 @app.post("/engines/{adapter_key}/delete")
-def delete_engine_route(request: Request, adapter_key: str) -> RedirectResponse:
+def delete_engine_route(
+    request: Request,
+    adapter_key: str,
+    engine_instance_id: int = Form(0),
+) -> RedirectResponse:
     require_admin(request)
     definition = adapter_definition(adapter_key)
-    remove_engine(adapter_key)
+    target_instance_id = normalized_engine_instance_id(engine_instance_id)
+    remove_engine(adapter_key, target_instance_id)
+    set_audit_context(
+        request,
+        action="engine.delete",
+        target_type="engine",
+        target_id=str(target_instance_id or adapter_key),
+    )
     return RedirectResponse(
         url=redirect_url("/engines", message=f"Removed {definition.label}."),
         status_code=303,
@@ -6200,19 +7262,46 @@ def delete_engine_route(request: Request, adapter_key: str) -> RedirectResponse:
 
 
 @app.post("/engines/{adapter_key}/test", response_class=HTMLResponse)
-def test_engine_route(request: Request, adapter_key: str) -> str:
+def test_engine_route(
+    request: Request,
+    adapter_key: str,
+    engine_instance_id: int = Form(0),
+) -> str:
     user = require_admin(request)
-    matches = [engine for engine in configured_engines() if engine.adapter_key == adapter_key]
+    target_instance_id = normalized_engine_instance_id(engine_instance_id)
+    matches = [
+        engine
+        for engine in configured_engines()
+        if engine.adapter_key == adapter_key
+        and (target_instance_id is None or engine.id == target_instance_id)
+    ]
     if not matches:
         raise HTTPException(status_code=404, detail="Engine not found.")
+    if adapter_capabilities(adapter_key).deployment == "worker":
+        request_engine_node_health_check(matches[0].id)
+        health = worker_backed_engine_health(
+            matches[0],
+            {
+                "ok": False,
+                "status": "worker check requested",
+                "detail": "A matching worker will run this health check on its next maintenance tick.",
+            },
+        )
+        return render_engines_page(
+            user,
+            health_overrides={str(matches[0].id): health},
+            message="Worker health check requested.",
+            target=str(matches[0].id),
+            notice_tone="success",
+        )
     health = test_engine_connection(matches[0])
     tone = health_tone_for(adapter_key, health)
     notice_tone = tone if tone in {"success", "warning", "danger"} else "success"
     return render_engines_page(
         user,
-        health_overrides={adapter_key: health},
+        health_overrides={str(matches[0].id): health},
         message=str(health["detail"]),
-        target=adapter_key,
+        target=str(matches[0].id),
         notice_tone=notice_tone,
     )
 
@@ -6220,6 +7309,7 @@ def test_engine_route(request: Request, adapter_key: str) -> str:
 @app.post("/engines/clamav/config")
 def save_clamav_config(
     request: Request,
+    engine_instance_id: int = Form(0),
     clamav_host: str = Form(""),
     clamav_port: str = Form("3310"),
     clamav_command: str = Form("clamscan"),
@@ -6227,6 +7317,8 @@ def save_clamav_config(
     clamav_max_file_size_bytes: str = Form("0"),
 ) -> RedirectResponse:
     require_admin(request)
+    target_instance_id = normalized_engine_instance_id(engine_instance_id)
+    set_audit_context(request, action="engine.configure", target_type="engine", target_id="clamav")
     update_engine_config(
         "clamav",
         {
@@ -6236,9 +7328,14 @@ def save_clamav_config(
             "timeout_seconds": clamav_timeout_seconds.strip() or "60",
             "max_file_size_bytes": clamav_max_file_size_bytes.strip() or "0",
         },
+        target_instance_id,
     )
     return RedirectResponse(
-        url=redirect_url("/engines", message="Saved ClamAV settings.", target="clamav"),
+        url=redirect_url(
+            "/engines",
+            message="Saved ClamAV settings.",
+            target=str(target_instance_id or "clamav"),
+        ),
         status_code=303,
     )
 
@@ -6246,11 +7343,14 @@ def save_clamav_config(
 @app.post("/engines/yara/config")
 def save_yara_config(
     request: Request,
+    engine_instance_id: int = Form(0),
     yara_command: str = Form("yara"),
     yara_rules_dir: str = Form("rules"),
     yara_timeout_seconds: str = Form("30"),
 ) -> RedirectResponse:
     require_admin(request)
+    target_instance_id = normalized_engine_instance_id(engine_instance_id)
+    set_audit_context(request, action="engine.configure", target_type="engine", target_id="yara")
     update_engine_config(
         "yara",
         {
@@ -6258,9 +7358,14 @@ def save_yara_config(
             "rules_dir": yara_rules_dir.strip() or "rules",
             "timeout_seconds": yara_timeout_seconds.strip() or "30",
         },
+        target_instance_id,
     )
     return RedirectResponse(
-        url=redirect_url("/engines", message="Saved YARA settings.", target="yara"),
+        url=redirect_url(
+            "/engines",
+            message="Saved YARA settings.",
+            target=str(target_instance_id or "yara"),
+        ),
         status_code=303,
     )
 
@@ -6268,6 +7373,7 @@ def save_yara_config(
 @app.post("/engines/microsoft_defender/config")
 def save_microsoft_defender_config(
     request: Request,
+    engine_instance_id: int = Form(0),
     microsoft_defender_execution_mode: str = Form("powershell"),
     microsoft_defender_powershell_path: str = Form("powershell.exe"),
     microsoft_defender_mpcmdrun_path: str = Form("auto"),
@@ -6277,6 +7383,13 @@ def save_microsoft_defender_config(
     microsoft_defender_require_real_time_enabled: str = Form("false"),
 ) -> RedirectResponse:
     require_admin(request)
+    target_instance_id = normalized_engine_instance_id(engine_instance_id)
+    set_audit_context(
+        request,
+        action="engine.configure",
+        target_type="engine",
+        target_id="microsoft_defender",
+    )
     update_engine_config(
         "microsoft_defender",
         {
@@ -6288,12 +7401,13 @@ def save_microsoft_defender_config(
             "update_before_scan": "true" if microsoft_defender_update_before_scan.strip().lower() in {"1", "true", "yes", "on"} else "false",
             "require_real_time_enabled": "true" if microsoft_defender_require_real_time_enabled.strip().lower() in {"1", "true", "yes", "on"} else "false",
         },
+        target_instance_id,
     )
     return RedirectResponse(
         url=redirect_url(
             "/engines",
             message="Saved Microsoft Defender settings.",
-            target="microsoft_defender",
+            target=str(target_instance_id or "microsoft_defender"),
         ),
         status_code=303,
     )
@@ -6322,6 +7436,7 @@ def _validated_int_setting(
 @app.post("/engines/virustotal/config")
 def save_virustotal_config(
     request: Request,
+    engine_instance_id: int = Form(0),
     virustotal_api_key: str = Form(""),
     virustotal_timeout_seconds: str = Form("10"),
     virustotal_cache_seconds: str = Form("3600"),
@@ -6333,11 +7448,30 @@ def save_virustotal_config(
     virustotal_clear_api_key: str = Form("false"),
 ) -> RedirectResponse:
     require_admin(request)
+    target_instance_id = normalized_engine_instance_id(engine_instance_id)
+    # Key material is intentionally absent from audit details; the audit layer
+    # also redacts secret-looking keys defensively.
+    set_audit_context(
+        request,
+        action="engine.configure",
+        target_type="engine",
+        target_id=str(target_instance_id or "virustotal"),
+        details={
+            "credential_changed": bool(virustotal_api_key.strip()),
+            "credential_cleared": virustotal_clear_api_key == "true",
+        },
+    )
     instance = next(
-        (engine for engine in configured_engines() if engine.adapter_key == "virustotal"),
+        (
+            engine
+            for engine in configured_engines()
+            if engine.adapter_key == "virustotal"
+            and (target_instance_id is None or engine.id == target_instance_id)
+        ),
         None,
     )
     if instance is None:
+        set_audit_context(request, outcome="failure", details={"reason": "not_configured"})
         return RedirectResponse(
             url=redirect_url("/engines", error="Add VirusTotal before configuring it."),
             status_code=303,
@@ -6403,18 +7537,27 @@ def save_virustotal_config(
             }
         )
     except (ValueError, SecretStoreError) as exc:
+        set_audit_context(
+            request,
+            outcome="failure",
+            details={"reason": "validation_or_secret_store"},
+        )
         return RedirectResponse(
-            url=redirect_url("/engines", error=str(exc), target="virustotal"),
+            url=redirect_url(
+                "/engines",
+                error=str(exc),
+                target=str(target_instance_id or "virustotal"),
+            ),
             status_code=303,
         )
 
-    update_engine_config("virustotal", config)
+    update_engine_config("virustotal", config, target_instance_id)
     clear_virustotal_cache()
     return RedirectResponse(
         url=redirect_url(
             "/engines",
             message="Saved VirusTotal credentials and policy.",
-            target="virustotal",
+            target=str(target_instance_id or "virustotal"),
         ),
         status_code=303,
     )

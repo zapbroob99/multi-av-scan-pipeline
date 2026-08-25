@@ -141,7 +141,7 @@ class VirusTotalApiTests(unittest.TestCase):
         payload = response_payload()
         with env, setting, patch(
             "app.main.enabled_hash_engines", return_value=[virustotal_engine()]
-        ), patch(
+        ) as enabled_hash, patch(
             "app.main.run_hash_engine", return_value=engine_execution(payload)
         ) as run_hash:
             status, _, actual = asgi_get(f"/api/v1/hashes/{SHA256}")
@@ -154,6 +154,7 @@ class VirusTotalApiTests(unittest.TestCase):
         })
         self.assertEqual(actual["results"][0]["data"], payload)
         run_hash.assert_called_once_with(virustotal_engine(), SHA256)
+        enabled_hash.assert_called_once_with(source="api")
         api_schemas.HashScanResponse.model_validate(actual)
 
     def test_invalid_hash_returns_400(self) -> None:
@@ -170,7 +171,19 @@ class VirusTotalApiTests(unittest.TestCase):
             status, _, payload = asgi_get(f"/api/v1/hashes/{SHA256}")
 
         self.assertEqual(status, 503)
-        self.assertIn("added and enabled", payload["detail"])
+        self.assertIn("non-metered", payload["detail"])
+
+    def test_configured_virustotal_is_excluded_from_api_hash_automation(self) -> None:
+        env, setting = self.configured_auth()
+        with env, setting, patch(
+            "app.services.engine_registry.configured_engines",
+            return_value=[virustotal_engine()],
+        ), patch("app.main.run_hash_engine") as run_hash:
+            status, _, payload = asgi_get(f"/api/v1/hashes/{SHA256}")
+
+        self.assertEqual(status, 503)
+        self.assertIn("non-metered", payload["detail"])
+        run_hash.assert_not_called()
 
     def test_missing_credentials_returns_503_after_engine_is_enabled(self) -> None:
         env, setting = self.configured_auth()

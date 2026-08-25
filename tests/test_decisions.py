@@ -1,9 +1,13 @@
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from app.models import EngineResultRecord
 from app.services.decisions import decide_scan_action
-from app.services.scan_assessment import required_engine_coverage
+from app.services.scan_assessment import (
+    engine_policy_review_reasons,
+    required_engine_coverage,
+)
 
 
 class ScanDecisionTests(unittest.TestCase):
@@ -72,7 +76,7 @@ class ScanDecisionTests(unittest.TestCase):
         self.assertEqual(decision.action, "review")
         self.assertEqual(decision.policy, "metadata_only")
 
-    def test_completed_hash_engine_review_policy_reduces_coverage(self) -> None:
+    def test_completed_hash_engine_review_policy_is_separate_from_coverage(self) -> None:
         result = EngineResultRecord(
             id=1,
             scan_job_id=1,
@@ -97,8 +101,43 @@ class ScanDecisionTests(unittest.TestCase):
         ):
             ran, required, unavailable = required_engine_coverage([result])
 
-        self.assertEqual((ran, required), (0, 1))
-        self.assertEqual(unavailable, ["VirusTotal requires review"])
+        self.assertEqual((ran, required), (1, 1))
+        self.assertEqual(unavailable, [])
+        self.assertEqual(
+            engine_policy_review_reasons([result]),
+            ["VirusTotal requires review under its configured policy."],
+        )
+
+        legacy_unknown = replace(
+            result,
+            details_json=(
+                '{"source":"virustotal","found":false,"status":"unknown",'
+                '"decision":{"action":"review","reason":"No report."}}'
+            ),
+        )
+        self.assertEqual(engine_policy_review_reasons([legacy_unknown]), [])
+        self.assertEqual(
+            engine_policy_review_reasons([legacy_unknown], source="hash"),
+            ["VirusTotal: No report."],
+        )
+
+    def test_completed_engine_policy_review_has_an_explicit_decision_reason(self) -> None:
+        decision = decide_scan_action(
+            scan_status="completed",
+            verdict="low",
+            risk_score=10,
+            detected_engines=0,
+            detection_engines=3,
+            unavailable_engines=[],
+            policy_review_reasons=[
+                "VirusTotal: No malicious engines reported, but policy requires review."
+            ],
+        )
+
+        self.assertEqual(decision.action, "review")
+        self.assertEqual(decision.policy, "engine_policy_review")
+        self.assertIn("All required engines completed", decision.reasons[0])
+        self.assertIn("VirusTotal", decision.reasons[1])
 
 
 if __name__ == "__main__":

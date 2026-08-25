@@ -161,6 +161,10 @@ def check_yara_health(
         "ok": True,
         "status": "available",
         "detail": f"{command} {version} found at {path}; {config['rule_count']} rules loaded.",
+        "product_version": version,
+        "engine_version": version,
+        "signature_version": f"{config['rule_count']} rules",
+        "service_state": "available",
     }
 
 

@@ -59,7 +59,7 @@ class EnqueueFromStoredSampleTests(unittest.TestCase):
         self.engines_patch = patch(
             "app.services.scan_intake.enabled_engines", return_value=self.engines
         )
-        self.engines_patch.start()
+        self.enabled_engines_mock = self.engines_patch.start()
 
     def tearDown(self) -> None:
         self.engines_patch.stop()
@@ -96,6 +96,7 @@ class EnqueueFromStoredSampleTests(unittest.TestCase):
         self.assertEqual(scan.source, "icap")
         self.assertEqual(scan.scan_role, "standalone")
         self.assertIsNone(scan.batch_id)
+        self.enabled_engines_mock.assert_called_with(source="icap")
         # Engine jobs were created in the same transaction.
         self.assertEqual(len(database.list_scan_engine_jobs(scan.id)), 1)
 

@@ -113,6 +113,33 @@ class ScanEngineJobTests(unittest.TestCase):
             )
         )
 
+    def test_two_instances_of_the_same_adapter_get_distinct_jobs(self) -> None:
+        scan_id = create_scan_with_two_engines()
+        first_id = database.create_engine_instance(
+            "clamav",
+            "ClamAV Istanbul",
+            config_json='{"host":"clamav-ist.example"}',
+        )
+        second_id = database.create_engine_instance(
+            "clamav",
+            "ClamAV Ankara",
+            config_json='{"host":"clamav-ank.example"}',
+        )
+        instances = database.list_engine_instances_for_adapter("clamav")
+
+        self.assertEqual(database.create_scan_engine_jobs(scan_id, instances), 2)
+        self.assertEqual(database.create_scan_engine_jobs(scan_id, instances), 0)
+        jobs = database.list_scan_engine_jobs(scan_id)
+        self.assertEqual({job.engine_instance_id for job in jobs}, {first_id, second_id})
+        self.assertEqual({job.engine_key for job in jobs}, {"clamav"})
+
+        first_claim = database.claim_next_scan_engine_job({"clamav"}, "linux-1")
+        second_claim = database.claim_next_scan_engine_job({"clamav"}, "linux-2")
+        self.assertIsNotNone(first_claim)
+        self.assertIsNotNone(second_claim)
+        assert first_claim is not None and second_claim is not None
+        self.assertNotEqual(first_claim.engine_instance_id, second_claim.engine_instance_id)
+
     def test_claim_does_not_reclaim_an_expired_job_without_recovery(self) -> None:
         scan_id = create_scan_with_two_engines(status="running")
         database.create_scan_engine_jobs(scan_id, database.list_engine_instances())

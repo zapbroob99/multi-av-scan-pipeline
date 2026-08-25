@@ -48,23 +48,79 @@ def engine_policy_action(result: EngineResultRecord) -> str | None:
     return str(action) if action in {"allow", "review", "block"} else None
 
 
-def detection_summary(results: list[EngineResultRecord]) -> tuple[int, int]:
+def engine_policy_reason(result: EngineResultRecord) -> str | None:
+    """Read the human-facing reason supplied by an adapter policy decision."""
+    if not result.details_json:
+        return None
+    try:
+        details = json.loads(result.details_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(details, dict):
+        return None
+    decision = details.get("decision")
+    if not isinstance(decision, dict):
+        return None
+    reason = decision.get("reason")
+    return str(reason).strip() if reason else None
+
+
+def engine_policy_review_reasons(
+    results: list[EngineResultRecord],
+    *,
+    source: str = "manual",
+) -> list[str]:
+    """Return review policy signals separately from execution coverage."""
+    reasons: list[str] = []
+    for result in results:
+        if result.status != "completed" or engine_policy_action(result) != "review":
+            continue
+        if source.strip().lower() == "manual":
+            try:
+                details = json.loads(result.details_json)
+            except (TypeError, json.JSONDecodeError):
+                details = {}
+            if (
+                isinstance(details, dict)
+                and details.get("source") == "virustotal"
+                and details.get("status") in {"unknown", "undetected", "stale"}
+            ):
+                # VirusTotal is enrichment for manual file scans. Preserve the
+                # strict review decision in technical details/Scan Hash, but do
+                # not let a zero-signal reputation result override local AV.
+                continue
+        reason = engine_policy_reason(result)
+        reasons.append(
+            f"{result.engine_name}: {reason}"
+            if reason
+            else f"{result.engine_name} requires review under its configured policy."
+        )
+    return reasons
+
+
+def detection_summary(
+    results: list[EngineResultRecord], *, source: str = "manual"
+) -> tuple[int, int]:
     detection_results = detection_engine_results(results)
     detected = sum(
         1
         for result in detection_results
         if result.status == "completed" and result.detected
     )
-    return detected, max(len(detection_results), len(detection_engine_names()))
+    return detected, max(
+        len(detection_results), len(detection_engine_names(source=source))
+    )
 
 
 def required_engine_coverage(
     results: list[EngineResultRecord],
+    *,
+    source: str = "manual",
 ) -> tuple[int, int, list[str]]:
     result_map = engine_result_map(results)
     unavailable = []
     ran = 0
-    required_engines = detection_engine_names()
+    required_engines = detection_engine_names(source=source)
 
     for engine_name in required_engines:
         result = result_map.get(engine_name.lower())
@@ -73,9 +129,6 @@ def required_engine_coverage(
             continue
 
         if result.status == "completed":
-            if engine_policy_action(result) == "review":
-                unavailable.append(f"{engine_name} requires review")
-                continue
             ran += 1
             continue
 
@@ -98,8 +151,15 @@ def scan_decision(
         effective_score = assessment.score
     if effective_verdict == "pending":
         effective_verdict = assessment.verdict
-    detected_count, detection_total = detection_summary(engine_results)
-    _, _, coverage_unavailable = required_engine_coverage(engine_results)
+    detected_count, detection_total = detection_summary(
+        engine_results, source=scan.source
+    )
+    _, _, coverage_unavailable = required_engine_coverage(
+        engine_results, source=scan.source
+    )
+    policy_review_reasons = engine_policy_review_reasons(
+        engine_results, source=scan.source
+    )
     return decide_scan_action(
         scan_status=scan.status,
         verdict=effective_verdict,
@@ -107,6 +167,7 @@ def scan_decision(
         detected_engines=detected_count,
         detection_engines=detection_total,
         unavailable_engines=coverage_unavailable,
+        policy_review_reasons=policy_review_reasons,
     )
 
 
