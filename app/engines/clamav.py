@@ -86,11 +86,16 @@ def get_clamav_config(
     config_override: dict[str, str] | None = None,
 ) -> dict[str, str | int | float | bool]:
     override = config_override or {}
-    clamd_host = setting_value(
-        override,
-        "host",
-        env_or_setting("MASP_CLAMD_HOST", "clamav.host", ""),
-    ).strip()
+    explicit_mode = override.get("mode", "").strip().lower()
+    clamd_host = (
+        ""
+        if explicit_mode == "cli"
+        else setting_value(
+            override,
+            "host",
+            env_or_setting("MASP_CLAMD_HOST", "clamav.host", ""),
+        ).strip()
+    )
     if clamd_host:
         adapter_cap = setting_int(
             override,

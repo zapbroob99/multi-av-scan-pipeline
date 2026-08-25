@@ -21,6 +21,10 @@ The first multi-instance foundation is implemented:
   compatibility period.
 - ClamAV and Microsoft Defender advertise multi-instance support in their
   capability profiles.
+- The Engines catalog performs initial configuration before persistence: admins
+  choose the adapter, supply a unique deployment name, and explicitly complete
+  its required runtime/connection policy. It does not create an enabled empty
+  instance and rely on inherited defaults afterward.
 - Queue idempotency is keyed by `(scan_job_id, engine_instance_id)`, not by the
   shared adapter key.
 - Workers still advertise adapter capabilities such as `clamav` or

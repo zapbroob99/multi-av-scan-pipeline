@@ -102,6 +102,9 @@ Metadata, and a private bundled PostgreSQL. Defender and ESET are intentionally
 out of scope for this first pilot and can be added later as remote workers.
 
 The queue supports multiple configured instances of worker-deployed adapters.
+The Engines catalog requires a deployment-specific instance name and explicit
+adapter setup before it creates or enables a new instance; example values shown
+in the form are guidance, not preselected configuration.
 Remote workers can use the authenticated HTTPS control API without PostgreSQL
 credentials or shared visibility of the sample store. Defender hosts have an SCM
 service package, lifecycle tooling, integrity verification, and an evidence-producing

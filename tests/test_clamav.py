@@ -59,6 +59,16 @@ class ClamAVConfigTests(unittest.TestCase):
 
         self.assertEqual(config["mode"], "cli")
 
+    def test_explicit_cli_mode_does_not_inherit_a_global_clamd_host(self) -> None:
+        with patch.dict(os.environ, {"MASP_CLAMD_HOST": "global-clamd"}, clear=False):
+            config = get_clamav_config(
+                {"mode": "cli", "command": "clamscan-local", "timeout_seconds": "45"}
+            )
+
+        self.assertEqual(config["mode"], "cli")
+        self.assertEqual(config["command"], "clamscan-local")
+        self.assertEqual(config["timeout_seconds"], 45)
+
 
 class ClamAVSizeChainTests(unittest.TestCase):
     """The adapter cap and clamd's own cap must reconcile into one limit.

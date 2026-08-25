@@ -97,9 +97,18 @@
     @apply mt-1 block text-[13px] font-medium text-slate-400;
   }
 
-  .nav-list,
-  .nav-utility {
+  .nav-list {
+    @apply grid gap-5 overflow-y-auto;
+  }
+
+  .nav-utility,
+  .nav-section,
+  .nav-section-links {
     @apply grid gap-1.5;
+  }
+
+  .nav-section-label {
+    @apply px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500;
   }
 
   .nav-link {
@@ -1656,6 +1665,66 @@
     @apply grid gap-3;
     max-height: 20rem;
     padding-right: 0.25rem;
+  }
+
+  .add-engine-instance-settings {
+    @apply grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4;
+  }
+
+  html.dark .add-engine-instance-settings {
+    @apply border-slate-800 bg-slate-900;
+  }
+
+  .add-engine-instance-settings > label {
+    @apply grid gap-2 text-sm font-semibold text-slate-900;
+  }
+
+  .add-engine-instance-settings > label small {
+    @apply text-xs font-normal text-slate-500;
+  }
+
+  html.dark .add-engine-instance-settings > label {
+    @apply text-slate-100;
+  }
+
+  html.dark .add-engine-instance-settings > label small {
+    @apply text-slate-400;
+  }
+
+  .adapter-setup-panel {
+    @apply grid gap-4 border-t border-slate-200 pt-4;
+  }
+
+  .adapter-setup-panel[hidden] {
+    display: none;
+  }
+
+  html.dark .adapter-setup-panel {
+    @apply border-slate-800;
+  }
+
+  .adapter-setup-heading {
+    @apply grid gap-1;
+  }
+
+  .adapter-setup-heading strong {
+    @apply text-sm font-semibold text-slate-950;
+  }
+
+  .adapter-setup-heading span {
+    @apply text-xs leading-5 text-slate-500;
+  }
+
+  html.dark .adapter-setup-heading strong {
+    @apply text-slate-100;
+  }
+
+  html.dark .adapter-setup-heading span {
+    @apply text-slate-400;
+  }
+
+  .adapter-setup-grid {
+    @apply items-end;
   }
 
   .adapter-option {

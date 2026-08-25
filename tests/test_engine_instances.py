@@ -52,6 +52,31 @@ class MultiEngineInstanceTests(unittest.TestCase):
         self.assertIsNone(database.get_engine_instance_by_id(second_id))
         self.assertIsNotNone(database.get_engine_instance_by_id(first_id))
 
+    def test_configured_instance_is_created_with_explicit_name_and_settings(self) -> None:
+        instance_id = add_engine(
+            "clamav",
+            display_name="ClamAV Istanbul",
+            config={
+                "mode": "clamd",
+                "host": "clamav-ist.internal",
+                "port": "3310",
+                "timeout_seconds": "90",
+                "max_file_size_bytes": "0",
+            },
+        )
+
+        instance = database.get_engine_instance_by_id(instance_id)
+        assert instance is not None
+        self.assertEqual(instance.display_name, "ClamAV Istanbul")
+        self.assertEqual(engine_config(instance)["host"], "clamav-ist.internal")
+        self.assertEqual(engine_config(instance)["timeout_seconds"], "90")
+
+    def test_explicit_instance_name_must_be_unique(self) -> None:
+        add_engine("clamav", display_name="ClamAV Istanbul", config={"mode": "clamd"})
+
+        with self.assertRaisesRegex(ValueError, "already in use"):
+            add_engine("clamav", display_name="clamav istanbul", config={"mode": "clamd"})
+
     def test_single_instance_adapter_remains_idempotent(self) -> None:
         first_id = add_engine("static_metadata")
         second_id = add_engine("static_metadata")

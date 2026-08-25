@@ -517,19 +517,35 @@ def available_adapter_definitions() -> list[EngineAdapterDefinition]:
     ]
 
 
-def add_engine(adapter_key: str) -> int:
+def add_engine(
+    adapter_key: str,
+    *,
+    display_name: str | None = None,
+    config: dict[str, str] | None = None,
+    enabled: bool = True,
+) -> int:
     definition = adapter_definition(adapter_key)
     existing = [
         engine for engine in configured_engines() if engine.adapter_key == adapter_key
     ]
     if existing and not adapter_capabilities(adapter_key).allows_multiple_instances:
         return existing[0].id
-    display_name = next_engine_display_name(definition.label)
+    normalized_name = (display_name or "").strip()
+    if display_name is not None:
+        if not normalized_name:
+            raise ValueError("Engine instance name is required.")
+        if len(normalized_name) > 128:
+            raise ValueError("Engine instance name must be 128 characters or fewer.")
+        used_names = {engine.display_name.casefold() for engine in configured_engines()}
+        if normalized_name.casefold() in used_names:
+            raise ValueError("Engine instance name is already in use.")
+    else:
+        normalized_name = next_engine_display_name(definition.label)
     return create_engine_instance(
         adapter_key=definition.key,
-        display_name=display_name,
-        enabled=True,
-        config_json="{}",
+        display_name=normalized_name,
+        enabled=enabled,
+        config_json=json.dumps(config or {}, sort_keys=True),
     )
 
 
@@ -640,10 +656,14 @@ def clamav_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
     # unrelated reason persists host="" over the env value -- which drops ClamAV
     # into CLI mode and breaks every scan.
     config = engine_config(instance) if instance is not None else {}
+    host = config_value(
+        config, "host", clamav_env_or_setting("MASP_CLAMD_HOST", "clamav.host", "")
+    )
+    configured_mode = config.get("mode", "").strip().lower()
+    mode = configured_mode if configured_mode in {"clamd", "cli"} else ("clamd" if host else "cli")
     return {
-        "host": config_value(
-            config, "host", clamav_env_or_setting("MASP_CLAMD_HOST", "clamav.host", "")
-        ),
+        "mode": mode,
+        "host": host,
         "port": config_value(
             config, "port", clamav_env_or_setting("MASP_CLAMD_PORT", "clamav.port", "3310")
         ),

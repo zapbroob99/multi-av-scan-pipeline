@@ -23,6 +23,9 @@ arbitrary command parsers.
 - `engine_instances.id` identifies one configured deployment.
 - Multiple ClamAV and Defender instances are supported; display names must remain
   unique so compatibility reports and result coverage stay unambiguous.
+- The Engines UI creates an instance only after an admin supplies a unique name
+  and every adapter-specific initial setting; suggested values are placeholders,
+  not silently persisted defaults. Built-in non-configurable adapters are exempt.
 - Queue idempotency is `(scan_job_id, engine_instance_id)`.
 - Workers advertise adapter keys but must resolve claimed jobs by instance id.
 - Keep fallback adapter-key routing only for legacy jobs without an instance id.

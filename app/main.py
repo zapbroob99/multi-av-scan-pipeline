@@ -1,6 +1,7 @@
 import html
 import json
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -356,21 +357,37 @@ def page_shell(
         if refresh_seconds is not None
         else ""
     )
-    primary_nav = [
-        ("dashboard", "/", "Dashboard"),
-        ("new_scan", "/scans/new", "New Scan"),
-        ("hash_scan", "/hash-scan", "Scan Hash"),
-        ("api_ledger", "/api-ledger", "API Ledger"),
+    nav_groups: list[tuple[str, list[tuple[str, str, str]]]] = [
+        (
+            "Scanning",
+            [
+                ("dashboard", "/", "Dashboard"),
+                ("new_scan", "/scans/new", "New Scan"),
+                ("hash_scan", "/hash-scan", "Scan Hash"),
+            ],
+        ),
+        ("Activity", [("api_ledger", "/api-ledger", "API Ledger")]),
     ]
-    admin_nav: list[tuple[str, str, str]] = []
     if user.role == ROLE_ADMIN:
-        admin_nav = [
-            ("engines", "/engines", "Engines"),
-            ("scan_policy", "/scan-policy", "Scan Policy"),
-            ("users", "/users", "Users"),
-            ("audit", "/audit", "Audit"),
-            ("system", "/system", "System"),
-        ]
+        nav_groups.extend(
+            [
+                (
+                    "Configuration",
+                    [
+                        ("engines", "/engines", "Engines"),
+                        ("scan_policy", "/scan-policy", "Scan Policy"),
+                        ("system", "/system", "System"),
+                    ],
+                ),
+                (
+                    "Access & audit",
+                    [
+                        ("users", "/users", "Users"),
+                        ("audit", "/audit", "Audit"),
+                    ],
+                ),
+            ]
+        )
 
     def render_nav_group(items: list[tuple[str, str, str]]) -> str:
         return "\n".join(
@@ -380,12 +397,15 @@ def page_shell(
             for key, href, label in items
         )
 
-    nav_html = render_nav_group(primary_nav)
-    if admin_nav:
-        nav_html += (
-            '\n<span class="nav-divider" role="separator" aria-hidden="true"></span>\n'
-            + render_nav_group(admin_nav)
-        )
+    nav_html = "\n".join(
+        f"""
+        <section class="nav-section" aria-labelledby="nav-group-{index}">
+          <span id="nav-group-{index}" class="nav-section-label">{html.escape(label)}</span>
+          <div class="nav-section-links">{render_nav_group(items)}</div>
+        </section>
+        """
+        for index, (label, items) in enumerate(nav_groups)
+    )
     username = html.escape(getattr(user, "username", ""))
     role = html.escape(str(getattr(user, "role", "")).title())
 
@@ -580,6 +600,52 @@ def page_shell(
               }}
             }});
           }}
+
+          const engineAdapterChoices = document.querySelectorAll("[data-engine-adapter-choice]");
+          const engineSetupPanels = document.querySelectorAll("[data-engine-setup]");
+          const engineDisplayName = document.querySelector("[data-engine-display-name]");
+
+          const syncClamavSetupMode = (panel, active) => {{
+            const modeSelect = panel.querySelector("[data-clamav-mode]");
+            if (!modeSelect) {{
+              return;
+            }}
+            const mode = modeSelect.value;
+            panel.querySelectorAll("[data-clamav-for]").forEach((field) => {{
+              const isRelevant = field.getAttribute("data-clamav-for") === mode;
+              field.disabled = !active || !isRelevant;
+              field.required = active && isRelevant;
+            }});
+          }};
+
+          const syncEngineSetup = () => {{
+            const selected = Array.from(engineAdapterChoices).find((choice) => choice.checked);
+            const selectedKey = selected ? selected.value : "";
+            engineSetupPanels.forEach((panel) => {{
+              const activePanel = panel.getAttribute("data-engine-setup") === selectedKey;
+              panel.hidden = !activePanel;
+              panel.querySelectorAll("input, select, textarea").forEach((field) => {{
+                field.disabled = !activePanel;
+              }});
+              syncClamavSetupMode(panel, activePanel);
+            }});
+            if (engineDisplayName) {{
+              engineDisplayName.placeholder = selected
+                ? selected.getAttribute("data-instance-placeholder") || "Production engine"
+                : "Select an adapter first";
+            }}
+          }};
+
+          engineAdapterChoices.forEach((choice) => {{
+            choice.addEventListener("change", syncEngineSetup);
+          }});
+          engineSetupPanels.forEach((panel) => {{
+            const modeSelect = panel.querySelector("[data-clamav-mode]");
+            if (modeSelect) {{
+              modeSelect.addEventListener("change", () => syncClamavSetupMode(panel, !panel.hidden));
+            }}
+          }});
+          syncEngineSetup();
 
           const updateBulkDeleteVisibility = () => {{
             if (!bulkDeleteButton) {{
@@ -938,8 +1004,9 @@ def redirect_url(
     message: str = "",
     error: str = "",
     target: str = "",
+    params: dict[str, str] | None = None,
 ) -> str:
-    query_params: dict[str, str] = {}
+    query_params: dict[str, str] = dict(params or {})
     if message:
         query_params["message"] = message
     if error:
@@ -1758,7 +1825,13 @@ def render_retention_panel(policy: RetentionPolicy) -> str:
     """
 
 
-def render_system_page(user: UserRecord, message: str = "", error: str = "") -> str:
+def render_system_page(
+    user: UserRecord,
+    message: str = "",
+    error: str = "",
+    pool_name: str = "",
+    pool_selector: str = "",
+) -> str:
     worker_status = get_worker_status()
     queue_metrics = get_queue_metrics()
     engine_metrics = list_engine_result_metrics()
@@ -1820,10 +1893,11 @@ def render_system_page(user: UserRecord, message: str = "", error: str = "") -> 
           <span class="pill neutral">{len(worker_pools)} configured</span>
         </div>
         <form action="/worker-pools/create" method="post" class="inline-actions" data-action-form data-preserve-scroll>
-          <input name="pool_name" placeholder="Istanbul Windows" required aria-label="Pool name">
-          <input name="pool_selector" placeholder="site=istanbul,os=windows" required aria-label="Pool selector">
+          <input name="pool_name" value="{html.escape(pool_name)}" placeholder="Istanbul Windows" required aria-label="Pool name">
+          <input name="pool_selector" value="{html.escape(pool_selector)}" placeholder="site=istanbul,os=windows" required aria-label="Pool selector">
           <button class="primary-action compact-action" type="submit" data-busy-label="Creating...">Create pool</button>
         </form>
+        <p class="form-helper">Selector format: comma-separated key=value labels, for example <code>site=istanbul,os=windows</code>. The worker node must advertise every label.</p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Pool</th><th>Selector</th><th>State</th><th>Engines</th><th>Actions</th></tr></thead>
@@ -2111,9 +2185,201 @@ def append_capability_fields(
     return fields
 
 
-def render_add_engine_panel() -> str:
+def render_adapter_setup_panel(adapter_key: str, selected: bool) -> str:
+    hidden_attr = "" if selected else " hidden"
+    disabled_attr = "" if selected else " disabled"
+    panel_open = (
+        f'<section class="adapter-setup-panel" data-engine-setup="{html.escape(adapter_key)}"{hidden_attr}>'
+    )
+    panel_close = "</section>"
+
+    if adapter_key == "static_metadata":
+        return f"""
+        {panel_open}
+          <div class="adapter-setup-heading">
+            <strong>No runtime settings required</strong>
+            <span>This built-in analyzer runs inside MASP. Only the instance name is required.</span>
+          </div>
+        {panel_close}
+        """
+
+    if adapter_key == "clamav":
+        return f"""
+        {panel_open}
+          <div class="adapter-setup-heading">
+            <strong>ClamAV connection</strong>
+            <span>Choose where this instance runs. No connection mode is assumed.</span>
+          </div>
+          <div class="settings-grid three adapter-setup-grid">
+            <label>
+              Connection mode
+              <select name="clamav_mode" required data-clamav-mode{disabled_attr}>
+                <option value="">Select mode</option>
+                <option value="clamd">Remote clamd TCP</option>
+                <option value="cli">Local clamscan CLI</option>
+              </select>
+            </label>
+            <label>
+              clamd host
+              <input type="text" name="clamav_host" placeholder="clamav-prod.internal" data-clamav-for="clamd"{disabled_attr}>
+            </label>
+            <label>
+              clamd port
+              <input type="number" name="clamav_port" placeholder="3310" min="1" max="65535" data-clamav-for="clamd"{disabled_attr}>
+            </label>
+            <label>
+              CLI command
+              <input type="text" name="clamav_command" placeholder="clamscan" data-clamav-for="cli"{disabled_attr}>
+            </label>
+            <label>
+              Timeout seconds
+              <input type="number" name="clamav_timeout_seconds" placeholder="60" min="1" max="600" required{disabled_attr}>
+            </label>
+            <label>
+              Max file size bytes
+              <input type="number" name="clamav_max_file_size_bytes" placeholder="0 means unlimited" min="0" max="1099511627776" required{disabled_attr}>
+            </label>
+          </div>
+        {panel_close}
+        """
+
+    if adapter_key == "yara":
+        return f"""
+        {panel_open}
+          <div class="adapter-setup-heading">
+            <strong>YARA runtime</strong>
+            <span>These paths are resolved on the worker that executes this instance.</span>
+          </div>
+          <div class="settings-grid three adapter-setup-grid">
+            <label>
+              CLI command
+              <input type="text" name="yara_command" placeholder="yara" required{disabled_attr}>
+            </label>
+            <label>
+              Rules directory
+              <input type="text" name="yara_rules_dir" placeholder="C:\\masp\\rules or /opt/masp/rules" required{disabled_attr}>
+            </label>
+            <label>
+              Timeout seconds
+              <input type="number" name="yara_timeout_seconds" placeholder="30" min="1" max="600" required{disabled_attr}>
+            </label>
+          </div>
+        {panel_close}
+        """
+
+    if adapter_key == "microsoft_defender":
+        return f"""
+        {panel_open}
+          <div class="adapter-setup-heading">
+            <strong>Microsoft Defender runtime</strong>
+            <span>Commands run locally on a matching Windows worker; MASP does not use remote PowerShell.</span>
+          </div>
+          <div class="settings-grid three adapter-setup-grid">
+            <label>
+              Execution mode
+              <select name="microsoft_defender_execution_mode" required{disabled_attr}>
+                <option value="">Select mode</option>
+                <option value="powershell">PowerShell</option>
+                <option value="mpcmdrun">MpCmdRun</option>
+              </select>
+            </label>
+            <label>
+              PowerShell path
+              <input type="text" name="microsoft_defender_powershell_path" placeholder="powershell.exe" required{disabled_attr}>
+            </label>
+            <label>
+              MpCmdRun path
+              <input type="text" name="microsoft_defender_mpcmdrun_path" placeholder="auto or full path" required{disabled_attr}>
+            </label>
+            <label>
+              Default scan type
+              <select name="microsoft_defender_default_scan_type" required{disabled_attr}>
+                <option value="">Select scan type</option>
+                <option value="custom">Custom file scan</option>
+                <option value="quick">Quick scan</option>
+                <option value="full">Full scan</option>
+              </select>
+            </label>
+            <label>
+              Timeout seconds
+              <input type="number" name="microsoft_defender_timeout_seconds" placeholder="900" min="30" max="86400" required{disabled_attr}>
+            </label>
+            <label>
+              Update signatures before scan
+              <select name="microsoft_defender_update_before_scan" required{disabled_attr}>
+                <option value="">Select</option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </label>
+            <label>
+              Require real-time protection
+              <select name="microsoft_defender_require_real_time_enabled" required{disabled_attr}>
+                <option value="">Select</option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </label>
+          </div>
+        {panel_close}
+        """
+
+    if adapter_key == "virustotal":
+        return f"""
+        {panel_open}
+          <div class="adapter-setup-heading">
+            <strong>VirusTotal reputation policy</strong>
+            <span>Only SHA-256 hashes are submitted. The API key is encrypted before storage.</span>
+          </div>
+          <div class="settings-grid three adapter-setup-grid">
+            <label>
+              API key
+              <input type="password" name="virustotal_api_key" autocomplete="new-password" required{disabled_attr}>
+            </label>
+            <label>
+              Timeout seconds
+              <input type="number" name="virustotal_timeout_seconds" placeholder="10" min="1" max="60" required{disabled_attr}>
+            </label>
+            <label>
+              Known-result cache seconds
+              <input type="number" name="virustotal_cache_seconds" placeholder="3600" min="0" max="86400" required{disabled_attr}>
+            </label>
+            <label>
+              Unknown-result cache seconds
+              <input type="number" name="virustotal_unknown_cache_seconds" placeholder="300" min="0" max="3600" required{disabled_attr}>
+            </label>
+            <label>
+              Cache maximum entries
+              <input type="number" name="virustotal_cache_max_entries" placeholder="10000" min="1" max="100000" required{disabled_attr}>
+            </label>
+            <label>
+              Malicious threshold
+              <input type="number" name="virustotal_malicious_threshold" placeholder="1" min="1" max="100" required{disabled_attr}>
+            </label>
+            <label>
+              Allow fresh undetected reports
+              <select name="virustotal_allow_undetected" required{disabled_attr}>
+                <option value="">Select</option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </label>
+            <label>
+              Maximum report age days
+              <input type="number" name="virustotal_max_age_days" placeholder="30" min="1" max="3650" required{disabled_attr}>
+            </label>
+          </div>
+        {panel_close}
+        """
+
+    return ""
+
+
+def render_add_engine_panel(selected_adapter: str = "") -> str:
     available_adapters = available_adapter_definitions()
     if available_adapters:
+        available_keys = {definition.key for definition in available_adapters}
+        selected_key = selected_adapter if selected_adapter in available_keys else ""
         available_count = len(available_adapters)
         available_label = (
             f"{available_count} adapter available"
@@ -2123,7 +2389,7 @@ def render_add_engine_panel() -> str:
         adapter_rows_html = "\n".join(
             f"""
             <label class="adapter-option">
-              <input type="radio" name="adapter_key" value="{html.escape(definition.key)}" {"checked" if index == 0 else ""}>
+              <input type="radio" name="adapter_key" value="{html.escape(definition.key)}" required data-engine-adapter-choice data-instance-placeholder="{html.escape(definition.label)} production" {"checked" if definition.key == selected_key else ""}>
               {render_engine_logo(definition.short_label, definition.key)}
               <span>
                 <strong>{html.escape(definition.label)}</strong>
@@ -2132,17 +2398,21 @@ def render_add_engine_panel() -> str:
               </span>
             </label>
             """
-            for index, definition in enumerate(available_adapters)
+            for definition in available_adapters
         )
-        description = "Add adapters from the supported engine catalog, then configure them per node."
+        setup_panels_html = "\n".join(
+            render_adapter_setup_panel(definition.key, definition.key == selected_key)
+            for definition in available_adapters
+        )
+        description = "Create configured engine instances from the supported adapter catalog."
         pill = '<span class="pill success">Catalog ready</span>'
         registry_body = f"""
-      <details class="add-engine-drawer">
+      <details class="add-engine-drawer" {"open" if selected_key else ""}>
         <summary class="add-engine-summary">
           <div class="add-engine-summary-copy">
             <span class="add-engine-summary-eyebrow">Adapter catalog</span>
-            <strong>Add engine adapter</strong>
-            <small>{available_label}. Register it here, then configure health checks and runtime settings below.</small>
+            <strong>Add engine instance</strong>
+            <small>{available_label}. Choose an adapter and complete its setup before registration.</small>
           </div>
           <div class="add-engine-summary-actions">
             <span class="add-engine-trigger">
@@ -2161,12 +2431,20 @@ def render_add_engine_panel() -> str:
           <div class="adapter-scroll-list">
             {adapter_rows_html}
           </div>
+          <div class="add-engine-instance-settings">
+            <label>
+              Instance name
+              <input type="text" name="engine_display_name" maxlength="128" required data-engine-display-name placeholder="Select an adapter first">
+              <small>Use a deployment-specific name such as ClamAV Istanbul or Defender Windows 02.</small>
+            </label>
+            {setup_panels_html}
+          </div>
           <div class="add-engine-form-footer">
             <div class="add-engine-form-note">
-              <strong>Register selected adapter</strong>
-              <span>The engine is added to this node first. Connection tests and runtime overrides stay editable afterward.</span>
+              <strong>Create configured instance</strong>
+              <span>MASP will not create or enable the instance until every required setup value is supplied.</span>
             </div>
-            <button class="primary-action add-engine-submit" type="submit" data-busy-label="Adding...">Add selected engine</button>
+            <button class="primary-action add-engine-submit" type="submit" data-busy-label="Creating...">Create engine instance</button>
           </div>
         </form>
       </details>
@@ -2461,9 +2739,16 @@ def render_engine_card(
                 <div class="settings-section">
                   <div>
                     <h3>Connection settings</h3>
-                    <p>Use clamd TCP when host is set; leave host empty for local CLI mode.</p>
+                    <p>Choose clamd TCP for a remote service or local CLI for a worker-installed clamscan binary.</p>
                   </div>
                   <div class="settings-grid">
+                    <label>
+                      connection mode
+                      <select name="clamav_mode">
+                        <option value="clamd" {"selected" if form_values["mode"] == "clamd" else ""}>remote clamd TCP</option>
+                        <option value="cli" {"selected" if form_values["mode"] == "cli" else ""}>local clamscan CLI</option>
+                      </select>
+                    </label>
                     <label>
                       clamd host
                       <input type="text" name="clamav_host" value="{html.escape(form_values["host"])}" placeholder="clamav">
@@ -5792,9 +6077,21 @@ async def delete_selected_api_scans(
 
 
 @app.get("/system", response_class=HTMLResponse)
-def system_page(request: Request, message: str = "", error: str = "") -> str:
+def system_page(
+    request: Request,
+    message: str = "",
+    error: str = "",
+    pool_name: str = "",
+    pool_selector: str = "",
+) -> str:
     user = require_admin(request)
-    return render_system_page(user, message=message, error=error)
+    return render_system_page(
+        user,
+        message=message,
+        error=error,
+        pool_name=pool_name,
+        pool_selector=pool_selector,
+    )
 
 
 def normalized_worker_pool_form(name: str, selector: str) -> tuple[str, str]:
@@ -5824,7 +6121,15 @@ def create_worker_pool_route(
     except ValueError as exc:
         set_audit_context(request, outcome="failure", details={"reason": "validation"})
         return RedirectResponse(
-            url=redirect_url("/system", error=str(exc)), status_code=303
+            url=redirect_url(
+                "/system",
+                error=str(exc),
+                params={
+                    "pool_name": pool_name,
+                    "pool_selector": pool_selector,
+                },
+            ),
+            status_code=303,
         )
     return RedirectResponse(
         url=redirect_url("/system", message=f"Created worker pool {clean_name}."),
@@ -7174,21 +7479,252 @@ def normalized_engine_instance_id(value: object) -> int | None:
     return value if isinstance(value, int) and value > 0 else None
 
 
+def _setup_form_text(form: Mapping[str, object], key: str) -> str:
+    value = form.get(key, "")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _required_setup_text(
+    form: Mapping[str, object],
+    key: str,
+    label: str,
+) -> str:
+    value = _setup_form_text(form, key)
+    if not value:
+        raise ValueError(f"{label} is required.")
+    return value
+
+
+def _required_setup_choice(
+    form: Mapping[str, object],
+    key: str,
+    label: str,
+    choices: set[str],
+) -> str:
+    value = _required_setup_text(form, key, label).lower()
+    if value not in choices:
+        raise ValueError(f"Select a valid {label.lower()}.")
+    return value
+
+
+def _required_setup_int(
+    form: Mapping[str, object],
+    key: str,
+    label: str,
+    minimum: int,
+    maximum: int,
+) -> str:
+    raw_value = _required_setup_text(form, key, label)
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an integer.") from exc
+    if value < minimum or value > maximum:
+        raise ValueError(f"{label} must be between {minimum} and {maximum}.")
+    return str(value)
+
+
+def engine_setup_from_form(
+    adapter_key: str,
+    form: Mapping[str, object],
+) -> tuple[str, dict[str, str]]:
+    """Validate initial setup before an engine instance is persisted."""
+    adapter_definition(adapter_key)
+    display_name = _required_setup_text(
+        form, "engine_display_name", "Engine instance name"
+    )
+    if len(display_name) > 128:
+        raise ValueError("Engine instance name must be 128 characters or fewer.")
+
+    if adapter_key == "static_metadata":
+        return display_name, {}
+
+    if adapter_key == "clamav":
+        mode = _required_setup_choice(
+            form, "clamav_mode", "ClamAV connection mode", {"clamd", "cli"}
+        )
+        config = {
+            "mode": mode,
+            "timeout_seconds": _required_setup_int(
+                form, "clamav_timeout_seconds", "ClamAV timeout seconds", 1, 600
+            ),
+            "max_file_size_bytes": _required_setup_int(
+                form,
+                "clamav_max_file_size_bytes",
+                "ClamAV max file size bytes",
+                0,
+                1099511627776,
+            ),
+        }
+        if mode == "clamd":
+            config.update(
+                {
+                    "host": _required_setup_text(
+                        form, "clamav_host", "ClamAV clamd host"
+                    ),
+                    "port": _required_setup_int(
+                        form, "clamav_port", "ClamAV clamd port", 1, 65535
+                    ),
+                }
+            )
+        else:
+            config["command"] = _required_setup_text(
+                form, "clamav_command", "ClamAV CLI command"
+            )
+        return display_name, config
+
+    if adapter_key == "yara":
+        return display_name, {
+            "command": _required_setup_text(form, "yara_command", "YARA CLI command"),
+            "rules_dir": _required_setup_text(
+                form, "yara_rules_dir", "YARA rules directory"
+            ),
+            "timeout_seconds": _required_setup_int(
+                form, "yara_timeout_seconds", "YARA timeout seconds", 1, 600
+            ),
+        }
+
+    if adapter_key == "microsoft_defender":
+        return display_name, {
+            "execution_mode": _required_setup_choice(
+                form,
+                "microsoft_defender_execution_mode",
+                "Microsoft Defender execution mode",
+                {"powershell", "mpcmdrun"},
+            ),
+            "powershell_path": _required_setup_text(
+                form,
+                "microsoft_defender_powershell_path",
+                "Microsoft Defender PowerShell path",
+            ),
+            "mpcmdrun_path": _required_setup_text(
+                form,
+                "microsoft_defender_mpcmdrun_path",
+                "Microsoft Defender MpCmdRun path",
+            ),
+            "default_scan_type": _required_setup_choice(
+                form,
+                "microsoft_defender_default_scan_type",
+                "Microsoft Defender default scan type",
+                {"custom", "quick", "full"},
+            ),
+            "timeout_seconds": _required_setup_int(
+                form,
+                "microsoft_defender_timeout_seconds",
+                "Microsoft Defender timeout seconds",
+                30,
+                86400,
+            ),
+            "update_before_scan": _required_setup_choice(
+                form,
+                "microsoft_defender_update_before_scan",
+                "Microsoft Defender signature update policy",
+                {"true", "false"},
+            ),
+            "require_real_time_enabled": _required_setup_choice(
+                form,
+                "microsoft_defender_require_real_time_enabled",
+                "Microsoft Defender real-time protection policy",
+                {"true", "false"},
+            ),
+        }
+
+    if adapter_key == "virustotal":
+        api_key = _required_setup_text(form, "virustotal_api_key", "VirusTotal API key")
+        return display_name, {
+            "api_key_encrypted": encrypt_secret(api_key),
+            "timeout_seconds": _required_setup_int(
+                form, "virustotal_timeout_seconds", "VirusTotal timeout seconds", 1, 60
+            ),
+            "cache_seconds": _required_setup_int(
+                form,
+                "virustotal_cache_seconds",
+                "VirusTotal known-result cache seconds",
+                0,
+                86400,
+            ),
+            "unknown_cache_seconds": _required_setup_int(
+                form,
+                "virustotal_unknown_cache_seconds",
+                "VirusTotal unknown-result cache seconds",
+                0,
+                3600,
+            ),
+            "cache_max_entries": _required_setup_int(
+                form,
+                "virustotal_cache_max_entries",
+                "VirusTotal cache maximum entries",
+                1,
+                100000,
+            ),
+            "malicious_threshold": _required_setup_int(
+                form,
+                "virustotal_malicious_threshold",
+                "VirusTotal malicious threshold",
+                1,
+                100,
+            ),
+            "allow_undetected": _required_setup_choice(
+                form,
+                "virustotal_allow_undetected",
+                "VirusTotal undetected-report policy",
+                {"true", "false"},
+            ),
+            "max_age_days": _required_setup_int(
+                form,
+                "virustotal_max_age_days",
+                "VirusTotal maximum report age days",
+                1,
+                3650,
+            ),
+        }
+
+    raise ValueError("This adapter does not expose an initial setup form.")
+
+
 @app.post("/engines/add")
-def add_engine_route(request: Request, adapter_key: str = Form(...)) -> RedirectResponse:
+async def add_engine_route(request: Request) -> RedirectResponse:
     require_admin(request)
+    form = await request.form()
+    adapter_key = _setup_form_text(form, "adapter_key")
     set_audit_context(request, action="engine.add", target_type="engine", target_id=adapter_key)
     try:
-        instance_id = add_engine(adapter_key)
+        display_name, config = engine_setup_from_form(adapter_key, form)
+        instance_id = add_engine(
+            adapter_key,
+            display_name=display_name,
+            config=config,
+            enabled=True,
+        )
     except KeyError as exc:
         set_audit_context(request, outcome="failure", details={"reason": "unknown_adapter"})
         return RedirectResponse(
             url=redirect_url("/engines", error="Unknown engine adapter."),
             status_code=303,
         )
+    except (ValueError, SecretStoreError) as exc:
+        set_audit_context(
+            request,
+            outcome="failure",
+            details={"reason": "invalid_initial_setup"},
+        )
+        return RedirectResponse(
+            url=redirect_url(
+                "/engines",
+                error=str(exc),
+                target=adapter_key if adapter_key in ADAPTERS else "",
+            ),
+            status_code=303,
+        )
+    if adapter_key == "virustotal":
+        clear_virustotal_cache()
     definition = adapter_definition(adapter_key)
     return RedirectResponse(
-        url=redirect_url("/engines", message=f"Added {definition.label}.", target=str(instance_id)),
+        url=redirect_url(
+            "/engines",
+            message=f"Created {display_name} from the {definition.label} adapter.",
+            target=str(instance_id),
+        ),
         status_code=303,
     )
 
@@ -7310,6 +7846,7 @@ def test_engine_route(
 def save_clamav_config(
     request: Request,
     engine_instance_id: int = Form(0),
+    clamav_mode: str = Form(""),
     clamav_host: str = Form(""),
     clamav_port: str = Form("3310"),
     clamav_command: str = Form("clamscan"),
@@ -7319,9 +7856,13 @@ def save_clamav_config(
     require_admin(request)
     target_instance_id = normalized_engine_instance_id(engine_instance_id)
     set_audit_context(request, action="engine.configure", target_type="engine", target_id="clamav")
+    normalized_mode = clamav_mode.strip().lower()
+    if normalized_mode not in {"clamd", "cli"}:
+        normalized_mode = "clamd" if clamav_host.strip() else "cli"
     update_engine_config(
         "clamav",
         {
+            "mode": normalized_mode,
             "host": clamav_host.strip(),
             "port": clamav_port.strip() or "3310",
             "command": clamav_command.strip() or "clamscan",
@@ -7652,7 +8193,7 @@ def render_engines_page(
 
     body = f"""
     {notice_html}
-    {render_add_engine_panel()}
+    {render_add_engine_panel(selected_adapter=target)}
     {engine_cards_html}
     <section class="panel engine-secondary">
       <div class="panel-header compact">
