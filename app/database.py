@@ -1177,8 +1177,15 @@ def migrate_engine_instances_for_multiple_instances(connection: Any) -> None:
             SELECT MIN(engine_instances.id)
             FROM engine_instances
             WHERE engine_instances.adapter_key = scan_engine_jobs.engine_key
+              AND engine_instances.display_name = scan_engine_jobs.engine_name
         )
         WHERE engine_instance_id IS NULL
+          AND EXISTS (
+              SELECT 1
+              FROM engine_instances
+              WHERE engine_instances.adapter_key = scan_engine_jobs.engine_key
+                AND engine_instances.display_name = scan_engine_jobs.engine_name
+          )
         """
     )
     connection.execute("DROP INDEX IF EXISTS idx_scan_engine_jobs_scan_engine")

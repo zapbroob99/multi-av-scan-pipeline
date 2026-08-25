@@ -29,6 +29,8 @@ arbitrary command parsers.
 - Queue idempotency is `(scan_job_id, engine_instance_id)`.
 - Workers advertise adapter keys but must resolve claimed jobs by instance id.
 - Keep fallback adapter-key routing only for legacy jobs without an instance id.
+- Startup migration must not rebind historical jobs from a deleted instance to a
+  different surviving instance that happens to share its adapter key.
 
 ## Active Roadmap
 
@@ -46,9 +48,13 @@ authenticated size/SHA-256-verified sample delivery. The Windows SCM service,
 least-privilege/ACL installer, installed-config preflight, lifecycle scripts,
 rotating logs, deterministic release bundle, bundle-integrity verifier, and
 evidence-producing service/clean/EICAR host acceptance runner are implemented.
-Next milestone: execute and retain the full real-Windows failure/failover/
-lifecycle matrix, apply organizational release signing, and promote support only
-after those gates pass.
+Real Windows 11 development-host runs have passed direct-database and HTTPS
+control-plane clean/EICAR scanning, including authenticated sample download,
+fenced result submission, full clean coverage, and Defender
+`Virus:DOS/EICAR_Test_File` detection. The HTTPS run used a temporary elevated
+agent rather than the installed SCM service. Next milestone: execute and retain
+the SCM identity plus full failure/failover/lifecycle matrix, apply organizational
+release signing, and promote support only after those gates pass.
 Direct worker database access and shared filesystem paths are compatibility modes,
 not the final remote-worker architecture.
 

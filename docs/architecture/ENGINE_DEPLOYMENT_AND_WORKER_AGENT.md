@@ -34,8 +34,10 @@ The first multi-instance foundation is implemented:
   instance id, so editing one deployment does not alter another deployment of
   the same adapter.
 - Existing SQLite and PostgreSQL installations migrate in place. Legacy jobs
-  without an instance id are backfilled to the original adapter instance and
-  retain adapter-key fallback routing.
+  without an instance id are backfilled only when their stored engine name
+  matches a surviving adapter instance. Jobs from a deleted named instance stay
+  unbound instead of being silently reassigned to another instance with the same
+  adapter key; unbound jobs retain compatibility fallback routing.
 - Workers register a durable node keyed by `MASP_WORKER_NODE_ID` (hostname is the
   compatibility default) with display name, platform, agent version, labels,
   capacity, advertised adapter keys, runtime state, and last heartbeat.
@@ -68,6 +70,9 @@ The current release supports two worker transports:
 - The sample response is bound to worker id plus attempt generation. The agent
   verifies declared size and SHA-256 before scanning and removes its temporary
   copy afterwards.
+- Agent operation URLs may be API-relative or origin-relative, but resolution is
+  pinned to the configured control-plane origin so credentials cannot be sent to
+  a server-selected external host.
 - `database` workers retain direct PostgreSQL and shared-filesystem access as a
   compatibility mode for existing Docker and hybrid installations.
 - MASP executes Defender on the Windows agent itself; remote PowerShell/WinRM
@@ -145,7 +150,7 @@ lease. The agent enforces the declared byte count, verifies SHA-256, scans a
 temporary local copy, and deletes it. An S3-compatible short-lived provider is
 still future work.
 
-### 7. Windows Worker Agent — acceptance tooling implemented, real-host run pending
+### 7. Windows Worker Agent — partial real-host acceptance complete
 
 The pywin32 SCM host supports cooperative stop, rotating local logs, automatic
 restart policy, a virtual least-privilege service identity, ACL-protected config
@@ -155,8 +160,14 @@ includes a per-file SHA-256 manifest. The extracted-bundle verifier detects
 missing or modified files and rejects traversal paths. The host acceptance runner
 validates service identity/startup, Defender/control health, clean/EICAR API
 behavior, and records JSON evidence plus Authenticode state without persisting
-tokens. Real Windows execution of the full failure/failover/lifecycle matrix and
-organizational code signing remain required before Defender can become `supported`.
+tokens. A Windows 11 development-host run has passed both the compatibility
+direct-database path and the HTTPS control-plane clean/EICAR path. The HTTPS run
+confirmed authenticated sample download, size/hash verification, fenced result
+submission, full clean coverage, and Defender EICAR detection, but used a
+temporary elevated agent instead of the installed SCM service. SCM identity,
+timeout, permission-denied, offline, failover, stale-result, lifecycle, and
+organizational signing gates remain required before Defender can become
+`supported`.
 
 ### 8. Shared transport libraries and commercial adapters
 

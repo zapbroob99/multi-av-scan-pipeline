@@ -285,6 +285,34 @@ class WorkerControlEndpointTests(unittest.TestCase):
 
 
 class ControlApiWorkerClientTests(unittest.TestCase):
+    def test_operation_urls_support_api_and_origin_relative_paths(self) -> None:
+        client = control_api_worker.WorkerControlClient(
+            "https://masp.example/api/v1/worker-control", "agent-token"
+        )
+
+        self.assertEqual(
+            client._url("jobs/claim"),
+            "https://masp.example/api/v1/worker-control/jobs/claim",
+        )
+        self.assertEqual(
+            client._url("/api/v1/worker-control/jobs/8514/sample"),
+            "https://masp.example/api/v1/worker-control/jobs/8514/sample",
+        )
+
+    def test_operation_url_cannot_leave_configured_origin(self) -> None:
+        client = control_api_worker.WorkerControlClient(
+            "https://masp.example/api/v1/worker-control", "agent-token"
+        )
+
+        for path in (
+            "https://attacker.example/jobs/claim",
+            "//attacker.example/jobs/claim",
+            "https://masp.example:invalid/jobs/claim",
+        ):
+            with self.subTest(path=path):
+                with self.assertRaises(control_api_worker.WorkerControlError):
+                    client._url(path)
+
     def test_plain_http_requires_explicit_development_opt_in(self) -> None:
         with patch.dict(
             "os.environ",

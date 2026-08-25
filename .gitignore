@@ -14,6 +14,7 @@ benchmark-results/
 benchmark-samples/
 backups/
 dist/
+artifacts/
 
 # Internal / local-only — keep out of future commits
 .agents/

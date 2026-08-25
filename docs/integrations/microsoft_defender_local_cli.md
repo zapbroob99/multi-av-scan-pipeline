@@ -6,7 +6,7 @@
 - User-facing display name: `Microsoft Defender via local CLI`
 - Vendor: Microsoft
 - Product: Microsoft Defender Antivirus
-- Tested version: product `4.18.26050.15`, engine `1.1.26050.11`, signatures `1.453.401.0` on 2026-07-03
+- Tested version: product `4.18.26070.9`, engine `1.1.26070.7`, signatures `1.457.331.0` on 2026-08-25
 - Integration method: local PowerShell + `MpCmdRun.exe`
 - Support state: `lab`
 
@@ -26,8 +26,8 @@
   `https://learn.microsoft.com/en-us/powershell/module/defender/start-mpscan`
   `https://learn.microsoft.com/en-us/powershell/module/defender/get-mpcomputerstatus`
 - Vendor notes: none yet.
-- Internal lab notes: local validation on 2026-07-03 confirmed `Get-MpComputerStatus` health output, `MpCmdRun.exe` clean scan output, and EICAR detection output. A non-elevated status check can return `Access denied`; elevated execution was required on the tested host.
-- Last reviewed: 2026-07-03
+- Internal lab notes: Windows 11 development-host validation on 2026-08-25 confirmed `Get-MpComputerStatus`, direct-database clean/EICAR scans, and HTTPS control-plane clean/EICAR scans with authenticated sample download and fenced result submission. Defender reported `Virus:DOS/EICAR_Test_File`. A non-elevated status check returned `Access denied`; elevated execution was required on the tested host. The HTTPS run used a temporary elevated agent, not the installed SCM service.
+- Last reviewed: 2026-08-25
 
 ## Product Notes From Documentation
 

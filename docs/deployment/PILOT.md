@@ -105,7 +105,7 @@ the ICAP service with host networking.
 The release ZIP is generated from a fixed `masp-pilot` commit/tag:
 
 ```bash
-python3 tools/package_pilot_release.py --version 0.1.0-pilot.4
+python3 tools/package_pilot_release.py --version 0.1.0-pilot.5
 ```
 
 The bundle contains application source needed for the image build, the pilot
@@ -162,20 +162,20 @@ For an offline target, build and export images on an approved connected Linux
 builder using the exact release:
 
 ```bash
-docker build -t masp-pilot:0.1.0-pilot.4 .
+docker build -t masp-pilot:0.1.0-pilot.5 .
 docker pull 'postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb'
 docker pull 'clamav/clamav:stable@sha256:1b6443c4a7b456baa1abfaf9796815f8d21e2fb558dbaed5b682fd4552d8b0c3'
-docker save -o masp-pilot-0.1.0-pilot.4-images.tar \
-  masp-pilot:0.1.0-pilot.4 postgres:16-alpine clamav/clamav:stable
-sha256sum masp-pilot-0.1.0-pilot.4-images.tar > \
-  masp-pilot-0.1.0-pilot.4-images.tar.sha256
+docker save -o masp-pilot-0.1.0-pilot.5-images.tar \
+  masp-pilot:0.1.0-pilot.5 postgres:16-alpine clamav/clamav:stable
+sha256sum masp-pilot-0.1.0-pilot.5-images.tar > \
+  masp-pilot-0.1.0-pilot.5-images.tar.sha256
 ```
 
 On the target, verify and load the archive, then install without building:
 
 ```bash
-sha256sum -c masp-pilot-0.1.0-pilot.4-images.tar.sha256
-docker load -i masp-pilot-0.1.0-pilot.4-images.tar
+sha256sum -c masp-pilot-0.1.0-pilot.5-images.tar.sha256
+docker load -i masp-pilot-0.1.0-pilot.5-images.tar
 ./deploy/pilot/install.sh --env-file .env.pilot --no-build
 ```
 

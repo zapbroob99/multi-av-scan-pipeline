@@ -117,6 +117,33 @@ class SchemaMigrationTests(unittest.TestCase):
         with database.connect() as connection:
             self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
 
+    def test_deleted_multi_instance_job_is_not_rebound_on_startup(self) -> None:
+        first_id = database.create_engine_instance("clamav", "ClamAV Primary")
+        second_id = database.create_engine_instance("clamav", "ClamAV Retired")
+        sample_id = self._sample()
+        scan_id = database.create_scan_job(
+            sample_id, case_name="C", priority="Normal", note=""
+        )
+        first = database.get_engine_instance_by_id(first_id)
+        second = database.get_engine_instance_by_id(second_id)
+        assert first is not None and second is not None
+        database.create_scan_engine_jobs(scan_id, [first, second])
+
+        database.delete_engine_instance_by_id(second_id)
+        before = database.list_scan_engine_jobs(scan_id)
+        self.assertEqual(
+            {job.engine_name: job.engine_instance_id for job in before},
+            {"ClamAV Primary": first_id, "ClamAV Retired": None},
+        )
+
+        database.init_db()
+
+        after = database.list_scan_engine_jobs(scan_id)
+        self.assertEqual(
+            {job.engine_name: job.engine_instance_id for job in after},
+            {"ClamAV Primary": first_id, "ClamAV Retired": None},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -108,8 +108,10 @@ in the form are guidance, not preselected configuration.
 Remote workers can use the authenticated HTTPS control API without PostgreSQL
 credentials or shared visibility of the sample store. Defender hosts have an SCM
 service package, lifecycle tooling, integrity verification, and an evidence-producing
-acceptance runner. The remote Defender path remains `lab` until its real-host matrix
-and organizational signing gate pass. See the
+acceptance runner. Direct-database and HTTPS control-plane clean/EICAR scans have
+passed on a Windows 11 development host; the remote Defender path remains `lab`
+until its SCM-service, remaining real-host matrix, and organizational signing
+gates pass. See the
 [engine deployment architecture](docs/architecture/ENGINE_DEPLOYMENT_AND_WORKER_AGENT.md).
 
 Use [docs/deployment/PILOT.md](docs/deployment/PILOT.md) for host requirements,
@@ -440,8 +442,10 @@ rotation, upgrade, and uninstall procedures. The acceptance command verifies the
 extracted manifest, service identity/startup, Defender/control health, clean and
 EICAR API decisions, and records Authenticode state without exposing tokens. See
 [Windows Worker Agent](docs/deployment/WINDOWS_WORKER_AGENT.md). The packaging is
-available for lab validation; Defender remains `lab` until the real-host
-acceptance matrix and release signing are complete.
+available for lab validation. Manual development-host clean/EICAR validation has
+passed over the HTTPS control plane, but Defender remains `lab` until installed
+SCM-service acceptance, the remaining failure/failover/lifecycle matrix, and
+release signing are complete.
 
 The worker assignment in the hybrid Compose setup is:
 

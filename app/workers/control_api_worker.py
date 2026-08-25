@@ -75,6 +75,32 @@ class WorkerControlClient:
         self.token = token
         self.context = ssl_context() if self.base_url.startswith("https://") else None
 
+    def _url(self, path: str) -> str:
+        """Resolve API-relative and origin-relative paths without changing origin."""
+        resolved = urljoin(self.base_url, path)
+        base = urlparse(self.base_url)
+        target = urlparse(resolved)
+
+        def origin(parsed) -> tuple[str, str | None, int | None]:
+            default_port = 443 if parsed.scheme == "https" else 80
+            return parsed.scheme, parsed.hostname, parsed.port or default_port
+
+        try:
+            base_origin = origin(base)
+            target_origin = origin(target)
+        except ValueError as exc:
+            raise WorkerControlError("Control API operation URL is invalid.") from exc
+        if (
+            not path
+            or target.username is not None
+            or target.password is not None
+            or target_origin != base_origin
+        ):
+            raise WorkerControlError(
+                "Control API operation URL must remain on the configured origin."
+            )
+        return resolved
+
     def _request(
         self,
         path: str,
@@ -84,7 +110,7 @@ class WorkerControlClient:
     ):
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         request = Request(
-            urljoin(self.base_url, path.lstrip("/")),
+            self._url(path),
             data=data,
             method="POST",
             headers={

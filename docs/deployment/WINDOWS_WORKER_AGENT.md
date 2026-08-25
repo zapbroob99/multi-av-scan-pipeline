@@ -5,8 +5,10 @@
 The Windows agent executes Microsoft Defender locally while all orchestration
 stays on the MASP server. It uses outbound HTTPS only and receives neither a
 PostgreSQL credential nor a shared-storage mount. The current implementation is
-`lab`: service packaging and automated lifecycle tooling exist, but a signed
-release and the real-host acceptance matrix must pass before production support.
+`lab`: service packaging and automated lifecycle tooling exist. Direct-database
+and HTTPS control-plane clean/EICAR scans have passed on a Windows 11 development
+host, but the installed-service identity, remaining real-host matrix, and signed
+release gates must pass before production support.
 
 ## Security model
 
@@ -170,6 +172,12 @@ revoke the node credential in MASP System; deleting the local file alone does
 not revoke its server-side hash.
 
 ## Required acceptance before production
+
+Development-host evidence currently covers authenticated HTTPS health and
+authorization checks, correct origin-relative sample download, fenced result
+submission, clean full-coverage allow, asynchronous `202`/poll/`409` behavior,
+and EICAR block with Defender plus ClamAV detections. That run used a temporary
+elevated agent process; it does not satisfy the SCM service or release gate.
 
 Run and record all cases on the target Windows/Defender build:
 
