@@ -11,7 +11,7 @@ import asyncio
 from pathlib import Path
 
 from app.database import create_scan_intake, get_scan
-from app.models import ScanRecord, StoredSample
+from app.models import EngineInstanceRecord, ScanRecord, StoredSample
 from app.services.archive_extractor import detect_archive_format
 from app.services.engine_registry import enabled_engines
 
@@ -50,6 +50,10 @@ def enqueue_scan_from_stored_sample(
     note: str,
     source: str,
     archive_mode: str = DEFAULT_ARCHIVE_MODE,
+    engines: list[EngineInstanceRecord] | None = None,
+    service_client_id: int | None = None,
+    scan_profile_id: int | None = None,
+    profile_snapshot_json: str = "{}",
 ) -> ScanRecord:
     """Create a scan job (and archive batch/container when applicable).
 
@@ -59,8 +63,8 @@ def enqueue_scan_from_stored_sample(
     normalized by the caller.
     """
     try:
-        engines = enabled_engines(source=source)
-        if not engines:
+        selected_engines = engines if engines is not None else enabled_engines(source=source)
+        if not selected_engines:
             raise NoEligibleEnginesError(
                 f"No eligible scan engines are available for source {source!r}; "
                 "intake rejected."
@@ -68,13 +72,16 @@ def enqueue_scan_from_stored_sample(
         archive_format = detect_archive_format(stored_sample.storage_path)
         scan_id = create_scan_intake(
             sample=stored_sample,
-            engines=engines,
+            engines=selected_engines,
             case_name=case_name.strip() or "Unassigned",
             priority=priority,
             note=note.strip(),
             source=source,
             archive_mode=archive_mode,
             archive_format=archive_format,
+            service_client_id=service_client_id,
+            scan_profile_id=scan_profile_id,
+            profile_snapshot_json=profile_snapshot_json,
         )
     except Exception:
         # Any failure BEFORE the intake transaction commits (zero engines,

@@ -253,6 +253,22 @@ class ApiScanSourceIsolationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
 
+    def test_status_hides_another_service_clients_api_scan(self) -> None:
+        env, setting = self.configured()
+        identity = SimpleNamespace(client=SimpleNamespace(id=10, client_key="client-a"))
+        other_scan = SimpleNamespace(
+            id=1, source="api", status="completed", service_client_id=20
+        )
+        with env, setting, patch(
+            "app.main.api_client_identity", return_value=identity
+        ), patch("app.main.get_scan", return_value=other_scan):
+            status, _, payload = asgi_get(
+                "/api/v1/scans/1", headers=self._auth_header()
+            )
+
+        self.assertEqual(status, 404)
+        self.assertEqual(payload["detail"], "Scan not found.")
+
 
 if __name__ == "__main__":
     unittest.main()

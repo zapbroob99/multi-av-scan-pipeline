@@ -443,7 +443,7 @@ def configured_engines() -> list[EngineInstanceRecord]:
     return list_engine_instances()
 
 
-def _allowed_for_source(engine: EngineInstanceRecord, source: str) -> bool:
+def engine_allowed_for_source(engine: EngineInstanceRecord, source: str) -> bool:
     capabilities = adapter_capabilities(engine.adapter_key)
     return not (
         source.strip().lower() in {"api", "icap"}
@@ -462,7 +462,7 @@ def enabled_engines(*, source: str = "manual") -> list[EngineInstanceRecord]:
         engine
         for engine in configured_engines()
         if engine.enabled
-        and _allowed_for_source(engine, source)
+        and engine_allowed_for_source(engine, source)
         and (
             adapter_capabilities(engine.adapter_key).supports_file_upload
             or adapter_capabilities(engine.adapter_key).supports_file_hash_scan
@@ -475,7 +475,7 @@ def enabled_hash_engines(*, source: str = "manual") -> list[EngineInstanceRecord
         engine
         for engine in configured_engines()
         if engine.enabled
-        and _allowed_for_source(engine, source)
+        and engine_allowed_for_source(engine, source)
         and adapter_capabilities(engine.adapter_key).supports_hash_lookup
     ]
 

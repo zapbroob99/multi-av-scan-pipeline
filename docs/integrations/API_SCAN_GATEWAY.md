@@ -132,11 +132,21 @@ Use a bearer token in the `Authorization` header.
 Authorization: Bearer <token>
 ```
 
-Configure one or more tokens with:
+For new integrations, an administrator creates a client in **Service Clients**,
+selects its engine instances, and registers a long random token. MASP stores
+only the token hash and a short fingerprint. A token can read only scans and
+batches owned by its client; cross-client IDs return `404`. Profile changes
+apply to new submissions only because every accepted scan keeps a routing
+snapshot.
+
+The following compatibility sources are still accepted and map to the shared
+`legacy-default` client:
 
 - `MASP_API_TOKEN`
 - `MASP_API_TOKENS`
 - `api.tokens` in MASP settings storage
+
+Do not use shared compatibility tokens when client-level isolation is required.
 
 ## Environment
 

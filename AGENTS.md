@@ -15,6 +15,11 @@ arbitrary command parsers.
   sample storage; direct database/shared-filesystem workers remain compatible.
 - ClamAV normally uses clamd TCP. Defender executes locally on a Windows worker.
 - API and ICAP submissions exclude adapters with `consumes_external_quota`.
+- API integrations resolve to a service client and default scan profile; ICAP
+  processes may bind to one client with `MASP_ICAP_SERVICE_CLIENT_KEY`.
+- Accepted automation scans persist an immutable routing snapshot. Retries,
+  workers, coverage, and decisions must use that snapshot rather than the
+  profile's current engine set.
 - Engine-job ownership uses leases, attempt generations, and fenced result commits.
 
 ## Engine Identity
@@ -36,6 +41,13 @@ arbitrary command parsers.
 
 The authoritative plan is
 `docs/architecture/ENGINE_DEPLOYMENT_AND_WORKER_AGENT.md`.
+
+Multi-integration identity and routing are documented in
+`docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md`. Service clients,
+hashed/revocable API credentials, default profiles, engine assignments, scan and
+batch ownership, API isolation, ledger filtering, and ICAP instance binding are
+implemented. Next milestones are multiple named profiles, per-client
+fairness/rate limits, and a transactional SIEM/webhook notification outbox.
 
 Durable worker nodes have stable identity, labels, capacity, advertised adapters,
 heartbeat/runtime metadata, and admin-managed lifecycle. Engine instances can be

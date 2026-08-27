@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.icap import protocol, server
 from app.icap.config import IcapConfig
+from app.icap.config import load_icap_config
 from app.models import StoredSample
 from app.services.decisions import ScanDecision
 
@@ -128,6 +129,14 @@ def run_handler(message: bytes, config: IcapConfig, *, decision_action="allow", 
 class IcapServerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = IcapConfig()
+
+    def test_config_binds_gateway_to_service_client_key(self) -> None:
+        with patch.dict(
+            "os.environ", {"MASP_ICAP_SERVICE_CLIENT_KEY": "Drive-Primary"}, clear=False
+        ):
+            config = load_icap_config()
+
+        self.assertEqual(config.service_client_key, "drive-primary")
 
     def test_options_returns_capabilities(self) -> None:
         writer = FakeWriter()

@@ -108,6 +108,10 @@ the proxy/LB source addresses through the host firewall. ICAP also defaults to
 localhost. For a remote ICAP client, set `MASP_ICAP_BIND` to the MASP server's
 private interface (or `0.0.0.0:1344` only with host firewall controls) and set
 `MASP_ICAP_ALLOWED_IPS` to the approved client addresses.
+Bind the gateway to a **Service Clients** identity with
+`MASP_ICAP_SERVICE_CLIENT_KEY`. Run separate listeners/containers for consuming
+systems that need different engine profiles or ledger ownership; ICAP source IP
+is not used as an identity boundary.
 
 ## 2. Bring up
 

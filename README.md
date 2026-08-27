@@ -14,6 +14,9 @@ shows analyst-friendly scan results.
 - Interactive **Scan Hash** reputation lookup and hash-only VirusTotal
   enrichment for explicitly initiated manual file scans
 - Bearer-token file scan API for service-to-service integrations
+- Admin-managed service clients with hashed/revocable API credentials,
+  client-specific engine profiles, immutable routing snapshots, and ledger/API
+  isolation
 - RFC 3507 ICAP REQMOD gateway for synchronous upload gating
 - Source-aware engine eligibility: token/quota-consuming adapters are excluded
   from REST and ICAP automation
@@ -37,6 +40,7 @@ shows analyst-friendly scan results.
 - [ICAP gateway](docs/integrations/ICAP_GATEWAY.md)
 - [Engine support matrix](docs/integrations/SUPPORT_MATRIX.md)
 - [Scan execution flow](docs/architecture/SCAN_EXECUTION_FLOW.md)
+- [Service clients and scan profiles](docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md)
 - [Engine deployment and worker agent architecture](docs/architecture/ENGINE_DEPLOYMENT_AND_WORKER_AGENT.md)
 - [Audit trail](docs/security/AUDIT_TRAIL.md)
 - [LDAP and Active Directory authentication](docs/security/LDAP_AUTHENTICATION.md)
@@ -236,6 +240,7 @@ MASP_DB_POOL_MIN=0
 MASP_DB_POOL_MAX=4
 MASP_DB_POOL_TIMEOUT_SECONDS=30
 MASP_ICAP_SERVICE_NAME=masp
+MASP_ICAP_SERVICE_CLIENT_KEY=legacy-default
 MASP_ICAP_WAIT_SECONDS=30
 MASP_ICAP_MAX_BYTES=0
 MASP_ICAP_FAIL_MODE_CLOSED=1
@@ -276,6 +281,11 @@ MASP's asynchronous service-integration surface is the file scan API:
 - `POST /api/v1/scans`
 - `GET /api/v1/scans/{scan_id}`
 - `GET /api/v1/scans/{scan_id}/result`
+
+Create dedicated integrations from **Service Clients**. Each bearer token maps
+to one client and its default engine profile; status/result reads are limited to
+that client's scans. Existing environment/settings tokens remain supported and
+map to the shared `legacy-default` compatibility client.
 
 API and ICAP submissions use only engines eligible for automation. Registry
 adapters marked `consumes_external_quota` are excluded before engine jobs are
@@ -328,6 +338,9 @@ python tools\icap_probe.py --host 127.0.0.1 --port 1344 --eicar --expect block
 ```
 
 The service URI is `icap://<host>:1344/masp`; use `REQMOD` for upload gating.
+One ICAP process maps all accepted requests to the service client selected by
+`MASP_ICAP_SERVICE_CLIENT_KEY`. Deploy separate listeners for integrations that
+need different engine profiles or ledger ownership.
 ICAP is unencrypted TCP, so expose it only on a private network. Restrict
 sources with the **host firewall** — that is the authoritative control.
 `MASP_ICAP_ALLOWED_IPS` is defense in depth: it matches the address the gateway

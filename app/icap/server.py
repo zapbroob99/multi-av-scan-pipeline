@@ -21,6 +21,11 @@ from app.services.scan_intake import (
     wait_for_terminal_scan,
 )
 from app.services.scan_assessment import resolve_scan_decision
+from app.services.service_clients import (
+    engines_for_profile,
+    identity_for_service_client_key,
+    profile_snapshot_json,
+)
 
 ICAP_SOURCE = "icap"
 _MAX_HEAD_BYTES = 64 * 1024
@@ -285,12 +290,18 @@ async def scan_and_decide(
         return "block" if config.fail_closed else "allow"
 
     try:
+        identity = identity_for_service_client_key(config.service_client_key)
+        engines = engines_for_profile(identity.profile.id, source=ICAP_SOURCE)
         scan = enqueue_scan_from_stored_sample(
             stored_sample,
             case_name="ICAP",
             priority="Normal",
             note="Submitted via ICAP gateway.",
             source=ICAP_SOURCE,
+            engines=engines,
+            service_client_id=identity.client.id,
+            scan_profile_id=identity.profile.id,
+            profile_snapshot_json=profile_snapshot_json(identity, engines),
         )
         scan = await wait_for_terminal_scan(scan.id, config.wait_seconds)
         action = resolve_icap_action(scan, config)
@@ -491,7 +502,8 @@ async def serve(config: IcapConfig | None = None) -> None:
     server = await asyncio.start_server(_client, config.host, config.port)
     log(
         f"MASP ICAP gateway listening on {config.host}:{config.port} "
-        f"(service '{config.service_name}', wait {config.wait_seconds}s, "
+        f"(service '{config.service_name}', client '{config.service_client_key}', "
+        f"wait {config.wait_seconds}s, "
         f"fail-{'closed' if config.fail_closed else 'open'})"
     )
     if config.allowed_ips:

@@ -35,6 +35,7 @@ class IcapConfig:
     host: str = "0.0.0.0"
     port: int = 1344
     service_name: str = "masp"
+    service_client_key: str = "legacy-default"
     wait_seconds: int = 30
     max_bytes: int | None = None
     fail_closed: bool = True
@@ -60,6 +61,10 @@ def load_icap_config() -> IcapConfig:
         host=os.getenv("MASP_ICAP_HOST", "0.0.0.0").strip() or "0.0.0.0",
         port=_int_env("MASP_ICAP_PORT", 1344, minimum=1),
         service_name=os.getenv("MASP_ICAP_SERVICE_NAME", "masp").strip() or "masp",
+        service_client_key=(
+            os.getenv("MASP_ICAP_SERVICE_CLIENT_KEY", "legacy-default").strip().lower()
+            or "legacy-default"
+        ),
         wait_seconds=_int_env("MASP_ICAP_WAIT_SECONDS", 30),
         max_bytes=effective_cap or None,
         fail_closed=_bool_env("MASP_ICAP_FAIL_MODE_CLOSED", True),

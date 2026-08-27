@@ -137,6 +137,9 @@ Important settings:
   Bind a private interface and firewall it to the proxy when the proxy is
   remote.
 - `MASP_ICAP_BIND=<masp-private-ip>:1344` for the storage client connection.
+- `MASP_ICAP_SERVICE_CLIENT_KEY=legacy-default` uses compatibility routing. For
+  dedicated ownership/routing, first create a client in **Service Clients** and
+  set its stable key here. One gateway process maps to one client.
 - `MASP_ICAP_ALLOWED_IPS=127.0.0.1,<client-ip-1>,<client-ip-2>`. The current
   allowlist accepts exact IP addresses, not CIDR ranges. Keep loopback for the
   local acceptance probe. **This allowlist is a secondary control — see below.**

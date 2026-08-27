@@ -39,12 +39,22 @@
   select,
   textarea {
     @apply rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100;
+    min-height: 42px;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-height: 0;
+    padding: 0;
+    box-shadow: none;
   }
 
   html.dark input,
   html.dark select,
   html.dark textarea {
-    @apply border-slate-800 bg-slate-900 text-slate-100 focus:border-sky-400 focus:ring-sky-950;
+    @apply border-slate-700 bg-slate-900 text-slate-100 focus:border-sky-400 focus:ring-sky-950;
+    background-color: rgba(15, 23, 42, 0.72);
+    border-color: rgba(71, 85, 105, 0.72);
   }
 
   code,
@@ -366,12 +376,290 @@
     @apply text-slate-400;
   }
 
+  .modal-dialog {
+    @apply w-[min(920px,calc(100vw-2rem))] max-w-none rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-shell;
+    max-height: min(82vh, 780px);
+  }
+
+  .modal-dialog::backdrop {
+    background: rgba(2, 6, 23, 0.56);
+    backdrop-filter: blur(4px);
+  }
+
+  html.dark .modal-dialog {
+    @apply border-slate-800 bg-slate-950 text-slate-100;
+  }
+
+  .modal-panel {
+    @apply grid overflow-hidden rounded-2xl;
+    max-height: min(82vh, 780px);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .modal-header {
+    @apply flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4;
+  }
+
+  html.dark .modal-header {
+    @apply border-slate-800;
+  }
+
+  .modal-header h2 {
+    @apply text-lg font-semibold text-slate-950;
+  }
+
+  .modal-header p {
+    @apply mt-1 text-sm text-slate-500;
+  }
+
+  html.dark .modal-header h2 {
+    @apply text-slate-100;
+  }
+
+  html.dark .modal-header p {
+    @apply text-slate-400;
+  }
+
+  .modal-body {
+    @apply overflow-auto;
+  }
+
+  .service-client-card {
+    @apply overflow-hidden;
+  }
+
+  .service-client-summary {
+    @apply flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-slate-50;
+  }
+
+  html.dark .service-client-summary {
+    @apply hover:bg-slate-900;
+  }
+
+  .service-client-summary-main {
+    @apply grid min-w-0 gap-2;
+  }
+
+  .service-client-summary-main strong {
+    @apply block text-sm font-semibold text-slate-950;
+  }
+
+  .service-client-summary-main small,
+  .service-client-summary-meta {
+    @apply text-xs text-slate-500;
+  }
+
+  html.dark .service-client-summary-main strong {
+    @apply text-slate-100;
+  }
+
+  html.dark .service-client-summary-main small,
+  html.dark .service-client-summary-meta {
+    @apply text-slate-400;
+  }
+
+  .service-client-summary-meta {
+    @apply flex flex-wrap items-center gap-x-3 gap-y-1;
+  }
+
+  .service-client-summary-actions {
+    @apply flex flex-none flex-wrap items-center justify-end gap-2;
+  }
+
+  .service-client-modal .modal-panel {
+    display: block;
+    overflow: auto;
+  }
+
+  .service-client-modal .panel-header {
+    @apply sticky top-0 z-10 bg-white;
+  }
+
+  html.dark .service-client-modal .panel-header {
+    @apply bg-slate-950;
+  }
+
+  .engine-card {
+    @apply overflow-hidden;
+  }
+
+  .engine-card.is-engine-disabled {
+    @apply border-amber-200 bg-amber-50;
+  }
+
+  html.dark .engine-card.is-engine-disabled {
+    @apply border-amber-900 bg-amber-950;
+    background-color: rgba(69, 26, 3, 0.18);
+  }
+
+  .engine-card.is-engine-disabled .engine-card-summary {
+    box-shadow: inset 3px 0 0 rgba(245, 158, 11, 0.8);
+  }
+
+  .engine-card-summary {
+    @apply grid w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50;
+    grid-template-columns: 44px minmax(0, 1fr) auto auto auto;
+  }
+
+  html.dark .engine-card-summary {
+    @apply hover:bg-slate-900;
+  }
+
+  .engine-card-summary .engine-logo {
+    @apply h-10 w-10 rounded-xl;
+  }
+
+  .engine-summary-copy {
+    @apply grid min-w-0 gap-1;
+  }
+
+  .engine-summary-copy strong {
+    @apply block truncate text-sm font-semibold text-slate-950;
+  }
+
+  .engine-summary-copy small {
+    @apply block truncate text-xs text-slate-500;
+  }
+
+  .engine-definition-meta,
+  .engine-disabled-note {
+    @apply hidden md:block;
+  }
+
+  .engine-summary-meta {
+    @apply hidden text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 lg:block;
+  }
+
+  html.dark .engine-summary-copy strong {
+    @apply text-slate-100;
+  }
+
+  html.dark .engine-summary-copy small,
+  html.dark .engine-summary-meta {
+    @apply text-slate-400;
+  }
+
+  .engine-modal {
+    @apply w-[min(980px,calc(100vw-2rem))];
+  }
+
+  .engine-modal .engine-config {
+    @apply grid gap-4 p-5;
+  }
+
+  .engine-modal .engine-config.has-edit-form > .config-grid {
+    display: none;
+  }
+
+  .engine-modal .engine-health {
+    @apply flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4;
+  }
+
+  html.dark .engine-modal .engine-health {
+    @apply border-slate-800 bg-slate-900;
+    background-color: rgba(15, 23, 42, 0.48);
+  }
+
+  .engine-modal .engine-health span {
+    @apply text-xs font-semibold uppercase tracking-[0.12em] text-slate-500;
+  }
+
+  .engine-modal .engine-health strong {
+    @apply mt-1 block text-sm font-medium text-slate-900;
+  }
+
+  html.dark .engine-modal .engine-health span {
+    @apply text-slate-400;
+  }
+
+  html.dark .engine-modal .engine-health strong {
+    @apply text-slate-100;
+  }
+
+  .engine-modal .engine-settings-drawer,
+  .engine-modal .engine-subsection {
+    @apply rounded-xl border border-slate-200 bg-white;
+  }
+
+  .engine-modal .engine-settings-drawer {
+    @apply border-0 bg-transparent;
+  }
+
+  html.dark .engine-modal .engine-settings-drawer,
+  html.dark .engine-modal .engine-subsection {
+    @apply border-slate-800 bg-slate-950;
+  }
+
+  html.dark .engine-modal .engine-settings-drawer {
+    @apply bg-transparent;
+  }
+
+  .engine-modal .engine-settings-drawer > summary,
+  .engine-modal .engine-subsection-header {
+    @apply flex items-center justify-between gap-4 px-4 py-3;
+  }
+
+  .engine-modal .engine-settings-drawer > summary {
+    display: none;
+  }
+
+  .engine-modal .settings-form.embedded,
+  .engine-modal .rule-upload {
+    @apply border border-slate-200;
+    border-radius: 0.75rem;
+    border-left: 0;
+    border-right: 0;
+    box-shadow: none;
+  }
+
+  .engine-modal .settings-form.embedded {
+    @apply bg-white;
+    padding: 1rem;
+  }
+
+  html.dark .engine-modal .settings-form.embedded,
+  html.dark .engine-modal .rule-upload {
+    @apply border-slate-800;
+  }
+
+  html.dark .engine-modal .settings-form.embedded {
+    @apply bg-slate-950;
+  }
+
+  .engine-modal .settings-actions {
+    @apply sticky bottom-0 z-10 -mx-4 -mb-4 mt-2 justify-end border-t border-slate-200 bg-white px-4 py-3;
+  }
+
+  html.dark .engine-modal .settings-actions {
+    @apply border-slate-800 bg-slate-950;
+  }
+
   .panel-actions,
   .row-actions,
+  .table-actions,
+  .user-actions,
   .scan-verdict-group,
   .notice-actions,
   .scan-filter-actions {
     @apply flex flex-wrap items-center gap-2;
+  }
+
+  .table-actions {
+    @apply justify-start;
+    max-width: 12rem;
+  }
+
+  .table-actions form,
+  .panel-actions form,
+  .row-actions form,
+  .user-actions form,
+  .inline-actions {
+    @apply m-0 inline-flex;
+  }
+
+  .table-actions .secondary-action,
+  .table-actions .danger-action {
+    flex: 0 0 auto;
   }
 
   .engine-toolbar {
@@ -405,22 +693,35 @@
   .toolbar-delete,
   .theme-toggle,
   button.primary-action {
-    @apply inline-flex min-h-[38px] items-center justify-center rounded-xl px-4 text-sm font-medium transition;
+    @apply inline-flex min-h-[38px] items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  .primary-action:focus-visible,
+  .secondary-action:focus-visible,
+  .danger-action:focus-visible,
+  .row-action:focus-visible,
+  .toolbar-delete:focus-visible {
+    @apply outline-none ring-4 ring-sky-100;
   }
 
   .primary-action {
     @apply border border-sky-500 bg-sky-600 text-white shadow-sm hover:border-sky-400 hover:bg-sky-500;
     box-shadow: 0 10px 30px rgba(2, 132, 199, 0.22);
+    color: #ffffff;
   }
 
   .secondary-action,
   .row-action {
-    @apply border border-slate-200 bg-white text-slate-700 hover:bg-slate-50;
+    @apply border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-slate-400 hover:bg-slate-50;
   }
 
   .danger-action,
   .toolbar-delete {
-    @apply border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100;
+    @apply border border-rose-200 bg-rose-50 text-rose-700 shadow-sm hover:border-rose-300 hover:bg-rose-100;
   }
 
   .primary-action:disabled,
@@ -433,7 +734,9 @@
 
   html.dark .secondary-action,
   html.dark .row-action {
-    @apply border-slate-700 bg-slate-900 text-slate-100 hover:border-slate-600 hover:bg-slate-800;
+    @apply border-slate-700 bg-slate-900 text-slate-100 hover:border-slate-500 hover:bg-slate-800;
+    background-color: rgba(15, 23, 42, 0.72);
+    border-color: rgba(71, 85, 105, 0.82);
   }
 
   html.dark .danger-action,
@@ -449,7 +752,8 @@
   }
 
   .compact-action {
-    @apply min-h-[34px] px-3 text-xs;
+    @apply min-h-[34px] rounded-lg px-3 text-xs;
+    min-width: 0;
   }
 
   .pill {
@@ -684,6 +988,106 @@
     @apply text-slate-400;
   }
 
+  .about-layout {
+    @apply grid gap-5;
+  }
+
+  .about-hero-panel {
+    @apply overflow-hidden;
+  }
+
+  .about-hero-body {
+    @apply grid gap-4 px-5 py-5;
+  }
+
+  .about-hero-body p {
+    @apply max-w-3xl text-sm leading-5 text-slate-600;
+  }
+
+  html.dark .about-hero-body p {
+    @apply text-slate-300;
+  }
+
+  .about-facts {
+    @apply flex flex-wrap gap-2;
+  }
+
+  .about-facts span {
+    @apply rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600;
+  }
+
+  html.dark .about-facts span {
+    @apply border-slate-800 bg-slate-950 text-slate-300;
+  }
+
+  .about-two-column {
+    @apply grid gap-5 xl:grid-cols-2;
+  }
+
+  .about-list {
+    @apply grid divide-y divide-slate-200 px-5;
+  }
+
+  html.dark .about-list {
+    @apply divide-slate-800;
+  }
+
+  .about-list > div {
+    @apply grid gap-1 py-4;
+  }
+
+  .about-list strong {
+    @apply text-sm font-semibold text-slate-900;
+  }
+
+  .about-list span {
+    @apply text-sm leading-5 text-slate-600;
+  }
+
+  html.dark .about-list strong {
+    @apply text-slate-100;
+  }
+
+  html.dark .about-list span {
+    @apply text-slate-400;
+  }
+
+  .about-runtime-grid {
+    @apply rounded-none;
+  }
+
+  .about-interface-grid {
+    @apply grid gap-px bg-slate-200 md:grid-cols-2;
+  }
+
+  html.dark .about-interface-grid {
+    @apply bg-slate-800;
+  }
+
+  .about-interface {
+    @apply grid gap-1 bg-white p-5 transition hover:bg-slate-50;
+  }
+
+  html.dark .about-interface {
+    @apply bg-slate-900 hover:bg-slate-800;
+  }
+
+  .about-interface strong {
+    @apply text-sm font-semibold text-slate-900;
+  }
+
+  .about-interface span {
+    @apply text-sm leading-5 text-slate-600;
+  }
+
+  html.dark .about-interface strong {
+    @apply text-slate-100;
+  }
+
+  html.dark .about-interface span {
+    @apply text-slate-400;
+  }
+
   .notice {
     @apply flex items-start justify-between gap-4 rounded-2xl border px-5 py-4 shadow-sm;
   }
@@ -784,6 +1188,70 @@
     @apply grid gap-4;
   }
 
+  .settings-form.embedded {
+    @apply rounded-xl border border-slate-200 bg-slate-50 p-4;
+    border-color: rgba(203, 213, 225, 0.72);
+  }
+
+  html.dark .settings-form.embedded {
+    @apply border-slate-800 bg-slate-900;
+    background-color: rgba(15, 23, 42, 0.48);
+  }
+
+  .service-client-section {
+    @apply grid gap-4 border-t border-slate-200 px-5 py-5;
+    background: transparent;
+  }
+
+  .service-client-section:first-of-type {
+    @apply border-t-0;
+  }
+
+  html.dark .service-client-section {
+    @apply border-slate-800;
+  }
+
+  .service-client-section > .panel-header {
+    @apply border-b-0 px-0 py-0;
+    background: transparent;
+  }
+
+  .service-client-section .settings-actions {
+    @apply justify-start;
+  }
+
+  .settings-grid {
+    @apply grid gap-3;
+  }
+
+  .settings-grid.three {
+    @apply md:grid-cols-3;
+  }
+
+  .settings-grid label,
+  .settings-form label,
+  .rule-upload label {
+    @apply grid gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500;
+  }
+
+  html.dark .settings-grid label,
+  html.dark .settings-form label,
+  html.dark .rule-upload label {
+    @apply text-slate-400;
+  }
+
+  .settings-actions {
+    @apply flex flex-wrap items-center justify-end gap-2;
+  }
+
+  .field-help {
+    @apply text-sm text-slate-500;
+  }
+
+  html.dark .field-help {
+    @apply text-slate-400;
+  }
+
   .auth-hint,
   .auth-message,
   .auth-error {
@@ -848,6 +1316,88 @@
 
   .selected-file.has-file {
     @apply border-emerald-200 bg-emerald-50 text-emerald-700;
+  }
+
+  .user-table {
+    @apply overflow-hidden rounded-xl border border-slate-200;
+  }
+
+  html.dark .user-table {
+    @apply border-slate-800;
+  }
+
+  .user-row {
+    @apply grid gap-3 border-b border-slate-200 px-4 py-4;
+    grid-template-columns: minmax(180px, 1fr) auto auto;
+    align-items: center;
+  }
+
+  .user-account-row {
+    grid-template-columns: minmax(240px, 0.45fr) minmax(0, 1fr) auto;
+  }
+
+  .credential-row {
+    grid-template-columns: minmax(220px, 1fr) auto auto;
+  }
+
+  .user-row:last-child {
+    @apply border-b-0;
+  }
+
+  html.dark .user-row {
+    @apply border-slate-800;
+  }
+
+  .user-row strong,
+  .user-row small {
+    @apply block;
+  }
+
+  .user-row strong {
+    @apply text-sm font-semibold text-slate-950;
+  }
+
+  .user-row small {
+    @apply mt-1 text-xs text-slate-500;
+  }
+
+  html.dark .user-row strong {
+    @apply text-slate-100;
+  }
+
+  html.dark .user-row small {
+    @apply text-slate-400;
+  }
+
+  .user-row .user-inline-form {
+    @apply grid gap-3;
+    grid-template-columns: minmax(150px, 180px) minmax(220px, 1fr) auto;
+    align-items: end;
+  }
+
+  .user-inline-readonly {
+    @apply grid max-w-3xl gap-2 justify-self-stretch;
+  }
+
+  .user-inline-readonly .pill {
+    @apply w-fit;
+  }
+
+  .user-inline-readonly small {
+    @apply text-xs text-slate-500;
+  }
+
+  html.dark .user-inline-readonly small {
+    @apply text-slate-400;
+  }
+
+  .user-row .user-inline-form .secondary-action,
+  .user-row .user-inline-form .danger-action {
+    @apply min-h-[38px];
+  }
+
+  .user-actions {
+    @apply justify-end;
   }
 
   .hash-scan-input,
@@ -1573,18 +2123,32 @@
     box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.12);
   }
 
+  .add-engine-panel {
+    overflow: hidden;
+  }
+
   .add-engine-drawer {
     @apply border-t border-slate-200;
+    border-color: rgba(203, 213, 225, 0.72);
+    background: transparent;
   }
 
   html.dark .add-engine-drawer {
     @apply border-slate-800;
+    border-color: rgba(51, 65, 85, 0.72);
   }
 
   .add-engine-summary {
     @apply flex items-center justify-between gap-4 px-5 py-4;
     cursor: pointer;
     list-style: none;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  .add-engine-drawer:not([open]) > .add-engine-summary {
+    border-bottom-left-radius: inherit;
+    border-bottom-right-radius: inherit;
   }
 
   .add-engine-summary::-webkit-details-marker {
@@ -1593,14 +2157,17 @@
 
   .add-engine-summary-copy {
     @apply grid gap-1;
+    min-width: 0;
+    max-width: min(620px, 100%);
   }
 
   .add-engine-summary-copy strong {
-    @apply text-sm font-semibold text-slate-950;
+    @apply text-base font-semibold leading-5 text-slate-950;
   }
 
   .add-engine-summary-copy small {
-    @apply text-sm text-slate-500;
+    @apply text-[13px] leading-5 text-slate-500;
+    overflow-wrap: anywhere;
   }
 
   html.dark .add-engine-summary-copy strong {
@@ -1617,6 +2184,7 @@
 
   .add-engine-summary-actions {
     @apply flex items-center gap-3;
+    flex: 0 0 auto;
   }
 
   .engine-expand-indicator {
@@ -1634,6 +2202,7 @@
 
   .add-engine-trigger {
     @apply inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-800 shadow-sm transition hover:border-sky-300 hover:text-sky-700;
+    flex: 0 0 auto;
   }
 
   .add-engine-trigger-icon {
@@ -1653,12 +2222,14 @@
   }
 
   .add-engine-form {
-    @apply grid gap-4 border-t border-slate-200 px-5 py-5;
+    @apply grid gap-4 border-t border-slate-200 px-5 py-4;
     grid-template-columns: minmax(0, 1fr);
+    border-color: rgba(203, 213, 225, 0.72);
   }
 
   html.dark .add-engine-form {
     @apply border-slate-800;
+    border-color: rgba(51, 65, 85, 0.72);
   }
 
   .adapter-scroll-list {
@@ -1766,6 +2337,69 @@
 
   html.dark .adapter-option:hover {
     @apply border-slate-700 bg-slate-800;
+  }
+
+  .profile-engine-list {
+    @apply grid gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+
+  .profile-engine-option {
+    @apply relative grid min-h-[52px] grid-cols-[18px_32px_minmax(0,1fr)] items-center gap-3 border-0 bg-white px-3 py-2.5 transition hover:bg-slate-50;
+    transition-duration: 120ms;
+  }
+
+  html.dark .profile-engine-list {
+    @apply border-slate-800 bg-slate-800;
+  }
+
+  .profile-engine-option input {
+    @apply h-4 w-4 rounded border-slate-500 bg-transparent;
+    accent-color: #2563eb;
+  }
+
+  .profile-engine-option input:focus,
+  .profile-engine-option input:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+
+  .profile-engine-option:focus-within {
+    z-index: 1;
+    box-shadow: inset 3px 0 0 rgba(14, 165, 233, 0.82);
+  }
+
+  .profile-engine-option .engine-logo {
+    @apply h-8 w-8 rounded-lg;
+  }
+
+  .profile-engine-option > span:last-child {
+    @apply min-w-0;
+  }
+
+  .profile-engine-option strong {
+    @apply block truncate text-sm font-semibold text-slate-950;
+  }
+
+  .profile-engine-option small {
+    @apply mt-0.5 block truncate text-xs leading-5 text-slate-500;
+  }
+
+  html.dark .profile-engine-option {
+    @apply border-slate-800 bg-slate-950 hover:bg-slate-900;
+    background-color: rgba(15, 23, 42, 0.46);
+  }
+
+  html.dark .profile-engine-option:focus-within {
+    box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.78);
+  }
+
+  html.dark .profile-engine-option strong {
+    @apply text-slate-100;
+  }
+
+  html.dark .profile-engine-option small {
+    @apply text-slate-400;
   }
 
   .add-engine-form-footer {
@@ -1907,6 +2541,29 @@
     .engine-toolbar .danger-action {
       width: auto;
       flex: 0 0 auto;
+    }
+
+    .table-actions {
+      max-width: none;
+    }
+
+    .user-row,
+    .user-row .user-inline-form {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .user-row .user-inline-form {
+      grid-column: auto;
+    }
+
+    .user-inline-readonly,
+    .user-actions {
+      grid-column: auto;
+    }
+
+    .user-actions,
+    .settings-actions {
+      @apply justify-start;
     }
   }
 }

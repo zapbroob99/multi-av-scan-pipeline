@@ -46,6 +46,7 @@ instead — the scan still completes in the background and is visible in MASP.
 | `MASP_ICAP_HOST` | `0.0.0.0` | Bind address |
 | `MASP_ICAP_PORT` | `1344` | Bind port (ICAP standard) |
 | `MASP_ICAP_SERVICE_NAME` | `masp` | Service path (`icap://host:1344/masp`) |
+| `MASP_ICAP_SERVICE_CLIENT_KEY` | `legacy-default` | Service client whose default scan profile owns and routes this gateway's scans |
 | `MASP_ICAP_WAIT_SECONDS` | `30` | Max seconds to hold the connection for a verdict |
 | `MASP_ICAP_MAX_BYTES` | falls back to `MASP_UPLOAD_MAX_BYTES` | Size cap; over-cap is fail-closed |
 | `MASP_ICAP_FAIL_MODE_CLOSED` | `1` | `1` = block on timeout/error, `0` = allow |
@@ -58,6 +59,12 @@ instead — the scan still completes in the background and is visible in MASP.
 ICAP has no standard auth. Trust is network-level: run the gateway on a private
 network/subnet and, if needed, restrict clients with `MASP_ICAP_ALLOWED_IPS`.
 There is no bearer token as in the REST API.
+
+Identity is deployment-bound. Set `MASP_ICAP_SERVICE_CLIENT_KEY` to a client
+created in **Service Clients**. If multiple consuming systems need distinct
+engine profiles or ledger ownership, run separate ICAP instances with unique
+listeners/service names and bind each instance to its own client key. Do not
+derive client identity from arbitrary ICAP headers or NAT-obscured source IPs.
 
 ## Running it
 

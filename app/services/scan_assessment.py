@@ -13,6 +13,7 @@ from app.models import EngineResultRecord, ScanRecord
 from app.services.decisions import ScanDecision, decide_scan_action
 from app.services.engine_registry import detection_engine_names
 from app.services.scoring import calculate_risk
+from app.services.service_clients import required_detection_engine_names
 
 
 def detection_engine_results(
@@ -99,7 +100,10 @@ def engine_policy_review_reasons(
 
 
 def detection_summary(
-    results: list[EngineResultRecord], *, source: str = "manual"
+    results: list[EngineResultRecord],
+    *,
+    source: str = "manual",
+    scan: ScanRecord | None = None,
 ) -> tuple[int, int]:
     detection_results = detection_engine_results(results)
     detected = sum(
@@ -107,20 +111,28 @@ def detection_summary(
         for result in detection_results
         if result.status == "completed" and result.detected
     )
-    return detected, max(
-        len(detection_results), len(detection_engine_names(source=source))
+    required_names = (
+        required_detection_engine_names(scan)
+        if scan is not None
+        else detection_engine_names(source=source)
     )
+    return detected, max(len(detection_results), len(required_names))
 
 
 def required_engine_coverage(
     results: list[EngineResultRecord],
     *,
     source: str = "manual",
+    scan: ScanRecord | None = None,
 ) -> tuple[int, int, list[str]]:
     result_map = engine_result_map(results)
     unavailable = []
     ran = 0
-    required_engines = detection_engine_names(source=source)
+    required_engines = (
+        required_detection_engine_names(scan)
+        if scan is not None
+        else detection_engine_names(source=source)
+    )
 
     for engine_name in required_engines:
         result = result_map.get(engine_name.lower())
@@ -152,10 +164,10 @@ def scan_decision(
     if effective_verdict == "pending":
         effective_verdict = assessment.verdict
     detected_count, detection_total = detection_summary(
-        engine_results, source=scan.source
+        engine_results, source=scan.source, scan=scan
     )
     _, _, coverage_unavailable = required_engine_coverage(
-        engine_results, source=scan.source
+        engine_results, source=scan.source, scan=scan
     )
     policy_review_reasons = engine_policy_review_reasons(
         engine_results, source=scan.source

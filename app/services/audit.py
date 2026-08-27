@@ -217,6 +217,8 @@ def should_audit_request(request: Request) -> bool:
         return True
     if path.startswith("/users"):
         return True
+    if path.startswith("/service-clients") or path.startswith("/scan-profiles"):
+        return True
     if path.startswith("/engines"):
         return not path.endswith("/test")
     if path.startswith("/workers"):

@@ -98,6 +98,11 @@ report_malicious.json
 - Control-API workers receive no PostgreSQL credentials. Their one-time agent
   token is stored server-side only as a hash; job/result/health writes retain
   lease-generation fencing, and sample download is limited to the current owner.
+- MASP REST consumers can use distinct service clients, hashed/revocable tokens,
+  and engine profiles. ICAP identity is process-bound with
+  `MASP_ICAP_SERVICE_CLIENT_KEY`; separate listeners are required for distinct
+  client routing/ownership. This orchestration boundary does not change any
+  vendor adapter's support state.
 - Generic ICAP, generic REST, and custom command engines are internal engineering tools only unless a future product decision explicitly changes this.
 - Implemented `lab` or `blocked` integrations may be exposed for controlled
   validation with an explicit support-state warning. Production operators must

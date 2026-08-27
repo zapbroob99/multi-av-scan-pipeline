@@ -10,6 +10,8 @@ action, target, request ID, or outcome.
 - User administration and password changes.
 - Scan-policy, engine configuration/lifecycle, worker-node lifecycle, and YARA
   rule administration.
+- Service-client lifecycle, scan-profile engine routing, and API credential
+  creation/revocation. Raw tokens are never included.
 - Retention execution and destructive scan deletion.
 - Actor type and identifier, outcome, direct peer IP, request ID, route, status,
   target, timestamp, and bounded event-specific metadata.

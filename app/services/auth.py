@@ -19,16 +19,21 @@ from app.database import (
     delete_auth_sessions_for_user,
     delete_expired_auth_sessions,
     get_setting,
+    has_active_api_client_credentials,
     get_user_by_session,
     get_user_by_username,
     sync_external_user,
 )
-from app.models import UserRecord
+from app.models import ApiClientIdentity, UserRecord
 from app.services.auth_roles import ROLE_ADMIN, ROLE_ANALYST
 from app.services.ldap_auth import (
     LdapConfigurationError,
     LdapUnavailableError,
     authenticate_ldap,
+)
+from app.services.service_clients import (
+    legacy_service_client_identity,
+    resolve_stored_api_client,
 )
 
 
@@ -282,18 +287,38 @@ def bearer_token_from_request(request: Request) -> str | None:
 
 def require_api_token(request: Request) -> str:
     tokens = configured_api_tokens()
-    if not tokens:
+    provided_token = bearer_token_from_request(request)
+    if provided_token and any(
+        hmac.compare_digest(provided_token, token) for token in tokens
+    ):
+        identity = legacy_service_client_identity()
+        request.state.api_client = identity
+        return provided_token
+
+    if provided_token:
+        identity = resolve_stored_api_client(provided_token)
+        if identity is not None:
+            request.state.api_client = identity
+            return provided_token
+
+    if not tokens and not has_active_api_client_credentials():
         raise HTTPException(
             status_code=503,
             detail="API token authentication is not configured.",
         )
-
-    provided_token = bearer_token_from_request(request)
-    if provided_token and any(hmac.compare_digest(provided_token, token) for token in tokens):
-        return provided_token
 
     raise HTTPException(
         status_code=401,
         detail="Bearer token required.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def api_client_identity(request: Request) -> ApiClientIdentity:
+    identity = getattr(request.state, "api_client", None)
+    if not isinstance(identity, ApiClientIdentity):
+        require_api_token(request)
+        identity = getattr(request.state, "api_client", None)
+    if not isinstance(identity, ApiClientIdentity):
+        raise HTTPException(status_code=401, detail="Bearer token required.")
+    return identity

@@ -1,6 +1,7 @@
 import html
 import json
 import logging
+import re
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -13,11 +14,14 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from app.database import (
+    IntegrityViolation,
     count_audit_events,
     count_scan_history,
     count_scans_older_than,
     count_users_by_role,
     create_worker_pool,
+    create_api_client_credential,
+    create_service_client_bundle,
     create_scan_engine_jobs,
     create_user,
     delete_scan,
@@ -32,6 +36,7 @@ from app.database import (
     get_user_by_username,
     init_db,
     list_active_scans,
+    list_api_client_credentials,
     list_audit_events,
     list_engine_result_metrics,
     list_engine_node_health,
@@ -41,15 +46,21 @@ from app.database import (
     list_scan_batch_scans,
     list_scan_batches_by_ids,
     list_scan_history,
+    list_scan_profile_engines,
+    list_scan_profiles,
     list_scans_older_than,
+    list_service_clients,
     list_users,
     list_worker_pools,
     list_engine_instance_worker_pool_bindings,
     retry_scan_job as retry_scan_job_record,
     refresh_scan_batch_counts,
     request_engine_node_health_check,
+    revoke_api_client_credential,
     revoke_worker_agent_credentials,
+    set_scan_profile_engines,
     update_scan_assessment,
+    update_service_client,
     update_user,
     update_worker_node_lifecycle,
     update_worker_pool,
@@ -57,6 +68,7 @@ from app.database import (
 )
 from app.models import (
     ACTIVE_SCAN_STATUSES,
+    ApiClientIdentity,
     AuditEventRecord,
     EngineInstanceRecord,
     EngineResultRecord,
@@ -70,6 +82,7 @@ from app.services.auth import (
     ROLE_ADMIN,
     SESSION_TTL_SECONDS,
     SESSION_COOKIE,
+    api_client_identity,
     current_user,
     dev_login_hint,
     hash_password,
@@ -171,6 +184,17 @@ from app.services.secret_store import (
     encrypt_secret,
     secret_encryption_available,
 )
+from app.services.service_clients import (
+    engines_for_scan,
+    engines_for_profile,
+    hash_engines_for_profile,
+    identity_can_access_batch,
+    identity_can_access_scan,
+    hash_api_token,
+    profile_snapshot_json,
+    seed_legacy_service_client,
+    snapshot_labels,
+)
 from app.services.yara_rules import (
     delete_yara_rule,
     list_yara_rules,
@@ -201,6 +225,7 @@ API_LEDGER_SOURCES = ("api", "icap")
 init_db()
 seed_default_users()
 seed_default_engines()
+seed_legacy_service_client()
 
 app.include_router(worker_control_router)
 
@@ -332,11 +357,26 @@ def nav_icon(icon_key: str) -> str:
           <path d="M23 11h-6"></path>
         </svg>
         """,
+        "service_clients": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+          <path d="M8 9h8"></path>
+          <path d="M8 15h5"></path>
+          <circle cx="17" cy="15" r="1"></circle>
+        </svg>
+        """,
         "audit": """
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6z"></path>
           <path d="M9 12h6"></path>
           <path d="M12 9v6"></path>
+        </svg>
+        """,
+        "about": """
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M12 11v6"></path>
+          <path d="M12 7h.01"></path>
         </svg>
         """,
     }
@@ -382,12 +422,14 @@ def page_shell(
                 (
                     "Access & audit",
                     [
+                        ("service_clients", "/service-clients", "Service Clients"),
                         ("users", "/users", "Users"),
                         ("audit", "/audit", "Audit"),
                     ],
                 ),
             ]
         )
+    nav_groups.append(("Product", [("about", "/about", "About")]))
 
     def render_nav_group(items: list[tuple[str, str, str]]) -> str:
         return "\n".join(
@@ -450,10 +492,6 @@ def page_shell(
             <nav class="nav-list" aria-label="Main navigation">
               {nav_html}
             </nav>
-            <div class="side-status">
-              <span class="status-dot"></span>
-              <span>Local node online</span>
-            </div>
           </aside>
           <div class="workspace">
             <header class="topbar">
@@ -526,6 +564,8 @@ def page_shell(
           const evidenceDrawer = document.querySelector("[data-evidence-drawer]");
           const themeToggle = document.querySelector("[data-theme-toggle]");
           const actionForms = document.querySelectorAll("form[data-action-form]");
+          const modalOpeners = document.querySelectorAll("[data-modal-open]");
+          const modalCloseButtons = document.querySelectorAll("[data-modal-close]");
           const selectedScanIds = new Set();
           const clickTimers = new Map();
           const scrollRestoreKey = "masp-scroll-restore";
@@ -759,6 +799,48 @@ def page_shell(
                     submitter.textContent = busyLabel;
                   }}
                   submitter.disabled = true;
+                }}
+              }});
+            }});
+          }}
+
+          if (modalOpeners.length) {{
+            const closeModal = (modal) => {{
+              if (!modal) {{
+                return;
+              }}
+              if (typeof modal.close === "function") {{
+                modal.close();
+              }} else {{
+                modal.removeAttribute("open");
+              }}
+            }};
+
+            modalOpeners.forEach((opener) => {{
+              opener.addEventListener("click", () => {{
+                const modalId = opener.getAttribute("data-modal-open");
+                const modal = modalId ? document.getElementById(modalId) : null;
+                if (!modal) {{
+                  return;
+                }}
+                if (typeof modal.showModal === "function") {{
+                  modal.showModal();
+                }} else {{
+                  modal.setAttribute("open", "");
+                }}
+              }});
+            }});
+
+            modalCloseButtons.forEach((button) => {{
+              button.addEventListener("click", () => {{
+                closeModal(button.closest("dialog"));
+              }});
+            }});
+
+            document.querySelectorAll("dialog[data-modal]").forEach((modal) => {{
+              modal.addEventListener("click", (event) => {{
+                if (event.target === modal) {{
+                  closeModal(modal);
                 }}
               }});
             }});
@@ -1244,7 +1326,7 @@ def build_api_scan_status_payload(
         scan_payload=build_scan_summary_payload(scan),
         queue_metrics=queue_metrics,
         queue_position=queue_position,
-        expected_engines=len(enabled_engines(source=scan.source)),
+        expected_engines=len(engines_for_scan(scan)),
         results=results,
         links=api_scan_links(request, scan.id),
     )
@@ -1282,6 +1364,7 @@ async def enqueue_scan_from_upload(
     note: str,
     source: str,
     archive_mode: str = DEFAULT_ARCHIVE_MODE,
+    api_identity: ApiClientIdentity | None = None,
 ) -> ScanRecord:
     if not sample.filename:
         raise HTTPException(status_code=400, detail="A file must be selected.")
@@ -1293,6 +1376,17 @@ async def enqueue_scan_from_upload(
         raise HTTPException(status_code=413, detail=str(exc)) from exc
 
     try:
+        selected_engines = None
+        service_client_id = None
+        scan_profile_id = None
+        snapshot = "{}"
+        if api_identity is not None:
+            selected_engines = engines_for_profile(
+                api_identity.profile.id, source=source
+            )
+            service_client_id = api_identity.client.id
+            scan_profile_id = api_identity.profile.id
+            snapshot = profile_snapshot_json(api_identity, selected_engines)
         return enqueue_scan_from_stored_sample(
             stored_sample,
             case_name=case_name,
@@ -1300,6 +1394,10 @@ async def enqueue_scan_from_upload(
             note=note,
             source=source,
             archive_mode=effective_archive_mode,
+            engines=selected_engines,
+            service_client_id=service_client_id,
+            scan_profile_id=scan_profile_id,
+            profile_snapshot_json=snapshot,
         )
     except NoEligibleEnginesError as exc:
         raise HTTPException(
@@ -2412,7 +2510,7 @@ def render_add_engine_panel(selected_adapter: str = "") -> str:
           <div class="add-engine-summary-copy">
             <span class="add-engine-summary-eyebrow">Adapter catalog</span>
             <strong>Add engine instance</strong>
-            <small>{available_label}. Choose an adapter and complete its setup before registration.</small>
+            <small>{available_label}. Complete setup to create one.</small>
           </div>
           <div class="add-engine-summary-actions">
             <span class="add-engine-trigger">
@@ -2465,7 +2563,7 @@ def render_add_engine_panel(selected_adapter: str = "") -> str:
         """
 
     return f"""
-    <section class="panel">
+    <section class="panel add-engine-panel">
       <div class="panel-header">
         <div>
           <h2>Engine registry</h2>
@@ -2613,7 +2711,7 @@ def render_engine_summary(
         else ""
     )
     return f"""
-    <summary class="engine-card-summary">
+    <button class="engine-card-summary" type="button" data-modal-open="engine-modal-{instance.id}">
       {render_engine_logo(definition.short_label, instance.adapter_key)}
       <span class="engine-summary-copy">
         <strong>{html.escape(instance.display_name)}</strong>
@@ -2624,8 +2722,8 @@ def render_engine_summary(
       </span>
       <span class="engine-summary-meta">{html.escape(meta)}</span>
       {status_html}
-      <span class="engine-expand-indicator" aria-hidden="true"></span>
-    </summary>
+      <span class="secondary-action compact-action">Manage</span>
+    </button>
     """
 
 
@@ -2637,21 +2735,28 @@ def render_engine_details_shell(
     health_overrides: dict[str, dict[str, str | bool]],
     focus_adapter_key: str = "",
 ) -> str:
-    disabled_class = " is-disabled" if not instance.enabled else ""
-    instance_token = str(instance.id)
-    open_attr = " open" if (
-        instance_token in health_overrides
-        or instance.adapter_key in health_overrides
-        or instance_token == focus_adapter_key
-        or instance.adapter_key == focus_adapter_key
-    ) else ""
+    disabled_class = " is-engine-disabled" if not instance.enabled else ""
+    modal_id = f"engine-modal-{instance.id}"
+    definition = adapter_definition(instance.adapter_key)
+    edit_class = " has-edit-form" if "engine-settings-drawer" in body else ""
     return f"""
-    <details id="engine-{instance.id}" class="panel engine-secondary engine-card{disabled_class}"{open_attr}>
+    <section id="engine-{instance.id}" class="panel engine-secondary engine-card{disabled_class}">
       {render_engine_summary(instance, status_html, meta)}
-      <div class="engine-config">
-        {body}
-      </div>
-    </details>
+      <dialog id="{modal_id}" class="modal-dialog engine-modal" data-modal aria-labelledby="{modal_id}-title">
+        <div class="modal-panel">
+          <div class="modal-header">
+            <div>
+              <h2 id="{modal_id}-title">{html.escape(instance.display_name)}</h2>
+              <p>{html.escape(definition.label)} &middot; engine #{instance.id} &middot; {html.escape(meta)}</p>
+            </div>
+            <button class="secondary-action compact-action" type="button" data-modal-close>Close</button>
+          </div>
+          <div class="modal-body engine-config{edit_class}">
+            {body}
+          </div>
+        </div>
+      </dialog>
+    </section>
     """
 
 
@@ -2729,7 +2834,7 @@ def render_engine_card(
               </div>
               {render_engine_actions(instance, show_test=instance.enabled)}
             </div>
-            <details class="engine-settings-drawer">
+            <details class="engine-settings-drawer" open>
               <summary>
                 <span>Settings</span>
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
@@ -2814,7 +2919,7 @@ def render_engine_card(
               </div>
               {render_engine_actions(instance, show_test=instance.enabled)}
             </div>
-            <details class="engine-settings-drawer">
+            <details class="engine-settings-drawer" open>
               <summary>
                 <span>Settings</span>
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
@@ -2923,7 +3028,7 @@ def render_engine_card(
               </div>
               {render_engine_actions(instance, show_test=instance.enabled)}
             </div>
-            <details class="engine-settings-drawer">
+            <details class="engine-settings-drawer" open>
               <summary>
                 <span>Settings</span>
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
@@ -3041,7 +3146,7 @@ def render_engine_card(
               </div>
               {render_engine_actions(instance, show_test=instance.enabled)}
             </div>
-            <details class="engine-settings-drawer">
+            <details class="engine-settings-drawer" open>
               <summary>
                 <span>Settings</span>
                 <span class="engine-expand-indicator" aria-hidden="true"></span>
@@ -3231,7 +3336,7 @@ def render_user_rows(current_admin: UserRecord) -> str:
         )
         rows.append(
             f"""
-            <div class="user-row">
+            <div class="user-row user-account-row">
               <div>
                 <strong>{html.escape(user.username)}</strong>
                 {display_name_html}
@@ -3503,6 +3608,143 @@ def render_account_page(user: UserRecord, message: str = "", error: str = "") ->
     return page_shell("Account", "account", body, user)
 
 
+def about_status_row(label: str, value: str, tone: str = "neutral") -> str:
+    return f"""
+      <div>
+        <span>{html.escape(label)}</span>
+        <strong><span class="pill {html.escape(tone)}">{html.escape(value)}</span></strong>
+      </div>
+    """
+
+
+def render_about_page(user: UserRecord) -> str:
+    engines = configured_engines()
+    active_engines = [engine for engine in engines if engine.enabled]
+    hash_engine_count = len(enabled_hash_engines())
+    worker_status = get_worker_status()
+    worker_nodes = worker_status.get("nodes", [])
+    registered_nodes = len(worker_nodes) if isinstance(worker_nodes, list) else 0
+    schedulable_nodes = int(worker_status.get("schedulable_count", 0) or 0)
+    app_version = str(app.version or "unknown")
+    queue_mode = "Durable engine job queue"
+    worker_transport = "Database or HTTPS control API"
+    directory_status = "Enabled" if ldap_enabled() else "Disabled"
+    secret_status = "Available" if secret_encryption_available() else "Not configured"
+    consumer_metric_value = (
+        str(len(list_service_clients())) if user.role == ROLE_ADMIN else "4"
+    )
+    consumer_metric_label = (
+        "Isolated API/ICAP consumers"
+        if user.role == ROLE_ADMIN
+        else "Manual, hash, REST API, ICAP"
+    )
+
+    engine_names = ", ".join(engine.display_name for engine in active_engines[:5])
+    if len(active_engines) > 5:
+        engine_names += f" +{len(active_engines) - 5}"
+    if not engine_names:
+        engine_names = "No enabled engines"
+
+    body = f"""
+    <section class="about-layout">
+      <section class="panel about-hero-panel">
+        <div class="panel-header compact">
+          <div>
+            <h2>MASP</h2>
+            <p>Self-hosted multi-engine malware scan orchestration for files, hashes, APIs, and ICAP gateways.</p>
+          </div>
+          <span class="pill neutral">v{html.escape(app_version)}</span>
+        </div>
+        <div class="about-hero-body">
+          <p>
+            MASP coordinates antivirus and reputation engines, stores normalized evidence,
+            scores scan results, and keeps file content inside your own infrastructure.
+          </p>
+          <div class="about-facts">
+            <span>Offline-first decisions</span>
+            <span>Multi-tenant service clients</span>
+            <span>Remote worker ready</span>
+            <span>API and ICAP intake</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="metric-grid">
+        {metric_card("Enabled engines", str(len(active_engines)), engine_names, "tone-blue")}
+        {metric_card("Hash engines", str(hash_engine_count), "Reputation lookups without file upload", "tone-green")}
+        {metric_card("Worker nodes", str(registered_nodes), f"{schedulable_nodes} accepting work")}
+        {metric_card("Service clients" if user.role == ROLE_ADMIN else "Interfaces", consumer_metric_value, consumer_metric_label, "tone-blue")}
+      </section>
+
+      <section class="about-two-column">
+        <section class="panel">
+          <div class="panel-header compact">
+            <div>
+              <h2>What MASP does</h2>
+              <p>The product boundary in plain terms.</p>
+            </div>
+          </div>
+          <div class="about-list">
+            <div><strong>Orchestrates engines</strong><span>Routes scans to configured ClamAV, Defender, YARA, metadata, and reputation adapters.</span></div>
+            <div><strong>Normalizes evidence</strong><span>Converts engine output into verdicts, severity, confidence, findings, and analyst reports.</span></div>
+            <div><strong>Separates consumers</strong><span>Service clients can own API credentials, ledger entries, and engine routing.</span></div>
+            <div><strong>Keeps quota explicit</strong><span>API and ICAP traffic do not spend external reputation quota engines such as VirusTotal.</span></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header compact">
+            <div>
+              <h2>What MASP is not</h2>
+              <p>Useful limits for deployment conversations.</p>
+            </div>
+          </div>
+          <div class="about-list">
+            <div><strong>Not an antivirus engine</strong><span>It runs and coordinates engines; detection quality comes from the configured adapters.</span></div>
+            <div><strong>Not a secret vault replacement</strong><span>It encrypts supported secrets when configured, but deployment secrets still belong in operations tooling.</span></div>
+            <div><strong>Not a sandbox detonator yet</strong><span>Dynamic detonation and behavioral analysis remain future engine integrations.</span></div>
+            <div><strong>Not a generic command runner</strong><span>Adapters stay typed and constrained so engine execution remains supportable.</span></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header compact">
+          <div>
+            <h2>Runtime snapshot</h2>
+            <p>Non-sensitive deployment and capability state from this MASP instance.</p>
+          </div>
+          <span class="pill neutral">{html.escape(user.role.title())}</span>
+        </div>
+        <div class="config-grid about-runtime-grid">
+          {about_status_row("Application", f"MASP {app_version}")}
+          {about_status_row("Queue model", queue_mode, "success")}
+          {about_status_row("Worker transport", worker_transport, "success")}
+          {about_status_row("Directory login", directory_status, "success" if ldap_enabled() else "neutral")}
+          {about_status_row("Secret encryption", secret_status, "success" if secret_encryption_available() else "warning")}
+          {about_status_row("External quota engines", "Excluded from API/ICAP", "success")}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header compact">
+          <div>
+            <h2>Primary interfaces</h2>
+            <p>How other systems are expected to consume MASP.</p>
+          </div>
+        </div>
+        <div class="about-interface-grid">
+          <a class="about-interface" href="/scans/new"><strong>Manual file scan</strong><span>Analyst-driven upload and report workflow.</span></a>
+          <a class="about-interface" href="/hash-scan"><strong>Hash scan</strong><span>SHA-256 reputation lookup without uploading file content.</span></a>
+          <a class="about-interface" href="/api-ledger"><strong>API ledger</strong><span>Owned history for REST and ICAP-originated submissions.</span></a>
+          <span class="about-interface"><strong>ICAP gateway</strong><span>Network/service integration through a dedicated ICAP process.</span></span>
+        </div>
+      </section>
+    </section>
+    """
+    return page_shell("About", "about", body, user)
+
+
 def short_hash(value: str) -> str:
     return f"{value[:12]}...{value[-8:]}"
 
@@ -3564,7 +3806,7 @@ def dashboard_verdict_pill(scan: ScanRecord, results: list[EngineResultRecord]) 
     if scan.status in ACTIVE_SCAN_STATUSES:
         return '<span class="pill neutral">Pending</span>'
 
-    detected, total = detection_summary(results, source=scan.source)
+    detected, total = detection_summary(results, source=scan.source, scan=scan)
     if total == 0:
         return '<span class="pill neutral">Metadata Only</span>'
     if detected > 0:
@@ -3682,31 +3924,41 @@ def detection_meter(
 def detection_summary_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
     if scan.status in ACTIVE_SCAN_STATUSES:
         return "Pending engine results"
-    return detection_summary_text(results, source=scan.source)
+    detected, total = detection_summary(results, source=scan.source, scan=scan)
+    if total == 0:
+        return "No detection engines configured"
+    return f"{detected} of {total} engines detected"
 
 
 def detection_summary_tone_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
     if scan.status in ACTIVE_SCAN_STATUSES:
         return "neutral"
-    return detection_summary_tone(results, source=scan.source)
+    detected, total = detection_summary(results, source=scan.source, scan=scan)
+    return "neutral" if total == 0 else "danger" if detected > 0 else "success"
 
 
 def detection_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
     if scan.status in ACTIVE_SCAN_STATUSES:
         return "Detection engines have not completed yet."
-    return detection_detail_text(results, source=scan.source)
+    names = detected_engine_names(results)
+    if names:
+        return ", ".join(names)
+    _, total = detection_summary(results, source=scan.source, scan=scan)
+    if total == 0:
+        return "No detection adapters are assigned to this scan profile."
+    return "No detection engine flagged this sample."
 
 
 def detection_meter_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
-    if scan.status not in ACTIVE_SCAN_STATUSES:
-        return detection_meter(results, source=scan.source)
-
-    total = len(detection_engine_names(source=scan.source))
-    label = "Pending engine results"
+    detected, total = detection_summary(results, source=scan.source, scan=scan)
+    pending = scan.status in ACTIVE_SCAN_STATUSES
+    label = "Pending engine results" if pending else detection_summary_text_for_scan(scan, results)
+    tone = "neutral" if pending or total == 0 else "danger" if detected else "success"
+    meter_angle = 0 if total == 0 else round((detected / total) * 360)
     return f"""
-    <div class="detection-meter neutral" style="--meter-angle: 0deg" aria-label="{html.escape(label)}" title="{html.escape(label)}">
+    <div class="detection-meter {tone}" style="--meter-angle: {meter_angle}deg" aria-label="{html.escape(label)}" title="{html.escape(label)}">
       <div class="detection-meter-core">
-        <strong>0</strong>
+        <strong>{detected}</strong>
         <span>/ {total}</span>
       </div>
     </div>
@@ -3762,7 +4014,10 @@ def coverage_summary_text_for_scan(scan: ScanRecord, results: list[EngineResultR
         return "Waiting for worker"
     if scan.status == "running":
         return "Engines are running"
-    return coverage_summary_text(results, source=scan.source)
+    ran, total, _ = required_engine_coverage(results, source=scan.source, scan=scan)
+    if total == 0:
+        return "No required detection engines configured"
+    return f"{ran} of {total} required engines ran"
 
 
 def coverage_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
@@ -3770,7 +4025,12 @@ def coverage_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRe
         return "Required engines have not started yet."
     if scan.status == "running":
         return "Required engines are being executed by the worker. Missing engines may be marked skipped after the orchestration wait window."
-    return coverage_detail_text(results, source=scan.source)
+    _, total, unavailable = required_engine_coverage(results, source=scan.source, scan=scan)
+    if total == 0:
+        return "Only metadata analyzers are assigned to this scan profile."
+    if not unavailable:
+        return "All required detection engines completed."
+    return "; ".join(unavailable)
 
 
 def coverage_tone_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
@@ -3778,7 +4038,12 @@ def coverage_tone_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) 
         return "warning"
     if scan.status == "failed":
         return "danger"
-    return coverage_tone(results, source=scan.source)
+    ran, total, unavailable = required_engine_coverage(results, source=scan.source, scan=scan)
+    if total == 0:
+        return "neutral"
+    if not unavailable:
+        return "success"
+    return "danger" if ran == 0 else "warning"
 
 
 def coverage_status_pill(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
@@ -3802,7 +4067,7 @@ def coverage_status_detail_for_scan(scan: ScanRecord, results: list[EngineResult
     tone = coverage_tone_for_scan(scan, results)
     if tone in {"success", "neutral"}:
         return ""
-    return coverage_detail_text(results, source=scan.source)
+    return coverage_detail_text_for_scan(scan, results)
 
 
 def coverage_summary_card_class(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
@@ -3823,9 +4088,9 @@ def detection_detail_text(
 
 
 def detection_summary_card_class(
-    results: list[EngineResultRecord], *, source: str = "manual"
+    results: list[EngineResultRecord], *, source: str = "manual", scan: ScanRecord | None = None
 ) -> str:
-    detected, total = detection_summary(results, source=source)
+    detected, total = detection_summary(results, source=source, scan=scan)
     if total == 0:
         return "summary-wide detection-summary-card neutral"
     if detected > 0:
@@ -3837,7 +4102,7 @@ def dashboard_verdict_key(scan: ScanRecord, results: list[EngineResultRecord]) -
     if scan.status in ACTIVE_SCAN_STATUSES:
         return "pending"
 
-    detected, total = detection_summary(results, source=scan.source)
+    detected, total = detection_summary(results, source=scan.source, scan=scan)
     if total == 0:
         return "metadata_only"
     if detected > 0:
@@ -3924,6 +4189,7 @@ def scan_query_url(
     query: str,
     status_filter: str,
     verdict_filter: str,
+    client_filter: str = "all",
 ) -> str:
     params: dict[str, str] = {"page": str(page)}
     if query.strip():
@@ -3932,6 +4198,8 @@ def scan_query_url(
         params["status"] = status_filter
     if verdict_filter != "all":
         params["verdict"] = verdict_filter
+    if client_filter != "all":
+        params["client"] = client_filter
     query_string = urlencode(params)
     return f"{base_path}?{query_string}" if query_string else base_path
 
@@ -3958,6 +4226,7 @@ def api_ledger_query_url(
     query: str,
     status_filter: str,
     verdict_filter: str,
+    client_filter: str = "all",
 ) -> str:
     return scan_query_url(
         "/api-ledger",
@@ -3965,6 +4234,7 @@ def api_ledger_query_url(
         query=query,
         status_filter=status_filter,
         verdict_filter=verdict_filter,
+        client_filter=client_filter,
     )
 
 
@@ -3995,11 +4265,23 @@ def render_scan_filters(
     status_filter: str,
     verdict_filter: str,
     verdict_options: list[tuple[str, str]],
+    client_options: list[tuple[str, str]] | None = None,
+    client_filter: str = "all",
 ) -> str:
     verdict_option_html = "\n".join(
         select_option(value, label, verdict_filter)
         for value, label in verdict_options
     )
+    client_filter_html = ""
+    if client_options:
+        client_filter_html = f"""
+      <label>
+        <span>Service client</span>
+        <select name="client">
+          {''.join(select_option(value, label, client_filter) for value, label in client_options)}
+        </select>
+      </label>
+        """
     return f"""
     <form class="scan-filter-bar" action="{html.escape(action_path)}" method="get">
       <label class="scan-search-field">
@@ -4024,6 +4306,7 @@ def render_scan_filters(
           {verdict_option_html}
         </select>
       </label>
+      {client_filter_html}
       <div class="scan-filter-actions">
         <button class="primary-action compact-action" type="submit">Apply</button>
         <a class="secondary-action compact-action" href="{html.escape(reset_path)}">Reset</a>
@@ -4059,6 +4342,7 @@ def render_scan_pagination(
     query: str,
     status_filter: str,
     verdict_filter: str,
+    client_filter: str = "all",
 ) -> str:
     if total_items == 0:
         return ""
@@ -4066,12 +4350,12 @@ def render_scan_pagination(
     start_item = ((page - 1) * page_size) + 1
     end_item = min(page * page_size, total_items)
     previous_link = (
-        f'<a class="secondary-action compact-action" href="{html.escape(scan_query_url(base_path, page=page - 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter))}">Previous</a>'
+        f'<a class="secondary-action compact-action" href="{html.escape(scan_query_url(base_path, page=page - 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter, client_filter=client_filter))}">Previous</a>'
         if page > 1
         else '<span class="secondary-action compact-action is-disabled" aria-disabled="true">Previous</span>'
     )
     next_link = (
-        f'<a class="secondary-action compact-action" href="{html.escape(scan_query_url(base_path, page=page + 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter))}">Next</a>'
+        f'<a class="secondary-action compact-action" href="{html.escape(scan_query_url(base_path, page=page + 1, query=query, status_filter=status_filter, verdict_filter=verdict_filter, client_filter=client_filter))}">Next</a>'
         if page < total_pages
         else '<span class="secondary-action compact-action is-disabled" aria-disabled="true">Next</span>'
     )
@@ -4312,11 +4596,12 @@ def render_api_ledger_rows(
     can_delete: bool = False,
 ) -> str:
     if not scans:
-        colspan = 9 if can_delete else 8
+        colspan = 10 if can_delete else 9
         return f'<tr><td class="empty-cell" colspan="{colspan}">{html.escape(empty_message)}</td></tr>'
 
     rows = []
     for scan in scans:
+        client_name, profile_name = snapshot_labels(scan)
         engine_results = results_by_scan.get(scan.id, [])
         timing = build_scan_timing_payload(scan)
         queue_wait = format_duration_ms(timing["queue_wait_ms"])
@@ -4361,6 +4646,10 @@ def render_api_ledger_rows(
                   <strong>{html.escape(scan.original_filename)}</strong>
                   <small>{html.escape(scan.case_name or "Unassigned")}</small>
                 </div>
+              </td>
+              <td>
+                <strong>{html.escape(client_name or "Unassigned")}</strong>
+                <small class="status-detail">{html.escape(profile_name or "Historical scan")}</small>
               </td>
               <td><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{short_hash(scan.sha256)}</code></td>
               <td>
@@ -4944,7 +5233,7 @@ def build_scan_report_payload(
     risk_score = scan.risk_score if scan.risk_score is not None else assessment.score
     findings = report_finding_rows(engine_results)
     coverage_ran, coverage_total, coverage_unavailable = required_engine_coverage(
-        engine_results, source=scan.source
+        engine_results, source=scan.source, scan=scan
     )
     decision = scan_decision(
         scan,
@@ -5301,7 +5590,7 @@ def render_scan_result(
           <div><span>Scan type</span><strong>{html.escape(scan_type_label(scan))}</strong></div>
           <div><span>Path</span><strong>{html.escape(scan.relative_path or scan.original_filename)}</strong></div>
           <div><span>{html.escape(runtime_label)}</span><strong>{html.escape(runtime_value)}</strong></div>
-          <div class="{detection_summary_card_class(engine_results, source=scan.source)}">
+          <div class="{detection_summary_card_class(engine_results, source=scan.source, scan=scan)}">
             <span>Engine detections</span>
             <strong>{html.escape(detection_summary_text_for_scan(scan, engine_results))}</strong>
             <small>{html.escape(detection_detail_text_for_scan(scan, engine_results))}</small>
@@ -5810,6 +6099,7 @@ def api_ledger(
     q: str = "",
     status: str = "all",
     verdict: str = "all",
+    client: str = "all",
     page: int = 1,
     message: str = "",
     error: str = "",
@@ -5819,12 +6109,17 @@ def api_ledger(
     page_size = 25
     status_filter = status if status in {"all", "active", "queued", "running", "completed", "partial", "failed"} else "all"
     verdict_filter = verdict if verdict in {"all", "pending", "info", "metadata_only", "low", "medium", "high", "critical"} else "all"
+    service_clients = list_service_clients()
+    client_ids = {str(item.id): item for item in service_clients}
+    client_filter = client if client in client_ids else "all"
+    selected_client_id = int(client_filter) if client_filter != "all" else None
     total_items = count_scan_history(
         source=API_LEDGER_SOURCES,
         query=q,
         status_filter=status_filter,
         verdict_filter=verdict_filter,
         include_child_scans=False,
+        service_client_id=selected_client_id,
     )
     total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items else 1
     current_page = min(normalize_dashboard_page(page), total_pages)
@@ -5836,9 +6131,14 @@ def api_ledger(
         limit=page_size,
         offset=(current_page - 1) * page_size,
         include_child_scans=False,
+        service_client_id=selected_client_id,
     )
     results_by_scan = list_engine_results_by_scan_ids([scan.id for scan in scans])
-    counts = get_scan_counts(source=API_LEDGER_SOURCES, include_child_scans=False)
+    counts = get_scan_counts(
+        source=API_LEDGER_SOURCES,
+        include_child_scans=False,
+        service_client_id=selected_client_id,
+    )
     queue_metrics = get_queue_metrics()
     empty_message = "No API scans match the current filters." if total_items else "No API scans have been submitted yet."
     notice_html = (
@@ -5898,14 +6198,18 @@ def api_ledger(
                 ("high", "High"),
                 ("critical", "Critical"),
             ],
+            client_options=[("all", "All clients")]
+            + [(str(item.id), item.display_name) for item in service_clients],
+            client_filter=client_filter,
         )}
-        {render_scan_pagination(base_path="/api-ledger", page=current_page, total_pages=total_pages, total_items=total_items, page_size=page_size, query=q, status_filter=status_filter, verdict_filter=verdict_filter)}
+        {render_scan_pagination(base_path="/api-ledger", page=current_page, total_pages=total_pages, total_items=total_items, page_size=page_size, query=q, status_filter=status_filter, verdict_filter=verdict_filter, client_filter=client_filter)}
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 {select_header}
                 <th>File</th>
+                <th>Service client</th>
                 <th>SHA256</th>
                 <th>Status</th>
                 <th>Verdict</th>
@@ -5920,7 +6224,7 @@ def api_ledger(
             </tbody>
           </table>
         </div>
-        {render_scan_pagination(base_path="/api-ledger", page=current_page, total_pages=total_pages, total_items=total_items, page_size=page_size, query=q, status_filter=status_filter, verdict_filter=verdict_filter)}
+        {render_scan_pagination(base_path="/api-ledger", page=current_page, total_pages=total_pages, total_items=total_items, page_size=page_size, query=q, status_filter=status_filter, verdict_filter=verdict_filter, client_filter=client_filter)}
       </div>
 
       {render_worker_status_panel(get_worker_status())}
@@ -6352,6 +6656,385 @@ def users(request: Request, message: str = "", error: str = "") -> str:
     return render_users_page(user, message=message, error=error)
 
 
+SERVICE_CLIENT_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
+
+
+def render_profile_engine_choices(
+    engines: list[EngineInstanceRecord], selected_ids: set[int]
+) -> str:
+    if not engines:
+        return '<p class="field-help">Add at least one engine instance before creating a service client.</p>'
+    choices: list[str] = []
+    for engine in engines:
+        definition = adapter_definition(engine.adapter_key)
+        checked = " checked" if engine.id in selected_ids else ""
+        disabled_note = " · currently disabled" if not engine.enabled else ""
+        choices.append(
+            f"""
+            <label class="profile-engine-option">
+              <input type="checkbox" name="engine_instance_ids" value="{engine.id}"{checked}>
+              {render_engine_logo(definition.short_label, engine.adapter_key)}
+              <span>
+                <strong>{html.escape(engine.display_name)}</strong>
+                <small>{html.escape(definition.label)} · instance #{engine.id}{disabled_note}</small>
+              </span>
+            </label>
+            """
+        )
+    return '<div class="profile-engine-list">' + "".join(choices) + "</div>"
+
+
+def render_service_client_cards(engines: list[EngineInstanceRecord]) -> str:
+    cards: list[str] = []
+    for client in list_service_clients():
+        profiles = list_scan_profiles(client.id)
+        credentials = list_api_client_credentials(client.id)
+        profile_sections: list[str] = []
+        assigned_engine_ids: set[int] = set()
+        for profile in profiles:
+            selected = {engine.id for engine in list_scan_profile_engines(profile.id)}
+            assigned_engine_ids.update(selected)
+            if client.client_key == "legacy-default":
+                assigned_names = [
+                    engine.display_name for engine in engines if engine.id in selected
+                ]
+                profile_sections.append(
+                    f"""
+                    <div class="settings-form service-client-section">
+                      <div class="panel-header compact">
+                        <div><h3>{html.escape(profile.name)}</h3><p>Compatibility routing follows globally configured automation-safe engines. Create a dedicated client for custom routing.</p></div>
+                        <span class="pill neutral">Managed</span>
+                      </div>
+                      <p class="field-help">{html.escape(', '.join(assigned_names) or 'No engines assigned')}</p>
+                    </div>
+                    """
+                )
+                continue
+            profile_sections.append(
+                f"""
+                <form class="settings-form service-client-section" action="/scan-profiles/{profile.id}/engines" method="post">
+                  <div class="panel-header compact">
+                    <div>
+                      <h3>{html.escape(profile.name)}</h3>
+                      <p>New scans keep an immutable snapshot of this routing selection.</p>
+                    </div>
+                    <span class="pill {'success' if profile.enabled else 'neutral'}">{'Default profile' if profile.is_default else 'Profile'}</span>
+                  </div>
+                  {render_profile_engine_choices(engines, selected)}
+                  <div class="settings-actions">
+                    <button class="secondary-action" type="submit">Save engine routing</button>
+                  </div>
+                </form>
+                """
+            )
+
+        credential_rows: list[str] = []
+        for credential in credentials:
+            state = "Revoked" if credential.revoked_at is not None else "Active"
+            last_used = (
+                datetime.fromtimestamp(credential.last_used_at).isoformat(timespec="seconds")
+                if credential.last_used_at is not None
+                else "Never used"
+            )
+            revoke_action = (
+                ""
+                if credential.revoked_at is not None
+                else f"""
+                <form action="/service-clients/{client.id}/credentials/{credential.id}/revoke" method="post">
+                  <button class="danger-action compact-action" type="submit">Revoke</button>
+                </form>
+                """
+            )
+            credential_rows.append(
+                f"""
+                <div class="user-row credential-row">
+                  <div>
+                    <strong>{html.escape(credential.label)}</strong>
+                    <small><code>{html.escape(credential.token_prefix)}…</code> · last used {html.escape(last_used)}</small>
+                  </div>
+                  <span class="pill {'neutral' if credential.revoked_at is not None else 'success'}">{state}</span>
+                  <div class="user-actions">{revoke_action}</div>
+                </div>
+                """
+            )
+        credential_html = "".join(credential_rows) or '<p class="field-help">No database-managed API credentials yet.</p>'
+        legacy_note = (
+            '<span class="pill neutral">Environment-managed compatibility client</span>'
+            if client.client_key == "legacy-default"
+            else ""
+        )
+        client_controls = "" if client.client_key == "legacy-default" else f"""
+          <form class="settings-form service-client-section" action="/service-clients/{client.id}/update" method="post">
+            <div class="settings-grid three">
+              <label>Display name<input type="text" name="display_name" value="{html.escape(client.display_name)}" required maxlength="128"></label>
+              <label>Status<select name="client_state"><option value="enabled"{' selected' if client.enabled else ''}>Enabled</option><option value="disabled"{' selected' if not client.enabled else ''}>Disabled</option></select></label>
+            </div>
+            <div class="settings-actions"><button class="secondary-action" type="submit">Save client</button></div>
+          </form>
+        """
+        modal_id = f"service-client-modal-{client.id}"
+        active_credentials = sum(
+            1 for credential in credentials if credential.revoked_at is None
+        )
+        credential_summary = (
+            f"{active_credentials} active credential"
+            if active_credentials == 1
+            else f"{active_credentials} active credentials"
+        )
+        profile_summary = (
+            f"{len(profiles)} profile" if len(profiles) == 1 else f"{len(profiles)} profiles"
+        )
+        assigned_engine_names = [
+            engine.display_name for engine in engines if engine.id in assigned_engine_ids
+        ]
+        engine_summary = ", ".join(assigned_engine_names[:3])
+        if len(assigned_engine_names) > 3:
+            engine_summary += f" +{len(assigned_engine_names) - 3}"
+        if not engine_summary:
+            engine_summary = "No engines assigned"
+        cards.append(
+            f"""
+            <section class="panel service-client-card">
+              <button class="service-client-summary" type="button" data-modal-open="{modal_id}">
+                <span class="service-client-summary-main">
+                  <span>
+                    <strong>{html.escape(client.display_name)}</strong>
+                    <small><code>{html.escape(client.client_key)}</code> &middot; client #{client.id}</small>
+                  </span>
+                  <span class="service-client-summary-meta">
+                    <span>{html.escape(profile_summary)}</span>
+                    <span>{html.escape(engine_summary)}</span>
+                    <span>{html.escape(credential_summary)}</span>
+                  </span>
+                </span>
+                <span class="service-client-summary-actions">
+                  <span class="pill {'success' if client.enabled else 'neutral'}">{'Enabled' if client.enabled else 'Disabled'}</span>
+                  {legacy_note}
+                  <span class="secondary-action compact-action">Manage</span>
+                </span>
+              </button>
+              <dialog id="{modal_id}" class="modal-dialog service-client-modal" data-modal aria-labelledby="{modal_id}-title">
+                <div class="modal-panel">
+              <div class="panel-header">
+                <div>
+                  <h2 id="{modal_id}-title">{html.escape(client.display_name)}</h2>
+                  <p><code>{html.escape(client.client_key)}</code> · client #{client.id}</p>
+                </div>
+                <div class="actions"><span class="pill {'success' if client.enabled else 'neutral'}">{'Enabled' if client.enabled else 'Disabled'}</span>{legacy_note}<button class="secondary-action compact-action" type="button" data-modal-close>Close</button></div>
+              </div>
+              {client_controls}
+              {''.join(profile_sections)}
+              <div class="settings-form service-client-section">
+                <div class="panel-header compact"><div><h3>API credentials</h3><p>Only the fingerprint is retained and shown. The token can never be read back.</p></div></div>
+                <div class="user-table">{credential_html}</div>
+                <form action="/service-clients/{client.id}/credentials" method="post">
+                  <div class="settings-grid three">
+                    <label>Credential label<input type="text" name="credential_label" required maxlength="100" placeholder="Production API"></label>
+                    <label>New bearer token<input type="password" name="api_token" required minlength="32" autocomplete="new-password" placeholder="At least 32 random characters"></label>
+                  </div>
+                  <div class="settings-actions"><button class="secondary-action" type="submit">Add credential</button></div>
+                </form>
+              </div>
+                </div>
+              </dialog>
+            </section>
+            """
+        )
+    return "".join(cards)
+
+
+def render_service_clients_page(
+    user: UserRecord, *, message: str = "", error: str = ""
+) -> str:
+    engines = configured_engines()
+    notice_html = page_notice("Service clients updated", message, "success") + page_notice(
+        "Could not save", error, "danger"
+    )
+    body = f"""
+    {notice_html}
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Service client registry</h2>
+          <p>Manage identities, credentials and engine routing for consuming systems.</p>
+        </div>
+        <span class="pill neutral">Admin only</span>
+      </div>
+      <details class="add-engine-drawer">
+        <summary class="add-engine-summary">
+          <div class="add-engine-summary-copy">
+            <span class="add-engine-summary-eyebrow">New integration</span>
+            <strong>Add service client</strong>
+            <small>Create this only when a consuming system needs its own token, ledger ownership or engine set.</small>
+          </div>
+          <div class="add-engine-summary-actions">
+            <span class="add-engine-trigger">
+              <span class="add-engine-trigger-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 5v14"></path>
+                  <path d="M5 12h14"></path>
+                </svg>
+              </span>
+              <span>New client</span>
+            </span>
+            <span class="engine-expand-indicator" aria-hidden="true"></span>
+          </div>
+        </summary>
+        <form class="add-engine-form" action="/service-clients/create" method="post" data-action-form data-preserve-scroll>
+          <div class="settings-grid three">
+            <label>Client key<input type="text" name="client_key" required maxlength="64" pattern="[a-z0-9][a-z0-9_-]{{1,63}}" placeholder="large-file-transfer"></label>
+            <label>Display name<input type="text" name="display_name" required maxlength="128" placeholder="Large File Transfer"></label>
+            <label>Profile name<input type="text" name="profile_name" required maxlength="100" value="Default"></label>
+            <label>Credential label<input type="text" name="credential_label" required maxlength="100" value="Initial API token"></label>
+            <label>Bearer token<input type="password" name="api_token" required minlength="32" autocomplete="new-password" placeholder="At least 32 random characters"></label>
+          </div>
+          <div class="panel-header compact"><div><h3>Engine routing</h3><p>Select every engine this client is allowed and required to run.</p></div></div>
+          {render_profile_engine_choices(engines, set())}
+          <div class="add-engine-form-footer">
+            <div class="add-engine-form-note">
+              <strong>Create isolated client</strong>
+              <span>The token is stored as a hash; selected engines become this client's default scan profile.</span>
+            </div>
+            <button class="primary-action add-engine-submit" type="submit" data-busy-label="Creating...">Create service client</button>
+          </div>
+        </form>
+      </details>
+    </section>
+    {render_service_client_cards(engines)}
+    """
+    return page_shell("Service Clients", "service_clients", body, user)
+
+
+@app.get("/service-clients", response_class=HTMLResponse)
+def service_clients_page(request: Request, message: str = "", error: str = "") -> str:
+    user = require_admin(request)
+    return render_service_clients_page(user, message=message, error=error)
+
+
+def validated_api_token(api_token: str) -> str:
+    token = api_token.strip()
+    if len(token) < 32 or len(token) > 512 or any(character.isspace() for character in token):
+        raise ValueError("API tokens must contain 32 to 512 non-whitespace characters.")
+    return token
+
+
+@app.post("/service-clients/create")
+def create_service_client_route(
+    request: Request,
+    client_key: str = Form(...),
+    display_name: str = Form(...),
+    profile_name: str = Form(...),
+    credential_label: str = Form(...),
+    api_token: str = Form(...),
+    engine_instance_ids: list[int] = Form(default=[]),
+) -> RedirectResponse:
+    require_admin(request)
+    clean_key = client_key.strip().lower()
+    set_audit_context(request, action="service_client.create", target_type="service_client", target_id=clean_key)
+    try:
+        if not SERVICE_CLIENT_KEY_PATTERN.fullmatch(clean_key):
+            raise ValueError("Client key must use 2-64 lowercase letters, numbers, hyphens or underscores.")
+        clean_name = display_name.strip()
+        clean_profile = profile_name.strip()
+        clean_label = credential_label.strip()
+        if not clean_name or not clean_profile or not clean_label:
+            raise ValueError("Display name, profile name and credential label are required.")
+        token = validated_api_token(api_token)
+        client_id, _, _ = create_service_client_bundle(
+            client_key=clean_key,
+            display_name=clean_name,
+            profile_name=clean_profile,
+            engine_instance_ids=engine_instance_ids,
+            credential_label=clean_label,
+            token_hash=hash_api_token(token),
+            token_prefix=token[:8],
+        )
+    except ValueError as exc:
+        set_audit_context(request, outcome="failure", details={"reason": "validation"})
+        return RedirectResponse(url=redirect_url("/service-clients", error=str(exc)), status_code=303)
+    except IntegrityViolation:
+        set_audit_context(request, outcome="failure", details={"reason": "duplicate"})
+        return RedirectResponse(url=redirect_url("/service-clients", error="Client key or API token already exists."), status_code=303)
+    set_audit_context(request, target_id=str(client_id), details={"client_key": clean_key})
+    return RedirectResponse(url=redirect_url("/service-clients", message=f"Created {clean_name}."), status_code=303)
+
+
+@app.post("/service-clients/{client_id}/update")
+def update_service_client_route(
+    request: Request,
+    client_id: int,
+    display_name: str = Form(...),
+    client_state: str = Form("enabled"),
+) -> RedirectResponse:
+    require_admin(request)
+    set_audit_context(request, action="service_client.update", target_type="service_client", target_id=str(client_id))
+    client = next((item for item in list_service_clients() if item.id == client_id), None)
+    clean_name = display_name.strip()
+    if client is None or client.client_key == "legacy-default" or not clean_name:
+        set_audit_context(request, outcome="denied", details={"reason": "invalid_or_managed"})
+        return RedirectResponse(url=redirect_url("/service-clients", error="Service client cannot be updated."), status_code=303)
+    update_service_client(client_id, display_name=clean_name, enabled=client_state == "enabled")
+    return RedirectResponse(url=redirect_url("/service-clients", message=f"Updated {clean_name}."), status_code=303)
+
+
+@app.post("/scan-profiles/{profile_id}/engines")
+def update_scan_profile_engines_route(
+    request: Request,
+    profile_id: int,
+    engine_instance_ids: list[int] = Form(default=[]),
+) -> RedirectResponse:
+    require_admin(request)
+    set_audit_context(request, action="scan_profile.engines_update", target_type="scan_profile", target_id=str(profile_id))
+    try:
+        set_scan_profile_engines(profile_id, engine_instance_ids)
+    except ValueError as exc:
+        set_audit_context(request, outcome="failure", details={"reason": "validation"})
+        return RedirectResponse(url=redirect_url("/service-clients", error=str(exc)), status_code=303)
+    return RedirectResponse(url=redirect_url("/service-clients", message="Saved profile engine routing."), status_code=303)
+
+
+@app.post("/service-clients/{client_id}/credentials")
+def create_service_client_credential_route(
+    request: Request,
+    client_id: int,
+    credential_label: str = Form(...),
+    api_token: str = Form(...),
+) -> RedirectResponse:
+    require_admin(request)
+    set_audit_context(request, action="api_credential.create", target_type="service_client", target_id=str(client_id))
+    try:
+        label = credential_label.strip()
+        if not label or not any(client.id == client_id for client in list_service_clients()):
+            raise ValueError("A valid service client and credential label are required.")
+        token = validated_api_token(api_token)
+        create_api_client_credential(client_id, label=label, token_hash=hash_api_token(token), token_prefix=token[:8])
+    except ValueError as exc:
+        set_audit_context(request, outcome="failure", details={"reason": "validation"})
+        return RedirectResponse(url=redirect_url("/service-clients", error=str(exc)), status_code=303)
+    except IntegrityViolation:
+        set_audit_context(request, outcome="failure", details={"reason": "duplicate"})
+        return RedirectResponse(url=redirect_url("/service-clients", error="This API token is already registered."), status_code=303)
+    return RedirectResponse(url=redirect_url("/service-clients", message="Added API credential."), status_code=303)
+
+
+@app.post("/service-clients/{client_id}/credentials/{credential_id}/revoke")
+def revoke_service_client_credential_route(
+    request: Request, client_id: int, credential_id: int
+) -> RedirectResponse:
+    require_admin(request)
+    set_audit_context(request, action="api_credential.revoke", target_type="api_credential", target_id=str(credential_id))
+    belongs_to_client = any(
+        credential.id == credential_id
+        for credential in list_api_client_credentials(client_id)
+    )
+    if not belongs_to_client or not revoke_api_client_credential(
+        credential_id, int(datetime.now().timestamp())
+    ):
+        set_audit_context(request, outcome="failure", details={"reason": "not_found_or_revoked"})
+        return RedirectResponse(url=redirect_url("/service-clients", error="Active API credential not found."), status_code=303)
+    return RedirectResponse(url=redirect_url("/service-clients", message="Revoked API credential."), status_code=303)
+
+
 @app.post("/users")
 def create_user_route(
     request: Request,
@@ -6482,6 +7165,12 @@ def delete_user_route(request: Request, user_id: int) -> RedirectResponse:
 def account_page(request: Request, message: str = "", error: str = "") -> str:
     user = require_user(request)
     return render_account_page(user, message=message, error=error)
+
+
+@app.get("/about", response_class=HTMLResponse)
+def about_page(request: Request) -> str:
+    user = require_user(request)
+    return render_about_page(user)
 
 
 @app.post("/account/password")
@@ -6997,6 +7686,7 @@ async def api_create_scan(
     wait_seconds: int = Form(0),
 ) -> JSONResponse:
     require_api_token(request)
+    identity = api_client_identity(request)
     scan = await enqueue_scan_from_upload(
         sample,
         case_name=case_name,
@@ -7004,6 +7694,7 @@ async def api_create_scan(
         note=note,
         source="api",
         archive_mode=archive_mode,
+        api_identity=identity,
     )
     applied_wait_seconds = normalized_api_wait_seconds(wait_seconds)
     current_scan = await wait_for_terminal_scan(scan.id, applied_wait_seconds)
@@ -7042,11 +7733,12 @@ async def api_create_scan(
 )
 def api_scan_status(request: Request, scan_id: int) -> JSONResponse:
     require_api_token(request)
+    identity = api_client_identity(request)
     scan = get_scan(scan_id)
     # The public API only exposes scans submitted through the API. ICAP/manual
     # scans are hidden (404, not 403) so an API token cannot enumerate or read
     # them. Matches the source guard on the batch endpoints.
-    if scan is None or scan.source != "api":
+    if scan is None or not identity_can_access_scan(identity, scan):
         raise HTTPException(status_code=404, detail="Scan not found.")
     return JSONResponse(build_api_scan_status_payload(request, scan))
 
@@ -7072,9 +7764,10 @@ def api_scan_status(request: Request, scan_id: int) -> JSONResponse:
 )
 def api_scan_result(request: Request, scan_id: int) -> JSONResponse:
     require_api_token(request)
+    identity = api_client_identity(request)
     scan = get_scan(scan_id)
     # Public API exposes API-sourced scans only; ICAP/manual scans return 404.
-    if scan is None or scan.source != "api":
+    if scan is None or not identity_can_access_scan(identity, scan):
         raise HTTPException(status_code=404, detail="Scan not found.")
     if not scan_is_terminal(scan):
         payload = build_api_scan_status_payload(request, scan)
@@ -7104,9 +7797,10 @@ def api_scan_result(request: Request, scan_id: int) -> JSONResponse:
 )
 def api_batch_status(request: Request, batch_id: int) -> JSONResponse:
     require_api_token(request)
+    identity = api_client_identity(request)
     refresh_scan_batch_counts(batch_id)
     batch = get_scan_batch(batch_id)
-    if batch is None or batch.source != "api":
+    if batch is None or not identity_can_access_batch(identity, batch):
         raise HTTPException(status_code=404, detail="Batch not found.")
     scans = list_scan_batch_scans(batch_id, limit=5000)
     return JSONResponse(build_scan_batch_status_payload(request, batch, scans))
@@ -7133,9 +7827,10 @@ def api_batch_status(request: Request, batch_id: int) -> JSONResponse:
 )
 def api_batch_result(request: Request, batch_id: int) -> JSONResponse:
     require_api_token(request)
+    identity = api_client_identity(request)
     refresh_scan_batch_counts(batch_id)
     batch = get_scan_batch(batch_id)
-    if batch is None or batch.source != "api":
+    if batch is None or not identity_can_access_batch(identity, batch):
         raise HTTPException(status_code=404, detail="Batch not found.")
     scans = list_scan_batch_scans(batch_id, limit=5000)
     if not scan_batch_is_terminal(batch):
@@ -7184,11 +7879,16 @@ def api_batch_result(request: Request, batch_id: int) -> JSONResponse:
 )
 def api_hash_lookup(request: Request, sha256: str) -> JSONResponse:
     require_api_token(request)
+    identity = api_client_identity(request)
     try:
         normalized_sha256 = normalize_sha256(sha256)
     except InvalidSha256Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    engines = enabled_hash_engines(source="api")
+    engines = (
+        enabled_hash_engines(source="api")
+        if identity.legacy_credential
+        else hash_engines_for_profile(identity.profile.id, source="api")
+    )
     if not engines:
         raise HTTPException(
             status_code=503,
@@ -7268,7 +7968,7 @@ async def retry_single_scan(request: Request, scan_id: int) -> RedirectResponse:
             url=redirect_url(f"/scans/{scan_id}", error="Only completed or failed scans can be retried."),
             status_code=303,
         )
-    create_scan_engine_jobs(scan_id, enabled_engines(source=scan.source))
+    create_scan_engine_jobs(scan_id, engines_for_scan(scan))
     return RedirectResponse(
         url=redirect_url(f"/scans/{scan_id}", message="Scan was queued for another run."),
         status_code=303,
@@ -8176,33 +8876,10 @@ def render_engines_page(
     engine_cards_html = "\n".join(
         render_engine_card(instance, overrides, focus_adapter_key=target) for instance in configured_engines()
     )
-    roadmap_rows_html = "\n".join(
-        f"""
-        <div class="engine-row muted">
-          {render_engine_logo(item.short_label, item.label.lower().replace(" ", "_"))}
-          <div>
-            <strong>{html.escape(item.label)}</strong>
-            <small>{html.escape(item.vendor)} · {html.escape(item.product)} · {html.escape(item.integration_method)}</small>
-            <small>{html.escape(item.blocker)}</small>
-          </div>
-          <span class="pill neutral">{html.escape(item.status.title())}</span>
-        </div>
-        """
-        for item in ROADMAP_ADAPTERS
-    )
 
     body = f"""
     {notice_html}
     {render_add_engine_panel(selected_adapter=target)}
     {engine_cards_html}
-    <section class="panel engine-secondary">
-      <div class="panel-header compact">
-        <h2>Roadmap adapters</h2>
-        <span class="pill neutral">{len(ROADMAP_ADAPTERS)} planned</span>
-      </div>
-      <div class="engine-table">
-        {roadmap_rows_html}
-      </div>
-    </section>
     """
     return page_shell("Engines", "engines", body, user)

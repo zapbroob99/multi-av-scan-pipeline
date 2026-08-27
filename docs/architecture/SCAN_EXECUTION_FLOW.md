@@ -7,7 +7,8 @@ future scheduling changes.
 The most important idea: MASP is not only "upload file, run engines." It is a
 distributed orchestration flow where the API stores a scan job, one or more
 workers write engine results, and the scan becomes complete only when all
-enabled engines have a result or the missing engines are finalized as skipped.
+engines required by the accepted scan's routing snapshot have a result or the
+missing engines are finalized as skipped.
 
 ## Core Components
 
@@ -19,6 +20,7 @@ The current flow is spread across a few key modules:
 - HTTPS worker agent: [`app/workers/control_api_worker.py`](../../app/workers/control_api_worker.py)
 - Worker control plane: [`app/services/worker_control.py`](../../app/services/worker_control.py)
 - Engine registry and adapter dispatch: [`app/services/engine_registry.py`](../../app/services/engine_registry.py)
+- Service-client identity, profile routing and snapshots: [`app/services/service_clients.py`](../../app/services/service_clients.py)
 - Worker capability filtering: [`app/services/worker_capabilities.py`](../../app/services/worker_capabilities.py)
 - Engine routing/skip reasons: [`app/services/routing.py`](../../app/services/routing.py)
 - Timing calculations: [`app/services/timing.py`](../../app/services/timing.py)
@@ -66,8 +68,9 @@ sequenceDiagram
 
     Client->>API: POST /api/v1/scans + file
     API->>DB: create sample
+    API->>DB: resolve client/profile and persist routing snapshot
     API->>DB: create scan_job(status=queued)
-    API->>DB: create scan_engine_jobs(status=pending)
+    API->>DB: create scan_engine_jobs for snapshot instances
     API-->>Client: 202 + scan id + status/result links
 
     loop worker poll
@@ -84,7 +87,7 @@ sequenceDiagram
     API->>DB: GET scan status
     API-->>Client: result_ready=false/true + timing + engine coverage
 
-    Note over DB: scan completed when every enabled engine has a result
+    Note over DB: scan completed when every snapshot-required engine has a result
 ```
 
 The API does not synchronously scan the file itself. It stores the sample and
@@ -104,11 +107,12 @@ The flow is:
 
 1. The client uploads a file with metadata such as `case_name`, `priority`,
    `note`, and optional `wait_seconds`.
-2. `store_upload()` persists the sample and computes hashes.
-3. `create_sample()` inserts the sample row.
-4. `create_scan_job()` inserts a `scan_jobs` row with `status='queued'`.
-5. `create_scan_engine_jobs()` inserts one `scan_engine_jobs` row for each
-   enabled engine at scan creation time.
+2. Bearer authentication resolves one service client and its enabled default
+   profile.
+3. Source/quota rules filter the profile's explicit engine instance set.
+4. `store_upload()` persists the sample and computes hashes.
+5. Sample, scan, client/profile IDs, immutable routing snapshot, and engine jobs
+   are committed together.
 6. The API returns a status payload.
 7. If `wait_seconds > 0`, the API briefly waits for terminal completion using
    [`wait_for_terminal_scan`](../../app/main.py#L877). This is only a
@@ -129,7 +133,7 @@ Important API behavior:
 stateDiagram-v2
     [*] --> queued: create_scan_job
     queued --> running: worker starts eligible work
-    running --> completed: all enabled engines have results
+    running --> completed: all snapshot-required engines have results
     running --> completed: missing engines become skipped after wait window
     queued --> failed: worker exception before useful recovery
     running --> failed: worker exception recorded
@@ -141,7 +145,7 @@ The main scan statuses are:
 
 - `queued`: scan exists but no worker has started meaningful work yet.
 - `running`: at least one worker has started or the scan is being revisited.
-- `completed`: all enabled engines have a result record, including skipped
+- `completed`: all engines required by the accepted snapshot have a result record, including skipped
   results for missing/unavailable engines.
 - `failed`: worker processing failed in a way that could not be normalized into
   engine results.

@@ -93,6 +93,10 @@ from app.services.worker_scheduling import (
     eligible_engine_instance_ids_for_node,
     schedulable_engine_instance_ids,
 )
+from app.services.service_clients import (
+    engines_for_scan as profile_engines_for_scan,
+    seed_legacy_service_client,
+)
 from app.services.worker_health import run_due_worker_health_checks
 
 
@@ -115,6 +119,16 @@ ENGINE_JOB_QUEUE_ENABLED = os.getenv(
     "MASP_ENGINE_JOB_QUEUE_ENABLED",
     "1",
 ).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def engines_for_scan(scan: ScanRecord) -> list[EngineInstanceRecord]:
+    """Use immutable profile routing, with global fallback for legacy scans."""
+    snapshot = getattr(scan, "profile_snapshot_json", "") or ""
+    if getattr(scan, "scan_profile_id", None) is not None or snapshot not in {"", "{}"}:
+        return profile_engines_for_scan(scan)
+    return enabled_engines(source=scan.source)
+
+
 LEGACY_SCAN_WORKER_FALLBACK_ENABLED = os.getenv(
     "MASP_LEGACY_SCAN_WORKER_FALLBACK_ENABLED",
     "0",
@@ -336,7 +350,7 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
 
     record_worker_heartbeat("running", active_scan_id=scan.id)
 
-    engines = enabled_engines(source=scan.source)
+    engines = engines_for_scan(scan)
     engine = find_engine_for_job(job, engines)
     if engine is None:
         mark_scan_engine_job_terminal_if_owned(
@@ -510,7 +524,7 @@ def process_scan(scan: ScanRecord, engine_keys: set[str]) -> bool:
     record_worker_heartbeat("running", active_scan_id=scan.id)
 
     stage_started_at = time.perf_counter()
-    engines = enabled_engines(source=scan.source)
+    engines = engines_for_scan(scan)
     engine_results = list_engine_results(scan.id)
     existing_engine_names = {result.engine_name for result in engine_results}
     missing_enabled_engines = missing_enabled_engine_instances(engines, existing_engine_names)
@@ -928,6 +942,18 @@ def maybe_enqueue_lazy_archive_children(
         # Idempotent by (parent_scan_id, ordinal) and fenced to this finalizer:
         # a re-run registers only missing members; a superseded finalizer cannot
         # mutate the DB (raises StaleFinalizerError, handled by the caller).
+        child_scope: dict[str, object] = {}
+        snapshot = getattr(scan, "profile_snapshot_json", "{}") or "{}"
+        if (
+            getattr(scan, "service_client_id", None) is not None
+            or getattr(scan, "scan_profile_id", None) is not None
+            or snapshot != "{}"
+        ):
+            child_scope = {
+                "service_client_id": getattr(scan, "service_client_id", None),
+                "scan_profile_id": getattr(scan, "scan_profile_id", None),
+                "profile_snapshot_json": snapshot,
+            }
         child_scan_id = create_archive_child(
             parent_scan_id=scan.id,
             parent_finalize_worker_id=WORKER_ID,
@@ -941,6 +967,7 @@ def maybe_enqueue_lazy_archive_children(
             source=scan.source,
             relative_path=f"{relative_prefix}{member.relative_path}",
             member_ordinal=member_ordinal,
+            **child_scope,
         )
         if child_scan_id is not None:
             created_children += 1
@@ -1160,7 +1187,7 @@ def sweep_finalize_stuck_scans() -> int:
     """
     finalized = 0
     for scan in list_active_scans(limit=ACTIVE_SCAN_LIMIT):
-        engines = enabled_engines(source=scan.source)
+        engines = engines_for_scan(scan)
         engine_jobs = list_scan_engine_jobs(scan.id)
         if not engine_jobs or not all_scan_engine_jobs_terminal(engine_jobs):
             continue
@@ -1184,7 +1211,7 @@ def reap_orphaned_engine_jobs(engine_keys: set[str]) -> bool:
     reaped_any = False
 
     for scan in list_active_scans(limit=ACTIVE_SCAN_LIMIT):
-        engines = enabled_engines(source=scan.source)
+        engines = engines_for_scan(scan)
         covered_instance_ids = schedulable_engine_instance_ids(worker_status, engines)
         engine_jobs = list_scan_engine_jobs(scan.id)
         if not engine_jobs:
@@ -1407,6 +1434,7 @@ def run_forever() -> None:
         )
     init_db()
     seed_default_engines()
+    seed_legacy_service_client()
     engine_keys = worker_engine_keys()
     record_worker_heartbeat("starting")
     recovered = run_maintenance()

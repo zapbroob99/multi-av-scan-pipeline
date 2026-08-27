@@ -60,6 +60,9 @@ class ScanRecord:
     parent_scan_id: int | None = None
     relative_path: str | None = None
     scan_role: str = "standalone"
+    service_client_id: int | None = None
+    scan_profile_id: int | None = None
+    profile_snapshot_json: str = "{}"
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,9 @@ class ScanBatchRecord:
     updated_at: str
     completed_at: str | None
     last_error: str | None
+    service_client_id: int | None = None
+    scan_profile_id: int | None = None
+    profile_snapshot_json: str = "{}"
 
 
 @dataclass(frozen=True)
@@ -161,6 +167,48 @@ class EngineInstanceRecord:
     config_json: str
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class ServiceClientRecord:
+    id: int
+    client_key: str
+    display_name: str
+    enabled: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ScanProfileRecord:
+    id: int
+    service_client_id: int
+    name: str
+    enabled: bool
+    is_default: bool
+    policy_json: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ApiClientCredentialRecord:
+    id: int
+    service_client_id: int
+    label: str
+    token_hash: str
+    token_prefix: str
+    created_at: str
+    last_used_at: int | None
+    revoked_at: int | None
+
+
+@dataclass(frozen=True)
+class ApiClientIdentity:
+    client: ServiceClientRecord
+    profile: ScanProfileRecord
+    credential_id: int | None = None
+    legacy_credential: bool = False
 
 
 @dataclass(frozen=True)
