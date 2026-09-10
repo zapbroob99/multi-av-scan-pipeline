@@ -54,6 +54,9 @@ x-common-env: &common-env
   MASP_CLAMD_MAX_FILE_SIZE: ${MASP_CLAMD_MAX_FILE_SIZE:-64M}
   MASP_CLAMD_READY_TIMEOUT_SECONDS: ${MASP_CLAMD_READY_TIMEOUT_SECONDS:-30}
   MASP_YARA_RULES_DIR: /app/rules
+  MASP_DEFERRED_FILESYSTEM_BACKEND_KEY: ${MASP_DEFERRED_FILESYSTEM_BACKEND_KEY:-}
+  MASP_DEFERRED_FILESYSTEM_ROOT: /app/deferred-source
+  MASP_DEFERRED_BACKEND_CLIENTS_JSON: ${MASP_DEFERRED_BACKEND_CLIENTS_JSON:-}
 
 services:
   app:
@@ -72,6 +75,9 @@ services:
       MASP_API_MAX_WAIT_SECONDS: ${MASP_API_MAX_WAIT_SECONDS:-30}
       MASP_API_RETRY_AFTER_SECONDS: ${MASP_API_RETRY_AFTER_SECONDS:-2}
       MASP_UPLOAD_MAX_BYTES: ${MASP_UPLOAD_MAX_BYTES:?set MASP_UPLOAD_MAX_BYTES (e.g. 52428800 for 50 MiB)}
+      MASP_HTTP_UPLOAD_MAX_BYTES: ${MASP_HTTP_UPLOAD_MAX_BYTES:-67108864}
+      MASP_UI_READ_TIMEOUT_MS: ${MASP_UI_READ_TIMEOUT_MS:-5000}
+      MASP_UI_WRITE_LOCK_TIMEOUT_MS: ${MASP_UI_WRITE_LOCK_TIMEOUT_MS:-5000}
       # Optional LDAP/Active Directory login. Only the app receives directory
       # credentials; workers and ICAP never need them.
       MASP_LDAP_ENABLED: ${MASP_LDAP_ENABLED:-0}
@@ -139,6 +145,33 @@ services:
         condition: service_healthy
       # No dependency on app: concurrent fresh-DB bootstrap is serialized by the
       # advisory lock in init_postgres_db, so app and worker start in parallel.
+
+  deferred-intake:
+    <<: *masp-hardening
+    build: .
+    restart: unless-stopped
+    profiles: [deferred]
+    command: python -m app.workers.deferred_intake_worker
+    environment:
+      <<: *common-env
+      MASP_DEFERRED_MAX_BYTES: ${MASP_DEFERRED_MAX_BYTES:-0}
+      MASP_DEFERRED_INTAKE_LEASE_SECONDS: ${MASP_DEFERRED_INTAKE_LEASE_SECONDS:-3600}
+    volumes:
+      - ${MASP_STORAGE_DIR:-./storage}:/app/storage
+      - ${MASP_DEFERRED_SOURCE_DIR:-./deferred-source}:/app/deferred-source:ro
+
+  notification:
+    <<: *masp-hardening
+    build: .
+    restart: unless-stopped
+    profiles: [notifications]
+    command: python -m app.workers.notification_worker
+    environment:
+      <<: *common-env
+      MASP_SIEM_WEBHOOK_URL: ${MASP_SIEM_WEBHOOK_URL:-}
+      MASP_SIEM_WEBHOOK_SECRET: ${MASP_SIEM_WEBHOOK_SECRET:-}
+      MASP_SIEM_WEBHOOK_TIMEOUT_SECONDS: ${MASP_SIEM_WEBHOOK_TIMEOUT_SECONDS:-10}
+      MASP_SIEM_WEBHOOK_ALLOW_HTTP: ${MASP_SIEM_WEBHOOK_ALLOW_HTTP:-false}
 
   icap:
     <<: *masp-hardening

@@ -8,6 +8,7 @@ to import the web app.
 from __future__ import annotations
 
 import asyncio
+from starlette.concurrency import run_in_threadpool
 from pathlib import Path
 
 from app.database import create_scan_intake, get_scan
@@ -99,7 +100,7 @@ def enqueue_scan_from_stored_sample(
 
 
 async def wait_for_terminal_scan(scan_id: int, wait_seconds: int) -> ScanRecord | None:
-    scan = get_scan(scan_id)
+    scan = await run_in_threadpool(get_scan, scan_id)
     if scan is None or wait_seconds <= 0 or scan_is_terminal(scan):
         return scan
 
@@ -107,7 +108,7 @@ async def wait_for_terminal_scan(scan_id: int, wait_seconds: int) -> ScanRecord 
     deadline = loop.time() + wait_seconds
     while loop.time() < deadline:
         await asyncio.sleep(min(0.5, max(0.1, deadline - loop.time())))
-        scan = get_scan(scan_id)
+        scan = await run_in_threadpool(get_scan, scan_id)
         if scan is None or scan_is_terminal(scan):
             return scan
-    return get_scan(scan_id)
+    return await run_in_threadpool(get_scan, scan_id)

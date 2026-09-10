@@ -167,6 +167,31 @@ def build_result_payload(scan: ScanRecord, results: list[EngineResultRecord]) ->
 
 
 class ContractDriftTests(unittest.TestCase):
+    def test_deferred_submit_rejects_blank_identifiers_and_normalizes_values(self) -> None:
+        payload = {
+            "client_request_id": " request-1 ",
+            "backend_key": " filesystem ",
+            "object_id": " incoming/sample.bin ",
+            "original_filename": " sample.bin ",
+        }
+
+        request = api_schemas.DeferredScanSubmitRequest.model_validate(payload)
+        self.assertEqual(request.client_request_id, "request-1")
+        self.assertEqual(request.backend_key, "filesystem")
+        self.assertEqual(request.object_id, "incoming/sample.bin")
+        self.assertEqual(request.original_filename, "sample.bin")
+
+        for field_name in (
+            "client_request_id",
+            "backend_key",
+            "object_id",
+            "original_filename",
+        ):
+            with self.subTest(field_name=field_name), self.assertRaises(ValidationError):
+                api_schemas.DeferredScanSubmitRequest.model_validate(
+                    {**payload, field_name: "   "}
+                )
+
     def test_status_payload_matches_contract_for_running_scan(self) -> None:
         payload = build_status_payload(make_scan("running"), [make_result("ClamAV", detected=False)])
 
@@ -268,6 +293,8 @@ class ContractDriftTests(unittest.TestCase):
 class OpenApiContractTests(unittest.TestCase):
     API_OPERATIONS = (
         ("/api/v1/scans", "post"),
+        ("/api/v1/deferred-scans", "post"),
+        ("/api/v1/deferred-scans/{submission_id}", "get"),
         ("/api/v1/scans/{scan_id}", "get"),
         ("/api/v1/scans/{scan_id}/result", "get"),
         ("/api/v1/batches/{batch_id}", "get"),
@@ -314,6 +341,14 @@ class OpenApiContractTests(unittest.TestCase):
         self.assertEqual(
             schema_ref("/api/v1/scans", "post", "413"),
             "#/components/schemas/ApiErrorResponse",
+        )
+        self.assertEqual(
+            schema_ref("/api/v1/deferred-scans", "post", "202"),
+            "#/components/schemas/DeferredScanSubmitResponse",
+        )
+        self.assertEqual(
+            schema_ref("/api/v1/deferred-scans/{submission_id}", "get", "200"),
+            "#/components/schemas/DeferredScanSubmitResponse",
         )
         self.assertEqual(
             schema_ref("/api/v1/scans/{scan_id}/result", "get", "409"),

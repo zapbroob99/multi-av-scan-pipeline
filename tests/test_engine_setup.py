@@ -25,10 +25,52 @@ class EngineInitialSetupTests(unittest.TestCase):
         markup = render_add_engine_panel()
 
         self.assertNotRegex(markup, r"data-engine-adapter-choice[^>]*\schecked")
+        self.assertIn('data-modal-open="add-engine-modal"', markup)
+        self.assertIn(
+            '<dialog id="add-engine-modal" class="modal-dialog add-engine-modal" data-modal ',
+            markup,
+        )
+        self.assertNotIn("data-modal data-auto-open", markup)
+        self.assertIn("data-engine-adapter-list", markup)
+        self.assertIn("data-engine-selected-adapter hidden", markup)
+        self.assertEqual(markup.count("data-engine-config-section"), 2)
         self.assertIn('name="engine_display_name" maxlength="128" required', markup)
         self.assertIn('<option value="">Select mode</option>', markup)
         self.assertIn('placeholder="3310"', markup)
         self.assertNotIn('name="clamav_port" value="3310"', markup)
+
+    def test_selected_adapter_reopens_modal_without_persisting_defaults(self) -> None:
+        markup = render_add_engine_panel(selected_adapter="clamav")
+
+        self.assertIn("data-modal data-auto-open", markup)
+        self.assertRegex(
+            markup,
+            r'name="adapter_key" value="clamav"[^>]*\schecked',
+        )
+        self.assertIn("data-engine-change-adapter", markup)
+        self.assertIn('data-engine-setup="clamav"', markup)
+        self.assertNotIn('name="clamav_port" value="3310"', markup)
+
+    def test_page_shell_contains_engine_modal_state_contract(self) -> None:
+        admin = UserRecord(
+            id=1,
+            username="admin",
+            password_hash="hash",
+            role="admin",
+            created_at="now",
+            updated_at="now",
+        )
+
+        markup = page_shell("Engines", "engines", render_add_engine_panel(), admin)
+
+        self.assertIn("let engineAdapterListExpanded = false;", markup)
+        self.assertIn(
+            "engineAdapterList.hidden = Boolean(selected && !engineAdapterListExpanded);",
+            markup,
+        )
+        self.assertIn("engineDisplayName.disabled = !showEngineConfig;", markup)
+        self.assertIn('dialog[data-modal][data-auto-open]', markup)
+        self.assertIn("modal.showModal();", markup)
 
     def test_clamav_setup_requires_explicit_runtime_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "timeout seconds is required"):

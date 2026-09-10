@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from dataclasses import replace
 
 from app.database import (
     ensure_legacy_service_client_profile,
@@ -11,6 +12,7 @@ from app.database import (
     get_service_client,
     get_service_client_by_key,
     list_engine_instances_by_ids,
+    list_scan_engine_jobs,
     list_scan_profile_engines,
 )
 from app.models import (
@@ -18,6 +20,7 @@ from app.models import (
     EngineInstanceRecord,
     ScanBatchRecord,
     ScanRecord,
+    ScanEngineJobRecord,
 )
 from app.services.engine_registry import (
     adapter_capabilities,
@@ -139,6 +142,9 @@ def hash_engines_for_profile(
 def profile_snapshot_json(
     identity: ApiClientIdentity,
     engines: list[EngineInstanceRecord],
+    *,
+    delivery_mode: str | None = None,
+    client_request_id: str | None = None,
 ) -> str:
     try:
         policy = json.loads(identity.profile.policy_json or "{}")
@@ -146,8 +152,7 @@ def profile_snapshot_json(
         policy = {}
     if not isinstance(policy, dict):
         policy = {}
-    return json.dumps(
-        {
+    snapshot: dict[str, object] = {
             "version": PROFILE_SNAPSHOT_VERSION,
             "service_client": {
                 "id": identity.client.id,
@@ -169,7 +174,14 @@ def profile_snapshot_json(
                 }
                 for engine in engines
             ],
-        },
+        }
+    if delivery_mode:
+        snapshot["delivery"] = {
+            "mode": delivery_mode,
+            "client_request_id": client_request_id,
+        }
+    return json.dumps(
+        snapshot,
         separators=(",", ":"),
         sort_keys=True,
     )
@@ -183,26 +195,21 @@ def parse_profile_snapshot(scan: ScanRecord) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def is_security_event_deferred_scan(scan: ScanRecord) -> bool:
+    """Return whether a scan belongs to the long-lived deferred intake flow."""
+    delivery = parse_profile_snapshot(scan).get("delivery")
+    return (
+        isinstance(delivery, dict)
+        and delivery.get("mode") == "security_events_only"
+    )
+
+
 def engines_for_scan(scan: ScanRecord) -> list[EngineInstanceRecord]:
     snapshot = parse_profile_snapshot(scan)
     raw_engines = snapshot.get("engines")
-    instance_ids: list[int] = []
     if isinstance(raw_engines, list):
-        for entry in raw_engines:
-            if not isinstance(entry, dict):
-                continue
-            try:
-                instance_ids.append(int(entry["id"]))
-            except (KeyError, TypeError, ValueError):
-                continue
-    if instance_ids:
-        return [
-            engine
-            for engine in list_engine_instances_by_ids(instance_ids)
-            if engine.enabled
-            and engine_allowed_for_source(engine, scan.source)
-            and _file_capable(engine)
-        ]
+        # An explicit empty snapshot must not fall back to the current profile.
+        return engines_for_snapshot_json(scan.profile_snapshot_json, source=scan.source)
     if scan.scan_profile_id is not None:
         return engines_for_profile(scan.scan_profile_id, source=scan.source)
     # Historical/manual scans retain the global source-aware behavior.
@@ -211,11 +218,55 @@ def engines_for_scan(scan: ScanRecord) -> list[EngineInstanceRecord]:
     return enabled_engines(source=scan.source)
 
 
-def required_detection_engine_names(scan: ScanRecord) -> list[str]:
+def engines_for_snapshot_json(
+    snapshot_json: str, *, source: str, strict: bool = False
+) -> list[EngineInstanceRecord]:
+    try:
+        snapshot = json.loads(snapshot_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        snapshot = {}
+    raw_engines = snapshot.get("engines") if isinstance(snapshot, dict) else None
+    instance_ids: list[int] = []
+    snapshot_names: dict[int, str] = {}
+    if isinstance(raw_engines, list):
+        for entry in raw_engines:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                instance_id = int(entry["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            instance_ids.append(instance_id)
+            snapshot_name = str(entry.get("name") or "").strip()
+            if snapshot_name:
+                snapshot_names[instance_id] = snapshot_name
+    engines = [
+        replace(
+            engine,
+            display_name=snapshot_names.get(engine.id, engine.display_name),
+        )
+        for engine in list_engine_instances_by_ids(instance_ids)
+        if engine.enabled
+        and engine_allowed_for_source(engine, source)
+        and _file_capable(engine)
+    ]
+    if strict:
+        requested = set(instance_ids)
+        resolved = {engine.id for engine in engines}
+        missing = requested - resolved
+        if missing or len(resolved) != len(requested):
+            raise ValueError(
+                "Deferred routing snapshot contains unavailable engine instances: "
+                + ", ".join(str(value) for value in sorted(missing))
+            )
+    return engines
+
+
+def required_detection_engine_names(scan: ScanRecord, *, jobs: list[ScanEngineJobRecord] | None = None) -> list[str]:
     snapshot = parse_profile_snapshot(scan)
     raw_engines = snapshot.get("engines")
     if isinstance(raw_engines, list):
-        names = [
+        return [
             str(entry.get("name"))
             for entry in raw_engines
             if isinstance(entry, dict)
@@ -223,8 +274,24 @@ def required_detection_engine_names(scan: ScanRecord) -> list[str]:
             and entry.get("detection")
             and entry.get("name")
         ]
-        if names:
-            return names
+
+    # Manual and historical scans may predate routing snapshots, but every
+    # modern intake still has immutable engine-job rows. Use their snapshotted
+    # names and adapter keys so later instance renames/enables do not rewrite a
+    # completed scan's coverage. Fall back to current configuration only for
+    # truly legacy scans without engine jobs.
+    jobs = list_scan_engine_jobs(scan.id) if jobs is None else jobs
+    if jobs:
+        names: list[str] = []
+        for job in jobs:
+            try:
+                detection = adapter_definition(job.engine_key).detection
+            except KeyError:
+                detection = True
+            if detection:
+                names.append(job.engine_name)
+        return names
+
     return [
         engine.display_name
         for engine in engines_for_scan(scan)

@@ -213,6 +213,8 @@ def should_audit_request(request: Request) -> bool:
         return False
 
     path = request.url.path.rstrip("/") or "/"
+    if path.startswith("/api/ui/v1/"):
+        return True
     if path in {"/login", "/logout", "/account/password", "/scan-policy"}:
         return True
     if path.startswith("/users"):

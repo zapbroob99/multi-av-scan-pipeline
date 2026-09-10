@@ -21,6 +21,8 @@ The current flow is spread across a few key modules:
 - Worker control plane: [`app/services/worker_control.py`](../../app/services/worker_control.py)
 - Engine registry and adapter dispatch: [`app/services/engine_registry.py`](../../app/services/engine_registry.py)
 - Service-client identity, profile routing and snapshots: [`app/services/service_clients.py`](../../app/services/service_clients.py)
+- Deferred object intake: [`app/workers/deferred_intake_worker.py`](../../app/workers/deferred_intake_worker.py)
+- Transactional SIEM delivery: [`app/workers/notification_worker.py`](../../app/workers/notification_worker.py)
 - Worker capability filtering: [`app/services/worker_capabilities.py`](../../app/services/worker_capabilities.py)
 - Engine routing/skip reasons: [`app/services/routing.py`](../../app/services/routing.py)
 - Timing calculations: [`app/services/timing.py`](../../app/services/timing.py)
@@ -94,6 +96,15 @@ The API does not synchronously scan the file itself. It stores the sample and
 creates a queued job. Workers later turn that job into engine results.
 
 ## API Submission Flow
+
+Large files may use `POST /api/v1/deferred-scans` instead of multipart upload.
+Acceptance stores only an approved backend/object reference, client identity,
+and immutable engine/delivery snapshot. A separate intake worker later copies
+and verifies the source, then creates the normal scan and engine jobs atomically.
+The backend/client mapping is explicit and fail-closed; optional prefix scopes
+limit shared-root access. High/critical completion writes an outbox event in the
+completion transaction; webhook I/O occurs only in the notification worker, and
+retention does not delete scans with undelivered events.
 
 The primary service-to-service entrypoint is `POST /api/v1/scans`.
 

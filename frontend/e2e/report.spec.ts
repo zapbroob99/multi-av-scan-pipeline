@@ -1,0 +1,27 @@
+import { test, expect } from '@playwright/test'
+
+test('manual failed report, lazy technical text and legacy escape hatch', async ({ page }) => {
+  const errors: string[] = [], technical: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('request', request => { if (request.url().includes('/results/')) technical.push(request.url()) })
+  await page.goto('scans/25')
+  await page.getByLabel('Username').fill('console-analyst')
+  await page.getByLabel('Password').fill('console-test-only')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'acceptance-24.bin' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Review', exact: true })).toBeVisible()
+  await expect(page.getByText('Synthetic worker failure')).toBeVisible()
+  expect(technical).toEqual([])
+  await page.getByRole('button', { name: 'Show technical output for Static Metadata' }).click()
+  await expect(page.getByText('<script>benign fixture text</script>', { exact: true })).toBeVisible()
+  expect(technical).toHaveLength(1)
+  await expect(page.getByRole('link', { name: /Legacy report:/ })).toHaveAttribute('href', '/scans/25')
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.screenshot({ path: '../artifacts/console-e2e/report-desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: '../artifacts/console-e2e/report-mobile.png', fullPage: true })
+  await page.goto('scans/999999')
+  await expect(page.getByRole('heading', { name: 'Report unavailable' })).toBeVisible()
+  expect(errors).toEqual([])
+})

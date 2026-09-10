@@ -78,16 +78,48 @@ correctness. This release does not yet provide per-client queue fairness, rate
 limits, quotas, or reserved capacity. A noisy client can therefore increase
 another client's queue latency even though records and credentials are isolated.
 
+## Deferred large-file path
+
+`POST /api/v1/deferred-scans` accepts metadata only and immediately returns
+`202 Accepted`. The request carries a client-scoped idempotency key, a
+deployment-approved backend key, and a relative object id. Raw URLs, UNC paths,
+and arbitrary host paths are not accepted. Backend-to-service-client
+authorization is explicit and fail-closed; shared roots may additionally scope
+each client to object prefixes so one tenant cannot reference another tenant's
+folder.
+
+The opt-in deferred intake worker mounts one approved source root read-only. It
+rejects traversal, symlinks/junctions and hardlinked files (even within the same
+backend), validates the opened source handle, copies the bytes into MASP storage,
+checks that the source did not change during copy, verifies optional expected
+size/SHA-256, enforces the configured maximum byte limit, and atomically creates
+the sample, scan, routing snapshot, and engine jobs. Unavailable sources retry
+with bounded exponential backoff; immutable-reference, policy and hash
+mismatches fail explicitly. If any engine in the immutable routing snapshot is
+unavailable before intake, MASP fails the deferred submission before copying instead of
+silently creating partial coverage.
+
+Deferred scans carry `security_events_only` in their immutable snapshot. A
+high/critical completion inserts `malware.detected` into `notification_outbox`
+in the same transaction as completion. A separate worker posts the event to the
+operator-configured SIEM webhook with an idempotency key, optional HMAC-SHA256,
+and retry/backoff. The webhook must use HTTPS unless HTTP is explicitly enabled
+for a lab receiver. Redirect responses are rejected and retried, never treated as
+delivery acknowledgment. Clean/low results do not create an event. Retention and
+manual deletion preserve scans with undelivered outbox events.
+
+This is eventual detection, not preventive blocking: the source application may
+have released the file before detection. Quarantine/delete remediation requires
+an explicitly authorized source-system integration and is not performed here.
+
 ## Next milestones
 
 1. Add multiple named profiles per client and allow an authorized API request to
    select among its own profiles.
 2. Add per-client admission/rate limits, weighted fairness, and quota metrics.
-3. Add a transactional notification outbox with per-client SIEM/webhook routes,
-   retry/backoff, idempotency keys, and delivery audit.
-4. Add an explicit notification-only submission mode. `POST /api/v1/scans`
-   already returns `202` without waiting when `wait_seconds=0`; notification-only
-   means the caller need not poll and receives only configured security events.
+3. Extend global webhook delivery with per-client SIEM routes, delivery
+   metrics/audit, review/policy event selection, and a dead-letter UI.
+4. Add S3-compatible deferred backends, resumable fetch and bandwidth scheduling.
 5. Add client-scoped policy overrides after precedence and snapshot semantics are
    defined. Global safety ceilings must remain authoritative.
 

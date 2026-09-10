@@ -1,0 +1,10 @@
+{
+  "name": "masp-browser-contract-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

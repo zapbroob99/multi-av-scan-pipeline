@@ -1,5 +1,41 @@
 # MASP Single-Host Pilot
 
+The [independent Dashboard/Engines console](../architecture/FRONTEND_SEPARATION.md) is an
+opt-in migration slice with a separate static build/proxy. Legacy screens remain.
+Review its TLS/origin requirements before pilot deployment.
+The console now submits files at `/api/ui/v1/scans`; rebuild the optional frontend
+image to include its exact nginx upload location (64 MiB request ceiling).
+Other browser API bodies remain capped at 128 KiB. Align deployment limits;
+the server still checks its own file policy and HTTP ceiling before intake.
+Manual JSON report reads now use the shared assessment rules and bounded engine
+projections. Manual archive navigation uses `/api/ui/v1/scans/{id}/children` with
+20-row direct-child pages, reusing the existing parent/id index. It neither
+extracts files nor refreshes batch counters. Empty lists are not a clean verdict.
+Update backend and frontend together; legacy reports remain available.
+The `/console/scans/{id}/manage` screen adds bounded summary and full JSON/CSV
+downloads plus confirmed retry/delete. Full JSON contains raw engine output,
+details and findings; CSV contains normalized rows. Both use fixed numeric names,
+omit sample bytes/storage paths and have separate 2 MiB browser output ceilings.
+The full reader rejects over 256 results/jobs or more than 2 MiB of engine source
+fields before hydrating blobs. Invalid policy details retain evidence but suppress
+the decision. Retry is analyst/admin; delete remains admin-only.
+Mutation bodies carry attempt and engine-job revision; old browser bundles must
+be rebuilt with the matching backend. Retry acceptance is asynchronous. Deletion
+reports storage-cleanup failure separately after the database commit. Manual batch
+overviews use bounded indexed pages and persisted counters without refreshing them
+or loading engine output. Full-output and bulk-action screens remain legacy. Validate PostgreSQL locking,
+full-export preflight and query budgets before promotion.
+Browser reads default to a 5-second per-statement PostgreSQL budget and retry/delete
+to a 5-second row-lock budget. Tune `MASP_UI_READ_TIMEOUT_MS` and
+`MASP_UI_WRITE_LOCK_TIMEOUT_MS` only from retained acceptance evidence; both are
+clamped to 100..60000 ms and a budget expiry returns a generic 503.
+Run `npm --prefix frontend run contracts:check` in the development/CI environment
+before bundling a release (generator setup is in the separation guide). Static
+builds use checked-in generated types; deployed nginx needs no Python/generator.
+This check does not prove compatibility with a separately deployed older backend.
+Dashboard startup adds a partial `(source, id)` history index; plan upgrade time
+for existing large histories. API/ICAP and archive children are not in Dashboard history.
+
 This runbook deploys a single-host pilot on one Linux VM. The stack
 contains the web/admin application, REST API, ICAP gateway, one Linux worker,
 ClamAV, YARA, Static Metadata, and a private bundled PostgreSQL. Defender and
@@ -144,6 +180,11 @@ Important settings:
   allowlist accepts exact IP addresses, not CIDR ranges. Keep loopback for the
   local acceptance probe. **This allowlist is a secondary control — see below.**
 - `MASP_STORAGE_DIR=/srv/masp/storage`.
+- Deferred large-file intake is opt-in. Mount a dedicated source path, set
+  `MASP_DEFERRED_FILESYSTEM_BACKEND_KEY`, `MASP_DEFERRED_SOURCE_DIR`, and an
+  explicit `MASP_DEFERRED_BACKEND_CLIENTS_JSON` client mapping, then start
+  `--profile deferred`. Add `--profile notifications` only after setting and
+  testing an HTTPS `MASP_SIEM_WEBHOOK_URL`; the source mount is read-only.
 - Keep the 50 MiB upload and ICAP limits for the synchronous pilot.
 
 The compose file hard-codes fail-closed ICAP and block-on-review. They cannot
@@ -228,6 +269,24 @@ All PostgreSQL-gated cases must **run rather than skip** — a skip means the te
 database URL never reached the tests and the gate did not actually execute, so
 check the summary reports `0 skipped`. The script exits non-zero on failure.
 Retain the output in the pilot acceptance record.
+
+Then run the browser scale benchmark against a second throwaway, loopback-only
+database. The command drops and recreates its `public` schema and deliberately
+refuses ordinary database names:
+
+```bash
+MASP_TEST_POSTGRES_URL='postgresql://USER:PASSWORD@127.0.0.1:55432/masp_browser_acceptance' \
+python tools/benchmark_browser_postgres.py \
+  --confirm-reset-public-schema --rows 100000 --archive-rows 100000 \
+  --output artifacts/postgres-browser-100k.json
+```
+
+Retain the JSON timings and `EXPLAIN (ANALYZE, BUFFERS)` plan summary. Default
+budgets cover latest/deep Dashboard pages, no-match substring search, uncached
+summary, deep/no-match archive pages, indexed deep batch pages and mixed eight-way
+reads. This synthetic, warm-cache loopback gate does not replace a
+deployment-shaped test with worker writes, real row widths, proxy/TLS traffic,
+database monitoring and p95/p99 load.
 
 ### ICAP functional and fail-closed smoke
 
@@ -472,6 +531,13 @@ identity, ACL, preflight, rotation, logging, and uninstall flow in
 [Windows Worker Agent](WINDOWS_WORKER_AGENT.md). Do not promote the Defender
 integration beyond lab status until every acceptance item there has evidence
 from the target Windows image and Defender policy.
+
+Apply the [phase 1 hardening upgrade checks](../security/HARDENING_PHASE_1.md)
+before the next pilot: HTTP multipart bodies have a 64 MiB default deployment
+ceiling; deferred sources reject links; authenticated control and webhook URLs
+must not redirect. The first PostgreSQL sample-size BIGINT migration may lock
+and rewrite the samples table. Plan a backup and maintenance window, and rerun
+long-scan/download liveness checks with the upgraded worker bundle.
 
 After every remote node has registered, create worker pools in the System page
 from the labels published in `MASP_WORKER_LABELS`, then assign each remote engine

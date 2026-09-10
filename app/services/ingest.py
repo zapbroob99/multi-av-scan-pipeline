@@ -4,6 +4,7 @@ import re
 import uuid
 
 from fastapi import UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from app.models import StoredSample
 
@@ -43,6 +44,13 @@ async def store_upload(
     upload: UploadFile,
     max_size_bytes: int | None = None,
 ) -> StoredSample:
+    try:
+        return await run_in_threadpool(_store_upload, upload, max_size_bytes)
+    finally:
+        await upload.close()
+
+
+def _store_upload(upload: UploadFile, max_size_bytes: int | None) -> StoredSample:
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
     upload_limit = configured_upload_max_bytes() if max_size_bytes is None else max_size_bytes
 
@@ -57,7 +65,7 @@ async def store_upload(
 
     try:
         with storage_path.open("wb") as target:
-            while chunk := await upload.read(1024 * 1024):
+            while chunk := upload.file.read(1024 * 1024):
                 size_bytes += len(chunk)
                 if upload_limit is not None and size_bytes > upload_limit:
                     raise UploadTooLargeError(upload_limit, size_bytes)
@@ -68,8 +76,6 @@ async def store_upload(
     except Exception:
         storage_path.unlink(missing_ok=True)
         raise
-    finally:
-        await upload.close()
 
     return StoredSample(
         original_filename=safe_filename,

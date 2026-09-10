@@ -107,12 +107,12 @@ class RunMaintenanceTests(unittest.TestCase):
 
 
 class ScanEngineWorkerTests(unittest.TestCase):
-    def test_process_scan_engine_job_runs_adapter_and_marks_terminal(self) -> None:
+    def test_process_scan_engine_job_attributes_adapter_result_to_named_instance(self) -> None:
         scan = replace(make_scan(), source="api")
-        engine = make_engine("static_metadata", "Static Metadata")
+        engine = make_engine("static_metadata", "Static")
         job = make_job(scan.id, engine)
         result = EngineResultInput(
-            engine_name=engine.display_name,
+            engine_name="Static Metadata",
             status="completed",
             detected=False,
             severity="info",
@@ -163,7 +163,10 @@ class ScanEngineWorkerTests(unittest.TestCase):
         commit_result.assert_called_once()
         _, commit_kwargs = commit_result.call_args
         self.assertEqual(commit_kwargs["job_id"], job.id)
-        self.assertEqual(commit_kwargs["result"], result)
+        self.assertEqual(
+            commit_kwargs["result"],
+            replace(result, engine_name=job.engine_name),
+        )
         self.assertEqual(commit_kwargs["terminal_status"], "completed")
         self.assertEqual(commit_kwargs["attempt_generation"], job.attempt_count)
         finalize.assert_called_once()
@@ -708,6 +711,13 @@ class ReapOrphanedEngineJobsTests(unittest.TestCase):
 
     def _reap(self, **overrides):
         scan = make_scan()
+        if overrides.get("deferred"):
+            scan = replace(
+                scan,
+                profile_snapshot_json=(
+                    '{"delivery":{"mode":"security_events_only"}}'
+                ),
+            )
         static_engine = replace(
             make_engine("static_metadata", "Static Metadata"), id=10
         )
@@ -818,6 +828,84 @@ class ReapOrphanedEngineJobsTests(unittest.TestCase):
         create_result.assert_not_called()
         finalize.assert_not_called()
 
+    def test_deferred_scan_waits_for_engine_beyond_sync_window(self) -> None:
+        reaped, skip_pending, create_result, finalize, _, _ = self._reap(
+            deferred=True,
+            window_elapsed=True,
+        )
+
+        self.assertFalse(reaped)
+        skip_pending.assert_not_called()
+        create_result.assert_not_called()
+        finalize.assert_not_called()
+
+    def test_reaper_pages_past_deferred_scans(self) -> None:
+        deferred_scans = [
+            replace(
+                make_scan(),
+                id=index + 1,
+                profile_snapshot_json='{"delivery":{"mode":"security_events_only"}}',
+            )
+            for index in range(20)
+        ]
+        normal_scan = replace(make_scan(), id=2)
+        static_engine = replace(
+            make_engine("static_metadata", "Static Metadata"), id=10
+        )
+        defender_engine = replace(
+            make_engine("microsoft_defender", "Microsoft Defender"), id=11
+        )
+        normal_jobs = [
+            replace(make_job(normal_scan.id, static_engine), id=1, status="completed"),
+            replace(
+                make_job(normal_scan.id, defender_engine),
+                id=2,
+                engine_instance_id=None,
+                status="pending",
+                worker_id=None,
+            ),
+        ]
+
+        def active_page(*, limit=20, offset=0):
+            if offset == 0:
+                return deferred_scans
+            if offset == 20:
+                return [normal_scan]
+            return []
+
+        with patch(
+            "app.workers.scan_worker.get_worker_status",
+            return_value={"engine_keys": ["static_metadata"]},
+        ), patch(
+            "app.workers.scan_worker.enabled_engines",
+            return_value=[static_engine, defender_engine],
+        ), patch(
+            "app.workers.scan_worker.list_active_scans",
+            side_effect=active_page,
+        ) as list_active, patch(
+            "app.workers.scan_worker.list_scan_engine_jobs",
+            return_value=normal_jobs,
+        ), patch(
+            "app.workers.scan_worker.should_finalize_scan_with_partial_results",
+            return_value=True,
+        ), patch(
+            "app.workers.scan_worker.partial_results_wait_seconds", return_value=30
+        ), patch(
+            "app.workers.scan_worker.skip_pending_scan_engine_job", return_value=True
+        ) as skip_pending, patch(
+            "app.workers.scan_worker.skipped_engine_result",
+            return_value="skipped-result-sentinel",
+        ), patch(
+            "app.workers.scan_worker.create_engine_result_if_missing"
+        ), patch(
+            "app.workers.scan_worker.finalize_scan_if_complete", return_value=True
+        ), patch("app.workers.scan_worker.record_worker_timing_event"):
+            reaped = reap_orphaned_engine_jobs(self.WORKER_KEYS)
+
+        self.assertTrue(reaped)
+        self.assertEqual([call.kwargs["offset"] for call in list_active.call_args_list], [0, 20])
+        skip_pending.assert_called_once()
+
     def test_reaper_preserves_instance_identity_for_shared_adapter(self) -> None:
         scan = make_scan()
         clamav_primary = replace(
@@ -858,7 +946,7 @@ class ReapOrphanedEngineJobsTests(unittest.TestCase):
             "app.workers.scan_worker.skip_pending_scan_engine_job", return_value=True
         ), patch(
             "app.workers.scan_worker.skipped_engine_result",
-            side_effect=lambda _scan, engine, _keys, _wait: engine.display_name,
+            side_effect=lambda _scan, engine, _keys, _wait, **_kwargs: engine.display_name,
         ), patch(
             "app.workers.scan_worker.create_engine_result_if_missing"
         ) as create_result, patch(

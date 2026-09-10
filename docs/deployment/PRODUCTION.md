@@ -1,5 +1,64 @@
 # MASP Production Deployment Runbook
 
+The [independent Dashboard/Engines console](../architecture/FRONTEND_SEPARATION.md) is an
+opt-in incremental migration. Its frontend overlay requires separate nginx/TLS,
+trusted-proxy, secure-cookie and release-image validation before production use.
+Browser contract export/type generation is a build-time gate, not a deployed
+service. Use the documented schema-tooling dependency baseline and both lockfiles
+for contract checks, then package backend and frontend from the same tested
+revision. Ordinary frontend builds remain Node-only. Generated types do not
+runtime-validate responses from an outdated server or establish engine support.
+Manual scan management now supports summary/full JSON/CSV downloads and CSRF-protected
+retry/delete with attempt plus engine-job revision checks. Retry resets and
+creates engine jobs in one transaction; shared delete rejects active scans,
+shared samples and pending notifications. Browser delete also protects parents
+with registered children. Retry/delete row-lock waits have a transaction-local
+budget. Full exports run only on click in the report snapshot, preflight at most
+256 results/jobs and 2 MiB of engine source fields before hydrating blobs, and
+then enforce a separate 2 MiB serialized-output ceiling. JSON includes raw output,
+details and findings; CSV retains normalized rows. Neither includes sample bytes,
+storage paths or integration settings. Invalid policy details suppress the decision.
+Validate sample-reference/outbox lookup plans and export concurrency at deployment
+scale. These ceilings do not guarantee bounded database work or server memory;
+JSON transport escaping adds overhead. Manual batch overviews use the existing
+`(batch_id, created_at, id)` index, paired keyset cursors and persisted counters;
+GET does not refresh counters or load engine output. Validate deep pages and stale
+counter behavior under worker writes. Full-output and bulk-action screens retain
+legacy behavior.
+Deletion commits before sample cleanup; failed cleanup needs administrator follow-up.
+Browser sample uploads use the exact `/api/ui/v1/scans` multipart endpoint.
+Rebuild the frontend image for its 64 MiB nginx exception; do not raise the
+128 KiB limit for all browser API requests. Align proxy/server file limits and
+budget spool storage and upload concurrency. No distributed upload admission or
+request-idempotency guarantee is added by the console; ambiguous network failures
+must be reconciled against history before a user retries.
+Manual report reads use short PostgreSQL REPEATABLE READ transactions, with no
+worker-row locks and a transaction-local statement budget. Large/invalid policy
+payloads suppress the compact decision and direct the user to the legacy report.
+SQL substring projection bounds transfer, not necessarily database TOAST/decompression
+work. No new schema migration or engine support promotion is part of this slice.
+Archive navigation similarly uses a consistent read snapshot and bounded direct
+children (20 default, 100 maximum), manual/batch scope and a parent-attempt guard
+on later pages. It reuses `idx_scan_jobs_parent`, does not count/load whole trees
+or write batch counters, and never extracts files. Child-presence checks use a
+second, page-bounded set of constant index probes in the same snapshot to avoid
+correlated sequential scans on highly skewed parents. Selective/no-match search
+can still examine many rows. Retained child records are not a fresh extraction
+inventory or a clean/full-coverage guarantee.
+The new partial Dashboard seek index is created during startup, not concurrently;
+budget a maintenance window for large existing histories. Summary caching is
+per API process, not distributed. Validate cold aggregate and substring-search
+cost under concurrent PostgreSQL traffic before scaling; page-size bounds do not
+bound the number of rows examined by those queries.
+
+A local disposable PostgreSQL 16 benchmark with 100,000 Dashboard rows, 100,000
+archive children, indexed deep batch pages and eight-way mixed reads passed the
+repository's default budgets. This establishes a regression baseline, not
+production capacity. Repeat
+`tools/benchmark_browser_postgres.py` against an isolated loopback acceptance
+database with deployment-shaped rows, worker writes and database telemetry before
+promotion; the tool destroys the target `public` schema and refuses deployed hosts.
+
 Deploys MASP against an **external, operator-managed PostgreSQL** using
 `docker-compose.prod.yml` and an operator-managed `.env.production`. The local
 `docker-compose.yml` is for development only (bundled dev database, hardcoded
@@ -90,6 +149,14 @@ URL-encode special characters in the PostgreSQL username/password. The example
 DSN uses `sslmode=require`; use `sslmode=verify-full` only after mounting the
 corporate CA and configuring its path in the DSN.
 
+`MASP_UI_READ_TIMEOUT_MS` limits each browser read statement and
+`MASP_UI_WRITE_LOCK_TIMEOUT_MS` limits retry/delete row-lock waits. Both default
+to 5000 ms and clamp to 100..60000 ms. They use PostgreSQL transaction-local
+settings, so a timed-out request cannot poison a later pooled transaction.
+Browser reads also force custom plans inside their transaction because archive
+parent selectivity varies sharply. Budget expiry returns a sanitized 503; retain
+database logs/metrics to distinguish query pressure from lock contention.
+
 Database pooling is per process. Budget the maximum as:
 
 ```text
@@ -127,6 +194,28 @@ REST + ICAP:
 docker compose -f docker-compose.prod.yml --env-file .env.production \
     --profile icap up -d --build
 ```
+
+Deferred large-file intake and SIEM delivery are separate opt-in processes:
+
+```bash
+# Mount MASP_DEFERRED_SOURCE_DIR from NFS/SMB on the host first.
+docker compose -f docker-compose.prod.yml --env-file .env.production \
+  --profile deferred --profile notifications up -d --build
+```
+
+Set `MASP_DEFERRED_FILESYSTEM_BACKEND_KEY` to the API-visible logical name and
+`MASP_DEFERRED_SOURCE_DIR` to its absolute host mount. It is exposed read-only
+to the intake container and must be a dedicated integration source. Deferred
+storage is fail-closed: map each backend to allowed service-client keys with
+`MASP_DEFERRED_BACKEND_CLIENTS_JSON`, for example `{"drive":["drive"]}`. For a
+shared root, scope clients to prefixes, for example
+`{"shared":{"drive":["drive/inbox"],"large-transfer":["transfer/inbox"]}}`.
+Set `MASP_DEFERRED_MAX_BYTES` to the largest deferred object MASP may copy.
+
+Set `MASP_SIEM_WEBHOOK_URL` to an HTTPS endpoint; optionally set
+`MASP_SIEM_WEBHOOK_SECRET` so each body carries `X-MASP-Signature-SHA256`.
+HTTP webhooks are rejected unless `MASP_SIEM_WEBHOOK_ALLOW_HTTP=true` is set
+for a lab-only receiver.
 
 The app and worker bootstrap the schema **concurrently and safely** — a
 PostgreSQL advisory lock in `init_postgres_db` serializes first-run schema
@@ -195,6 +284,10 @@ healthcheck has a 120s start period. Workers wait for clamd to be healthy.
   not sufficient evidence that the antivirus is usable.
 - **Backups:** back up the external PostgreSQL and the `MASP_STORAGE_DIR`
   sample directory. The `clamav-db` volume is a rebuildable cache.
+- **Deferred intake:** monitor pending/failed `deferred_scan_submissions`; source
+  outages intentionally retain work and retry instead of blocking Drive.
+- **Notifications:** monitor `notification_outbox` pending age and delivery
+  errors. Webhook downtime never blocks scan completion.
 
 ## Monitoring and alerting
 
@@ -232,6 +325,13 @@ degrades detection without failing anything).
 
 ## Security checklist
 
+For this upgrade, review [phase 1 hardening](../security/HARDENING_PHASE_1.md):
+set the total multipart ceiling (`MASP_HTTP_UPLOAD_MAX_BYTES`, default 64 MiB),
+replace linked deferred sources with regular files, use non-redirecting control
+and webhook URLs, and plan the one-time PostgreSQL `samples.size_bytes` BIGINT
+migration. The migration can lock/rewrite the table; schedule it with a backup
+and sufficient disk space rather than assuming a zero-downtime restart.
+
 - [ ] `MASP_API_TOKEN` is strong and unique; rotated on a schedule.
 - [ ] MASP ports bound to localhost / private network; only the TLS proxy is
       public.
@@ -265,6 +365,7 @@ degrades detection without failing anything).
       overridden locally).
 - [ ] `MASP_RETENTION_DAYS` is set above `0`. It defaults to `0`, which keeps
       every sample forever; decide the retention window with the data owner.
+      Cleanup applies only to terminal scans, never queued deferred work.
 - [ ] Admin > Audit is reviewed after acceptance tests; audit retention, backup,
       export/SIEM forwarding, and legal-hold ownership are documented. The local
       trail is application-level append-only and best effort, not immutable

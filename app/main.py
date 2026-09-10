@@ -19,6 +19,7 @@ from app.database import (
     count_scan_history,
     count_scans_older_than,
     count_users_by_role,
+    create_deferred_scan_submission,
     create_worker_pool,
     create_api_client_credential,
     create_service_client_bundle,
@@ -28,6 +29,7 @@ from app.database import (
     delete_user,
     delete_worker_pool,
     get_scan,
+    get_deferred_scan_submission,
     get_scan_batch,
     get_scan_queue_position,
     get_queue_metrics,
@@ -72,6 +74,7 @@ from app.models import (
     AuditEventRecord,
     EngineInstanceRecord,
     EngineResultRecord,
+    DeferredScanRecord,
     ScanBatchRecord,
     ScanRecord,
     UserRecord,
@@ -131,6 +134,13 @@ from app.services.engine_registry import (
     remove_engine,
 )
 from app.services.ingest import UploadTooLargeError, store_upload
+from app.services.deferred_storage import (
+    DeferredSourceError,
+    backend_allowed_for_client,
+    configured_backend_keys,
+    max_deferred_source_bytes,
+    validate_object_id,
+)
 from app.services.hash_scanning import (
     HashEngineError,
     HashEngineRun,
@@ -158,9 +168,9 @@ from app.services.api_payloads import (
 )
 from app.services.retention import RetentionPolicy, retention_cutoff_value, retention_policy_from_env
 from app.services.reports import (
+    build_scan_report_csv as build_shared_scan_report_csv,
+    build_scan_report_payload as build_shared_scan_report_payload,
     build_report_finding_rows,
-    create_scan_report_csv,
-    create_scan_report_payload,
     parse_json_value,
     report_filename_base,
     result_findings,
@@ -192,9 +202,13 @@ from app.services.service_clients import (
     identity_can_access_scan,
     hash_api_token,
     profile_snapshot_json,
+    required_detection_engine_names,
     seed_legacy_service_client,
     snapshot_labels,
 )
+from app.services.upload_admission import UploadAdmissionRoute
+from app.services.ui_api import router as ui_router
+from app.services.engine_setup import _setup_form_text, engine_setup_from_form
 from app.services.yara_rules import (
     delete_yara_rule,
     list_yara_rules,
@@ -212,6 +226,7 @@ app = FastAPI(
     version="0.1.0",
 )
 logger = logging.getLogger(__name__)
+app.router.route_class = UploadAdmissionRoute
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -228,6 +243,7 @@ seed_default_engines()
 seed_legacy_service_client()
 
 app.include_router(worker_control_router)
+app.include_router(ui_router)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -262,6 +278,9 @@ async def audit_http_requests(request: Request, call_next):
         raise
 
     response.headers["X-Request-ID"] = request.state.audit_request_id
+    if request.url.path.startswith("/api/ui/v1/"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
     if audited:
         try:
             await run_in_threadpool(
@@ -644,6 +663,13 @@ def page_shell(
           const engineAdapterChoices = document.querySelectorAll("[data-engine-adapter-choice]");
           const engineSetupPanels = document.querySelectorAll("[data-engine-setup]");
           const engineDisplayName = document.querySelector("[data-engine-display-name]");
+          const engineAdapterList = document.querySelector("[data-engine-adapter-list]");
+          const engineSelectedAdapter = document.querySelector("[data-engine-selected-adapter]");
+          const engineSelectedAdapterLabel = document.querySelector("[data-engine-selected-adapter-label]");
+          const engineSelectedAdapterDetail = document.querySelector("[data-engine-selected-adapter-detail]");
+          const engineChangeAdapter = document.querySelector("[data-engine-change-adapter]");
+          const engineConfigSections = document.querySelectorAll("[data-engine-config-section]");
+          let engineAdapterListExpanded = false;
 
           const syncClamavSetupMode = (panel, active) => {{
             const modeSelect = panel.querySelector("[data-clamav-mode]");
@@ -661,8 +687,27 @@ def page_shell(
           const syncEngineSetup = () => {{
             const selected = Array.from(engineAdapterChoices).find((choice) => choice.checked);
             const selectedKey = selected ? selected.value : "";
+            const showEngineConfig = Boolean(selected && !engineAdapterListExpanded);
+            if (engineAdapterList) {{
+              engineAdapterList.hidden = Boolean(selected && !engineAdapterListExpanded);
+            }}
+            if (engineSelectedAdapter) {{
+              engineSelectedAdapter.hidden = !selected || engineAdapterListExpanded;
+            }}
+            if (selected && engineSelectedAdapterLabel) {{
+              engineSelectedAdapterLabel.textContent = selected.getAttribute("data-adapter-label") || selectedKey;
+            }}
+            if (selected && engineSelectedAdapterDetail) {{
+              engineSelectedAdapterDetail.textContent = selected.getAttribute("data-adapter-detail") || "";
+            }}
+            engineConfigSections.forEach((section) => {{
+              section.hidden = !showEngineConfig;
+              section.querySelectorAll("input, select, textarea, button").forEach((field) => {{
+                field.disabled = !showEngineConfig;
+              }});
+            }});
             engineSetupPanels.forEach((panel) => {{
-              const activePanel = panel.getAttribute("data-engine-setup") === selectedKey;
+              const activePanel = showEngineConfig && panel.getAttribute("data-engine-setup") === selectedKey;
               panel.hidden = !activePanel;
               panel.querySelectorAll("input, select, textarea").forEach((field) => {{
                 field.disabled = !activePanel;
@@ -673,12 +718,28 @@ def page_shell(
               engineDisplayName.placeholder = selected
                 ? selected.getAttribute("data-instance-placeholder") || "Production engine"
                 : "Select an adapter first";
+              engineDisplayName.disabled = !showEngineConfig;
             }}
           }};
 
           engineAdapterChoices.forEach((choice) => {{
-            choice.addEventListener("change", syncEngineSetup);
+            choice.addEventListener("click", () => {{
+              if (engineAdapterListExpanded && choice.checked) {{
+                engineAdapterListExpanded = false;
+                syncEngineSetup();
+              }}
+            }});
+            choice.addEventListener("change", () => {{
+              engineAdapterListExpanded = false;
+              syncEngineSetup();
+            }});
           }});
+          if (engineChangeAdapter) {{
+            engineChangeAdapter.addEventListener("click", () => {{
+              engineAdapterListExpanded = true;
+              syncEngineSetup();
+            }});
+          }}
           engineSetupPanels.forEach((panel) => {{
             const modeSelect = panel.querySelector("[data-clamav-mode]");
             if (modeSelect) {{
@@ -843,6 +904,14 @@ def page_shell(
                   closeModal(modal);
                 }}
               }});
+            }});
+
+            document.querySelectorAll("dialog[data-modal][data-auto-open]").forEach((modal) => {{
+              if (typeof modal.showModal === "function") {{
+                modal.showModal();
+              }} else {{
+                modal.setAttribute("open", "");
+              }}
             }});
           }}
 
@@ -1356,6 +1425,45 @@ def build_api_scan_result_payload(
     return payload
 
 
+def deferred_scan_payload(
+    request: Request, record: DeferredScanRecord, *, duplicate: bool = False
+) -> dict[str, object]:
+    links = {
+        "status": str(
+            request.url_for("api_deferred_scan_status", submission_id=record.id)
+        )
+    }
+    if record.scan_job_id is not None:
+        links.update(api_scan_links(request, record.scan_job_id))
+    if record.status == "pending":
+        detail = "Deferred object accepted; MASP will fetch and scan it independently."
+    elif record.status == "claimed":
+        detail = "Deferred object is being fetched and verified by MASP."
+    elif record.status == "queued":
+        detail = "Deferred object was fetched and queued for engine scanning."
+    elif record.status == "failed":
+        detail = "Deferred object intake failed before a scan could be queued."
+    elif record.status == "completed":
+        detail = "Deferred scan completed."
+    else:
+        detail = "Deferred submission status loaded."
+    return {
+        "accepted": True,
+        "duplicate": duplicate,
+        "submission_id": record.id,
+        "client_request_id": record.client_request_id,
+        "status": record.status,
+        "scan_id": record.scan_job_id,
+        "detail": detail,
+        "attempts": record.attempt_count,
+        "available_at": record.available_at,
+        "last_error": record.last_error if record.status == "failed" else None,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "links": links,
+    }
+
+
 async def enqueue_scan_from_upload(
     sample: UploadFile,
     *,
@@ -1381,13 +1489,13 @@ async def enqueue_scan_from_upload(
         scan_profile_id = None
         snapshot = "{}"
         if api_identity is not None:
-            selected_engines = engines_for_profile(
+            selected_engines = await run_in_threadpool(engines_for_profile,
                 api_identity.profile.id, source=source
             )
             service_client_id = api_identity.client.id
             scan_profile_id = api_identity.profile.id
-            snapshot = profile_snapshot_json(api_identity, selected_engines)
-        return enqueue_scan_from_stored_sample(
+            snapshot = await run_in_threadpool(profile_snapshot_json, api_identity, selected_engines)
+        return await run_in_threadpool(enqueue_scan_from_stored_sample,
             stored_sample,
             case_name=case_name,
             priority=priority,
@@ -1695,11 +1803,13 @@ def render_worker_node_rows(worker_status: dict[str, object]) -> str:
               <td>
                 <form action="/workers/state" method="post" class="inline-actions" data-action-form data-preserve-scroll>
                   <input type="hidden" name="node_id" value="{html.escape(node_id)}">
+                  <input type="hidden" name="system_tab" value="worker-nodes">
                   <select name="lifecycle_state" aria-label="Lifecycle for {html.escape(node_id)}">{options}</select>
                   <button class="secondary-action compact-action" type="submit" data-busy-label="Saving...">Save</button>
                 </form>
                 <form action="/workers/credentials/revoke" method="post" class="inline-actions" data-action-form data-preserve-scroll data-confirm="Revoke this node's active agent credential? Running control-API work will lose authorization.">
                   <input type="hidden" name="node_id" value="{html.escape(node_id)}">
+                  <input type="hidden" name="system_tab" value="worker-nodes">
                   <button class="secondary-action compact-action" type="submit" data-busy-label="Revoking...">Revoke agent</button>
                 </form>
               </td>
@@ -1743,8 +1853,9 @@ def render_worker_pool_rows(
               <td><code>{html.escape(selector_text)}</code></td>
               <td>{status_pill("active" if pool.enabled else "disabled")}</td>
               <td>{html.escape(assignment_text)}</td>
-              <td>
-                <form action="/worker-pools/{pool.id}/update" method="post" class="inline-actions" data-action-form data-preserve-scroll>
+              <td class="system-actions-cell">
+                <form action="/worker-pools/{pool.id}/update" method="post" class="system-pool-edit-form" data-action-form data-preserve-scroll>
+                  <input type="hidden" name="system_tab" value="worker-pools">
                   <input name="pool_name" value="{html.escape(pool.name)}" aria-label="Pool name">
                   <input name="pool_selector" value="{html.escape(selector_text)}" aria-label="Pool selector">
                   <select name="pool_state" aria-label="Pool state">
@@ -1753,7 +1864,8 @@ def render_worker_pool_rows(
                   </select>
                   <button class="secondary-action compact-action" type="submit" data-busy-label="Saving...">Save</button>
                 </form>
-                <form action="/worker-pools/{pool.id}/delete" method="post" class="inline-actions" data-action-form data-preserve-scroll>
+                <form action="/worker-pools/{pool.id}/delete" method="post" class="system-pool-delete-form" data-action-form data-preserve-scroll>
+                  <input type="hidden" name="system_tab" value="worker-pools">
                   <button class="danger-action compact-action" type="submit" data-busy-label="Deleting...">Delete</button>
                 </form>
               </td>
@@ -1787,9 +1899,10 @@ def render_engine_placement_rows(
             <tr>
               <td><strong>{html.escape(engine.display_name)}</strong><small>{html.escape(engine.adapter_key)}</small></td>
               <td>{html.escape(next((pool.name for pool in pools if pool.id == assigned_pool_id), "Unbound"))}</td>
-              <td>
-                <form action="/engines/pool" method="post" class="inline-actions" data-action-form data-preserve-scroll>
+              <td class="system-actions-cell">
+                <form action="/engines/pool" method="post" class="system-placement-form" data-action-form data-preserve-scroll>
                   <input type="hidden" name="engine_instance_id" value="{engine.id}">
+                  <input type="hidden" name="system_tab" value="engine-placement">
                   <select name="worker_pool_id" aria-label="Worker pool for {html.escape(engine.display_name)}">{"".join(options)}</select>
                   <button class="secondary-action compact-action" type="submit" data-busy-label="Assigning...">Assign</button>
                 </form>
@@ -1843,6 +1956,121 @@ def render_system_engine_rows(
             """
         )
     return "\n".join(rows)
+
+
+SYSTEM_TAB_KEYS = {
+    "overview",
+    "worker-nodes",
+    "worker-pools",
+    "engine-placement",
+    "runtime-queue",
+}
+
+
+def normalize_system_tab(tab: str) -> str:
+    normalized = tab.strip().lower()
+    return normalized if normalized in SYSTEM_TAB_KEYS else "overview"
+
+
+def system_redirect_url(
+    *,
+    message: str = "",
+    error: str = "",
+    tab: str = "overview",
+    params: dict[str, str] | None = None,
+) -> str:
+    query_params = dict(params or {})
+    query_params["tab"] = normalize_system_tab(tab)
+    return redirect_url("/system", message=message, error=error, params=query_params)
+
+
+SYSTEM_TABS_SCRIPT = """
+    <script>
+      (() => {
+        const root = document.querySelector("[data-system-tabs]");
+        if (!root) {
+          return;
+        }
+        const tabs = Array.from(root.querySelectorAll("[data-system-tab]"));
+        const panels = Array.from(root.querySelectorAll("[data-system-panel]"));
+        const panelIds = new Set(panels.map((panel) => panel.id));
+        const defaultTab = root.getAttribute("data-default-tab") || "overview";
+        const storageKey = "masp-system-active-tab";
+
+        const cleanTab = (rawValue) => {
+          const value = String(rawValue || "").replace(/^#/, "");
+          return panelIds.has(value) ? value : defaultTab;
+        };
+
+        const rememberTab = (activeId) => {
+          try {
+            window.sessionStorage.setItem(storageKey, activeId);
+          } catch (error) {
+            console.warn("System tab preference could not be saved", error);
+          }
+        };
+
+        const rememberedTab = () => {
+          try {
+            return window.sessionStorage.getItem(storageKey);
+          } catch (error) {
+            return null;
+          }
+        };
+
+        const updateTabUrl = (activeId) => {
+          if (!window.history || !window.history.replaceState) {
+            return;
+          }
+          const url = new URL(window.location.href);
+          url.searchParams.set("tab", activeId);
+          url.hash = "";
+          window.history.replaceState(null, "", url);
+        };
+
+        const activateTab = (rawValue, updateUrl = false) => {
+          const activeId = cleanTab(rawValue);
+          root.classList.add("system-tabs-ready");
+          panels.forEach((panel) => {
+            const active = panel.id === activeId;
+            panel.hidden = !active;
+            panel.classList.toggle("is-active", active);
+          });
+          tabs.forEach((tab) => {
+            const active = cleanTab(tab.getAttribute("href")) === activeId;
+            tab.classList.toggle("is-active", active);
+            tab.setAttribute("aria-selected", active ? "true" : "false");
+            tab.setAttribute("tabindex", active ? "0" : "-1");
+          });
+          rememberTab(activeId);
+          if (updateUrl) {
+            updateTabUrl(activeId);
+          }
+        };
+
+        const params = new URLSearchParams(window.location.search);
+        activateTab(
+          window.location.hash ||
+          params.get("tab") ||
+          rememberedTab() ||
+          root.getAttribute("data-active-tab")
+        );
+
+        tabs.forEach((tab) => {
+          tab.addEventListener("click", (event) => {
+            event.preventDefault();
+            activateTab(tab.getAttribute("href"), true);
+            window.scrollTo({
+              top: Math.max(0, root.getBoundingClientRect().top + window.scrollY - 96),
+              behavior: "smooth",
+            });
+          });
+        });
+
+        window.addEventListener("hashchange", () => activateTab(window.location.hash));
+      })();
+    </script>
+"""
 
 
 def render_system_queue_rows(active_scans: list[ScanRecord]) -> str:
@@ -1914,6 +2142,7 @@ def render_retention_panel(policy: RetentionPolicy) -> str:
         <div class="retention-actions">
           <p>{html.escape(helper_text)}</p>
           <form action="/system/retention/run" method="post" data-action-form data-preserve-scroll>
+            <input type="hidden" name="system_tab" value="overview">
             <button class="danger-action" type="submit" data-busy-label="Cleaning old scans..." {action_disabled}>
               Run cleanup
             </button>
@@ -1929,6 +2158,7 @@ def render_system_page(
     error: str = "",
     pool_name: str = "",
     pool_selector: str = "",
+    active_tab: str = "overview",
 ) -> str:
     worker_status = get_worker_status()
     queue_metrics = get_queue_metrics()
@@ -1943,6 +2173,34 @@ def render_system_page(
         page_notice("System updated", message, "success")
         + page_notice("Action blocked", error, "danger")
     )
+    active_system_tab = normalize_system_tab(active_tab)
+    registered_node_count = (
+        len(worker_status.get("nodes", []))
+        if isinstance(worker_status.get("nodes"), list)
+        else 0
+    )
+    system_tabs = [
+        ("overview", "Overview", "Status, queue, retention"),
+        ("worker-nodes", "Managed worker nodes", f"{registered_node_count} registered"),
+        ("worker-pools", "Worker pools", f"{len(worker_pools)} configured"),
+        ("engine-placement", "Engine placement", f"{len(engines)} engines"),
+        ("runtime-queue", "Runtime & queue", f"{len(active_scans)} active shown"),
+    ]
+    system_tabs_html = "\n".join(
+        f"""
+        <a class="system-tab {'is-active' if key == active_system_tab else ''}"
+           id="system-tab-{key}"
+           href="#{key}"
+           role="tab"
+           aria-selected="{'true' if key == active_system_tab else 'false'}"
+           aria-controls="{key}"
+           data-system-tab>
+          <strong>{html.escape(label)}</strong>
+          <span>{html.escape(detail)}</span>
+        </a>
+        """
+        for key, label, detail in system_tabs
+    )
 
     body = f"""
     {notice_html}
@@ -1953,14 +2211,41 @@ def render_system_page(
       {metric_card("Failures", str(queue_metrics["failed"]), "Failed scan jobs", "tone-red")}
     </section>
 
-    <section class="system-layout">
-      <div class="panel system-wide">
+    <section class="system-tabs-shell" data-system-tabs data-default-tab="overview" data-active-tab="{html.escape(active_system_tab)}">
+      <nav class="system-tabs" role="tablist" aria-label="System sections">
+        {system_tabs_html}
+      </nav>
+
+      <div id="overview" class="system-tab-panel system-layout" role="tabpanel" aria-labelledby="system-tab-overview" data-system-panel>
+        {render_worker_status_panel(worker_status)}
+
+        <div class="panel">
+          <div class="panel-header compact">
+            <div>
+              <h2>Queue health</h2>
+              <p>{queue_metrics["active"]} active of {queue_metrics["total"]} total scan jobs.</p>
+            </div>
+            <span class="pill neutral">{supported_engine_count} worker engine keys</span>
+          </div>
+          <div class="status-summary-grid">
+            <div><span>Completed</span><strong>{queue_metrics["completed"]}</strong></div>
+            <div><span>Failed</span><strong>{queue_metrics["failed"]}</strong></div>
+            <div><span>Queued</span><strong>{queue_metrics["queued"]}</strong></div>
+            <div><span>Running</span><strong>{queue_metrics["running"]}</strong></div>
+          </div>
+        </div>
+
+        {render_retention_panel(retention_policy)}
+      </div>
+
+      <div id="worker-nodes" class="system-tab-panel system-layout" role="tabpanel" aria-labelledby="system-tab-worker-nodes" data-system-panel>
+        <div class="panel system-wide">
         <div class="panel-header compact">
           <div>
             <h2>Managed worker nodes</h2>
             <p>Stable identity, lifecycle, capacity, labels, and advertised engine capabilities.</p>
           </div>
-          <span class="pill neutral">{len(worker_status.get("nodes", [])) if isinstance(worker_status.get("nodes"), list) else 0} registered</span>
+          <span class="pill neutral">{registered_node_count} registered</span>
         </div>
         <div class="table-wrap">
           <table>
@@ -1981,7 +2266,9 @@ def render_system_page(
           </table>
         </div>
       </div>
+      </div>
 
+      <div id="worker-pools" class="system-tab-panel system-layout" role="tabpanel" aria-labelledby="system-tab-worker-pools" data-system-panel>
       <div class="panel system-wide">
         <div class="panel-header compact">
           <div>
@@ -1990,9 +2277,16 @@ def render_system_page(
           </div>
           <span class="pill neutral">{len(worker_pools)} configured</span>
         </div>
-        <form action="/worker-pools/create" method="post" class="inline-actions" data-action-form data-preserve-scroll>
-          <input name="pool_name" value="{html.escape(pool_name)}" placeholder="Istanbul Windows" required aria-label="Pool name">
-          <input name="pool_selector" value="{html.escape(pool_selector)}" placeholder="site=istanbul,os=windows" required aria-label="Pool selector">
+        <form action="/worker-pools/create" method="post" class="system-pool-create-form" data-action-form data-preserve-scroll>
+          <input type="hidden" name="system_tab" value="worker-pools">
+          <label>
+            <span>Pool name</span>
+            <input name="pool_name" value="{html.escape(pool_name)}" placeholder="Istanbul Windows" required aria-label="Pool name">
+          </label>
+          <label>
+            <span>Selector</span>
+            <input name="pool_selector" value="{html.escape(pool_selector)}" placeholder="site=istanbul,os=windows" required aria-label="Pool selector">
+          </label>
           <button class="primary-action compact-action" type="submit" data-busy-label="Creating...">Create pool</button>
         </form>
         <p class="form-helper">Selector format: comma-separated key=value labels, for example <code>site=istanbul,os=windows</code>. The worker node must advertise every label.</p>
@@ -2003,7 +2297,9 @@ def render_system_page(
           </table>
         </div>
       </div>
+      </div>
 
+      <div id="engine-placement" class="system-tab-panel system-layout" role="tabpanel" aria-labelledby="system-tab-engine-placement" data-system-panel>
       <div class="panel system-wide">
         <div class="panel-header compact">
           <div>
@@ -2018,7 +2314,9 @@ def render_system_page(
           </table>
         </div>
       </div>
+      </div>
 
+      <div id="runtime-queue" class="system-tab-panel system-layout" role="tabpanel" aria-labelledby="system-tab-runtime-queue" data-system-panel>
       <div class="panel">
         <div class="panel-header compact">
           <div>
@@ -2043,22 +2341,6 @@ def render_system_page(
               {render_system_worker_rows(worker_status)}
             </tbody>
           </table>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header compact">
-          <div>
-            <h2>Queue health</h2>
-            <p>{queue_metrics["active"]} active of {queue_metrics["total"]} total scan jobs.</p>
-          </div>
-          <span class="pill neutral">{supported_engine_count} worker engine keys</span>
-        </div>
-        <div class="status-summary-grid">
-          <div><span>Completed</span><strong>{queue_metrics["completed"]}</strong></div>
-          <div><span>Failed</span><strong>{queue_metrics["failed"]}</strong></div>
-          <div><span>Queued</span><strong>{queue_metrics["queued"]}</strong></div>
-          <div><span>Running</span><strong>{queue_metrics["running"]}</strong></div>
         </div>
       </div>
 
@@ -2118,9 +2400,9 @@ def render_system_page(
           </table>
         </div>
       </div>
-
-      {render_retention_panel(retention_policy)}
+      </div>
     </section>
+    {SYSTEM_TABS_SCRIPT}
     """
     return page_shell("System", "system", body, user, refresh_seconds=10)
 
@@ -2186,13 +2468,7 @@ def render_engine_logo(label: str, key: str) -> str:
         return f"""
         <span class="engine-logo engine-logo-clamav" aria-hidden="true">
           <svg viewBox="0 0 44 44" role="img" focusable="false">
-            <defs>
-              <linearGradient id="clamavBadge" x1="9" y1="8" x2="33" y2="36" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#ff6b6b"></stop>
-                <stop offset="1" stop-color="#dc2626"></stop>
-              </linearGradient>
-            </defs>
-            <path d="M11.2 14.4 16.7 7l3.8 5.5h3.1L27.3 7l5.5 7.4A14.7 14.7 0 0 1 36.5 24c0 8.1-6.5 14.5-14.5 14.5S7.5 32.1 7.5 24a14.7 14.7 0 0 1 3.7-9.6Z" fill="url(#clamavBadge)"></path>
+            <path d="M11.2 14.4 16.7 7l3.8 5.5h3.1L27.3 7l5.5 7.4A14.7 14.7 0 0 1 36.5 24c0 8.1-6.5 14.5-14.5 14.5S7.5 32.1 7.5 24a14.7 14.7 0 0 1 3.7-9.6Z" fill="#dc2626"></path>
             <path d="M13.6 21.9c1.7-2.1 5.7-2.4 8.8-.5-1.6 3.6-4.8 5.7-8.1 5.5-.9-1.5-1.2-3.2-.7-5Z" fill="#fff7f7"></path>
             <path d="M30.4 21.9c-1.7-2.1-5.7-2.4-8.8-.5 1.6 3.6 4.8 5.7 8.1 5.5.9-1.5 1.2-3.2.7-5Z" fill="#fff7f7"></path>
             <path d="M17.7 23.5c.8 1.1 2.1 2.4 4 3.2-1.8.8-3.7.6-5.1-.2.1-1 .5-2 .9-3Z" fill="#1f2937"></path>
@@ -2208,13 +2484,7 @@ def render_engine_logo(label: str, key: str) -> str:
         return """
         <span class="engine-logo engine-logo-defender" aria-hidden="true">
           <svg viewBox="0 0 44 44" role="img" focusable="false">
-            <defs>
-              <linearGradient id="defenderShield" x1="10" y1="7" x2="34" y2="37" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#60a5fa"></stop>
-                <stop offset="1" stop-color="#2563eb"></stop>
-              </linearGradient>
-            </defs>
-            <path d="M22 5.6c4.5 2.7 8.9 4.2 13.1 4.6v10.2c0 8.2-4.6 14.8-13.1 18-8.5-3.2-13.1-9.8-13.1-18V10.2c4.2-.4 8.6-1.9 13.1-4.6Z" fill="url(#defenderShield)"></path>
+            <path d="M22 5.6c4.5 2.7 8.9 4.2 13.1 4.6v10.2c0 8.2-4.6 14.8-13.1 18-8.5-3.2-13.1-9.8-13.1-18V10.2c4.2-.4 8.6-1.9 13.1-4.6Z" fill="#2563eb"></path>
             <path d="M22 9.4v24.8c-6.2-2.7-9.8-7.3-9.8-13V15c3.2-.8 6.5-2.1 9.8-5.6Z" fill="#eff6ff"></path>
             <path d="M22 9.4c3.3 3.5 6.6 4.8 9.8 5.6v6.2c0 5.7-3.6 10.3-9.8 13V9.4Z" fill="#93c5fd"></path>
             <path d="M22 12.8v17" stroke="#1d4ed8" stroke-width="1.45" stroke-linecap="round"></path>
@@ -2487,7 +2757,7 @@ def render_add_engine_panel(selected_adapter: str = "") -> str:
         adapter_rows_html = "\n".join(
             f"""
             <label class="adapter-option">
-              <input type="radio" name="adapter_key" value="{html.escape(definition.key)}" required data-engine-adapter-choice data-instance-placeholder="{html.escape(definition.label)} production" {"checked" if definition.key == selected_key else ""}>
+              <input type="radio" name="adapter_key" value="{html.escape(definition.key)}" required data-engine-adapter-choice data-adapter-label="{html.escape(definition.label)}" data-adapter-detail="{html.escape(definition.integration_method)} &middot; {html.escape(definition.vendor)} &middot; {html.escape(definition.support_state.title())}" data-instance-placeholder="{html.escape(definition.label)} production" {"checked" if definition.key == selected_key else ""}>
               {render_engine_logo(definition.short_label, definition.key)}
               <span>
                 <strong>{html.escape(definition.label)}</strong>
@@ -2502,34 +2772,46 @@ def render_add_engine_panel(selected_adapter: str = "") -> str:
             render_adapter_setup_panel(definition.key, definition.key == selected_key)
             for definition in available_adapters
         )
-        description = "Create configured engine instances from the supported adapter catalog."
-        pill = '<span class="pill success">Catalog ready</span>'
-        registry_body = f"""
-      <details class="add-engine-drawer" {"open" if selected_key else ""}>
-        <summary class="add-engine-summary">
-          <div class="add-engine-summary-copy">
-            <span class="add-engine-summary-eyebrow">Adapter catalog</span>
-            <strong>Add engine instance</strong>
-            <small>{available_label}. Complete setup to create one.</small>
+        auto_open_attr = " data-auto-open" if selected_key else ""
+        return f"""
+    <section class="panel engine-add-placeholder">
+      <button class="engine-add-placeholder-button" type="button" data-modal-open="add-engine-modal">
+        <span class="add-engine-trigger-icon engine-add-placeholder-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14"></path>
+            <path d="M5 12h14"></path>
+          </svg>
+        </span>
+        <span class="engine-add-placeholder-copy">
+          <span class="add-engine-summary-eyebrow">Adapter catalog</span>
+          <strong>Add engine instance</strong>
+          <small>{available_label}. Select an adapter and complete setup to create one.</small>
+        </span>
+        <span class="primary-action engine-add-placeholder-action">Add engine</span>
+      </button>
+    </section>
+    <dialog id="add-engine-modal" class="modal-dialog add-engine-modal" data-modal{auto_open_attr} aria-labelledby="add-engine-modal-title">
+      <div class="modal-panel">
+        <div class="modal-header">
+          <div>
+            <h2 id="add-engine-modal-title">Add engine instance</h2>
+            <p>Create a configured deployment from the supported adapter catalog.</p>
           </div>
-          <div class="add-engine-summary-actions">
-            <span class="add-engine-trigger">
-              <span class="add-engine-trigger-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 5v14"></path>
-                  <path d="M5 12h14"></path>
-                </svg>
-              </span>
-              <span>Browse catalog</span>
-            </span>
-            <span class="engine-expand-indicator" aria-hidden="true"></span>
+          <button class="secondary-action compact-action" type="button" data-modal-close>Close</button>
+        </div>
+        <form class="modal-body add-engine-form" action="/engines/add" method="post" data-action-form data-preserve-scroll>
+          <div class="selected-adapter-summary" data-engine-selected-adapter hidden>
+            <div>
+              <span class="add-engine-summary-eyebrow">Selected adapter</span>
+              <strong data-engine-selected-adapter-label></strong>
+              <small data-engine-selected-adapter-detail></small>
+            </div>
+            <button class="secondary-action compact-action" type="button" data-engine-change-adapter>Change adapter</button>
           </div>
-        </summary>
-        <form class="add-engine-form" action="/engines/add" method="post" data-action-form data-preserve-scroll>
-          <div class="adapter-scroll-list">
+          <div class="adapter-scroll-list" data-engine-adapter-list>
             {adapter_rows_html}
           </div>
-          <div class="add-engine-instance-settings">
+          <div class="add-engine-instance-settings" data-engine-config-section>
             <label>
               Instance name
               <input type="text" name="engine_display_name" maxlength="128" required data-engine-display-name placeholder="Select an adapter first">
@@ -2537,7 +2819,7 @@ def render_add_engine_panel(selected_adapter: str = "") -> str:
             </label>
             {setup_panels_html}
           </div>
-          <div class="add-engine-form-footer">
+          <div class="add-engine-form-footer" data-engine-config-section>
             <div class="add-engine-form-note">
               <strong>Create configured instance</strong>
               <span>MASP will not create or enable the instance until every required setup value is supplied.</span>
@@ -2545,7 +2827,8 @@ def render_add_engine_panel(selected_adapter: str = "") -> str:
             <button class="primary-action add-engine-submit" type="submit" data-busy-label="Creating...">Create engine instance</button>
           </div>
         </form>
-      </details>
+      </div>
+    </dialog>
         """
     else:
         empty_state_html = """
@@ -2554,26 +2837,27 @@ def render_add_engine_panel(selected_adapter: str = "") -> str:
           <span>Remove an adapter to add it again, or implement a new adapter to expose it here.</span>
         </div>
         """
-        description = "All implemented adapters are already configured on this node."
-        pill = '<span class="pill neutral">No adapters left</span>'
-        registry_body = f"""
+        return f"""
+    <section class="panel engine-add-placeholder is-empty">
+      <div class="engine-add-placeholder-button">
+        <span class="add-engine-trigger-icon engine-add-placeholder-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14"></path>
+            <path d="M5 12h14"></path>
+          </svg>
+        </span>
+        <span class="engine-add-placeholder-copy">
+          <span class="add-engine-summary-eyebrow">Adapter catalog</span>
+          <strong>Add engine instance</strong>
+          <small>All implemented adapters are already configured on this node.</small>
+        </span>
+        <span class="pill neutral">No adapters left</span>
+      </div>
       <div class="add-engine-empty-state">
         {empty_state_html}
       </div>
-        """
-
-    return f"""
-    <section class="panel add-engine-panel">
-      <div class="panel-header">
-        <div>
-          <h2>Engine registry</h2>
-          <p>{description}</p>
-        </div>
-        {pill}
-      </div>
-      {registry_body}
     </section>
-    """
+        """
 
 
 def worker_backed_engine_health(
@@ -2597,6 +2881,20 @@ def worker_backed_engine_health(
         worker_status,
         instance,
     )
+    if str(health.get("status") or "") == "worker check requested":
+        if instance.id in schedulable_engine_instance_ids(worker_status, [instance]):
+            # A newly requested probe must not be presented as successful just
+            # because an older health record exists. The next normal page load
+            # can render the worker's freshly committed report.
+            return health
+        return {
+            "ok": False,
+            "status": "no online worker",
+            "detail": (
+                "Health check was requested, but no active worker matches this "
+                "engine's adapter and pool placement."
+            ),
+        }
     health_records = sorted(
         (
             record
@@ -2648,11 +2946,17 @@ def health_tone_for(adapter_key: str, health: dict[str, str | bool]) -> str:
         return "neutral"
     if str(health["status"]) == "degraded":
         return "warning"
+    if str(health["status"]) == "worker check requested":
+        return "warning"
     if str(health["status"]) == "no online worker":
         return "warning"
     if bool(health["ok"]):
         return "success"
-    if adapter_key == "clamav" and health["status"] in {"unreachable", "unexpected"}:
+    if adapter_key == "clamav" and health["status"] in {
+        "not configured",
+        "unreachable",
+        "unexpected",
+    }:
         return "danger"
     if adapter_key == "yara" and health["status"] in {"not configured", "no rules", "unavailable"}:
         return "danger"
@@ -2671,10 +2975,13 @@ def render_engine_actions(instance: EngineInstanceRecord, show_test: bool) -> st
     test_button = ""
     toggle_busy_label = "Disabling..." if instance.enabled else "Enabling..."
     if show_test:
+        worker_deployed = adapter_capabilities(instance.adapter_key).deployment == "worker"
+        test_label = "Request health check" if worker_deployed else "Test connection"
+        test_busy_label = "Requesting..." if worker_deployed else "Testing..."
         test_button = f"""
         <form action="/engines/{html.escape(instance.adapter_key)}/test" method="post" data-action-form data-preserve-scroll>
           <input type="hidden" name="engine_instance_id" value="{instance.id}">
-          <button class="secondary-action engine-action-primary" type="submit" data-busy-label="Testing...">Test connection</button>
+          <button class="secondary-action engine-action-primary" type="submit" data-busy-label="{test_busy_label}">{test_label}</button>
         </form>
         """
     toggle_button = f"""
@@ -2727,6 +3034,19 @@ def render_engine_summary(
     """
 
 
+def engine_notice_title(tone: str, status: str = "") -> str:
+    if tone == "danger":
+        return "Engine check failed"
+    normalized_status = status.strip().lower()
+    if normalized_status == "no online worker":
+        return "Engine worker unavailable"
+    if normalized_status == "worker check requested":
+        return "Engine check requested"
+    if tone == "warning":
+        return "Engine check warning"
+    return "Engine action complete"
+
+
 def render_engine_details_shell(
     instance: EngineInstanceRecord,
     status_html: str,
@@ -2739,10 +3059,15 @@ def render_engine_details_shell(
     modal_id = f"engine-modal-{instance.id}"
     definition = adapter_definition(instance.adapter_key)
     edit_class = " has-edit-form" if "engine-settings-drawer" in body else ""
+    auto_open_attr = (
+        " data-auto-open"
+        if focus_adapter_key in {str(instance.id), instance.adapter_key}
+        else ""
+    )
     return f"""
     <section id="engine-{instance.id}" class="panel engine-secondary engine-card{disabled_class}">
       {render_engine_summary(instance, status_html, meta)}
-      <dialog id="{modal_id}" class="modal-dialog engine-modal" data-modal aria-labelledby="{modal_id}-title">
+      <dialog id="{modal_id}" class="modal-dialog engine-modal" data-modal{auto_open_attr} aria-labelledby="{modal_id}-title">
         <div class="modal-panel">
           <div class="modal-header">
             <div>
@@ -3937,6 +4262,86 @@ def detection_summary_tone_for_scan(scan: ScanRecord, results: list[EngineResult
     return "neutral" if total == 0 else "danger" if detected > 0 else "success"
 
 
+def scan_row_summary_payload(
+    scan: ScanRecord,
+    results: list[EngineResultRecord],
+) -> dict[str, str]:
+    """Precompute repeated scan-table summary fields for one rendered row."""
+    if scan.status in ACTIVE_SCAN_STATUSES:
+        return {
+            "coverage_pill": status_pill(scan.status),
+            "coverage_detail": "",
+            "verdict_pill": '<span class="pill neutral">Pending</span>',
+            "detection_text": "Pending engine results",
+            "detection_tone": "neutral",
+        }
+
+    required_names = required_detection_engine_names(scan)
+    detection_results = detection_engine_results(results, required_names=required_names)
+    detected = sum(
+        1
+        for result in detection_results
+        if result.status == "completed" and result.detected
+    )
+    detection_total = max(len(detection_results), len(required_names))
+    if detection_total == 0:
+        detection_text = "No detection engines configured"
+        detection_tone = "neutral"
+        verdict_html = '<span class="pill neutral">Metadata Only</span>'
+    elif detected > 0:
+        detection_text = f"{detected} of {detection_total} engines detected"
+        detection_tone = "danger"
+        verdict_html = '<span class="pill danger">Malicious</span>'
+    else:
+        detection_text = f"0 of {detection_total} engines detected"
+        detection_tone = "success"
+        verdict_html = '<span class="pill success">Undetected</span>'
+
+    if scan.status != "completed":
+        return {
+            "coverage_pill": status_pill(scan.status),
+            "coverage_detail": "",
+            "verdict_pill": verdict_html,
+            "detection_text": detection_text,
+            "detection_tone": detection_tone,
+        }
+
+    result_map = {result.engine_name.lower(): result for result in results}
+    unavailable = []
+    ran = 0
+    for engine_name in required_names:
+        result = result_map.get(engine_name.lower())
+        if result is None:
+            unavailable.append(f"{engine_name} missing")
+            continue
+        if result.status == "completed":
+            ran += 1
+            continue
+        unavailable.append(f"{engine_name} {result.status}")
+
+    coverage_total = len(required_names)
+    if coverage_total == 0:
+        coverage_html = '<span class="pill neutral">Metadata Only</span>'
+        coverage_detail = ""
+    elif not unavailable:
+        coverage_html = status_pill(scan.status)
+        coverage_detail = ""
+    elif ran == 0:
+        coverage_html = '<span class="pill danger">Engine Failure</span>'
+        coverage_detail = "; ".join(unavailable)
+    else:
+        coverage_html = '<span class="pill warning">Partial</span>'
+        coverage_detail = "; ".join(unavailable)
+
+    return {
+        "coverage_pill": coverage_html,
+        "coverage_detail": coverage_detail,
+        "verdict_pill": verdict_html,
+        "detection_text": detection_text,
+        "detection_tone": detection_tone,
+    }
+
+
 def detection_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
     if scan.status in ACTIVE_SCAN_STATUSES:
         return "Detection engines have not completed yet."
@@ -4010,24 +4415,34 @@ def coverage_tone(
 
 
 def coverage_summary_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
-    if scan.status == "queued":
-        return "Waiting for worker"
-    if scan.status == "running":
-        return "Engines are running"
     ran, total, _ = required_engine_coverage(results, source=scan.source, scan=scan)
     if total == 0:
         return "No required detection engines configured"
+    if scan.status == "queued":
+        return f"{ran} of {total} required engines queued"
+    if scan.status in {"running", "finalizing"}:
+        return f"{ran} of {total} required engines completed"
     return f"{ran} of {total} required engines ran"
 
 
 def coverage_detail_text_for_scan(scan: ScanRecord, results: list[EngineResultRecord]) -> str:
-    if scan.status == "queued":
-        return "Required engines have not started yet."
-    if scan.status == "running":
-        return "Required engines are being executed by the worker. Missing engines may be marked skipped after the orchestration wait window."
     _, total, unavailable = required_engine_coverage(results, source=scan.source, scan=scan)
     if total == 0:
         return "Only metadata analyzers are assigned to this scan profile."
+    if scan.status == "queued":
+        waiting = "; ".join(unavailable)
+        return (
+            f"Waiting for required engines: {waiting}."
+            if waiting
+            else "Required engine jobs are queued."
+        )
+    if scan.status in {"running", "finalizing"}:
+        waiting = "; ".join(unavailable)
+        return (
+            f"Waiting for required engines: {waiting}."
+            if waiting
+            else "Required engine coverage is complete; finalizing scan."
+        )
     if not unavailable:
         return "All required detection engines completed."
     return "; ".join(unavailable)
@@ -4447,7 +4862,8 @@ def render_recent_scan_rows(
         engine_results = cached_results.get(scan.id)
         if engine_results is None:
             engine_results = list_engine_results(scan.id)
-        detection_tone = detection_summary_tone_for_scan(scan, engine_results)
+        summary = scan_row_summary_payload(scan, engine_results)
+        detection_tone = summary["detection_tone"]
         file_tone_class = "danger" if detection_tone == "danger" else ""
         pending_icon = (
             '<span class="scan-alert-icon" aria-hidden="true" title="Scan not completed">!</span>'
@@ -4478,12 +4894,12 @@ def render_recent_scan_rows(
               </td>
               <td><code class="copyable" data-copy-value="{html.escape(scan.sha256)}" aria-label="Copy SHA256" title="Copy SHA256">{short_hash(scan.sha256)}</code></td>
               <td>
-                {coverage_status_pill(scan, engine_results)}
-                <small class="status-detail">{html.escape(coverage_status_detail_for_scan(scan, engine_results))}</small>
+                {summary["coverage_pill"]}
+                <small class="status-detail">{html.escape(summary["coverage_detail"])}</small>
               </td>
-              <td>{dashboard_verdict_pill(scan, engine_results)}</td>
+              <td>{summary["verdict_pill"]}</td>
               <td>
-                <span class="detection-count {detection_tone}">{html.escape(detection_summary_text_for_scan(scan, engine_results))}</span>
+                <span class="detection-count {detection_tone}">{html.escape(summary["detection_text"])}</span>
               </td>
               <td>{html.escape(scan.created_at)}</td>
             </tr>
@@ -5228,41 +5644,11 @@ def build_scan_report_payload(
     scan: ScanRecord,
     engine_results: list[EngineResultRecord],
 ) -> dict[str, object]:
-    assessment = calculate_risk(engine_results)
-    verdict = scan.verdict if scan.risk_score is not None else assessment.verdict
-    risk_score = scan.risk_score if scan.risk_score is not None else assessment.score
-    findings = report_finding_rows(engine_results)
-    coverage_ran, coverage_total, coverage_unavailable = required_engine_coverage(
-        engine_results, source=scan.source, scan=scan
-    )
-    decision = scan_decision(
-        scan,
-        engine_results,
-        risk_score=risk_score,
-        verdict=verdict,
-    )
-    return create_scan_report_payload(
-        scan,
-        engine_results,
-        verdict=verdict,
-        risk_score=risk_score,
-        findings=findings,
-        coverage_ran=coverage_ran,
-        coverage_total=coverage_total,
-        coverage_unavailable=coverage_unavailable,
-        decision_payload=scan_decision_payload(decision),
-        assessment_reasons=assessment.reasons,
-        detection_label=detection_summary_text_for_scan(scan, engine_results),
-        detection_detail=detection_detail_text_for_scan(scan, engine_results),
-        detected_engines=detected_engine_names(engine_results),
-        coverage_label=coverage_summary_text_for_scan(scan, engine_results),
-        coverage_detail=coverage_detail_text_for_scan(scan, engine_results),
-    )
+    return build_shared_scan_report_payload(scan, engine_results)
 
 
 def build_scan_report_csv(scan: ScanRecord, engine_results: list[EngineResultRecord]) -> str:
-    payload = build_scan_report_payload(scan, engine_results)
-    return create_scan_report_csv(scan, engine_results, payload)
+    return build_shared_scan_report_csv(scan, engine_results)
 
 
 def report_shell(title: str, body: str) -> str:
@@ -6387,6 +6773,7 @@ def system_page(
     error: str = "",
     pool_name: str = "",
     pool_selector: str = "",
+    tab: str = "overview",
 ) -> str:
     user = require_admin(request)
     return render_system_page(
@@ -6395,6 +6782,7 @@ def system_page(
         error=error,
         pool_name=pool_name,
         pool_selector=pool_selector,
+        active_tab=tab,
     )
 
 
@@ -6411,6 +6799,7 @@ def create_worker_pool_route(
     request: Request,
     pool_name: str = Form(...),
     pool_selector: str = Form(...),
+    system_tab: str = Form("worker-pools"),
 ) -> RedirectResponse:
     require_admin(request)
     set_audit_context(
@@ -6425,9 +6814,9 @@ def create_worker_pool_route(
     except ValueError as exc:
         set_audit_context(request, outcome="failure", details={"reason": "validation"})
         return RedirectResponse(
-            url=redirect_url(
-                "/system",
+            url=system_redirect_url(
                 error=str(exc),
+                tab=system_tab,
                 params={
                     "pool_name": pool_name,
                     "pool_selector": pool_selector,
@@ -6436,7 +6825,10 @@ def create_worker_pool_route(
             status_code=303,
         )
     return RedirectResponse(
-        url=redirect_url("/system", message=f"Created worker pool {clean_name}."),
+        url=system_redirect_url(
+            message=f"Created worker pool {clean_name}.",
+            tab=system_tab,
+        ),
         status_code=303,
     )
 
@@ -6448,6 +6840,7 @@ def update_worker_pool_route(
     pool_name: str = Form(...),
     pool_selector: str = Form(...),
     pool_state: str = Form("enabled"),
+    system_tab: str = Form("worker-pools"),
 ) -> RedirectResponse:
     require_admin(request)
     set_audit_context(
@@ -6467,21 +6860,28 @@ def update_worker_pool_route(
     except ValueError as exc:
         set_audit_context(request, outcome="failure", details={"reason": "validation"})
         return RedirectResponse(
-            url=redirect_url("/system", error=str(exc)), status_code=303
+            url=system_redirect_url(error=str(exc), tab=system_tab), status_code=303
         )
     if not updated:
         set_audit_context(request, outcome="failure", details={"reason": "not_found"})
         return RedirectResponse(
-            url=redirect_url("/system", error="Worker pool not found."), status_code=303
+            url=system_redirect_url(error="Worker pool not found.", tab=system_tab), status_code=303
         )
     return RedirectResponse(
-        url=redirect_url("/system", message=f"Updated worker pool {clean_name}."),
+        url=system_redirect_url(
+            message=f"Updated worker pool {clean_name}.",
+            tab=system_tab,
+        ),
         status_code=303,
     )
 
 
 @app.post("/worker-pools/{pool_id}/delete")
-def delete_worker_pool_route(request: Request, pool_id: int) -> RedirectResponse:
+def delete_worker_pool_route(
+    request: Request,
+    pool_id: int,
+    system_tab: str = Form("worker-pools"),
+) -> RedirectResponse:
     require_admin(request)
     set_audit_context(
         request,
@@ -6494,15 +6894,15 @@ def delete_worker_pool_route(request: Request, pool_id: int) -> RedirectResponse
     except ValueError as exc:
         set_audit_context(request, outcome="failure", details={"reason": "assigned"})
         return RedirectResponse(
-            url=redirect_url("/system", error=str(exc)), status_code=303
+            url=system_redirect_url(error=str(exc), tab=system_tab), status_code=303
         )
     if not deleted:
         set_audit_context(request, outcome="failure", details={"reason": "not_found"})
         return RedirectResponse(
-            url=redirect_url("/system", error="Worker pool not found."), status_code=303
+            url=system_redirect_url(error="Worker pool not found.", tab=system_tab), status_code=303
         )
     return RedirectResponse(
-        url=redirect_url("/system", message="Deleted worker pool."), status_code=303
+        url=system_redirect_url(message="Deleted worker pool.", tab=system_tab), status_code=303
     )
 
 
@@ -6511,6 +6911,7 @@ def assign_engine_worker_pool_route(
     request: Request,
     engine_instance_id: int = Form(...),
     worker_pool_id: int = Form(0),
+    system_tab: str = Form("engine-placement"),
 ) -> RedirectResponse:
     require_admin(request)
     target_pool_id = worker_pool_id if worker_pool_id > 0 else None
@@ -6526,10 +6927,12 @@ def assign_engine_worker_pool_route(
     except ValueError as exc:
         set_audit_context(request, outcome="failure", details={"reason": "not_found"})
         return RedirectResponse(
-            url=redirect_url("/system", error=str(exc)), status_code=303
+            url=system_redirect_url(error=str(exc), tab=system_tab), status_code=303
         )
     message = "Updated engine worker placement."
-    return RedirectResponse(url=redirect_url("/system", message=message), status_code=303)
+    return RedirectResponse(
+        url=system_redirect_url(message=message, tab=system_tab), status_code=303
+    )
 
 
 @app.post("/workers/state")
@@ -6537,6 +6940,7 @@ def update_worker_node_state_route(
     request: Request,
     node_id: str = Form(...),
     lifecycle_state: str = Form(...),
+    system_tab: str = Form("worker-nodes"),
 ) -> RedirectResponse:
     require_admin(request)
     clean_node_id = node_id.strip()
@@ -6553,19 +6957,19 @@ def update_worker_node_state_route(
     except ValueError as exc:
         set_audit_context(request, outcome="failure", details={"reason": "invalid_state"})
         return RedirectResponse(
-            url=redirect_url("/system", error=str(exc)),
+            url=system_redirect_url(error=str(exc), tab=system_tab),
             status_code=303,
         )
     if not updated:
         set_audit_context(request, outcome="failure", details={"reason": "not_found"})
         return RedirectResponse(
-            url=redirect_url("/system", error="Worker node not found."),
+            url=system_redirect_url(error="Worker node not found.", tab=system_tab),
             status_code=303,
         )
     return RedirectResponse(
-        url=redirect_url(
-            "/system",
+        url=system_redirect_url(
             message=f"Worker node {clean_node_id} is now {clean_state}.",
+            tab=system_tab,
         ),
         status_code=303,
     )
@@ -6575,6 +6979,7 @@ def update_worker_node_state_route(
 def revoke_worker_node_credentials_route(
     request: Request,
     node_id: str = Form(...),
+    system_tab: str = Form("worker-nodes"),
 ) -> RedirectResponse:
     require_admin(request)
     clean_node_id = node_id.strip()
@@ -6592,14 +6997,17 @@ def revoke_worker_node_credentials_route(
             details={"reason": "no_active_credential"},
         )
         return RedirectResponse(
-            url=redirect_url("/system", error="No active agent credential found."),
+            url=system_redirect_url(
+                error="No active agent credential found.",
+                tab=system_tab,
+            ),
             status_code=303,
         )
     set_audit_context(request, details={"revoked_count": revoked})
     return RedirectResponse(
-        url=redirect_url(
-            "/system",
+        url=system_redirect_url(
             message=f"Revoked the active agent credential for {clean_node_id}.",
+            tab=system_tab,
         ),
         status_code=303,
     )
@@ -6617,7 +7025,10 @@ def audit_page(
 
 
 @app.post("/system/retention/run")
-def run_retention_cleanup(request: Request) -> RedirectResponse:
+def run_retention_cleanup(
+    request: Request,
+    system_tab: str = Form("overview"),
+) -> RedirectResponse:
     require_admin(request)
     set_audit_context(request, action="retention.run", target_type="scan")
     policy = retention_policy_from_env()
@@ -6625,7 +7036,10 @@ def run_retention_cleanup(request: Request) -> RedirectResponse:
     if cutoff_value is None:
         set_audit_context(request, outcome="failure", details={"reason": "disabled"})
         return RedirectResponse(
-            url=redirect_url("/system", error="Retention cleanup is disabled."),
+            url=system_redirect_url(
+                error="Retention cleanup is disabled.",
+                tab=system_tab,
+            ),
             status_code=303,
         )
 
@@ -6647,7 +7061,9 @@ def run_retention_cleanup(request: Request) -> RedirectResponse:
         else f"Deleted {deleted_count} expired scan." if deleted_count == 1
         else f"Deleted {deleted_count} expired scans."
     )
-    return RedirectResponse(url=redirect_url("/system", message=message), status_code=303)
+    return RedirectResponse(
+        url=system_redirect_url(message=message, tab=system_tab), status_code=303
+    )
 
 
 @app.get("/users", response_class=HTMLResponse)
@@ -7631,7 +8047,7 @@ async def create_scan(
     priority: str = Form("Normal"),
     note: str = Form(""),
 ) -> RedirectResponse:
-    require_user(request)
+    await run_in_threadpool(require_user, request)
     try:
         scan = await enqueue_scan_from_upload(
             sample,
@@ -7685,7 +8101,7 @@ async def api_create_scan(
     archive_mode: str = Form(DEFAULT_ARCHIVE_MODE),
     wait_seconds: int = Form(0),
 ) -> JSONResponse:
-    require_api_token(request)
+    await run_in_threadpool(require_api_token, request)
     identity = api_client_identity(request)
     scan = await enqueue_scan_from_upload(
         sample,
@@ -7696,24 +8112,149 @@ async def api_create_scan(
         archive_mode=archive_mode,
         api_identity=identity,
     )
-    applied_wait_seconds = normalized_api_wait_seconds(wait_seconds)
+    applied_wait_seconds = await run_in_threadpool(normalized_api_wait_seconds, wait_seconds)
     current_scan = await wait_for_terminal_scan(scan.id, applied_wait_seconds)
     if current_scan is None:
         raise HTTPException(status_code=500, detail="Scan could not be loaded.")
 
     headers = {"Location": str(request.url_for("api_scan_status", scan_id=scan.id))}
-    status_payload = build_api_scan_status_payload(request, current_scan)
+    status_payload = await run_in_threadpool(build_api_scan_status_payload, request, current_scan)
     status_payload["accepted"] = True
     status_payload["wait_seconds_applied"] = applied_wait_seconds
 
     if scan_is_terminal(current_scan):
         status_payload["detail"] = "Scan completed within the requested wait window."
-        status_payload["result"] = build_api_scan_result_payload(request, current_scan)
+        status_payload["result"] = await run_in_threadpool(build_api_scan_result_payload, request, current_scan)
         return JSONResponse(status_payload, status_code=200, headers=headers)
 
-    headers["Retry-After"] = str(configured_api_retry_after_seconds())
+    headers["Retry-After"] = str(await run_in_threadpool(configured_api_retry_after_seconds))
     status_payload["detail"] = "Scan accepted and still processing."
     return JSONResponse(status_payload, status_code=202, headers=headers)
+
+
+@app.post(
+    "/api/v1/deferred-scans",
+    name="api_create_deferred_scan",
+    summary="Submit a deferred object scan",
+    description=(
+        "Durably accepts a reference to an object in a deployment-approved storage "
+        "backend. A separate intake worker fetches the object later; the caller never "
+        "waits for file transfer or antivirus execution."
+    ),
+    dependencies=[Security(API_BEARER_SCHEME)],
+    responses={
+        202: {"model": api_schemas.DeferredScanSubmitResponse},
+        400: {"model": api_schemas.ApiErrorResponse},
+        409: {"model": api_schemas.ApiErrorResponse},
+        **API_ERROR_RESPONSES,
+    },
+)
+def api_create_deferred_scan(
+    request: Request, body: api_schemas.DeferredScanSubmitRequest
+) -> JSONResponse:
+    require_api_token(request)
+    identity = api_client_identity(request)
+    backend_key = body.backend_key.strip().lower()
+    try:
+        object_id = validate_object_id(body.object_id)
+        available_backends = configured_backend_keys()
+    except DeferredSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if backend_key not in available_backends:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Deferred storage backend {backend_key!r} is not configured.",
+        )
+    try:
+        backend_allowed = backend_allowed_for_client(
+            backend_key, identity.client.client_key, object_id
+        )
+    except DeferredSourceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not backend_allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="This service client is not allowed to use that storage backend.",
+        )
+    expected_sha256 = None
+    if body.expected_sha256:
+        try:
+            expected_sha256 = normalize_sha256(body.expected_sha256)
+        except InvalidSha256Error as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        max_bytes = max_deferred_source_bytes()
+    except DeferredSourceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if (
+        max_bytes
+        and body.expected_size_bytes is not None
+        and body.expected_size_bytes > max_bytes
+    ):
+        raise HTTPException(
+            status_code=413,
+            detail="Deferred object exceeds MASP_DEFERRED_MAX_BYTES.",
+        )
+    archive_mode = normalized_archive_mode(body.archive_mode)
+    engines = engines_for_profile(identity.profile.id, source="api")
+    if not engines:
+        raise HTTPException(
+            status_code=503,
+            detail="No eligible engines are assigned to this client's deferred scan profile.",
+        )
+    client_request_id = body.client_request_id.strip()
+    snapshot = profile_snapshot_json(
+        identity,
+        engines,
+        delivery_mode="security_events_only",
+        client_request_id=client_request_id,
+    )
+    try:
+        record, created = create_deferred_scan_submission(
+            service_client_id=identity.client.id,
+            scan_profile_id=identity.profile.id,
+            client_request_id=client_request_id,
+            backend_key=backend_key,
+            object_id=object_id,
+            original_filename=body.original_filename.strip(),
+            content_type=body.content_type.strip() or "application/octet-stream",
+            expected_size_bytes=body.expected_size_bytes,
+            expected_sha256=expected_sha256,
+            archive_mode=archive_mode,
+            case_name=body.case_name.strip() or "Unassigned",
+            priority=body.priority.strip() or "Normal",
+            note=body.note.strip(),
+            profile_snapshot_json=snapshot,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    payload = deferred_scan_payload(request, record, duplicate=not created)
+    headers = {
+        "Location": str(
+            request.url_for("api_deferred_scan_status", submission_id=record.id)
+        )
+    }
+    return JSONResponse(payload, status_code=202, headers=headers)
+
+
+@app.get(
+    "/api/v1/deferred-scans/{submission_id}",
+    name="api_deferred_scan_status",
+    summary="Fetch deferred scan status",
+    dependencies=[Security(API_BEARER_SCHEME)],
+    responses={
+        200: {"model": api_schemas.DeferredScanSubmitResponse},
+        404: {"model": api_schemas.ApiErrorResponse},
+        **API_ERROR_RESPONSES,
+    },
+)
+def api_deferred_scan_status(request: Request, submission_id: int) -> JSONResponse:
+    require_api_token(request)
+    identity = api_client_identity(request)
+    record = get_deferred_scan_submission(submission_id)
+    if record is None or record.service_client_id != identity.client.id:
+        raise HTTPException(status_code=404, detail="Deferred scan not found.")
+    return JSONResponse(deferred_scan_payload(request, record))
 
 
 @app.get(
@@ -7963,12 +8504,11 @@ async def retry_single_scan(request: Request, scan_id: int) -> RedirectResponse:
             url=redirect_url("/", error="Scan not found."),
             status_code=303,
         )
-    if not retry_scan_job_record(scan_id):
+    if not retry_scan_job_record(scan_id, engines=engines_for_scan(scan)):
         return RedirectResponse(
-            url=redirect_url(f"/scans/{scan_id}", error="Only completed or failed scans can be retried."),
+            url=redirect_url(f"/scans/{scan_id}", error="Retry requires an inactive scan and eligible engines."),
             status_code=303,
         )
-    create_scan_engine_jobs(scan_id, engines_for_scan(scan))
     return RedirectResponse(
         url=redirect_url(f"/scans/{scan_id}", message="Scan was queued for another run."),
         status_code=303,
@@ -8179,209 +8719,6 @@ def normalized_engine_instance_id(value: object) -> int | None:
     return value if isinstance(value, int) and value > 0 else None
 
 
-def _setup_form_text(form: Mapping[str, object], key: str) -> str:
-    value = form.get(key, "")
-    return value.strip() if isinstance(value, str) else ""
-
-
-def _required_setup_text(
-    form: Mapping[str, object],
-    key: str,
-    label: str,
-) -> str:
-    value = _setup_form_text(form, key)
-    if not value:
-        raise ValueError(f"{label} is required.")
-    return value
-
-
-def _required_setup_choice(
-    form: Mapping[str, object],
-    key: str,
-    label: str,
-    choices: set[str],
-) -> str:
-    value = _required_setup_text(form, key, label).lower()
-    if value not in choices:
-        raise ValueError(f"Select a valid {label.lower()}.")
-    return value
-
-
-def _required_setup_int(
-    form: Mapping[str, object],
-    key: str,
-    label: str,
-    minimum: int,
-    maximum: int,
-) -> str:
-    raw_value = _required_setup_text(form, key, label)
-    try:
-        value = int(raw_value)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be an integer.") from exc
-    if value < minimum or value > maximum:
-        raise ValueError(f"{label} must be between {minimum} and {maximum}.")
-    return str(value)
-
-
-def engine_setup_from_form(
-    adapter_key: str,
-    form: Mapping[str, object],
-) -> tuple[str, dict[str, str]]:
-    """Validate initial setup before an engine instance is persisted."""
-    adapter_definition(adapter_key)
-    display_name = _required_setup_text(
-        form, "engine_display_name", "Engine instance name"
-    )
-    if len(display_name) > 128:
-        raise ValueError("Engine instance name must be 128 characters or fewer.")
-
-    if adapter_key == "static_metadata":
-        return display_name, {}
-
-    if adapter_key == "clamav":
-        mode = _required_setup_choice(
-            form, "clamav_mode", "ClamAV connection mode", {"clamd", "cli"}
-        )
-        config = {
-            "mode": mode,
-            "timeout_seconds": _required_setup_int(
-                form, "clamav_timeout_seconds", "ClamAV timeout seconds", 1, 600
-            ),
-            "max_file_size_bytes": _required_setup_int(
-                form,
-                "clamav_max_file_size_bytes",
-                "ClamAV max file size bytes",
-                0,
-                1099511627776,
-            ),
-        }
-        if mode == "clamd":
-            config.update(
-                {
-                    "host": _required_setup_text(
-                        form, "clamav_host", "ClamAV clamd host"
-                    ),
-                    "port": _required_setup_int(
-                        form, "clamav_port", "ClamAV clamd port", 1, 65535
-                    ),
-                }
-            )
-        else:
-            config["command"] = _required_setup_text(
-                form, "clamav_command", "ClamAV CLI command"
-            )
-        return display_name, config
-
-    if adapter_key == "yara":
-        return display_name, {
-            "command": _required_setup_text(form, "yara_command", "YARA CLI command"),
-            "rules_dir": _required_setup_text(
-                form, "yara_rules_dir", "YARA rules directory"
-            ),
-            "timeout_seconds": _required_setup_int(
-                form, "yara_timeout_seconds", "YARA timeout seconds", 1, 600
-            ),
-        }
-
-    if adapter_key == "microsoft_defender":
-        return display_name, {
-            "execution_mode": _required_setup_choice(
-                form,
-                "microsoft_defender_execution_mode",
-                "Microsoft Defender execution mode",
-                {"powershell", "mpcmdrun"},
-            ),
-            "powershell_path": _required_setup_text(
-                form,
-                "microsoft_defender_powershell_path",
-                "Microsoft Defender PowerShell path",
-            ),
-            "mpcmdrun_path": _required_setup_text(
-                form,
-                "microsoft_defender_mpcmdrun_path",
-                "Microsoft Defender MpCmdRun path",
-            ),
-            "default_scan_type": _required_setup_choice(
-                form,
-                "microsoft_defender_default_scan_type",
-                "Microsoft Defender default scan type",
-                {"custom", "quick", "full"},
-            ),
-            "timeout_seconds": _required_setup_int(
-                form,
-                "microsoft_defender_timeout_seconds",
-                "Microsoft Defender timeout seconds",
-                30,
-                86400,
-            ),
-            "update_before_scan": _required_setup_choice(
-                form,
-                "microsoft_defender_update_before_scan",
-                "Microsoft Defender signature update policy",
-                {"true", "false"},
-            ),
-            "require_real_time_enabled": _required_setup_choice(
-                form,
-                "microsoft_defender_require_real_time_enabled",
-                "Microsoft Defender real-time protection policy",
-                {"true", "false"},
-            ),
-        }
-
-    if adapter_key == "virustotal":
-        api_key = _required_setup_text(form, "virustotal_api_key", "VirusTotal API key")
-        return display_name, {
-            "api_key_encrypted": encrypt_secret(api_key),
-            "timeout_seconds": _required_setup_int(
-                form, "virustotal_timeout_seconds", "VirusTotal timeout seconds", 1, 60
-            ),
-            "cache_seconds": _required_setup_int(
-                form,
-                "virustotal_cache_seconds",
-                "VirusTotal known-result cache seconds",
-                0,
-                86400,
-            ),
-            "unknown_cache_seconds": _required_setup_int(
-                form,
-                "virustotal_unknown_cache_seconds",
-                "VirusTotal unknown-result cache seconds",
-                0,
-                3600,
-            ),
-            "cache_max_entries": _required_setup_int(
-                form,
-                "virustotal_cache_max_entries",
-                "VirusTotal cache maximum entries",
-                1,
-                100000,
-            ),
-            "malicious_threshold": _required_setup_int(
-                form,
-                "virustotal_malicious_threshold",
-                "VirusTotal malicious threshold",
-                1,
-                100,
-            ),
-            "allow_undetected": _required_setup_choice(
-                form,
-                "virustotal_allow_undetected",
-                "VirusTotal undetected-report policy",
-                {"true", "false"},
-            ),
-            "max_age_days": _required_setup_int(
-                form,
-                "virustotal_max_age_days",
-                "VirusTotal maximum report age days",
-                1,
-                3650,
-            ),
-        }
-
-    raise ValueError("This adapter does not expose an initial setup form.")
-
-
 @app.post("/engines/add")
 async def add_engine_route(request: Request) -> RedirectResponse:
     require_admin(request)
@@ -8520,15 +8857,19 @@ def test_engine_route(
             {
                 "ok": False,
                 "status": "worker check requested",
-                "detail": "A matching worker will run this health check on its next maintenance tick.",
+                "detail": (
+                    "Health check queued. A matching worker will test this "
+                    "engine's saved settings on its next maintenance tick."
+                ),
             },
         )
         return render_engines_page(
             user,
             health_overrides={str(matches[0].id): health},
-            message="Worker health check requested.",
+            message=str(health["detail"]),
             target=str(matches[0].id),
-            notice_tone="success",
+            notice_tone=health_tone_for(adapter_key, health),
+            notice_status=str(health["status"]),
         )
     health = test_engine_connection(matches[0])
     tone = health_tone_for(adapter_key, health)
@@ -8539,6 +8880,7 @@ def test_engine_route(
         message=str(health["detail"]),
         target=str(matches[0].id),
         notice_tone=notice_tone,
+        notice_status=str(health["status"]),
     )
 
 
@@ -8867,10 +9209,11 @@ def render_engines_page(
     error: str = "",
     target: str = "",
     notice_tone: str = "success",
+    notice_status: str = "",
 ) -> str:
     overrides = health_overrides or {}
     notice_html = (
-        page_notice("Engine action complete", message, notice_tone)
+        page_notice(engine_notice_title(notice_tone, notice_status), message, notice_tone)
         + page_notice("Action blocked", error, "danger")
     )
     engine_cards_html = "\n".join(

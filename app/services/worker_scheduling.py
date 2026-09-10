@@ -8,7 +8,7 @@ from app.database import (
     list_engine_instances,
     list_worker_pools,
 )
-from app.models import EngineInstanceRecord
+from app.models import EngineInstanceRecord, WorkerPoolRecord
 
 
 def parse_worker_pool_selector(raw: str) -> dict[str, str]:
@@ -143,14 +143,17 @@ def schedulable_engine_instance_ids(
 def eligible_worker_node_ids_for_engine_instance(
     worker_status: dict[str, object],
     instance: EngineInstanceRecord,
+    *,
+    bindings: dict[int, int] | None = None,
+    pools: list[WorkerPoolRecord] | None = None,
 ) -> set[str]:
     """Return currently schedulable durable nodes for one exact instance."""
-    bindings = list_engine_instance_worker_pool_bindings()
+    bindings = list_engine_instance_worker_pool_bindings() if bindings is None else bindings
     pool_id = bindings.get(instance.id)
     pool = None
     selector: dict[str, str] | None = None
     if pool_id is not None:
-        pool = next((item for item in list_worker_pools() if item.id == pool_id), None)
+        pool = next((item for item in (list_worker_pools() if pools is None else pools) if item.id == pool_id), None)
         if pool is None or not pool.enabled:
             return set()
         try:

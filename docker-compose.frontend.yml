@@ -1,0 +1,15 @@
+# Optional overlay: existing API/worker topology stays unchanged.
+# docker compose -f docker-compose.yml -f docker-compose.frontend.yml up --build frontend
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      MASP_BACKEND_URL: http://app:8000
+    depends_on:
+      - app
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

@@ -77,6 +77,32 @@ class WorkerTimeoutTests(unittest.TestCase):
         self.assertEqual(details["routing"]["reason_code"], "worker_timeout")
         self.assertEqual(details["routing"]["deferred_reason_code"], "unsupported_platform")
 
+    def test_timeout_result_can_surface_reaper_specific_message(self) -> None:
+        engine = make_engine(
+            "clamav",
+            "ClamAV",
+            '{"timeout_seconds":"30"}',
+        )
+        scan = make_scan(started_seconds_ago=40)
+        message = (
+            "No active worker matches this engine's adapter and pool placement; "
+            "skipped after the orchestration wait window expired (35s)."
+        )
+
+        with patch("app.services.routing.worker_platform", return_value="linux"):
+            result = skipped_engine_result(
+                scan,
+                engine,
+                {"static_metadata", "microsoft_defender"},
+                35,
+                message=message,
+            )
+
+        self.assertEqual(result.error_message, message)
+        self.assertEqual(result.raw_output, message)
+        details = json.loads(result.details_json)
+        self.assertEqual(details["routing"]["reason"], message)
+
     def test_process_scan_refreshes_started_at_before_timeout_skip(self) -> None:
         static_engine = make_engine(
             "static_metadata",

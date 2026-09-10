@@ -18,7 +18,16 @@ from app.services.service_clients import required_detection_engine_names
 
 def detection_engine_results(
     results: list[EngineResultRecord],
+    *,
+    required_names: list[str] | None = None,
 ) -> list[EngineResultRecord]:
+    if required_names is not None:
+        required = {name.casefold() for name in required_names}
+        return [
+            result
+            for result in results
+            if result.engine_name.casefold() in required
+        ]
     return [
         result
         for result in results
@@ -104,17 +113,22 @@ def detection_summary(
     *,
     source: str = "manual",
     scan: ScanRecord | None = None,
+    required_names: list[str] | None = None,
 ) -> tuple[int, int]:
-    detection_results = detection_engine_results(results)
+    scoped = scan is not None or required_names is not None
+    required_names = required_names if required_names is not None else (
+        required_detection_engine_names(scan)
+        if scan is not None
+        else detection_engine_names(source=source)
+    )
+    detection_results = detection_engine_results(
+        results,
+        required_names=required_names if scoped else None,
+    )
     detected = sum(
         1
         for result in detection_results
         if result.status == "completed" and result.detected
-    )
-    required_names = (
-        required_detection_engine_names(scan)
-        if scan is not None
-        else detection_engine_names(source=source)
     )
     return detected, max(len(detection_results), len(required_names))
 
@@ -124,11 +138,12 @@ def required_engine_coverage(
     *,
     source: str = "manual",
     scan: ScanRecord | None = None,
+    required_names: list[str] | None = None,
 ) -> tuple[int, int, list[str]]:
     result_map = engine_result_map(results)
     unavailable = []
     ran = 0
-    required_engines = (
+    required_engines = required_names if required_names is not None else (
         required_detection_engine_names(scan)
         if scan is not None
         else detection_engine_names(source=source)
@@ -155,6 +170,7 @@ def scan_decision(
     *,
     risk_score: int | None = None,
     verdict: str | None = None,
+    required_names: list[str] | None = None,
 ) -> ScanDecision:
     assessment = calculate_risk(engine_results)
     effective_score = risk_score if risk_score is not None else scan.risk_score
@@ -164,10 +180,10 @@ def scan_decision(
     if effective_verdict == "pending":
         effective_verdict = assessment.verdict
     detected_count, detection_total = detection_summary(
-        engine_results, source=scan.source, scan=scan
+        engine_results, source=scan.source, scan=scan, required_names=required_names
     )
     _, _, coverage_unavailable = required_engine_coverage(
-        engine_results, source=scan.source, scan=scan
+        engine_results, source=scan.source, scan=scan, required_names=required_names
     )
     policy_review_reasons = engine_policy_review_reasons(
         engine_results, source=scan.source

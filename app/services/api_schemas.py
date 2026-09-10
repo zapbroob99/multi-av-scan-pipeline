@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 DecisionAction = Literal["allow", "block", "review", "wait"]
@@ -316,6 +316,44 @@ class ScanSubmitCompletedResponse(ScanSubmitAcceptedResponse):
     """``POST /api/v1/scans`` 200 body (terminal within the wait window)."""
 
     result: ScanResultResponse
+
+
+class DeferredScanSubmitRequest(ContractModel):
+    client_request_id: str = Field(min_length=1, max_length=128)
+    backend_key: str = Field(min_length=1, max_length=64)
+    object_id: str = Field(min_length=1, max_length=1024)
+    original_filename: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(default="application/octet-stream", max_length=255)
+    expected_size_bytes: int | None = Field(default=None, ge=0)
+    expected_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+    archive_mode: str = "lazy_extract_on_detection"
+    case_name: str = Field(default="Unassigned", max_length=255)
+    priority: str = Field(default="Normal", max_length=50)
+    note: str = Field(default="", max_length=2000)
+
+    @field_validator("client_request_id", "backend_key", "object_id", "original_filename")
+    @classmethod
+    def normalize_required_identifiers(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must contain non-whitespace characters")
+        return normalized
+
+
+class DeferredScanSubmitResponse(ContractModel):
+    accepted: bool
+    duplicate: bool
+    submission_id: int
+    client_request_id: str
+    status: str
+    scan_id: int | None
+    detail: str
+    attempts: int
+    available_at: int
+    last_error: str | None
+    created_at: str
+    updated_at: str
+    links: dict[str, str]
 
 
 class BatchCountsPayload(ContractModel):

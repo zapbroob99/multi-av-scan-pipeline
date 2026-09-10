@@ -212,6 +212,53 @@ class ApiClientIdentity:
 
 
 @dataclass(frozen=True)
+class DeferredScanRecord:
+    id: int
+    service_client_id: int
+    scan_profile_id: int
+    client_request_id: str
+    backend_key: str
+    object_id: str
+    original_filename: str
+    content_type: str
+    expected_size_bytes: int | None
+    expected_sha256: str | None
+    archive_mode: str
+    case_name: str
+    priority: str
+    note: str
+    profile_snapshot_json: str
+    status: str
+    scan_job_id: int | None
+    worker_id: str | None
+    lease_expires_at: int | None
+    attempt_count: int
+    available_at: int
+    last_error: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class NotificationOutboxRecord:
+    id: int
+    scan_job_id: int
+    service_client_id: int
+    event_type: str
+    idempotency_key: str
+    payload_json: str
+    status: str
+    worker_id: str | None
+    lease_expires_at: int | None
+    attempt_count: int
+    available_at: int
+    last_error: str | None
+    delivered_at: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class WorkerNodeRecord:
     node_id: str
     display_name: str

@@ -1,0 +1,44 @@
+# Bind only to loopback/private ingress. An outer trusted TLS proxy must preserve
+# Host and X-Forwarded-Proto; never expose this HTTP listener directly to users.
+map $http_x_forwarded_proto $masp_scheme {
+    default $scheme;
+    https https;
+}
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    client_max_body_size 64m;
+    client_body_timeout 30s;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $masp_scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_read_timeout 120s;
+    proxy_http_version 1.1;
+    proxy_request_buffering off;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    location = /console { return 302 /console/; }
+    location /console/assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+    location /console/ {
+        try_files $uri $uri/ /console/index.html;
+        add_header Cache-Control "no-store";
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    }
+    location / {
+        proxy_pass ${MASP_BACKEND_URL};
+    }
+    location /api/ui/ {
+        client_max_body_size 128k;
+        proxy_pass ${MASP_BACKEND_URL};
+    }
+    # Only sample submission may exceed the browser JSON limit.
+    location = /api/ui/v1/scans {
+        client_max_body_size 64m;
+        proxy_pass ${MASP_BACKEND_URL};
+    }
+}

@@ -1,0 +1,4 @@
+# Reproducible schema tooling/CI baseline; production dependency locking is separate.
+-r requirements.txt
+fastapi==0.138.2
+pydantic==2.13.4

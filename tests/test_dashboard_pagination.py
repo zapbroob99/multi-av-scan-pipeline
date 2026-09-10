@@ -1,9 +1,12 @@
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from app.main import (
     api_ledger_query_url,
     build_archive_format_by_batch_id,
+    coverage_detail_text_for_scan,
+    coverage_summary_text_for_scan,
     dashboard_query_url,
     paginate_scans,
     render_api_ledger_rows,
@@ -154,6 +157,22 @@ class DashboardPaginationTests(unittest.TestCase):
 
         list_batches.assert_called_once_with([])
         self.assertEqual(formats, {})
+
+    def test_running_scan_coverage_names_waiting_engines(self) -> None:
+        scan = replace(make_scan(16), status="running")
+
+        with patch(
+            "app.main.required_engine_coverage",
+            return_value=(1, 3, ["YARA missing", "ClamAV missing"]),
+        ):
+            self.assertEqual(
+                coverage_summary_text_for_scan(scan, []),
+                "1 of 3 required engines completed",
+            )
+            self.assertEqual(
+                coverage_detail_text_for_scan(scan, []),
+                "Waiting for required engines: YARA missing; ClamAV missing.",
+            )
 
     def test_scan_result_renders_archive_members_inside_container_scan(self) -> None:
         container_scan = make_scan(9, batch_id=51, scan_role="container", relative_path="bundle.zip")

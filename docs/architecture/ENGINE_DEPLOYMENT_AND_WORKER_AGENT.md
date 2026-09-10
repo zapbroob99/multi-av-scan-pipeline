@@ -14,6 +14,31 @@ and `Defender Windows Pool A` without duplicating vendor parser code.
 
 ## Current State
 
+The opt-in [independent console](FRONTEND_SEPARATION.md) uses a versioned
+browser API, shared engine setup validation and a read-only manual Dashboard
+with ID-keyset pages and cached aggregate totals. Manual sample submission now
+uses a CSRF-protected multipart browser endpoint and the same transactional
+intake as legacy uploads. Analysts can read the Dashboard and submit files;
+engine management remains admin-only. Manual reports now use consistent read
+snapshots, shared backend assessment and on-demand bounded technical previews;
+registered archive children now have bounded direct-child navigation with an
+attempt-fenced cursor and manual/batch scoping. Empty lists never imply clean
+extraction. Manual reports now link to bounded JSON/CSV summary and full exports and
+confirmed retry/delete management. Analyst/admin retry resets and queues engine
+jobs atomically; admin deletion protects active scans, shared samples, registered
+children and undelivered notifications. Attempt plus engine-job revision prevents
+stale browser actions even when a queued retry settles before a worker starts.
+Manual batch overviews now use bounded indexed pages and stored counters without
+loading engine output or refreshing counters. Full-output views and bulk actions
+retain legacy links. This changes browser delivery, not worker
+transport, scan routing or engine support state. A local disposable PostgreSQL
+run passed the documented 100k-row browser query/concurrency budgets. Full-text
+indexing and deployment-shaped PostgreSQL load remain gates, not completed work.
+Browser contracts now have offline OpenAPI export, generated TypeScript DTOs,
+route/method/JSON-body typed calls and read-only drift checks. A Windows/Linux
+CI workflow is defined; remote CI acceptance is separate from local validation.
+No worker protocol, database schema or support-state change is introduced.
+
 The first multi-instance foundation is implemented:
 
 - `engine_instances.adapter_key` is no longer unique.
@@ -73,6 +98,10 @@ The current release supports two worker transports:
 - Agent operation URLs may be API-relative or origin-relative, but resolution is
   pinned to the configured control-plane origin so credentials cannot be sent to
   a server-selected external host.
+- HTTP redirects are rejected. Heartbeat continues during downloads, scans,
+  health probes and result submission; job leases renew from before download
+  through result acknowledgment. Finalization uses the scan routing snapshot.
+  See [phase 1 hardening](../security/HARDENING_PHASE_1.md) for scope and gates.
 - `database` workers retain direct PostgreSQL and shared-filesystem access as a
   compatibility mode for existing Docker and hybrid installations.
 - MASP executes Defender on the Windows agent itself; remote PowerShell/WinRM

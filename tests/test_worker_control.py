@@ -1,4 +1,5 @@
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -195,6 +196,8 @@ class WorkerControlEndpointTests(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 400)
 
     def test_claim_download_and_result_use_same_fenced_owner(self) -> None:
+        from app.workers import scan_worker
+
         content = b"control plane sample"
         sample_path = Path(self.temp_dir.name) / "sample.bin"
         sample_path.write_bytes(content)
@@ -214,16 +217,21 @@ class WorkerControlEndpointTests(unittest.TestCase):
             )
         )
         scan_id = database.create_scan_job(
-            sample_id, "Control API", "Normal", "", source="manual"
+            sample_id, "Control API", "Normal", "", source="api",
+            profile_snapshot_json=json.dumps({"engines": [{"id": engine_id, "name": "Remote Static Metadata"}]}),
         )
         engine = database.get_engine_instance_by_id(engine_id)
         assert engine is not None
         database.create_scan_engine_jobs(scan_id, [engine])
+        database.create_engine_instance("clamav", "Not In This Scan Profile")
         environment = {
             "MASP_WORKER_ENROLLMENT_TOKEN": "bootstrap-secret",
             "MASP_WORKER_CONTROL_REQUIRE_HTTPS": "0",
         }
-        with patch.dict("os.environ", environment, clear=False):
+        with patch.dict("os.environ", environment, clear=False), patch(
+            "app.workers.scan_worker.finalize_scan_if_complete",
+            wraps=scan_worker.finalize_scan_if_complete,
+        ) as finalize:
             enrolled = worker_control.enroll_worker(
                 make_request("bootstrap-secret"),
                 worker_control.WorkerIdentityPayload(
@@ -281,6 +289,7 @@ class WorkerControlEndpointTests(unittest.TestCase):
             )
 
         self.assertTrue(result["committed"])
+        self.assertEqual([item.id for item in finalize.call_args.args[1]], [engine_id])
         self.assertEqual(database.get_scan(scan_id).status, "completed")  # type: ignore[union-attr]
 
 

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.database import (
+    DB_PATH,
     DatabaseOperationalError,
     claim_next_scan_engine_job,
     claim_scan_finalization,
@@ -39,6 +40,7 @@ from app.database import (
     remove_orphan_child_sample,
     transition_scan_to_completed,
     update_scan_status,
+    using_postgres,
 )
 from app.models import (
     EngineInstanceRecord,
@@ -95,6 +97,7 @@ from app.services.worker_scheduling import (
 )
 from app.services.service_clients import (
     engines_for_scan as profile_engines_for_scan,
+    is_security_event_deferred_scan,
     seed_legacy_service_client,
 )
 from app.services.worker_health import run_due_worker_health_checks
@@ -386,9 +389,12 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
             job_id=job.id,
             worker_id=WORKER_ID,
             attempt_generation=job.attempt_count,
-            result=build_skipped_engine_result(
-                decision,
-                duration_ms=synthetic_engine_duration_ms(),
+            result=result_for_engine_job(
+                job,
+                build_skipped_engine_result(
+                    decision,
+                    duration_ms=synthetic_engine_duration_ms(),
+                ),
             ),
             terminal_status="skipped",
             last_error=decision.reason,
@@ -455,7 +461,10 @@ def process_scan_engine_job(job: ScanEngineJobRecord, engine_keys: set[str]) -> 
 
     print(f"Running {engine.display_name} for scan job {scan.id}", flush=True)
     stage_started_at = time.perf_counter()
-    result = run_engine_with_lease_renewal(engine, scan, job, lease_seconds)
+    result = result_for_engine_job(
+        job,
+        run_engine_with_lease_renewal(engine, scan, job, lease_seconds),
+    )
     terminal_status = engine_job_terminal_status(result.status)
     committed = commit_engine_job_result_if_owned(
         job_id=job.id,
@@ -1047,6 +1056,22 @@ def engine_job_terminal_status(result_status: str) -> str:
     return "completed"
 
 
+def result_for_engine_job(
+    job: ScanEngineJobRecord, result: EngineResultInput
+) -> EngineResultInput:
+    """Attribute adapter output to the immutable configured instance name.
+
+    Adapters report a vendor/product name such as ``Static Metadata`` or
+    ``ClamAV``. The queue and compatibility reports identify a configured
+    deployment by the job's snapshotted, unique display name instead. Binding
+    at this boundary keeps renamed and multiple instances unambiguous while the
+    fenced database commit still rejects callers targeting a different job.
+    """
+    if result.engine_name == job.engine_name:
+        return result
+    return replace(result, engine_name=job.engine_name)
+
+
 def missing_enabled_engine_instances(
     engines: list[EngineInstanceRecord],
     existing_engine_names: set[str],
@@ -1134,6 +1159,7 @@ def skipped_engine_result(
     engine: EngineInstanceRecord,
     engine_keys: set[str],
     wait_seconds: int | None = None,
+    message: str | None = None,
 ) -> EngineResultInput:
     effective_wait_seconds = (
         partial_results_wait_seconds([engine])
@@ -1141,7 +1167,7 @@ def skipped_engine_result(
         else wait_seconds
     )
     deferred_decision = route_engine_for_worker(engine, scan, engine_keys)
-    message = (
+    timeout_message = message or (
         "No compatible worker recorded a result before the orchestration wait window "
         f"expired ({effective_wait_seconds}s)."
     )
@@ -1149,7 +1175,7 @@ def skipped_engine_result(
         engine=engine,
         action=ROUTE_ACTION_SKIP,
         reason_code=ROUTE_REASON_WORKER_TIMEOUT,
-        reason=message,
+        reason=timeout_message,
         details={
             **deferred_decision.details,
             "orchestration": {
@@ -1164,8 +1190,8 @@ def skipped_engine_result(
     return build_skipped_engine_result(
         timeout_decision,
         duration_ms=synthetic_engine_duration_ms(),
-        error_message=message,
-        raw_output=message,
+        error_message=timeout_message,
+        raw_output=timeout_message,
     )
 
 
@@ -1173,6 +1199,18 @@ def online_worker_engine_keys() -> set[str]:
     """Engine keys advertised by any worker currently sending heartbeats."""
     status = get_worker_status()
     return {str(key) for key in status.get("engine_keys", []) if str(key)}
+
+
+def iter_active_scans_for_maintenance():
+    offset = 0
+    while True:
+        scans = list_active_scans(limit=ACTIVE_SCAN_LIMIT, offset=offset)
+        if not scans:
+            return
+        yield from scans
+        offset += len(scans)
+        if len(scans) < ACTIVE_SCAN_LIMIT:
+            return
 
 
 def sweep_finalize_stuck_scans() -> int:
@@ -1186,7 +1224,7 @@ def sweep_finalize_stuck_scans() -> int:
     only one wins and no duplicate results or children are produced.
     """
     finalized = 0
-    for scan in list_active_scans(limit=ACTIVE_SCAN_LIMIT):
+    for scan in iter_active_scans_for_maintenance():
         engines = engines_for_scan(scan)
         engine_jobs = list_scan_engine_jobs(scan.id)
         if not engine_jobs or not all_scan_engine_jobs_terminal(engine_jobs):
@@ -1210,7 +1248,12 @@ def reap_orphaned_engine_jobs(engine_keys: set[str]) -> bool:
     worker_status = get_worker_status()
     reaped_any = False
 
-    for scan in list_active_scans(limit=ACTIVE_SCAN_LIMIT):
+    for scan in iter_active_scans_for_maintenance():
+        # Deferred security-event scans deliberately trade latency for eventual
+        # coverage. An engine worker may be offline for hours or days, so the
+        # short synchronous orchestration window must not discard its job.
+        if is_security_event_deferred_scan(scan):
+            continue
         engines = engines_for_scan(scan)
         covered_instance_ids = schedulable_engine_instance_ids(worker_status, engines)
         engine_jobs = list_scan_engine_jobs(scan.id)
@@ -1233,7 +1276,8 @@ def reap_orphaned_engine_jobs(engine_keys: set[str]) -> bool:
 
         wait_seconds = partial_results_wait_seconds(missing_engines)
         message = (
-            "No online worker advertises this engine; skipped after the "
+            "No active worker matches this engine's adapter and pool placement; "
+            "skipped after the "
             f"orchestration wait window expired ({wait_seconds}s)."
         )
         skipped_scan = False
@@ -1243,7 +1287,13 @@ def reap_orphaned_engine_jobs(engine_keys: set[str]) -> bool:
                 continue
             create_engine_result_if_missing(
                 scan.id,
-                skipped_engine_result(scan, engine, engine_keys, wait_seconds),
+                skipped_engine_result(
+                    scan,
+                    engine,
+                    engine_keys,
+                    wait_seconds,
+                    message=message,
+                ),
             )
             record_worker_timing_event(
                 scan.id,
@@ -1411,6 +1461,12 @@ def run_maintenance() -> int:
     return recovered
 
 
+def worker_database_label() -> str:
+    if using_postgres():
+        return "postgres via MASP_DATABASE_URL"
+    return f"sqlite {DB_PATH}"
+
+
 def run_forever() -> None:
     transport = os.getenv("MASP_WORKER_TRANSPORT", "database").strip().lower()
     if transport == "control_api":
@@ -1440,7 +1496,8 @@ def run_forever() -> None:
     recovered = run_maintenance()
     print(
         "MASP scan worker started "
-        f"(engines: {', '.join(sorted(engine_keys)) or 'none'})",
+        f"(engines: {', '.join(sorted(engine_keys)) or 'none'}; "
+        f"transport: {transport}; database: {worker_database_label()})",
         flush=True,
     )
     if recovered:

@@ -32,7 +32,7 @@ from app.database import (
 from app.models import EngineResultInput, WorkerAgentCredentialRecord
 from app.services.audit import set_audit_context
 from app.services.auth import bearer_token_from_request
-from app.services.engine_registry import adapter_definition, enabled_engines, runtime_config
+from app.services.engine_registry import adapter_definition, runtime_config
 from app.services.worker_scheduling import eligible_engine_instance_ids_for_node
 from app.services.sample_paths import resolve_sample_path
 
@@ -465,9 +465,9 @@ def submit_worker_job_result(
     if scan is not None:
         # Keep finalization server-side: the agent does not need database access
         # and cannot mutate archive/scoring state outside this fenced endpoint.
-        from app.workers.scan_worker import finalize_scan_if_complete
+        from app.workers.scan_worker import engines_for_scan, finalize_scan_if_complete
 
-        finalized = finalize_scan_if_complete(scan, enabled_engines(source=scan.source))
+        finalized = finalize_scan_if_complete(scan, engines_for_scan(scan))
     return {"committed": True, "job_id": job_id, "scan_finalized": finalized}
 
 

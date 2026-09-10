@@ -13,6 +13,30 @@ Support states:
 
 ## Current Support
 
+The opt-in [React Dashboard/Engines console](../architecture/FRONTEND_SEPARATION.md) preserves
+existing adapters and worker protocols. Its Dashboard is a read-only manual-scan
+slice; manual submission reuses existing source-aware intake and lazy archive
+handling. Manual reports now expose shared backend decisions and required coverage,
+with bounded on-demand technical output. Registered manual archive children have
+paginated direct/nested navigation; reading never extracts files and an empty
+list does not prove clean coverage. Bounded summary/full JSON/CSV downloads and
+confirmed single-scan retry/delete now use the browser API. Full JSON includes raw
+engine output/details/findings without sample bytes, storage paths or integration
+configuration; CSV remains normalized and spreadsheet-safe. Bounded manual batch
+overviews include registered nested members without reading engine output or
+changing vendor routing. Full-output and bulk actions remain legacy; this is not
+full UI parity. Browser acceptance does not promote
+Defender or certify a new engine integration.
+The browser now uses generated OpenAPI types and contract drift checks. These
+cover browser schemas only, not service-client/worker protocol certification;
+no engine support state is promoted by type generation or CI configuration.
+
+[Phase 1 hardening](../security/HARDENING_PHASE_1.md) adds upload admission,
+deferred source isolation, redirect rejection and continuous HTTPS worker
+liveness. These changes do not promote Defender beyond `lab` or certify
+production throughput; PostgreSQL, Linux and installed-SCM acceptance gates
+remain environment-specific.
+
 | Integration | Vendor | Product | Method | State | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Static Metadata | MASP | Built-in metadata analyzer | local | supported | Extracts hashes, size, content type, and storage metadata. Not a detection engine. |
@@ -103,6 +127,10 @@ report_malicious.json
   `MASP_ICAP_SERVICE_CLIENT_KEY`; separate listeners are required for distinct
   client routing/ownership. This orchestration boundary does not change any
   vendor adapter's support state.
+- Large-file REST consumers can submit idempotent deferred filesystem-object
+  references. This opt-in path uses a deployment-mounted read-only source,
+  isolated copy/hash verification, normal engine routing, and a transactional
+  high/critical SIEM webhook outbox. S3 backends and remediation are roadmap.
 - Generic ICAP, generic REST, and custom command engines are internal engineering tools only unless a future product decision explicitly changes this.
 - Implemented `lab` or `blocked` integrations may be exposed for controlled
   validation with an explicit support-state warning. Production operators must

@@ -10,11 +10,14 @@ node_modules/
 data/
 storage/samples/
 storage/staging/
+deferred-source/
 benchmark-results/
 benchmark-samples/
 backups/
 dist/
 artifacts/
+frontend/test-results/
+frontend/playwright-report/
 
 # Internal / local-only — keep out of future commits
 .agents/

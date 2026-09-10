@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
+from http.client import HTTPException as HTTPTransportError
 import json
 import os
 import platform
@@ -12,7 +14,7 @@ import threading
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from app.models import EngineInstanceRecord, EngineResultInput, ScanRecord
 from app.services.engine_registry import (
@@ -21,6 +23,7 @@ from app.services.engine_registry import (
     run_engine,
 )
 from app.services.worker_capabilities import worker_engine_keys
+from app.services.http_transport import open_without_redirects as urlopen
 from app.services.worker_runtime import (
     current_worker_node_id,
     worker_node_capacity,
@@ -125,13 +128,17 @@ class WorkerControlClient:
         except HTTPError as exc:
             detail = exc.reason
             try:
-                body = json.loads(exc.read().decode("utf-8"))
+                body = json.loads(exc.read(65536).decode("utf-8"))
                 detail = body.get("detail") or detail
-            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, OSError, HTTPTransportError):
                 pass
+            finally:
+                exc.close()
             raise WorkerControlError(f"Control API returned {exc.code}: {detail}") from exc
         except URLError as exc:
             raise WorkerControlError(f"Control API is unreachable: {exc.reason}") from exc
+        except (OSError, HTTPTransportError) as exc:
+            raise WorkerControlError(f"Control API transport failed: {exc}") from exc
 
     def post_json(
         self,
@@ -147,6 +154,8 @@ class WorkerControlClient:
                 parsed = json.loads(response.read().decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise WorkerControlError("Control API returned invalid JSON.") from exc
+            except (OSError, HTTPTransportError) as exc:
+                raise WorkerControlError(f"Control API response interrupted: {exc}") from exc
         if not isinstance(parsed, dict):
             raise WorkerControlError("Control API returned an unexpected payload.")
         return parsed
@@ -188,8 +197,10 @@ class WorkerControlClient:
             if digest.hexdigest().lower() != expected_sha256.lower():
                 raise WorkerControlError("Downloaded sample SHA-256 verification failed.")
             return target
-        except Exception:
+        except Exception as exc:
             target.unlink(missing_ok=True)
+            if isinstance(exc, (OSError, HTTPTransportError)):
+                raise WorkerControlError(f"Sample download interrupted: {exc}") from exc
             raise
 
 
@@ -299,6 +310,40 @@ def result_payload(
     }
 
 
+def heartbeat_interval_seconds() -> float:
+    return min(5.0, worker_poll_seconds())
+
+
+def job_lease_renewal_seconds(lease_seconds: int) -> float:
+    return max(5.0, lease_seconds / 3.0)
+
+
+@contextmanager
+def active_heartbeat(client, process_id: int, state: str, scan_id: int | None = None):
+    """Keep node liveness independent of blocking download/probe/scan calls."""
+    payload = identity_payload(
+        process_id=process_id, runtime_state=state, active_scan_id=scan_id
+    )
+    client.post_json("heartbeat", payload)
+    stop = threading.Event()
+
+    def beat():
+        while not stop.wait(heartbeat_interval_seconds()):
+            try:
+                client.post_json("heartbeat", payload)
+            except WorkerControlError as exc:
+                print(f"Worker heartbeat failed, retrying: {exc}", flush=True)
+
+    thread = threading.Thread(target=beat, name="control-heartbeat", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        # Finish any in-flight heartbeat before the next runtime state is sent.
+        thread.join()
+
+
 def run_claim(client: WorkerControlClient, claim: dict[str, object], process_id: int) -> None:
     job = _dict(claim.get("job"), "job")
     sample = _dict(claim.get("sample"), "sample")
@@ -310,50 +355,55 @@ def run_claim(client: WorkerControlClient, claim: dict[str, object], process_id:
         "attempt_generation": generation,
         "lease_seconds": lease_seconds,
     }
-    local_path = client.download_sample(
-        str(sample["download_path"]),
-        ownership,
-        expected_sha256=str(sample["sha256"]),
-        expected_size=int(sample["size_bytes"]),
-        filename=str(sample["original_filename"]),
-    )
     stop = threading.Event()
+    lost = threading.Event()
+    local_path = None
 
     def renew() -> None:
-        while not stop.wait(max(5.0, lease_seconds / 3.0)):
+        while not stop.wait(job_lease_renewal_seconds(lease_seconds)):
             try:
                 client.post_json(f"jobs/{job_id}/lease", ownership)
             except WorkerControlError as exc:
+                lost.set()
                 print(f"Worker lease renewal stopped: {exc}", flush=True)
                 return
 
     renewer = threading.Thread(target=renew, name=f"control-lease-{job_id}", daemon=True)
-    renewer.start()
-    try:
-        engine = engine_from_claim(claim)
-        scan = scan_from_claim(claim, local_path)
-        print(f"Running {engine.display_name} for remote scan job {scan.id}", flush=True)
-        result = run_engine(engine, scan)
-    except Exception as exc:
-        result = EngineResultInput(
-            engine_name=str(_dict(claim.get("engine"), "engine").get("display_name") or "Unknown"),
-            status="failed",
-            detected=False,
-            severity="info",
-            confidence=0,
-            signature=None,
-            raw_output=f"Remote worker adapter failed: {type(exc).__name__}: {exc}",
-            duration_ms=0,
-            error_message=str(exc),
-        )
-    finally:
-        stop.set()
-        renewer.join()
-        local_path.unlink(missing_ok=True)
-    client.post_json(
-        f"jobs/{job_id}/result",
-        result_payload(process_id, generation, lease_seconds, result),
-    )
+    with active_heartbeat(client, process_id, "running", int(job["scan_id"])):
+        renewer.start()
+        try:
+            local_path = client.download_sample(
+                str(sample["download_path"]), ownership,
+                expected_sha256=str(sample["sha256"]),
+                expected_size=int(sample["size_bytes"]),
+                filename=str(sample["original_filename"]),
+            )
+            if lost.is_set():
+                raise WorkerControlError("Job ownership could not be renewed during download.")
+            try:
+                engine = engine_from_claim(claim)
+                scan = scan_from_claim(claim, local_path)
+                print(f"Running {engine.display_name} for remote scan job {scan.id}", flush=True)
+                result = run_engine(engine, scan)
+            except Exception as exc:
+                result = EngineResultInput(
+                    engine_name=str(_dict(claim.get("engine"), "engine").get("display_name") or "Unknown"),
+                    status="failed", detected=False, severity="info", confidence=0,
+                    signature=None,
+                    raw_output=f"Remote worker adapter failed: {type(exc).__name__}: {exc}",
+                    duration_ms=0, error_message=str(exc),
+                )
+            if lost.is_set():
+                raise WorkerControlError("Job ownership could not be renewed during scan.")
+            client.post_json(
+                f"jobs/{job_id}/result",
+                result_payload(process_id, generation, lease_seconds, result),
+            )
+        finally:
+            stop.set()
+            renewer.join()
+            if local_path is not None:
+                local_path.unlink(missing_ok=True)
 
 
 def run_health_claim(
@@ -361,6 +411,11 @@ def run_health_claim(
     claim: dict[str, object],
     process_id: int,
 ) -> None:
+    with active_heartbeat(client, process_id, "checking"):
+        _run_health_claim(client, claim, process_id)
+
+
+def _run_health_claim(client, claim, process_id) -> None:
     engine = engine_from_claim(claim)
     try:
         probe = engine_health(engine)

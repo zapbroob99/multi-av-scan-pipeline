@@ -1,5 +1,31 @@
 # MASP - Multi AV Scan Pipeline
 
+An independent React/TypeScript console includes a read-only Dashboard, admin
+Engines management and manual sample submission (`/console/scans/new`).
+Manual scan reports now show backend decisions, required-engine coverage and
+on-demand technical previews in the console. Archive reports link to paginated
+direct-child navigation, literal path search, nested child reports and a bounded
+manual batch overview. This lists
+registered scans, not a complete/clean archive inventory. `/console/scans/{id}/manage`
+offers bounded summary and full JSON/CSV downloads, confirmed retry for analysts/admins
+and protected single-scan deletion for admins. Full JSON contains raw engine output,
+details and findings; CSV contains normalized report rows. Both have a 2 MiB browser
+ceiling and omit sample bytes/storage paths. Full-output and bulk-action screens
+retain legacy links. Batch pages use indexed keyset pagination and recorded counters
+without loading engine output. Retry queues atomically; acceptance does
+not mean completion. Active scans and undelivered notifications are protected.
+With the backend running, use `npm --prefix frontend ci` and
+`npm --prefix frontend run dev`, then open `http://127.0.0.1:5173/console/dashboard`.
+History uses bounded ID-keyset pages; summary totals have a 30-second server cache.
+PostgreSQL browser reads and retry/delete locks have transaction-local time budgets;
+expired work returns a generic 503 and leaves the transaction rolled back.
+The legacy UI is preserved. See [frontend separation](docs/architecture/FRONTEND_SEPARATION.md)
+for security, deployment, tests and remaining migration work.
+Browser request/response types now come from a versioned OpenAPI snapshot;
+`npm --prefix frontend run contracts:check` checks backend/schema/type drift.
+See the frontend separation guide for the isolated generator setup. Normal
+frontend builds use the checked-in types and do not require Python or a live API.
+
 MASP is a self-hosted file scanning orchestration MVP. It is not a malware
 scanner itself; it stores submitted samples, normalizes engine outputs, and
 shows analyst-friendly scan results.
@@ -17,6 +43,9 @@ shows analyst-friendly scan results.
 - Admin-managed service clients with hashed/revocable API credentials,
   client-specific engine profiles, immutable routing snapshots, and ledger/API
   isolation
+- Deferred large-file references with idempotent `202 Accepted`, read-only
+  backend fetch, size/SHA-256 verification, and security-event-only SIEM webhook
+  delivery through a transactional outbox
 - RFC 3507 ICAP REQMOD gateway for synchronous upload gating
 - Source-aware engine eligibility: token/quota-consuming adapters are excluded
   from REST and ICAP automation
@@ -68,6 +97,19 @@ python -m unittest discover -s tests
 With the URL set, nothing should skip. On a deployed pilot host, run the same
 gate through `./deploy/pilot/run_gated_tests.sh`, which creates and destroys its
 own throwaway database.
+
+Browser query/load acceptance has a separate destructive benchmark. It refuses
+non-loopback servers and database names without an `_acceptance` or `_test`
+suffix, and still requires an explicit schema-reset flag:
+
+```powershell
+python tools/benchmark_browser_postgres.py `
+  --database-url $env:MASP_TEST_POSTGRES_URL `
+  --confirm-reset-public-schema --rows 100000 --archive-rows 100000
+```
+
+Never point this command at a deployed MASP database; it drops and recreates the
+target database's `public` schema.
 
 ## Security posture
 
@@ -267,6 +309,7 @@ behavior. Details and the measured effect are in
 `MASP_RETENTION_DAYS=0` disables retention cleanup. Set it above `0` to enable
 manual old scan cleanup from the System page. Cleanup deletes both scan records
 and their stored sample files, up to `MASP_RETENTION_BATCH_SIZE` records per run.
+Scans with undelivered SIEM outbox events are preserved until delivery succeeds.
 `MASP_WORKER_TIMING_EVENTS_ENABLED=1` records compact worker orchestration
 events for throughput analysis; set it to `0` to disable those records.
 `MASP_ENGINE_JOB_QUEUE_ENABLED=1` enables the only supported worker execution
@@ -292,6 +335,19 @@ adapters marked `consumes_external_quota` are excluded before engine jobs are
 created and are checked again by workers. VirusTotal is currently in this
 class, so it remains available for manual file scans and **Scan Hash**, but it
 does not consume tokens for REST file/hash requests or ICAP traffic.
+
+Large-file clients can use `POST /api/v1/deferred-scans` to submit a
+deployment-approved backend/object reference instead of uploading bytes. The
+backend must be explicitly mapped to the service client, optional prefix scopes
+can constrain shared roots, and the intake worker enforces the configured
+maximum byte limit before copying into MASP storage.
+
+HTTP uploads authenticate before multipart parsing and have a separate total
+body ceiling, `MASP_HTTP_UPLOAD_MAX_BYTES` (64 MiB by default), even when the
+sample policy is unlimited. Deferred sources must be regular, non-hardlinked
+files without symlink/junction path components. See
+[phase 1 hardening and upgrade notes](docs/security/HARDENING_PHASE_1.md), including
+the PostgreSQL large-file size migration and remaining scaling validation gates.
 
 Two operational endpoints sit alongside it: `GET /health` is an unauthenticated
 liveness probe, and `GET /metrics` serves Prometheus text-format metrics (queue

@@ -1,7 +1,12 @@
 import unittest
 from unittest.mock import patch
 
-from app.main import health_tone_for, render_engine_card, worker_backed_engine_health
+from app.main import (
+    engine_notice_title,
+    health_tone_for,
+    render_engine_card,
+    worker_backed_engine_health,
+)
 from app.models import EngineInstanceRecord, EngineNodeHealthRecord
 
 
@@ -119,6 +124,111 @@ class WorkerBackedEngineHealthTests(unittest.TestCase):
         self.assertIn("windows-01", health["detail"])
         self.assertIn("1.2.3", health["detail"])
 
+    def test_requested_worker_check_stays_pending_until_worker_reports(self) -> None:
+        engine = make_engine("clamav", "ClamAV")
+        requested = {
+            "ok": False,
+            "status": "worker check requested",
+            "detail": "Health check queued.",
+        }
+        with patch(
+            "app.main.get_worker_status",
+            return_value={"engine_keys": ["clamav"], "nodes": []},
+        ), patch("app.main.list_engine_node_health", return_value=[]):
+            health = worker_backed_engine_health(engine, dict(requested))
+
+        self.assertFalse(health["ok"])
+        self.assertEqual(health["status"], "worker check requested")
+        self.assertEqual(health_tone_for(engine.adapter_key, health), "warning")
+
+    def test_requested_worker_check_does_not_reuse_stale_success(self) -> None:
+        engine = make_engine("microsoft_defender", "Microsoft Defender")
+        requested = {
+            "ok": False,
+            "status": "worker check requested",
+            "detail": "Health check queued.",
+        }
+        stale_record = EngineNodeHealthRecord(
+            node_id="windows-01",
+            engine_instance_id=engine.id,
+            status="healthy",
+            ok=True,
+            health_status="available",
+            detail="Previous Defender check passed.",
+            product_version="4.18",
+            engine_version="1.1",
+            signature_version="1.2.3",
+            service_state="enabled",
+            storage_readable=True,
+            storage_writable=True,
+            consecutive_failures=0,
+            last_checked_at=1000,
+            last_success_at=1000,
+            last_scan_success_at=900,
+            details_json="{}",
+            check_worker_id=None,
+            check_generation=1,
+            check_lease_expires_at=None,
+            created_at="",
+            updated_at="",
+        )
+        worker_status = {
+            "engine_keys": ["microsoft_defender"],
+            "nodes": [
+                {
+                    "node_id": "windows-01",
+                    "schedulable": True,
+                    "engine_keys": ["microsoft_defender"],
+                    "labels": {"os": "windows"},
+                }
+            ],
+        }
+        with patch("app.main.get_worker_status", return_value=worker_status), patch(
+            "app.main.list_engine_node_health", return_value=[stale_record]
+        ):
+            health = worker_backed_engine_health(engine, dict(requested))
+
+        self.assertFalse(health["ok"])
+        self.assertEqual(health["status"], "worker check requested")
+        self.assertEqual(health["detail"], "Health check queued.")
+
+    def test_requested_worker_check_without_worker_is_not_successful(self) -> None:
+        engine = make_engine("clamav", "ClamAV")
+        requested = {
+            "ok": False,
+            "status": "worker check requested",
+            "detail": "Health check queued.",
+        }
+        with patch(
+            "app.main.get_worker_status",
+            return_value={"engine_keys": [], "nodes": []},
+        ), patch("app.main.list_engine_node_health", return_value=[]):
+            health = worker_backed_engine_health(engine, dict(requested))
+
+        self.assertFalse(health["ok"])
+        self.assertEqual(health["status"], "no online worker")
+        self.assertEqual(health_tone_for(engine.adapter_key, health), "warning")
+
+    def test_clamav_not_configured_reads_as_error(self) -> None:
+        engine = make_engine("clamav", "ClamAV")
+        health = {
+            "ok": False,
+            "status": "not configured",
+            "detail": "clamscan was not found on PATH.",
+        }
+
+        self.assertEqual(health_tone_for(engine.adapter_key, health), "danger")
+
+    def test_no_worker_notice_title_is_not_check_requested(self) -> None:
+        self.assertEqual(
+            engine_notice_title("warning", "no online worker"),
+            "Engine worker unavailable",
+        )
+        self.assertEqual(
+            engine_notice_title("warning", "worker check requested"),
+            "Engine check requested",
+        )
+
 
 class VirusTotalEngineCardTests(unittest.TestCase):
     def test_hash_only_engine_card_exposes_lifecycle_without_rendering_secret(self) -> None:
@@ -145,6 +255,30 @@ class VirusTotalEngineCardTests(unittest.TestCase):
         self.assertIn('action="/engines/virustotal/config"', rendered)
         self.assertIn('type="password" name="virustotal_api_key"', rendered)
         self.assertNotIn("ui-secret-must-not-render", rendered)
+
+
+class WorkerEngineActionTests(unittest.TestCase):
+    def test_worker_engine_action_requests_async_health_check(self) -> None:
+        engine = make_engine("clamav", "ClamAV")
+        with patch("app.main.get_worker_status", return_value={"engine_keys": ["clamav"]}), patch(
+            "app.main.list_engine_node_health", return_value=[]
+        ):
+            rendered = render_engine_card(engine, {})
+
+        self.assertIn("Request health check", rendered)
+        self.assertNotIn(">Test connection</button>", rendered)
+
+    def test_targeted_engine_card_reopens_modal(self) -> None:
+        engine = make_engine("clamav", "ClamAV")
+        with patch("app.main.get_worker_status", return_value={"engine_keys": ["clamav"]}), patch(
+            "app.main.list_engine_node_health", return_value=[]
+        ):
+            rendered = render_engine_card(engine, {}, focus_adapter_key=str(engine.id))
+
+        self.assertIn(
+            'id="engine-modal-10" class="modal-dialog engine-modal" data-modal data-auto-open',
+            rendered,
+        )
 
 
 if __name__ == "__main__":

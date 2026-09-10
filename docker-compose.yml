@@ -27,6 +27,12 @@ services:
       MASP_API_MAX_WAIT_SECONDS: ${MASP_API_MAX_WAIT_SECONDS:-15}
       MASP_API_RETRY_AFTER_SECONDS: ${MASP_API_RETRY_AFTER_SECONDS:-2}
       MASP_UPLOAD_MAX_BYTES: ${MASP_UPLOAD_MAX_BYTES:-0}
+      MASP_HTTP_UPLOAD_MAX_BYTES: ${MASP_HTTP_UPLOAD_MAX_BYTES:-67108864}
+      MASP_UI_READ_TIMEOUT_MS: ${MASP_UI_READ_TIMEOUT_MS:-5000}
+      MASP_UI_WRITE_LOCK_TIMEOUT_MS: ${MASP_UI_WRITE_LOCK_TIMEOUT_MS:-5000}
+      MASP_DEFERRED_FILESYSTEM_BACKEND_KEY: ${MASP_DEFERRED_FILESYSTEM_BACKEND_KEY:-drive}
+      MASP_DEFERRED_FILESYSTEM_ROOT: /app/deferred-source
+      MASP_DEFERRED_BACKEND_CLIENTS_JSON: ${MASP_DEFERRED_BACKEND_CLIENTS_JSON:-}
       # Optional LDAP/Active Directory login. Only the app receives directory
       # credentials; workers and ICAP never need them.
       MASP_LDAP_ENABLED: ${MASP_LDAP_ENABLED:-0}
@@ -228,6 +234,37 @@ services:
     volumes:
       - ./storage:/app/storage
       - ./rules:/app/rules
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  deferred-intake:
+    build: .
+    profiles: [deferred]
+    command: python -m app.workers.deferred_intake_worker
+    environment:
+      MASP_DATABASE_URL: postgresql://masp:masp_dev_password@postgres:5432/masp
+      MASP_DEFERRED_FILESYSTEM_BACKEND_KEY: ${MASP_DEFERRED_FILESYSTEM_BACKEND_KEY:-drive}
+      MASP_DEFERRED_FILESYSTEM_ROOT: /app/deferred-source
+      MASP_DEFERRED_BACKEND_CLIENTS_JSON: ${MASP_DEFERRED_BACKEND_CLIENTS_JSON:-}
+      MASP_DEFERRED_MAX_BYTES: ${MASP_DEFERRED_MAX_BYTES:-0}
+    volumes:
+      - ./storage:/app/storage
+      - ./deferred-source:/app/deferred-source:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notification:
+    build: .
+    profiles: [notifications]
+    command: python -m app.workers.notification_worker
+    environment:
+      MASP_DATABASE_URL: postgresql://masp:masp_dev_password@postgres:5432/masp
+      MASP_SIEM_WEBHOOK_URL: ${MASP_SIEM_WEBHOOK_URL:-}
+      MASP_SIEM_WEBHOOK_SECRET: ${MASP_SIEM_WEBHOOK_SECRET:-}
+      MASP_SIEM_WEBHOOK_TIMEOUT_SECONDS: ${MASP_SIEM_WEBHOOK_TIMEOUT_SECONDS:-10}
+      MASP_SIEM_WEBHOOK_ALLOW_HTTP: ${MASP_SIEM_WEBHOOK_ALLOW_HTTP:-false}
     depends_on:
       postgres:
         condition: service_healthy

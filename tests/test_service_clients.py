@@ -4,7 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import database
-from app.models import ApiClientIdentity, StoredSample
+from app.models import ApiClientIdentity, EngineResultInput, StoredSample
+from app.services.scan_assessment import detection_summary, required_engine_coverage
 from app.services.service_clients import (
     engines_for_profile,
     engines_for_scan,
@@ -12,6 +13,7 @@ from app.services.service_clients import (
     identity_for_service_client_key,
     identity_can_access_scan,
     profile_snapshot_json,
+    required_detection_engine_names,
     resolve_stored_api_client,
 )
 
@@ -131,10 +133,92 @@ class ServiceClientIsolationTests(unittest.TestCase):
             profile_snapshot_json=snapshot,
         )
         database.set_scan_profile_engines(profile_id, [self.clamav_id])
+        with database.connect() as connection:
+            connection.execute("UPDATE engine_instances SET display_name = ? WHERE id = ?",
+                               ("Renamed Metadata", self.metadata_id))
 
         scan = database.get_scan(scan_id)
         assert scan is not None
         self.assertEqual([engine.id for engine in engines_for_scan(scan)], [self.metadata_id])
+        self.assertEqual([engine.display_name for engine in engines_for_scan(scan)], ["Metadata A"])
+
+    def test_explicit_empty_snapshot_does_not_use_current_global_engines(self) -> None:
+        scan_id = database.create_scan_job(
+            self.sample_id(), case_name="Empty", priority="Normal", note="", source="api",
+            profile_snapshot_json='{"engines":[]}',
+        )
+        self.assertEqual(engines_for_scan(database.get_scan(scan_id)), [])
+
+    def test_manual_scan_coverage_uses_immutable_job_identity(self) -> None:
+        scan_id = database.create_scan_job(
+            self.sample_id("metadata.bin"),
+            case_name="Metadata",
+            priority="Normal",
+            note="",
+            source="manual",
+        )
+        metadata = database.get_engine_instance_by_id(self.metadata_id)
+        assert metadata is not None
+        database.create_scan_engine_jobs(scan_id, [metadata])
+        database.create_engine_result(
+            scan_id,
+            EngineResultInput(
+                engine_name=metadata.display_name,
+                status="completed",
+                detected=False,
+                severity="info",
+                confidence=100,
+                signature=None,
+                raw_output="{}",
+                duration_ms=1,
+            ),
+        )
+
+        scan = database.get_scan(scan_id)
+        assert scan is not None
+        results = database.list_engine_results(scan_id)
+
+        # ClamAV is currently enabled globally, but it was not assigned to this
+        # scan. The custom-named metadata adapter must not be misclassified as a
+        # detection engine merely because its name differs from the built-in.
+        self.assertEqual(required_detection_engine_names(scan), [])
+        self.assertEqual(detection_summary(results, scan=scan), (0, 0))
+        self.assertEqual(required_engine_coverage(results, scan=scan), (0, 0, []))
+
+    def test_manual_scan_coverage_keeps_job_name_after_instance_rename(self) -> None:
+        scan_id = database.create_scan_job(
+            self.sample_id("clamav.bin"),
+            case_name="ClamAV",
+            priority="Normal",
+            note="",
+            source="manual",
+        )
+        clamav = database.get_engine_instance_by_id(self.clamav_id)
+        assert clamav is not None
+        database.create_scan_engine_jobs(scan_id, [clamav])
+        database.update_engine_instance_by_id(
+            self.clamav_id, display_name="ClamAV Current"
+        )
+        database.create_engine_result(
+            scan_id,
+            EngineResultInput(
+                engine_name=clamav.display_name,
+                status="completed",
+                detected=False,
+                severity="info",
+                confidence=100,
+                signature=None,
+                raw_output="clean",
+                duration_ms=1,
+            ),
+        )
+
+        scan = database.get_scan(scan_id)
+        assert scan is not None
+        results = database.list_engine_results(scan_id)
+
+        self.assertEqual(required_detection_engine_names(scan), ["ClamAV B"])
+        self.assertEqual(required_engine_coverage(results, scan=scan), (1, 1, []))
 
     def test_client_cannot_access_another_clients_scan(self) -> None:
         token_a = "client-d-token-that-is-longer-than-32-characters"

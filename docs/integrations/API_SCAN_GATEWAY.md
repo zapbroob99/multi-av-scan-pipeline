@@ -9,6 +9,13 @@ The primary workflow is:
 
 ## Upload-Gateway Integration Pattern (v1)
 
+Authentication occurs before multipart parsing. Total HTTP body size (including
+extra parts) is bounded by `MASP_HTTP_UPLOAD_MAX_BYTES`, default 64 MiB, as well
+as the effective sample policy plus 1 MiB of multipart overhead. Oversized
+declared or streamed bodies receive `413`; disabling the sample policy limit
+does not remove this deployment ceiling. See
+[hardening and upgrade notes](../security/HARDENING_PHASE_1.md).
+
 For integrations that scan a file before allowing an action elsewhere (for
 example, a file storage product scanning an upload before accepting it), the
 recommended v1 pattern is a **size-capped synchronous scan**:
@@ -43,6 +50,48 @@ the request shape changes.
 For a file above the upload cap, the integrating system must follow its own
 approved fail-closed or manual-review policy. MASP does not invoke metered
 external reputation services from API or ICAP traffic.
+
+## Deferred large-file submission
+
+Large-file systems that must not wait for content transfer or a verdict use the
+JSON endpoint below. The source object must already exist in a backend mounted
+read-only by the MASP deferred intake worker.
+
+```http
+POST /api/v1/deferred-scans
+Authorization: Bearer <client token>
+Content-Type: application/json
+
+{
+  "client_request_id": "drive-20260827-91823",
+  "backend_key": "drive",
+  "object_id": "incoming/2026/08/archive.iso",
+  "original_filename": "archive.iso",
+  "content_type": "application/octet-stream",
+  "expected_size_bytes": 21474836480,
+  "expected_sha256": null,
+  "archive_mode": "container",
+  "case_name": "Drive deferred",
+  "priority": "Normal",
+  "note": "Large-file security monitoring"
+}
+```
+
+MASP returns `202` after persisting only the reference and immutable routing
+snapshot. Repeating the same `client_request_id` for the same object is safe and
+returns the existing submission. Reusing it with any changed deferred payload
+returns `409`. `GET /api/v1/deferred-scans/{id}` reports fetch/queue state,
+attempt count, timestamps, failed-intake error details, and normal scan
+status/result links after intake creates the scan.
+
+The endpoint never accepts arbitrary URLs or filesystem paths. `backend_key`
+must exist in deployment configuration and be explicitly allowed for the
+authenticated service client; optional prefix mappings prevent one integration
+from referencing another one's shared-root folder. `object_id` must be relative
+and contained. Supply `expected_sha256` when the source system has it; otherwise
+MASP still hashes its isolated copy and detects size/mtime changes during fetch.
+If `expected_size_bytes` exceeds `MASP_DEFERRED_MAX_BYTES`, MASP rejects the
+submission before spending intake-worker time.
 
 ## SHA-256 reputation lookup
 
