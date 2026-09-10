@@ -72,7 +72,7 @@ function App() {
   </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="offline-label">SELF-HOSTED</span></header>
     {error && <p role="alert" className="error">{error}</p>}
       <Suspense fallback={<p role="status">Loading page…</p>}><Routes>
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard" element={<Dashboard session={session.data} />} />
         <Route path="/scans/new" element={<NewScan session={session.data} />} />
         <Route path="/scans/:scanId" element={<Report />} />
         <Route path="/scans/:scanId/manage" element={<ScanManagement key={location.pathname} session={session.data} />} />

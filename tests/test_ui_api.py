@@ -161,6 +161,52 @@ class BrowserApiTests(unittest.TestCase):
         self.assertIsNone(db.get_scan(child))
         self.assertEqual(self.request(f'/scans/{child}', 'DELETE', {'attempt': 0, 'job_revision': 0})[0], 404)
 
+    def test_bulk_delete_is_bounded_admin_only_strict_and_duplicate_safe(self):
+        scan = self.create_scan(status='completed')
+        item = {'scan_id': scan, 'attempt': 0, 'job_revision': 0}
+        self.assertEqual(self.request('/scans', 'DELETE', {'scans': [item]}, session=False)[0], 401)
+        self.assertEqual(self.reads, 0)
+        self.assertEqual(self.request('/scans', 'DELETE', {'scans': [item]}, csrf=False)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/scans', 'DELETE', {'scans': [item]})[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        for body in ({}, {'scans': []}, {'scans': [item, item]},
+                     {'scans': [item | {'extra': 'no'}]},
+                     {'scans': [{'scan_id': str(scan), 'attempt': 0, 'job_revision': 0}]},
+                     {'scans': [item] * 21}):
+            with self.subTest(body=body):
+                self.assertEqual(self.request('/scans', 'DELETE', body)[0], 422)
+                self.assertIsNotNone(db.get_scan(scan))
+
+    def test_bulk_delete_reports_partial_fenced_results_and_cleanup_failures(self):
+        deleted = self.create_scan(status='completed')
+        active = self.create_scan(status='running')
+        stale = self.create_scan(status='completed')
+        parent, batch = self.archive_fixture()
+        child = self.create_scan(status='completed', parent_scan_id=parent, batch_id=batch, scan_role='child')
+        api_scan = self.create_scan(status='completed', source='api')
+        candidates = [
+            {'scan_id': deleted, 'attempt': 0, 'job_revision': 0},
+            {'scan_id': active, 'attempt': 0, 'job_revision': 0},
+            {'scan_id': stale, 'attempt': 1, 'job_revision': 0},
+            {'scan_id': parent, 'attempt': 0, 'job_revision': 0},
+            {'scan_id': child, 'attempt': 0, 'job_revision': 0},
+            {'scan_id': api_scan, 'attempt': 0, 'job_revision': 0},
+        ]
+        with patch.object(scan_management, 'delete_sample_file', return_value=False):
+            status, payload, _ = self.request('/scans', 'DELETE', {'scans': candidates})
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload, {'requested_count': 6, 'deleted_ids': [deleted],
+            'blocked_ids': [active, stale, parent, child, api_scan],
+            'cleanup_failed_ids': [deleted]})
+        self.assertIsNone(db.get_scan(deleted))
+        for scan_id in (active, stale, parent, child, api_scan):
+            self.assertIsNotNone(db.get_scan(scan_id))
+
     def test_summary_exports_use_shared_decision_and_explicit_bounded_scope(self):
         import csv
         import io
@@ -813,7 +859,8 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual(row['risk_score'], 0)
         self.assertEqual(row['size_bytes'], 50 * 1024**3)
         self.assertEqual(set(row), {'id', 'filename', 'sha256', 'size_bytes', 'case_name', 'status',
-                                    'risk_level', 'risk_score', 'created_at'})
+                                    'risk_level', 'risk_score', 'attempt_count', 'job_revision', 'created_at'})
+        self.assertEqual((row['attempt_count'], row['job_revision']), (0, 0))
         summary = self.request('/dashboard/summary')[1]
         self.assertEqual((summary['total'], summary['active'], summary['high_risk']), (3, 1, 1))
         schema = self.app.openapi()['paths'][ui_api.PREFIX + '/dashboard/scans']['get']['responses']['200']

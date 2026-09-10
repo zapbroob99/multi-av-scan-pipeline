@@ -7,10 +7,13 @@ import Dashboard, { historyPollInterval } from './dashboard'
 import type { ScanPreview } from '../lib/api'
 
 const sample: ScanPreview = { id: 24, filename: '<img src=x onerror=alert(1)>', sha256: 'a'.repeat(64),
-  size_bytes: 512, case_name: 'Case A', status: 'failed', risk_score: 0, risk_level: 'info', created_at: '2026-09-08 12:00:00' }
+  size_bytes: 512, case_name: 'Case A', status: 'failed', risk_score: 0, risk_level: 'info',
+  attempt_count: 3, job_revision: 9, created_at: '2026-09-08 12:00:00' }
 
-function mount(path = '/dashboard', failHistory = false) {
-  const fetcher = vi.fn(async (url: string) => {
+function mount(path = '/dashboard', failHistory = false, role = 'admin') {
+  const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === 'DELETE') return new Response(JSON.stringify({ requested_count: 1,
+      deleted_ids: [24], blocked_ids: [], cleanup_failed_ids: [] }))
     if (url.includes('/summary')) return new Response(JSON.stringify({ total: 24, active: 1, high_risk: 2,
       enabled_engines: 1, generated_at: '2026-09-08T12:00:00Z', refresh_after_seconds: 30 }))
     if (failHistory) return new Response(JSON.stringify({ detail: 'Database unavailable' }), { status: 503 })
@@ -18,7 +21,8 @@ function mount(path = '/dashboard', failHistory = false) {
   })
   vi.stubGlobal('fetch', fetcher)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Dashboard /></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Dashboard
+    session={{ user: { id: 1, username: 'user', role }, csrf_token: 'csrf' }} /></MemoryRouter></QueryClientProvider>)
   return fetcher
 }
 
@@ -59,5 +63,23 @@ describe('Dashboard', () => {
   it('polls only the latest history page', () => {
     expect(historyPollInterval('')).toBe(20000)
     expect(historyPollInterval('24')).toBe(false)
+  })
+  it('submits an admin bulk deletion once with displayed fences', async () => {
+    const fetcher = mount()
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Select scan 24' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete selected (1)' }))
+    expect(fetcher.mock.calls.filter(([, options]) => options?.method === 'DELETE')).toHaveLength(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Deleted 1 of 1 selected scans')
+    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'DELETE')
+    expect(writes).toHaveLength(1)
+    expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ scans: [{ scan_id: 24, attempt: 3, job_revision: 9 }] })
+    expect(writes[0][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
+  })
+  it('keeps bulk deletion unavailable to analysts', async () => {
+    mount('/dashboard', false, 'analyst')
+    await screen.findByRole('link', { name: sample.filename })
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Delete selected/ })).toBeNull()
   })
 })

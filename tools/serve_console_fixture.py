@@ -31,9 +31,10 @@ def main():
             sample_id = db.create_sample(StoredSample(f"acceptance-{index:02}.bin", f"fixture-{index}",
                 str(Path(directory) / f"absent-{index}"), "application/octet-stream", 4096,
                 f"{index:032x}", f"{index:040x}", f"{index:064x}"))
+            terminal = index in {22, 24}
             scan_id = db.create_scan_job(sample_id, "Browser acceptance", "normal", "",
-                status="failed" if index == 24 else "queued", verdict="info" if index == 24 else "pending",
-                risk_score=0 if index == 24 else None)
+                status="failed" if index == 24 else "completed" if terminal else "queued",
+                verdict="info" if terminal else "pending", risk_score=0 if terminal else None)
             if index == 24:
                 db.create_engine_result(scan_id, EngineResultInput('Static Metadata', 'failed', False, 'info', 0, None,
                     '<script>benign fixture text</script>', 12, error_message='Synthetic worker failure'))

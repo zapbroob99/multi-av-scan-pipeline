@@ -449,6 +449,92 @@
         "title": "Body_submit_scan_api_ui_v1_scans_post",
         "type": "object"
       },
+      "BulkDeleteBody": {
+        "additionalProperties": false,
+        "properties": {
+          "scans": {
+            "items": {
+              "$ref": "#/components/schemas/BulkDeleteCandidate"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Scans",
+            "type": "array"
+          }
+        },
+        "required": [
+          "scans"
+        ],
+        "title": "BulkDeleteBody",
+        "type": "object"
+      },
+      "BulkDeleteCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "job_revision": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Job Revision",
+            "type": "integer"
+          },
+          "scan_id": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Scan Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scan_id",
+          "attempt",
+          "job_revision"
+        ],
+        "title": "BulkDeleteCandidate",
+        "type": "object"
+      },
+      "BulkDeleteResult": {
+        "properties": {
+          "blocked_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Blocked Ids",
+            "type": "array"
+          },
+          "cleanup_failed_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Cleanup Failed Ids",
+            "type": "array"
+          },
+          "deleted_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Deleted Ids",
+            "type": "array"
+          },
+          "requested_count": {
+            "title": "Requested Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "requested_count",
+          "deleted_ids",
+          "blocked_ids",
+          "cleanup_failed_ids"
+        ],
+        "title": "BulkDeleteResult",
+        "type": "object"
+      },
       "ConfigBody": {
         "additionalProperties": false,
         "properties": {
@@ -1231,6 +1317,10 @@
       },
       "ScanPreview": {
         "properties": {
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
           "case_name": {
             "title": "Case Name",
             "type": "string"
@@ -1245,6 +1335,10 @@
           },
           "id": {
             "title": "Id",
+            "type": "integer"
+          },
+          "job_revision": {
+            "title": "Job Revision",
             "type": "integer"
           },
           "risk_level": {
@@ -1284,6 +1378,8 @@
           "status",
           "risk_level",
           "risk_score",
+          "attempt_count",
+          "job_revision",
           "created_at"
         ],
         "title": "ScanPreview",
@@ -3358,6 +3454,115 @@
       }
     },
     "/api/ui/v1/scans": {
+      "delete": {
+        "operationId": "bulk_delete_manual_scans_api_ui_v1_scans_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkDeleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkDeleteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Bulk Delete Manual Scans",
+        "tags": [
+          "Browser console"
+        ]
+      },
       "post": {
         "operationId": "submit_scan_api_ui_v1_scans_post",
         "requestBody": {

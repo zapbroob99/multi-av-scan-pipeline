@@ -22,14 +22,15 @@ existing filename overwrites its content. Run a check to validate compilation.
 
 The Dashboard now provides manual history, status/recorded-risk filters, text
 search, cached summary cards and cursor pagination. Both analyst and admin
-sessions may read it. Manual sample submission now stays in the console and
+sessions may read it; admins may delete up to 20 selected visible rows with
+per-record stale-state fences. Manual sample submission now stays in the console and
 returns a visible acceptance receipt. Dashboard and receipt links now open the
 React report, showing backend decisions, required coverage and on-demand technical
 previews. Submission API `report_url`/Location still retain their legacy URLs for
 compatibility; the console constructs its own internal route from the scan ID.
 
-This is **not the whole frontend migration**. Bulk actions, detection-verdict
-filters, worker detail, full-output views, bulk actions, System,
+This is **not the whole frontend migration**. Detection-verdict filters, worker
+detail, full-output views, recursive batch actions, System,
 users and policies still use legacy HTML. `/` and `/engines` remain available.
 Integration URLs, worker control, queue behavior and snapshots are unchanged.
 Node is required for building/development, not for serving static production files.
@@ -67,6 +68,7 @@ snapshot at `frontend/contracts/browser.openapi.json`, generated TypeScript in
 | `/dashboard/scans` | GET | Bounded manual history previews, ID-keyset pagination |
 | `/scans/options` | GET | Current file/body limits and eligible enabled engine count |
 | `/scans` | POST multipart | Store one manual sample and enqueue; JSON `202` receipt |
+| `/scans` | DELETE | Admin-only bounded bulk deletion of selected visible manual scans |
 | `/scans/{id}` | GET | Manual report, backend decision and required-engine coverage |
 | `/scans/{id}/results/{result_id}` | GET | On-demand bounded technical text previews |
 | `/scans/{id}/children` | GET | Registered direct manual archive children, scoped keyset pages |
@@ -88,7 +90,8 @@ snapshot at `frontend/contracts/browser.openapi.json`, generated TypeScript in
 Engine routes require admin browser sessions, not service-client bearer tokens.
 The exact Dashboard/options/manual-report/children/batch/summary/full-export GET routes, manual submission and retry POST routes are additionally
 allowed for analysts; this does not widen engine-management permissions or expose
-automation history. Service-client tokens are not browser credentials.
+automation history. Bulk and single deletion remain admin-only. Service-client
+tokens are not browser credentials.
 Anonymous access returns JSON `401`, not HTML redirects. Unsafe methods require
 exact same-origin `Origin`, `X-MASP-UI: 1`, and, after login, `X-CSRF-Token` from
 the session endpoint. Session cookies remain HttpOnly, never returned in JSON or
@@ -211,8 +214,8 @@ Case folding follows database `LOWER` semantics; SQLite's built-in Unicode
 case folding is limited, so non-ASCII matching is not a cross-database parity claim.
 The risk level is **not** a detection verdict. Failed/missing coverage is never relabeled
 clean; score zero and job completion do not imply policy allow. Snapshot-aware
-coverage is available in the console report. This intentional history preview is not legacy
-Dashboard parity and cannot replace its decision/coverage or bulk-action UI yet.
+coverage is available in the console report. This intentional history preview is
+not decision/coverage parity; operators must still open the report.
 
 Search runs only on Apply filters, not each keystroke. The latest page polls at
 20 seconds; historical pages do not interval-poll. Background-tab intervals are
@@ -238,14 +241,14 @@ Queue fairness and ICAP streaming remain separate work. Inventory returns all co
 engines; very large deployments need pagination/incremental health updates.
 DTO generation and drift checks are implemented; see the contract workflow below.
 
-### Summary/full exports and single-scan management
+### Summary/full exports and scan management
 
 The report links to `/console/scans/{id}/manage`. Analysts and admins can download
 summary or full JSON/CSV exports and confirm retry; only admins see and may invoke deletion.
 The management screen refreshes on entry, focus or explicit action, without an
 interval. Server-side mutation checks remain authoritative when the page is stale.
-Legacy links preserve the full-output view. This slice does
-not provide recursive batch deletion or bulk actions.
+Legacy links preserve the full-output view. Recursive batch deletion remains a
+separate migration slice.
 
 `GET /scans/{id}/summary-export?format=json|csv` calls the same coherent, bounded
 report reader as the report screen. It preserves backend decisions, missing
@@ -320,6 +323,24 @@ retry/delete row locking and timeout rollback are covered by the disposable test
 gate. Sample-reference/outbox lookup plans and deployment concurrency/export
 budgets remain required gates; bounded output does not bound those queries. No
 table/column migration, new worker transport or engine support promotion is added.
+
+Dashboard bulk deletion uses `DELETE /scans` with one to 20 unique candidates
+from the visible page. Each candidate carries the displayed scan ID, attempt and
+highest engine-job ID. The server accepts admins only, rejects archive children
+from this Dashboard operation, and applies the same manual-source, active-state,
+registered-child, shared-sample, undelivered-outbox and row-lock checks as
+single-record deletion. Disabled active-row checkboxes are advisory; the locked
+server recheck is authoritative.
+
+Candidates commit independently in request order. The response separates deleted,
+blocked and post-commit cleanup-failed IDs, so one stale/protected row does not hide
+a successful deletion of another. This is deliberately a bounded partial-result
+operation, not an atomic multi-row transaction. A network/5xx failure can still be
+ambiguous after earlier rows commit; React never retries automatically and tells
+the administrator to refresh history before another attempt. Changing filters or
+pages clears selection. Production audit context records aggregate requested,
+deleted, blocked and cleanup-failed counts. It does not recursively traverse or
+delete an archive batch.
 
 ### Generated browser contracts
 
@@ -468,9 +489,9 @@ that release gate.
 ## Verification and next steps
 
 Verified on 2026-09-10 after PostgreSQL browser acceptance: the full Python suite
-ran 670 tests (668 passed, two platform-gated skips) with the disposable database,
-including 63 browser API and five contract tests. All 42 frontend tests, three
-generator tests and six
+ran 672 tests (670 passed, two platform-gated skips) with the disposable database,
+including 65 browser API and five contract tests. All 44 frontend tests, three
+generator tests and seven
 real Edge workflows passed. Both contract drift checks and compile-time negative
 assertions passed. Remote Windows/Linux CI has been configured but not executed.
 TypeScript/production build and `git diff --check` passed. SQLite WAL retry-race tests
@@ -479,8 +500,8 @@ on the next read. SQLite batch snapshot/index checks and PostgreSQL
 report/archive/batch consistency, migration, queue
 concurrency and browser statement/row-lock budget tests passed against a
 disposable PostgreSQL 16 container. Initial JavaScript including its shared UI dependency is
-about 97.85 kB gzip; lazy batch overview is 2.09 kB, submission 2.21 kB, archive
-navigation 2.26 kB, report 2.47 kB, Dashboard 2.51 kB, management 2.55 kB,
+about 97.84 kB gzip; lazy batch overview is 2.09 kB, submission 2.21 kB, archive
+navigation 2.25 kB, report 2.46 kB, Dashboard 3.44 kB, management 2.55 kB,
 Engines 4.87 kB, shared dialog 12.82 kB, shared mutation code 0.96 kB and search
 icon 0.30 kB gzip, excluding CSS (about 4.81 kB gzip). Shared dialog code loads
 with either management or Engines.
@@ -488,7 +509,7 @@ These are build sizes, not measured user latency. The new exact nginx upload
 location is configured but real nginx/TLS upload execution remains a gate.
 Docker image execution/TLS and deployment-shaped PostgreSQL validation were not
 performed in this slice. Test services used disposable data; no existing MASP configuration was
-changed by the browser acceptance test. Changes remain uncommitted.
+changed by the browser acceptance test.
 
 ```powershell
 python -m unittest discover -s tests
@@ -525,7 +546,11 @@ paths, nested navigation, retry-cursor conflicts, detached batches, archive
 read-only/indexed projections, coherent parent/child snapshots, manual batch
 authorization/source isolation, persisted counters, paired/deleted cursors,
 read-only indexed pages, nested batch members and benign multipart submission,
-receipt/history and mobile overflow. Submission tests cover pre-body
+receipt/history and mobile overflow. Bulk deletion coverage includes pre-body
+authentication/CSRF/admin enforcement, strict bounded input, duplicate rejection,
+attempt/job-revision fences, locked role/source checks, active/child/parent/shared
+sample/outbox protections, partial receipts, cleanup failures, analyst read-only
+behavior and a real Edge workflow. Submission tests cover pre-body
 auth/CSRF, streamed/declaration limits, duplicate/unknown/excess parts, field
 limits, file-policy rejection, no-engine/transaction cleanup and archive intake.
 Backend tests cover manual scope, literal SQL search, invalid limits, payload
@@ -544,18 +569,20 @@ The benchmark never opens deployed data or starts workers.
 
 Local disposable PostgreSQL 16 benchmark, 100,000 synthetic Dashboard rows plus
 100,000 direct archive children, 15 measured iterations and eight-way mixed
-reads rotating Dashboard, search and batch requests: latest-page p95 14.160 ms;
-90%-deep Dashboard keyset 4.837 ms; no-match Dashboard substring 175.564 ms;
-uncached summary 24.268 ms; deep archive page 11.391 ms; no-match archive
-substring 87.914 ms; deep batch keyset page 6.639 ms; report 11.266 ms; JSON
-summary export 9.009 ms; full JSON export 11.862 ms; mixed-read p95 310.289 ms.
-Every checked default budget passed. The archive child-presence plan used
-`idx_scan_jobs_parent`; the batch page used `idx_scan_jobs_batch_created`. This
+reads rotating Dashboard, search and batch requests: latest-page p95 20.606 ms;
+90%-deep Dashboard keyset 6.047 ms; no-match Dashboard substring 274.892 ms;
+uncached summary 29.788 ms; deep archive page 13.419 ms; no-match archive
+substring 128.454 ms; deep batch keyset page 8.313 ms; report 16.090 ms; JSON
+summary export 9.984 ms; full JSON export 18.717 ms; mixed-read p95 473.969 ms.
+Every checked default budget passed. Dashboard attempt/job-revision plans used
+`idx_scan_engine_jobs_scan_instance`, the archive child-presence plan used
+`idx_scan_jobs_parent`, and the batch page used `idx_scan_jobs_batch_created`;
+the benchmark now fails if these required indexes disappear. This
 was a loopback, warm-cache synthetic run without HTTP/TLS/proxy latency or worker
 writes.
 
 Next: deployment-shaped PostgreSQL capacity acceptance, production assets/proxy/TLS
 validation, remote contract CI acceptance, normalized policy read projections,
-bulk result management, recursive batch actions and remaining management screens.
+recursive batch actions and remaining management screens.
 Remove HTML only after feature/permission parity.
 Defender remains `lab`.

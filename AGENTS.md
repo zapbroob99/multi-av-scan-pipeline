@@ -31,6 +31,11 @@ arbitrary command parsers.
   history. Recorded risk is not coverage or an allow/clean decision. Substring
   search and uncached totals passed the documented local 100k-row PostgreSQL
   acceptance budget, but still require deployment-shaped load validation.
+- Dashboard bulk deletion is admin-only and limited to 20 unique visible manual
+  non-child rows. Preserve CSRF plus per-row attempt/job-revision fences and the
+  shared active/child/sample/outbox protections. Each row commits independently;
+  report deleted, blocked and cleanup-failed IDs explicitly and never auto-retry
+  an ambiguous request. Recursive batch deletion remains separate work.
 - Browser sample submission is the exact multipart `POST /api/ui/v1/scans` route;
   authenticate and verify CSRF before parsing, share `bounded_upload` admission,
   and use existing manual transactional intake. Never apply the JSON 128 KiB
@@ -40,7 +45,7 @@ arbitrary command parsers.
   backend decision/coverage helpers; React must not calculate an allow decision.
   Raw output/findings are on-demand, bounded text previews. Oversized/invalid
   policy input suppresses the compact decision, never silently permits a scan.
-  Preserve legacy report links for the full-output screen and bulk actions.
+  Preserve legacy report links for the full-output screen.
 - Summary exports reuse the coherent bounded report and preserve null decisions;
   they omit raw output/findings/children explicitly. CSV string values are forced
   to text. Full JSON/CSV exports use the same database snapshot and backend report

@@ -91,7 +91,7 @@ end, including on pooled connections.
 
 Local verification on 2026-09-10 exercised the PostgreSQL migration, queue
 concurrency, browser snapshot and lock/statement-budget tests against a disposable
-PostgreSQL 16 container. The full suite ran 670 tests with 668 passing and two
+PostgreSQL 16 container. The full suite ran 672 tests with 670 passing and two
 platform-gated skips. A destructive synthetic benchmark with 100,000 Dashboard
 rows and 100,000 archive children, including bounded full-export and indexed deep
 batch-page reads, passed its default single-query and eight-way

@@ -14,7 +14,7 @@ Support states:
 ## Current Support
 
 The opt-in [React Dashboard/Engines console](../architecture/FRONTEND_SEPARATION.md) preserves
-existing adapters and worker protocols. Its Dashboard is a read-only manual-scan
+existing adapters and worker protocols. Its Dashboard is a bounded manual-scan
 slice; manual submission reuses existing source-aware intake and lazy archive
 handling. Manual reports now expose shared backend decisions and required coverage,
 with bounded on-demand technical output. Registered manual archive children have
@@ -24,7 +24,8 @@ confirmed single-scan retry/delete now use the browser API. Full JSON includes r
 engine output/details/findings without sample bytes, storage paths or integration
 configuration; CSV remains normalized and spreadsheet-safe. Bounded manual batch
 overviews include registered nested members without reading engine output or
-changing vendor routing. Full-output and bulk actions remain legacy; this is not
+changing vendor routing. Admin-only bounded Dashboard deletion is migrated;
+full-output and recursive batch actions remain legacy. This is not
 full UI parity. Browser acceptance does not promote
 Defender or certify a new engine integration.
 The browser now uses generated OpenAPI types and contract drift checks. These

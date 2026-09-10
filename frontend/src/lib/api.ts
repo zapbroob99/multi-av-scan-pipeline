@@ -20,6 +20,7 @@ export type BatchScan = Schemas['BatchScan']
 export type ScanPreview = Schemas['ScanPreview']
 export type ScanPage = Schemas['ScanPage']
 export type DashboardSummary = Schemas['DashboardSummary']
+export type BulkDeleteResult = Schemas['BulkDeleteResult']
 
 type Method = 'get' | 'post' | 'put' | 'delete'
 type Route = keyof paths

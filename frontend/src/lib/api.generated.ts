@@ -217,7 +217,8 @@ export interface paths {
         put?: never;
         /** Submit Scan */
         post: operations["submit_scan_api_ui_v1_scans_post"];
-        delete?: never;
+        /** Bulk Delete Manual Scans */
+        delete: operations["bulk_delete_manual_scans_api_ui_v1_scans_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -547,6 +548,31 @@ export interface components {
             /** Sample */
             sample: string;
         };
+        /** BulkDeleteBody */
+        BulkDeleteBody: {
+            /** Scans */
+            scans: components["schemas"]["BulkDeleteCandidate"][];
+        };
+        /** BulkDeleteCandidate */
+        BulkDeleteCandidate: {
+            /** Attempt */
+            attempt: number;
+            /** Job Revision */
+            job_revision: number;
+            /** Scan Id */
+            scan_id: number;
+        };
+        /** BulkDeleteResult */
+        BulkDeleteResult: {
+            /** Blocked Ids */
+            blocked_ids: number[];
+            /** Cleanup Failed Ids */
+            cleanup_failed_ids: number[];
+            /** Deleted Ids */
+            deleted_ids: number[];
+            /** Requested Count */
+            requested_count: number;
+        };
         /** ConfigBody */
         ConfigBody: {
             /** Config */
@@ -841,6 +867,8 @@ export interface components {
         };
         /** ScanPreview */
         ScanPreview: {
+            /** Attempt Count */
+            attempt_count: number;
             /** Case Name */
             case_name: string;
             /** Created At */
@@ -849,6 +877,8 @@ export interface components {
             filename: string;
             /** Id */
             id: number;
+            /** Job Revision */
+            job_revision: number;
             /** Risk Level */
             risk_level: string;
             /** Risk Score */
@@ -2351,6 +2381,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SubmissionAccepted"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    bulk_delete_manual_scans_api_ui_v1_scans_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkDeleteResult"];
                 };
             };
             /** @description Bad Request */

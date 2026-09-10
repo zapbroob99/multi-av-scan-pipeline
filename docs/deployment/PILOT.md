@@ -23,7 +23,10 @@ Mutation bodies carry attempt and engine-job revision; old browser bundles must
 be rebuilt with the matching backend. Retry acceptance is asynchronous. Deletion
 reports storage-cleanup failure separately after the database commit. Manual batch
 overviews use bounded indexed pages and persisted counters without refreshing them
-or loading engine output. Full-output and bulk-action screens remain legacy. Validate PostgreSQL locking,
+or loading engine output. Admin Dashboard bulk deletion accepts at most 20 visible
+manual non-child rows, rechecks each attempt/job revision and protection under its
+own transaction, and reports partial success or cleanup failure. It never retries
+automatically. Full-output and recursive batch-action screens remain legacy. Validate PostgreSQL locking,
 full-export preflight and query budgets before promotion.
 Browser reads default to a 5-second per-statement PostgreSQL budget and retry/delete
 to a 5-second row-lock budget. Tune `MASP_UI_READ_TIMEOUT_MS` and

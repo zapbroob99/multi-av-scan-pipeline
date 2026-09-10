@@ -5,7 +5,7 @@ import json
 from typing import Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app import database as db
 from app.services.cleanup import delete_sample_file
@@ -22,6 +22,7 @@ from app.services.browser_db_budget import apply_read_budget, write_lock_timeout
 EXPORT_LIMIT = 2 * 1024 * 1024
 FULL_EXPORT_SOURCE_LIMIT = 2 * 1024 * 1024
 MAX_EXPORT_ENGINES = 256
+DASHBOARD_DELETE_ROLES = frozenset({'standalone', 'container'})
 EXPORT_SCOPE = 'Manual scan summary only. Bounded text previews; no raw output, findings or archive children. Use the separate bounded full export for complete result data.'
 
 
@@ -40,6 +41,27 @@ class ScanDeleted(BaseModel):
     scan_id: int
     status: Literal['deleted'] = 'deleted'
     sample_removed: bool
+
+
+class BulkDeleteCandidate(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    scan_id: int = Field(ge=1, le=9007199254740991)
+    attempt: int = Field(ge=0, le=2147483647)
+    job_revision: int = Field(ge=0, le=9007199254740991)
+
+
+class BulkDeleteBody(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    scans: list[BulkDeleteCandidate] = Field(min_length=1, max_length=20)
+
+
+class BulkDeleteResult(BaseModel):
+    requested_count: int
+    deleted_ids: list[int]
+    blocked_ids: list[int]
+    cleanup_failed_ids: list[int]
 
 
 def manual_scan(scan_id: int):
@@ -61,9 +83,11 @@ def retry(scan_id: int, attempt: int, job_revision: int) -> RetryAccepted:
     return RetryAccepted(scan_id=scan_id)
 
 
-def delete(scan_id: int, attempt: int, job_revision: int) -> ScanDeleted:
+def delete(scan_id: int, attempt: int, job_revision: int, *,
+           allowed_scan_roles: frozenset[str] | None = None) -> ScanDeleted:
     manual_scan(scan_id)
     scan = db.delete_scan(scan_id, source='manual', expected_attempt=attempt, protect_children=True,
+                          allowed_scan_roles=allowed_scan_roles,
                           expected_job_revision=job_revision,
                           lock_timeout_ms=write_lock_timeout_ms())
     if scan is None:
@@ -75,6 +99,31 @@ def delete(scan_id: int, attempt: int, job_revision: int) -> ScanDeleted:
     except OSError:
         removed = False
     return ScanDeleted(scan_id=scan_id, sample_removed=removed)
+
+
+def bulk_delete(candidates: list[BulkDeleteCandidate]) -> BulkDeleteResult:
+    ids = [candidate.scan_id for candidate in candidates]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(422, 'Each selected scan may appear only once.')
+    deleted_ids: list[int] = []
+    blocked_ids: list[int] = []
+    cleanup_failed_ids: list[int] = []
+    for candidate in candidates:
+        try:
+            # The locked delete rechecks this Dashboard-only role boundary along
+            # with source, attempt, job revision and all existing protections.
+            result = delete(candidate.scan_id, candidate.attempt, candidate.job_revision,
+                            allowed_scan_roles=DASHBOARD_DELETE_ROLES)
+        except HTTPException as exc:
+            if exc.status_code not in {404, 409}:
+                raise
+            blocked_ids.append(candidate.scan_id)
+            continue
+        deleted_ids.append(candidate.scan_id)
+        if not result.sample_removed:
+            cleanup_failed_ids.append(candidate.scan_id)
+    return BulkDeleteResult(requested_count=len(candidates), deleted_ids=deleted_ids,
+                            blocked_ids=blocked_ids, cleanup_failed_ids=cleanup_failed_ids)
 
 
 def summary_export(scan_id: int, format: Literal['json', 'csv']) -> SummaryExport:

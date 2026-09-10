@@ -168,11 +168,17 @@ def main() -> int:
             presence_sql, presence_params = archive_read.child_presence_statement(
                 [{'id': deep_after + offset, 'child_batch_id': batch} for offset in range(1, 22)])
             plans = {
-                'latest_20': plan(connection, '''SELECT j.id FROM scan_jobs j JOIN samples s ON s.id=j.sample_id
+                'latest_20': plan(connection, '''SELECT j.id,
+                    COALESCE((SELECT MAX(ej.id) FROM scan_engine_jobs ej WHERE ej.scan_job_id=j.id), 0) AS job_revision
+                    FROM scan_jobs j JOIN samples s ON s.id=j.sample_id
                     WHERE j.source='manual' AND j.scan_role != 'child' ORDER BY j.id DESC LIMIT ?''', (21,)),
-                'deep_keyset_20': plan(connection, '''SELECT j.id FROM scan_jobs j JOIN samples s ON s.id=j.sample_id
+                'deep_keyset_20': plan(connection, '''SELECT j.id,
+                    COALESCE((SELECT MAX(ej.id) FROM scan_engine_jobs ej WHERE ej.scan_job_id=j.id), 0) AS job_revision
+                    FROM scan_jobs j JOIN samples s ON s.id=j.sample_id
                     WHERE j.source='manual' AND j.scan_role != 'child' AND j.id < ? ORDER BY j.id DESC LIMIT ?''', (deep_before, 21)),
-                'substring_no_match': plan(connection, '''SELECT j.id FROM scan_jobs j JOIN samples s ON s.id=j.sample_id
+                'substring_no_match': plan(connection, '''SELECT j.id,
+                    COALESCE((SELECT MAX(ej.id) FROM scan_engine_jobs ej WHERE ej.scan_job_id=j.id), 0) AS job_revision
+                    FROM scan_jobs j JOIN samples s ON s.id=j.sample_id
                     WHERE j.source='manual' AND j.scan_role != 'child' AND
                     (LOWER(s.original_filename) LIKE ? OR LOWER(s.sha256) LIKE ? OR LOWER(s.sha1) LIKE ? OR LOWER(s.md5) LIKE ?
                      OR LOWER(j.case_name) LIKE ? OR LOWER(j.note) LIKE ? OR LOWER(j.priority) LIKE ?)
@@ -194,10 +200,22 @@ def main() -> int:
                    'mixed_concurrent': args.max_concurrent_p95_ms}
         failures = {name: {'observed_p95_ms': timings[name]['p95_ms'], 'budget_ms': budget}
                     for name, budget in budgets.items() if timings[name]['p95_ms'] > budget}
+        required_plan_indexes = {
+            'latest_20': ['idx_scan_engine_jobs_scan_instance'],
+            'deep_keyset_20': ['idx_scan_engine_jobs_scan_instance'],
+            'substring_no_match': ['idx_scan_engine_jobs_scan_instance'],
+            'archive_child_presence_21': ['idx_scan_jobs_parent'],
+            'batch_deep_keyset_20': ['idx_scan_jobs_batch_created'],
+        }
+        for name, expected_indexes in required_plan_indexes.items():
+            missing = sorted(set(expected_indexes) - set(plans[name]['indexes']))
+            if missing:
+                failures[f'plan:{name}'] = {'missing_indexes': missing}
         report = {'backend': 'disposable PostgreSQL', 'postgres_version': None, 'rows': args.rows,
                   'archive_rows': args.archive_rows, 'iterations': args.iterations,
                   'concurrency': args.concurrency, 'timings': timings, 'plans': plans,
-                  'budgets_ms': budgets, 'failures': failures,
+                  'budgets_ms': budgets, 'required_plan_indexes': required_plan_indexes,
+                  'failures': failures,
                   'limitations': ['Loopback single-host synthetic data', 'Warm cache after setup',
                                   'No HTTP/TLS/proxy latency', 'No worker write load']}
         with db.connect() as connection:

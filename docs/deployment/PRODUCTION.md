@@ -23,8 +23,10 @@ scale. These ceilings do not guarantee bounded database work or server memory;
 JSON transport escaping adds overhead. Manual batch overviews use the existing
 `(batch_id, created_at, id)` index, paired keyset cursors and persisted counters;
 GET does not refresh counters or load engine output. Validate deep pages and stale
-counter behavior under worker writes. Full-output and bulk-action screens retain
-legacy behavior.
+counter behavior under worker writes. Dashboard bulk deletion is admin-only,
+bounded to 20 visible manual non-child rows and independently commits each fenced
+record. Monitor partial/ambiguous outcomes and cleanup-failed IDs; recursive batch
+actions and full-output views retain legacy behavior.
 Deletion commits before sample cleanup; failed cleanup needs administrator follow-up.
 Browser sample uploads use the exact `/api/ui/v1/scans` multipart endpoint.
 Rebuild the frontend image for its 64 MiB nginx exception; do not raise the

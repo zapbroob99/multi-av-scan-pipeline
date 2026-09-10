@@ -261,6 +261,19 @@ def delete_manual_scan(request: Request, body: ScanAttemptBody, scan_id: int = P
     return result
 
 
+@router.delete('/scans', response_model=scan_management.BulkDeleteResult)
+def bulk_delete_manual_scans(request: Request, body: scan_management.BulkDeleteBody):
+    result = scan_management.bulk_delete(body.scans)
+    set_audit_context(request, action='scan.bulk_delete', target_type='scan',
+        actor=request.state.ui_user, details={
+            'requested_count': result.requested_count,
+            'deleted_count': len(result.deleted_ids),
+            'blocked_count': len(result.blocked_ids),
+            'cleanup_failed_count': len(result.cleanup_failed_ids),
+        })
+    return result
+
+
 class LoginBody(StrictBody):
     username: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=4096)

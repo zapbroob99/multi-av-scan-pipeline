@@ -1,6 +1,6 @@
 # MASP - Multi AV Scan Pipeline
 
-An independent React/TypeScript console includes a read-only Dashboard, admin
+An independent React/TypeScript console includes a manual Dashboard, admin
 Engines management and manual sample submission (`/console/scans/new`).
 Manual scan reports now show backend decisions, required-engine coverage and
 on-demand technical previews in the console. Archive reports link to paginated
@@ -10,8 +10,10 @@ registered scans, not a complete/clean archive inventory. `/console/scans/{id}/m
 offers bounded summary and full JSON/CSV downloads, confirmed retry for analysts/admins
 and protected single-scan deletion for admins. Full JSON contains raw engine output,
 details and findings; CSV contains normalized report rows. Both have a 2 MiB browser
-ceiling and omit sample bytes/storage paths. Full-output and bulk-action screens
-retain legacy links. Batch pages use indexed keyset pagination and recorded counters
+ceiling and omit sample bytes/storage paths. Admins can confirm deletion of up to
+20 selected visible Dashboard scans with per-record stale-state and safety checks;
+partial results and storage cleanup failures are reported explicitly. Full-output
+and recursive batch actions retain legacy links. Batch pages use indexed keyset pagination and recorded counters
 without loading engine output. Retry queues atomically; acceptance does
 not mean completion. Active scans and undelivered notifications are protected.
 With the backend running, use `npm --prefix frontend ci` and

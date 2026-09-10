@@ -5431,6 +5431,7 @@ def mark_scan_running(scan_id: int) -> None:
 
 def delete_scan(scan_id: int, *, expected_attempt: int | None = None,
                 source: str | None = None, protect_children: bool = False,
+                allowed_scan_roles: frozenset[str] | None = None,
                 expected_job_revision: int | None = None,
                 lock_timeout_ms: int | None = None) -> ScanRecord | None:
     scan = get_scan(scan_id)
@@ -5444,11 +5445,12 @@ def delete_scan(scan_id: int, *, expected_attempt: int | None = None,
         if not using_postgres():
             connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
-            "SELECT status, attempt_count, source FROM scan_jobs WHERE id = ? "
+            "SELECT status, attempt_count, source, scan_role FROM scan_jobs WHERE id = ? "
             + ("FOR UPDATE" if using_postgres() else ""), (scan_id,),
         ).fetchone()
         if (row is None or row['status'] in ACTIVE_SCAN_STATUSES
                 or (source is not None and row['source'] != source)
+                or (allowed_scan_roles is not None and row['scan_role'] not in allowed_scan_roles)
                 or (expected_attempt is not None and row['attempt_count'] != expected_attempt)):
             return None
         if expected_job_revision is not None and connection.execute(

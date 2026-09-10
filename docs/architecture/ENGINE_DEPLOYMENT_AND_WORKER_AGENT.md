@@ -15,7 +15,7 @@ and `Defender Windows Pool A` without duplicating vendor parser code.
 ## Current State
 
 The opt-in [independent console](FRONTEND_SEPARATION.md) uses a versioned
-browser API, shared engine setup validation and a read-only manual Dashboard
+browser API, shared engine setup validation and a bounded manual Dashboard
 with ID-keyset pages and cached aggregate totals. Manual sample submission now
 uses a CSRF-protected multipart browser endpoint and the same transactional
 intake as legacy uploads. Analysts can read the Dashboard and submit files;
@@ -29,8 +29,9 @@ jobs atomically; admin deletion protects active scans, shared samples, registere
 children and undelivered notifications. Attempt plus engine-job revision prevents
 stale browser actions even when a queued retry settles before a worker starts.
 Manual batch overviews now use bounded indexed pages and stored counters without
-loading engine output or refreshing counters. Full-output views and bulk actions
-retain legacy links. This changes browser delivery, not worker
+loading engine output or refreshing counters. Admins may bulk-delete up to 20
+visible top-level manual scans with per-row attempt/job-revision fences and partial
+receipts. Full-output views and recursive batch actions retain legacy links. This changes browser delivery, not worker
 transport, scan routing or engine support state. A local disposable PostgreSQL
 run passed the documented 100k-row browser query/concurrency budgets. Full-text
 indexing and deployment-shaped PostgreSQL load remain gates, not completed work.

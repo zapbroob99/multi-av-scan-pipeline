@@ -18,6 +18,8 @@ class ScanPreview(BaseModel):
     status: str
     risk_level: str
     risk_score: int | None
+    attempt_count: int
+    job_revision: int
     created_at: str
 
 
@@ -90,7 +92,10 @@ def scan_page(*, limit: int, before: int | None, query: str, status: str, risk: 
         rows = connection.execute(f"""
             SELECT j.id, SUBSTR(s.original_filename, 1, 512) AS filename,
                 s.sha256, s.size_bytes, SUBSTR(j.case_name, 1, 128) AS case_name,
-                j.status, j.verdict AS risk_level, j.risk_score, j.created_at
+                j.status, j.verdict AS risk_level, j.risk_score, j.attempt_count,
+                COALESCE((SELECT MAX(ej.id) FROM scan_engine_jobs ej
+                    WHERE ej.scan_job_id = j.id), 0) AS job_revision,
+                j.created_at
             FROM scan_jobs j JOIN samples s ON s.id = j.sample_id
             WHERE {' AND '.join(conditions)} ORDER BY j.id DESC LIMIT ?
         """, tuple(params)).fetchall()
