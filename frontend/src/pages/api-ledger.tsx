@@ -15,7 +15,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
   const [requiresRefresh, setRequiresRefresh] = useState(false)
   const [receipt, setReceipt] = useState('')
   const [error, setError] = useState('')
-  const admin = session?.user.role === 'admin' 
+  const admin = session?.user.role === 'admin'
   const [params, setParams] = useSearchParams()
   const query = new URLSearchParams(params)
   query.set('limit', '20')
