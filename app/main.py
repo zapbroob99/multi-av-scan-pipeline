@@ -13,6 +13,7 @@ from fastapi.security import HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from app import APP_VERSION
 from app.database import (
     IntegrityViolation,
     count_audit_events,
@@ -217,7 +218,7 @@ app = FastAPI(
         "Multi AV Scan Pipeline: self-hosted orchestration layer for file scanning engines, "
         "normalization, risk scoring, and analyst reports."
     ),
-    version="0.1.0",
+    version=APP_VERSION,
 )
 logger = logging.getLogger(__name__)
 app.router.route_class = UploadAdmissionRoute

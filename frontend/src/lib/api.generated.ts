@@ -1,5 +1,22 @@
 // Generated from contracts/browser.openapi.json. Do not edit.
 export interface paths {
+    "/api/ui/v1/about": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser About */
+        get: operations["browser_about_api_ui_v1_about_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/account": {
         parameters: {
             query?: never;
@@ -231,6 +248,23 @@ export interface paths {
         };
         /** Automation Summary Export */
         get: operations["automation_summary_export_api_ui_v1_api_ledger_scans__scan_id__summary_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Audit */
+        get: operations["browser_audit_api_ui_v1_audit_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1036,6 +1070,35 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AboutPayload */
+        AboutPayload: {
+            /** App Version */
+            app_version: string;
+            /** Directory Login Enabled */
+            directory_login_enabled: boolean;
+            /** Enabled Engine Count */
+            enabled_engine_count: number;
+            /** Enabled Engine Names */
+            enabled_engine_names: string[];
+            /** Engine Names Truncated */
+            engine_names_truncated: boolean;
+            /** Generated At */
+            generated_at: string;
+            /** Hash Engine Count */
+            hash_engine_count: number;
+            /** Queue Mode */
+            queue_mode: string;
+            /** Registered Nodes */
+            registered_nodes: number;
+            /** Schedulable Nodes */
+            schedulable_nodes: number;
+            /** Secret Encryption Available */
+            secret_encryption_available: boolean;
+            /** Service Client Count */
+            service_client_count: number | null;
+            /** Worker Transport */
+            worker_transport: string;
+        };
         /** AccountPayload */
         AccountPayload: {
             /** Auth Source */
@@ -1124,6 +1187,42 @@ export interface components {
             parent_scan_id: number | null;
             /** Parent Status */
             parent_status: string;
+        };
+        /** AuditEvent */
+        AuditEvent: {
+            /** Action */
+            action: string;
+            /** Actor Id */
+            actor_id: string | null;
+            /** Actor Name */
+            actor_name: string | null;
+            /** Actor Type */
+            actor_type: string;
+            /** Created At */
+            created_at: string;
+            /** Details */
+            details: string;
+            /** Details Truncated */
+            details_truncated: boolean;
+            /** Id */
+            id: number;
+            /** Outcome */
+            outcome: string;
+            /** Request Id */
+            request_id: string;
+            /** Source Ip */
+            source_ip: string | null;
+            /** Target Id */
+            target_id: string | null;
+            /** Target Type */
+            target_type: string;
+        };
+        /** AuditPage */
+        AuditPage: {
+            /** Items */
+            items: components["schemas"]["AuditEvent"][];
+            /** Next Before */
+            next_before: number | null;
         };
         /** BatchCounts */
         BatchCounts: {
@@ -2296,6 +2395,98 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    browser_about_api_ui_v1_about_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AboutPayload"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
     own_account_api_ui_v1_account_get: {
         parameters: {
             query?: never;
@@ -3659,6 +3850,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SummaryExport"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_audit_api_ui_v1_audit_get: {
+        parameters: {
+            query?: {
+                before?: number | null;
+                limit?: number;
+                outcome?: "all" | "success" | "failure" | "denied";
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPage"];
                 };
             };
             /** @description Bad Request */

@@ -4,6 +4,14 @@ MASP persists an application-level security audit trail in the `audit_events`
 table. Administrators can review it from **Admin > Audit** and filter by actor,
 action, target, request ID, or outcome.
 
+The React console serves the same trail at `/console/audit` with bounded
+descending ID-keyset pages instead of offset pagination, and calculates no total:
+counting a full institutional trail is unbounded work and the bounded page is the
+record an operator acts on. Its search treats `%` and `_` as literal characters.
+Event details are capped at 4096 characters for display and flagged when
+truncated; that is a rendering bound, not the privacy control, which remains the
+write-time redactor described below.
+
 ## Recorded activity
 
 - Login attempts and logout.

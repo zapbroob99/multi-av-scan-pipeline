@@ -68,7 +68,7 @@ authorization/regression tests, responsive browser verification and documentatio
 | Integration administration | `/console/service-clients` lists client metadata and confirms name/enabled-state changes; client profile routes read bounded profiles and confirm engine assignment. Atomic client/default-profile creation and credential add/list/scoped revocation are implemented. Tokens are supplied by the admin and never returned. |
 | Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Remaining: oversized complete-payload and final legacy-action parity; preserve ownership and manual-history isolation. |
 | Users and account | Bounded inventory, confirmed local creation, administrative role/password edit and deletion, and own-account password change implemented. Shared last-admin/session protections and stale revision fences; LDAP shadow deletion does not disable directory access. Final cutover/deployment acceptance remains. |
-| Audit and information | Bounded audit history and About screen. |
+| Audit and information | Admin `/console/audit` provides bounded descending ID-keyset audit pages, literal search, outcome filtering and bounded inert details; no total is calculated and no write verb exists. `/console/about` gives analysts and admins the product boundary and a non-sensitive runtime snapshot with admin-scoped client counts. Remaining: legacy detail/printable parity, About metric parity and deployment-shaped trail-volume validation. |
 | Cutover | Route/deep-link compatibility, all legacy actions and error states checked against the route inventory, feature/permission parity, static deployment/TLS and performance gates, then retire HTML rendering. |
 
 Inventory covers the legacy login/logout, Dashboard, scans/batches/reports/exports,
@@ -1436,7 +1436,8 @@ LDAP synchronization advance it. No password hash is exposed as a revision token
 Deploy all app processes together; old binaries do not participate in these guards.
 Migration lock time and production-shaped user/session load remain acceptance
 items. Full legacy removal, large-output parity, worker SCM, TLS and other security
-and performance gates remain open. Next screen group: audit history and About.
+and performance gates remain open. Next screen group: audit history and About,
+implemented in the section at the end of this document.
 
 Administrative-management validation (2026-09-22): full Python suite with disposable
 PostgreSQL ran 784 tests (782 passed, 2 skipped). New checks cover concurrent last
@@ -1451,3 +1452,68 @@ again; the confirmation fits a mobile viewport. Component tests cover revision/C
 submission, secret omission from caches, LDAP confirmation and no uncertain-write
 replay. Test servers and disposable PostgreSQL were stopped; live MASP data was not
 used. See `docs/SESSION_HANDOFF.md` for fresh-session continuation.
+
+### Audit history and About
+
+Admin `/console/audit` reads the append-only `audit_events` trail through
+GET `/api/ui/v1/audit` with bounded descending ID-keyset pages of at most 100
+records (the console requests 20), exact outcome selection and literal actor/
+action/target/request-ID search. The route is admin-only before any parsing and
+the router exposes no audit write verb, matching the data layer's insert/read-only
+contract: the console cannot edit or delete an event. Reads apply the shared
+PostgreSQL statement budget and custom plans. A partial `(outcome, id DESC)` seek
+index is added in place alongside the existing created/action indexes.
+
+No total is calculated. Counting a full institutional trail is unbounded
+administrative work, and the bounded page is the record an operator acts on;
+newer events can arrive while older pages are read. Search escapes `%` and `_`
+so an operator character matches itself — the legacy page passed the raw term to
+`LIKE`, which silently widened the filter instead of matching. Projected columns
+are length-capped and `details_json` is bounded to 4096 characters with an
+explicit truncation flag; details are rendered as inert text, never markup or
+policy input. Recorded details already pass the write-time redactor, so this is a
+display bound, not the privacy control.
+
+The trail deliberately excludes routine navigation, scan and hash submission,
+polling, report/export reads, health checks and metrics scrapes, and events are
+appended after the handled operation on a best-effort basis. The console states
+both limits: an absent record does not prove an action did not happen, and the
+source IP is the direct socket peer, not a forwarded client address. Audit
+retention, export and legal hold remain institutional decisions with no
+application control; see `docs/security/AUDIT_TRAIL.md`.
+
+`/console/about` is readable by analysts and admins through GET
+`/api/ui/v1/about`, the only non-dashboard browser read outside the admin gate in
+this slice. It returns product boundary text plus a non-sensitive runtime
+snapshot: application version, queue model, worker transport, directory-login and
+secret-encryption availability, enabled engine count with at most five display
+names and a truncation flag, hash-engine count, and registered/schedulable worker
+nodes. The service-client total is admin-only and is `null` for analysts rather
+than omitted, so the contract stays stable. Deployment hosts, filesystem paths,
+adapter keys, engine configuration and secrets never appear.
+
+About reads two small configuration tables (`worker_nodes`, `service_clients`)
+under the shared read budget and never aggregates scan history, so it needs no
+cache; the payload states when it was read. Enabled engines and schedulable nodes
+are configuration state and do not prove a scan will reach complete coverage. The
+application version is now the single `app.APP_VERSION` constant that also titles
+the FastAPI application.
+
+Audit/About validation (2026-09-22): full Python suite with disposable PostgreSQL
+ran 793 tests (791 passed, 2 skipped). New SQLite checks cover admin-only access,
+absent write verbs, cursor/limit/outcome/search validation, descending keyset
+paging, literal search, outcome filtering, detail bounding, analyst-readable About
+and admin-scoped client counts. A new PostgreSQL-gated class exercises both readers
+on real PostgreSQL, where `LENGTH(...) > n` returns a boolean rather than 0/1 and
+`SUBSTR` over NULL columns must stay null. Frontend: 114 tests, production build
+and contract drift check passed. Focused Edge acceptance pages the trail, applies
+a literal `%` search and an outcome filter, opens inert details, refuses an analyst
+session and checks admin-scoped About content at a mobile viewport. A pre-existing
+`ByRoleOptions`/`exact` type error in the user-management test was corrected; it
+was failing `tsc --noEmit` at the previous checkpoint. Test servers and disposable
+PostgreSQL were stopped; live MASP data and containers were not used.
+
+Remaining in this group: legacy audit detail/printable parity, deployment-shaped
+trail volume validation (this is the largest append-only table in a long-running
+deployment) and About metric parity are cutover gates. Next: remaining manual,
+hash, System and oversized-output parity, then the final cutover inventory.

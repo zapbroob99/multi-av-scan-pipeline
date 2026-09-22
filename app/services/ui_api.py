@@ -33,6 +33,8 @@ from app.services import profile_admin
 from app.services import credential_admin
 from app.services import ledger_read
 from app.services import user_admin
+from app.services import audit_read
+from app.services import about_read
 from app.services import account
 from app.services.ingest import store_upload, configured_upload_max_bytes, UploadTooLargeError
 from app.services.scan_intake import enqueue_scan_from_stored_sample, NoEligibleEnginesError, DEFAULT_ARCHIVE_MODE
@@ -100,7 +102,8 @@ class BrowserRoute(APIRoute):
                 retry_allowed = request.method == 'POST' and self.path == PREFIX + '/scans/{scan_id}/retry'
                 hash_allowed = (request.method == 'GET' and self.path == PREFIX + '/hash-scan/options') or (request.method == 'POST' and self.path == PREFIX + '/hash-scan')
                 account_allowed = (request.method == 'GET' and self.path == PREFIX + '/account') or (request.method == 'POST' and self.path == PREFIX + '/account/password')
-                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not hash_allowed and not account_allowed and user.role != "admin":
+                about_allowed = request.method == 'GET' and self.path == PREFIX + '/about'
+                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not hash_allowed and not account_allowed and not about_allowed and user.role != "admin":
                     raise HTTPException(403, "Admin permission is required.")
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 origin = str(request.base_url).rstrip("/")
@@ -275,6 +278,19 @@ def browser_delete_user(request: Request, body: user_admin.UserFence,
                         user_id: int = Path(ge=1, le=9007199254740991)):
     set_audit_context(request, action='user.delete', target_type='user', target_id=user_id, actor=request.state.ui_user)
     user_admin.manage(request.state.ui_user.id, user_id, expected_revision=body.expected_revision, delete=True)
+
+
+@router.get('/audit', response_model=audit_read.AuditPage)
+def browser_audit(limit: int = Query(default=20, ge=1, le=100),
+                  before: int | None = Query(default=None, ge=1, le=9007199254740991),
+                  q: str = Query(default='', max_length=200),
+                  outcome: Literal['all', 'success', 'failure', 'denied'] = 'all'):
+    return audit_read.page(limit=limit, before=before, query=q, outcome=outcome)
+
+
+@router.get('/about', response_model=about_read.AboutPayload)
+def browser_about(request: Request):
+    return about_read.snapshot(admin=request.state.ui_user.role == 'admin')
 
 
 @router.get('/api-ledger/scans/{scan_id}', response_model=scan_report_read.ScanReport)

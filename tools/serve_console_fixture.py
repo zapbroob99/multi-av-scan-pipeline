@@ -112,6 +112,17 @@ def main():
             ancestor = db.create_scan_job(sample, 'Automation archive', 'normal', '', source='api',
                 service_client_id=client, status='completed', verdict='info', risk_score=0,
                 batch_id=automation_batch, parent_scan_id=ancestor, scan_role='child', profile_snapshot_json='{"engines":[]}')
+        # Synthetic audit rows: no real actor, address or institutional data.
+        for index in range(21):
+            db.create_audit_event(actor_type='user', actor_id='1', actor_name='console-admin',
+                action='user.create' if index % 2 else 'auth.login', target_type='user',
+                target_id=str(index), outcome='denied' if index == 20 else 'success',
+                source_ip='127.0.0.1', request_id=f'audit-fixture-{index:02}',
+                details_json='{"note": "<script>inert audit fixture</script>"}')
+        db.create_audit_event(actor_type='user', actor_id='1', actor_name='ops%team',
+            action='engine.update', target_type='engine', target_id='1', outcome='failure',
+            source_ip=None, request_id='audit-fixture-literal',
+            details_json='{"marker": "' + 'z' * 5000 + '"}')
         app = FastAPI()
         app.include_router(router)
         uvicorn.run(app, host="127.0.0.1", port=18765, access_log=False)

@@ -273,8 +273,27 @@ and passwords remain directory-owned; removing a local LDAP shadow is permitted
 like legacy, revokes its sessions and does not disable directory access or prevent
 recreation on sign-in. Confirm that distinction. Require a fresh explicit list read
 after every write outcome; no automatic replay or secret retention.
-Next UI slice: audit history and About. Keep legacy System metric/detail parity and deployment
-acceptance open; engine pool assignment already lives in React Engines.
+Admin `/console/audit` reads the append-only audit trail with bounded descending ID-keyset
+pages, exact outcome selection and literal actor/action/target/request-ID search. No total is
+calculated and the router exposes no audit write verb: the trail stays insert/read-only. Escape
+`%`/`_` so an operator character matches itself. Bound projected columns, cap details at 4096
+characters with an explicit truncation flag and render them as inert text. State the recorded
+boundary: routine navigation, submission, polling and report reads are excluded, appends are
+best effort after the operation, and the source IP is the direct socket peer. Audit retention,
+export and legal hold have no application control.
+`/console/about` is readable by analysts and admins and is the only non-dashboard browser read
+outside the admin gate. Return the product boundary plus a non-sensitive runtime snapshot:
+version, queue model, worker transport, directory-login and secret-encryption availability,
+bounded engine names with a truncation flag, hash engines and worker-node counts. The
+service-client total is admin-only and null for analysts, never omitted. Never expose hosts,
+paths, adapter keys, engine configuration or secrets. Read only small configuration tables
+under the shared budget; never aggregate scan history for this screen. Enabled engines and
+schedulable nodes are configuration state, not proof of complete coverage. `app.APP_VERSION`
+is the single version constant.
+Next UI slice: remaining manual, hash, System and oversized-output parity, then the final
+cutover inventory. Keep legacy System metric/detail parity, legacy audit detail/printable
+parity, deployment-shaped audit-trail volume validation and deployment acceptance open;
+engine pool assignment already lives in React Engines.
 
 The authoritative plan is
 `docs/architecture/ENGINE_DEPLOYMENT_AND_WORKER_AGENT.md`.

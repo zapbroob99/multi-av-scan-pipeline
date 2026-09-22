@@ -598,6 +598,9 @@ def init_sqlite_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_audit_events_action
             ON audit_events (action, outcome, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_audit_events_outcome_seek
+            ON audit_events (outcome, id DESC);
             """
         )
         ensure_column(connection, "scan_jobs", "started_at", "TEXT")
@@ -1016,6 +1019,9 @@ def init_postgres_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_audit_events_action
             ON audit_events (action, outcome, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_audit_events_outcome_seek
+            ON audit_events (outcome, id DESC);
             """
         )
         # Existing deployments predate deferred multi-GiB intake. Only alter

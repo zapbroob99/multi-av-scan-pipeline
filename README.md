@@ -1,5 +1,11 @@
 # MASP - Multi AV Scan Pipeline
 
+Admin `/console/audit` now reads the append-only security audit trail with bounded
+pages, literal actor/action/target/request-ID search and outcome filtering. The
+console cannot edit or delete an event and calculates no total. `/console/about`
+gives analysts and admins the product boundary and a non-sensitive runtime
+snapshot; service-client totals stay admin-only.
+
 Admin `/console/service-clients` now lists integration clients with bounded pages
 and confirms display-name and enabled-state changes. The managed `legacy-default`
 client remains read-only. Each client links to its React profile routing editor,

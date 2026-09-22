@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -10,6 +11,7 @@ from urllib.parse import urlencode, urlsplit
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 
+from app import APP_VERSION
 from app import database as db
 from app.models import StoredSample, EngineResultInput
 from app.services import auth, ui_api
@@ -21,6 +23,7 @@ from app.services import system_read
 from app.services import retention_admin
 from app.services import scan_policy, scan_policy_admin
 from app.services import hash_console
+from app.services import audit_read, about_read
 
 
 class BrowserApiTests(unittest.TestCase):
@@ -1110,6 +1113,83 @@ class BrowserApiTests(unittest.TestCase):
         login = self.request('/session/login', 'POST', {'username': 'new-user', 'password': body['password']}, session=False, csrf=False)
         self.assertEqual(login[0], 200)
         self.assertEqual(login[1]['user']['role'], 'analyst')
+
+    def audit_event(self, **overrides):
+        fields = dict(actor_type='user', actor_id='1', actor_name='browser-admin', action='user.create',
+                      target_type='user', target_id='7', outcome='success', source_ip='127.0.0.1',
+                      request_id='req-1', details_json='{"role": "analyst"}')
+        return db.create_audit_event(**(fields | overrides))
+
+    def test_audit_requires_admin_and_rejects_out_of_range_cursors(self):
+        self.assertEqual(self.request('/audit', session=False)[0], 401)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/audit')[0], 403)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/audit?before=0')[0], 422)
+        self.assertEqual(self.request('/audit?limit=101')[0], 422)
+        self.assertEqual(self.request('/audit?outcome=deleted')[0], 422)
+        self.assertEqual(self.request('/audit?q=' + 'x' * 201)[0], 422)
+        # The trail is append-only through the application: no write verbs exist.
+        for method in ('POST', 'PUT', 'DELETE'):
+            self.assertEqual(self.request('/audit', method, {})[0], 405)
+
+    def test_audit_page_is_descending_keyset_bounded_and_carries_no_total(self):
+        ids = [self.audit_event(request_id=f'req-{index}') for index in range(21)]
+        status, page, headers = self.request('/audit')
+        self.assertEqual(status, 200, page)
+        self.assertEqual(set(page), {'items', 'next_before'})
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual([row['id'] for row in page['items']], sorted(ids, reverse=True)[:20])
+        self.assertEqual(page['next_before'], ids[1])
+        tail = self.request('/audit?before=' + str(page['next_before']))[1]
+        self.assertEqual([row['id'] for row in tail['items']], [ids[0]])
+        self.assertIsNone(tail['next_before'])
+
+    def test_audit_search_is_literal_and_outcome_filtered(self):
+        wildcard = self.audit_event(actor_name='ops%team', outcome='denied')
+        other = self.audit_event(actor_name='opsXteam', outcome='success')
+        matched = self.request('/audit?q=ops%25team')[1]['items']
+        self.assertEqual([row['id'] for row in matched], [wildcard])
+        self.assertEqual([row['id'] for row in self.request('/audit?q=%25')[1]['items']], [wildcard])
+        self.assertEqual([row['id'] for row in self.request('/audit?outcome=success')[1]['items']], [other])
+        self.assertEqual(self.request('/audit?outcome=failure')[1]['items'], [])
+
+    def test_audit_details_are_bounded_and_flagged(self):
+        self.audit_event(details_json='{"marker": "' + 'y' * 8000 + '"}')
+        self.audit_event(details_json='{"small": true}')
+        small, large = self.request('/audit')[1]['items'][0], self.request('/audit')[1]['items'][1]
+        self.assertFalse(small['details_truncated'])
+        self.assertTrue(large['details_truncated'])
+        self.assertEqual(len(large['details']), 4096)
+
+    def test_about_is_readable_by_analysts_and_scopes_client_counts_to_admins(self):
+        db.create_service_client('integration', 'Integration')
+        self.assertEqual(self.request('/about', session=False)[0], 401)
+        status, admin_view, headers = self.request('/about')
+        self.assertEqual(status, 200, admin_view)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(admin_view['service_client_count'], 1)
+        self.assertEqual(admin_view['app_version'], APP_VERSION)
+        self.assertEqual(admin_view['registered_nodes'], 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        analyst_view = self.request('/about')[1]
+        self.assertEqual(status, 200)
+        self.assertIsNone(analyst_view['service_client_count'])
+        self.assertEqual(analyst_view['queue_mode'], admin_view['queue_mode'])
+
+    def test_about_bounds_the_engine_name_list_and_omits_configuration(self):
+        for index in range(6):
+            db.create_engine_instance('static_metadata', f'Metadata {index}')
+        payload = self.request('/about')[1]
+        self.assertEqual(payload['enabled_engine_count'], 6)
+        self.assertEqual(len(payload['enabled_engine_names']), 5)
+        self.assertTrue(payload['engine_names_truncated'])
+        serialized = json.dumps(payload)
+        for secret in ('config_json', 'password', 'api_key', 'adapter_key', str(db.DB_PATH)):
+            self.assertNotIn(secret, serialized)
 
     def test_user_inventory_keyset_ldap_and_secret_omission(self):
         directory = db.sync_external_user(username='directory-user', role='analyst', external_id='PRIVATE-DIRECTORY-DN', display_name='Directory user')
@@ -2407,3 +2487,74 @@ class BrowserApiTests(unittest.TestCase):
             self.assertEqual(self.request(f'/engines/{instance_id}/rules/sample.yar/toggle', 'POST')[0], 200)
             self.assertEqual(self.request(f'/engines/{instance_id}/rules/sample.yar.disabled', 'DELETE')[0], 204)
             self.assertEqual(list(rules_dir.iterdir()), [])
+
+
+@unittest.skipUnless(os.getenv('MASP_TEST_POSTGRES_URL'), 'requires disposable PostgreSQL')
+class BrowserReadPostgresTests(unittest.TestCase):
+    """Audit and About readers on real PostgreSQL.
+
+    SQLite returns 0/1 where PostgreSQL returns booleans, and SUBSTR/LENGTH on
+    a NULL column differ enough between them that the SQLite suite cannot prove
+    these projections.
+    """
+
+    def setUp(self):
+        import psycopg
+        url = os.environ['MASP_TEST_POSTGRES_URL']
+        with psycopg.connect(url, autocommit=True) as connection:
+            connection.execute('DROP SCHEMA IF EXISTS public CASCADE')
+            connection.execute('CREATE SCHEMA public')
+        self.original = db.DATABASE_URL, db.DB_POOL_ENABLED
+        db.close_pool()
+        db.DATABASE_URL, db.DB_POOL_ENABLED = url, False
+        db.init_db()
+
+    def tearDown(self):
+        db.close_pool()
+        db.DATABASE_URL, db.DB_POOL_ENABLED = self.original
+
+    def event(self, **overrides):
+        fields = dict(actor_type='user', actor_id='1', actor_name='pg-admin', action='engine.update',
+                      target_type='engine', target_id='4', outcome='success', source_ip='127.0.0.1',
+                      request_id='pg-req', details_json='{"changed": true}')
+        return db.create_audit_event(**(fields | overrides))
+
+    def test_audit_projection_keyset_and_literal_search(self):
+        ids = [self.event(request_id=f'pg-req-{index}') for index in range(3)]
+        nulls = self.event(actor_id=None, actor_name=None, target_id=None, source_ip=None, outcome='denied')
+        big = self.event(details_json='{"marker": "' + 'q' * 9000 + '"}', actor_name='ops%team')
+        page = audit_read.page(limit=3, before=None, query='', outcome='all')
+        self.assertEqual([row.id for row in page.items], [big, nulls, ids[2]])
+        self.assertEqual(page.next_before, ids[2])
+        self.assertEqual([row.id for row in audit_read.page(limit=10, before=page.next_before, query='', outcome='all').items], ids[:2][::-1])
+        # PostgreSQL yields a real boolean here; the payload must stay JSON-safe.
+        truncated = page.items[0]
+        self.assertIs(truncated.details_truncated, True)
+        self.assertEqual(len(truncated.details), audit_read.DETAILS_LIMIT)
+        self.assertIs(page.items[1].details_truncated, False)
+        blank = next(row for row in page.items if row.id == nulls)
+        self.assertIsNone(blank.actor_id)
+        self.assertIsNone(blank.actor_name)
+        self.assertIsNone(blank.source_ip)
+        self.assertEqual([row.id for row in audit_read.page(limit=10, before=None, query='ops%team', outcome='all').items], [big])
+        self.assertEqual([row.id for row in audit_read.page(limit=10, before=None, query='%', outcome='all').items], [big])
+        self.assertEqual([row.id for row in audit_read.page(limit=10, before=None, query='', outcome='denied').items], [nulls])
+
+    def test_audit_read_honours_the_statement_budget(self):
+        self.event()
+        with patch.object(browser_db_budget, 'read_timeout_ms', return_value=browser_db_budget.MIN_TIMEOUT_MS):
+            with patch.object(db, 'connect', wraps=db.connect) as tracked:
+                audit_read.page(limit=1, before=None, query='', outcome='all')
+        self.assertEqual(tracked.call_count, 1)
+
+    def test_about_counts_nodes_and_clients_without_scan_history(self):
+        db.create_service_client('pg-client', 'PostgreSQL client')
+        db.upsert_worker_node_heartbeat(node_id='pg-node', display_name='PG node', hostname='pg-host',
+            platform='linux', agent_version='test', labels_json='{}', capacity=1,
+            advertised_engine_keys_json='[]', runtime_state='idle', active_scan_id=None,
+            process_id=0, last_heartbeat_at=int(time.time()))
+        admin_view = about_read.snapshot(admin=True)
+        self.assertEqual(admin_view.service_client_count, 1)
+        self.assertEqual(admin_view.registered_nodes, 1)
+        self.assertEqual(admin_view.schedulable_nodes, 1)
+        self.assertIsNone(about_read.snapshot(admin=False).service_client_count)

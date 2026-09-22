@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { BrowserRouter, Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { Activity, ArrowUpRight, Cpu, LayoutDashboard, LogOut, SlidersHorizontal } from 'lucide-react'
+import { Activity, ArrowUpRight, Cpu, Info, LayoutDashboard, LogOut, ScrollText, SlidersHorizontal } from 'lucide-react'
 import { request } from './lib/api'
 import { Button } from './components/ui/button'
 import { ThemeToggle } from './components/theme-toggle'
@@ -32,6 +32,8 @@ const ApiLedger = lazy(() => import('./pages/api-ledger'))
 const ServiceClients = lazy(() => import('./pages/service-clients'))
 const ClientCredentials = lazy(() => import('./pages/client-credentials'))
 const ClientProfiles = lazy(() => import('./pages/client-profiles'))
+const Audit = lazy(() => import('./pages/audit'))
+const About = lazy(() => import('./pages/about'))
 const client = new QueryClient({ defaultOptions: {
   queries: { staleTime: 15000, retry: false, refetchOnWindowFocus: false, refetchIntervalInBackground: false },
   mutations: { retry: false },
@@ -87,21 +89,25 @@ function App() {
     <NavLink className="nav-item" to="/api-ledger"><Activity size={18} />API ledger</NavLink>
     <NavLink className="nav-item" to="/hash-scan"><ArrowUpRight size={18} />Hash lookup</NavLink>
     <NavLink className="nav-item" to="/account"><Activity size={18} />Account</NavLink>
+    <NavLink className="nav-item" to="/about"><Info size={18} />About</NavLink>
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/engines"><Cpu size={18} />Engines</NavLink>}
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/system"><Activity size={18} />System</NavLink>}
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/scan-policy"><SlidersHorizontal size={18} />Scan policy</NavLink>}
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/service-clients"><Activity size={18} />Service clients</NavLink>}
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/users"><Activity size={18} />Users</NavLink>}
+    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/audit"><ScrollText size={18} />Audit</NavLink>}
     </nav>
     <div className="sidebar-footer"><span>{session.data.user.username}<small>{session.data.user.role}</small></span><div className="sidebar-controls">
       <ThemeToggle /><Button variant="secondary" disabled={busy} onClick={logout} aria-label="Sign out"><LogOut size={17} /></Button></div></div>
-  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="offline-label">SELF-HOSTED</span></header>
+  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="offline-label">SELF-HOSTED</span></header>
     {error && <p role="alert" className="error">{error}</p>}
       <Suspense fallback={<p role="status">Loading page…</p>}><Routes>
         <Route path="/account" element={<Account session={session.data} onPasswordChanged={() => {
           clearPrivateQueries(); client.setQueryData(['session'], null); setError(''); setNotice('Password updated. All your sessions were signed out. Sign in with your new password.')
         }} />} />
         <Route path="/users" element={session.data.user.role === 'admin' ? <Users session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
+        <Route path="/about" element={<About session={session.data} />} />
+        <Route path="/audit" element={session.data.user.role === 'admin' ? <Audit /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/dashboard" element={<Dashboard session={session.data} />} />
         <Route path="/scans/new" element={<NewScan session={session.data} />} />
         <Route path="/api-ledger/scans/:scanId" element={<Report key={location.pathname} automation />} />

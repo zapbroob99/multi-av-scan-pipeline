@@ -91,6 +91,6 @@ it('shows only shadow removal for LDAP users and cancels without writing', async
   expect(screen.queryByLabelText('Account role')).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: 'Review removal' }))
   expect(screen.getByRole('dialog')).toHaveTextContent('Directory access is unchanged')
-  await userEvent.click(screen.getByRole('button', { name: 'Cancel', exact: true }))
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
   expect(fetcher).toHaveBeenCalledTimes(1)
 })
