@@ -8,6 +8,7 @@ import time
 from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Path, Query, Request, Response, UploadFile
+from fastapi.responses import PlainTextResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
@@ -89,11 +90,15 @@ class BrowserRoute(APIRoute):
                     PREFIX + "/api-ledger/scans/{scan_id}/status-json",
                     PREFIX + "/api-ledger/scans/{scan_id}/results/{result_id}",
                     PREFIX + "/api-ledger/scans/{scan_id}/results/{result_id}/full",
+                    PREFIX + "/api-ledger/scans/{scan_id}/results/{result_id}/output",
+                    PREFIX + "/api-ledger/scans/{scan_id}/print",
                     PREFIX + "/api-ledger/batches/{batch_id}",
                     PREFIX + "/api-ledger/batches/{batch_id}/json",
                     PREFIX + "/scans/options",
                     PREFIX + "/scans/{scan_id}", PREFIX + "/scans/{scan_id}/results/{result_id}",
                     PREFIX + "/scans/{scan_id}/results/{result_id}/full",
+                    PREFIX + "/scans/{scan_id}/results/{result_id}/output",
+                    PREFIX + "/scans/{scan_id}/print",
                     PREFIX + "/scans/{scan_id}/children",
                     PREFIX + "/scans/{scan_id}/summary-export",
                     PREFIX + "/scans/{scan_id}/export",
@@ -278,6 +283,40 @@ def browser_delete_user(request: Request, body: user_admin.UserFence,
                         user_id: int = Path(ge=1, le=9007199254740991)):
     set_audit_context(request, action='user.delete', target_type='user', target_id=user_id, actor=request.state.ui_user)
     user_admin.manage(request.state.ui_user.id, user_id, expected_revision=body.expected_revision, delete=True)
+
+
+# PlainTextResponse would also declare the router's error responses as text, but
+# an HTTPException still returns JSON. Restate them so the contract stays honest.
+OUTPUT_ERRORS = {status: {'model': ErrorPayload,
+                          'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorPayload'}}}}
+                 for status in (400, 401, 403, 404, 409, 413, 422, 503)}
+
+
+def _output_response(filename: str, content: str) -> PlainTextResponse:
+    return PlainTextResponse(content, media_type='text/plain; charset=utf-8',
+                             headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+
+
+@router.get('/scans/{scan_id}/print', response_model=scan_management.PrintableReport)
+def manual_printable_report(scan_id: int = Path(ge=1, le=9007199254740991)):
+    return scan_management.printable_report(scan_id)
+
+
+@router.get('/api-ledger/scans/{scan_id}/print', response_model=scan_management.PrintableReport)
+def automation_printable_report(scan_id: int = Path(ge=1, le=9007199254740991)):
+    return scan_management.printable_report(scan_id, automation=True)
+
+
+@router.get('/scans/{scan_id}/results/{result_id}/output', response_class=PlainTextResponse, responses=OUTPUT_ERRORS)
+def manual_result_output(scan_id: int = Path(ge=1, le=9007199254740991),
+                         result_id: int = Path(ge=1, le=9007199254740991)):
+    return _output_response(*scan_report_read.raw_output(scan_id, result_id))
+
+
+@router.get('/api-ledger/scans/{scan_id}/results/{result_id}/output', response_class=PlainTextResponse, responses=OUTPUT_ERRORS)
+def automation_result_output(scan_id: int = Path(ge=1, le=9007199254740991),
+                             result_id: int = Path(ge=1, le=9007199254740991)):
+    return _output_response(*scan_report_read.raw_output(scan_id, result_id, automation=True))
 
 
 @router.get('/audit', response_model=audit_read.AuditPage)

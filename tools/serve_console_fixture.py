@@ -45,8 +45,10 @@ def main():
                 status="failed" if index == 24 else "completed" if terminal else "queued",
                 verdict="info" if terminal else "pending", risk_score=0 if terminal else None)
             if index == 24:
+                # Long enough to exercise the printable report's per-engine bound
+                # and the plain-text download, well under the 2 MiB JSON ceiling.
                 db.create_engine_result(scan_id, EngineResultInput('Static Metadata', 'failed', False, 'info', 0, None,
-                    '<script>benign fixture text</script>', 12, error_message='Synthetic worker failure',
+                    '<script>benign fixture text</script>' + 'p' * 9000, 12, error_message='Synthetic worker failure',
                     details_json='{"marker":"' + 'x' * 17000 + 'FULL_OUTPUT_END"}'))
         batch = db.create_scan_batch(source='manual', original_filename='outer.zip', archive_mode='lazy_extract_on_detection')
         with db.connect() as connection:

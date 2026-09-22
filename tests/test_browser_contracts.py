@@ -18,25 +18,42 @@ class BrowserContractTests(unittest.TestCase):
         self.assertEqual(first, exporter.render())
         self.assertEqual(first, exporter.OUTPUT.read_text(encoding='utf-8'))
 
+    # File downloads are the only browser reads outside the typed JSON contract:
+    # JSON escaping of recorded engine output can multiply its size. Enumerate
+    # them so a new non-JSON route cannot appear unnoticed.
+    PLAIN_TEXT_DOWNLOADS = {
+        ('/api/ui/v1/scans/{scan_id}/results/{result_id}/output', 'get'),
+        ('/api/ui/v1/api-ledger/scans/{scan_id}/results/{result_id}/output', 'get'),
+    }
+
     def test_every_browser_success_and_error_has_a_contract(self):
         schema = exporter.schema()
         operations = []
+        seen_downloads = set()
         for path, methods in schema['paths'].items():
             self.assertTrue(path.startswith('/api/ui/v1/'))
             for method, operation in methods.items():
                 if method not in ('get', 'post', 'put', 'delete'):
                     continue
                 operations.append(operation['operationId'])
+                download = (path, method) in self.PLAIN_TEXT_DOWNLOADS
                 success = {code: response for code, response in operation['responses'].items() if code.startswith('2')}
                 self.assertTrue(success, (path, method))
                 for code, response in success.items():
                     if code == '204':
                         self.assertNotIn('content', response)
+                    elif download:
+                        seen_downloads.add((path, method))
+                        # Exactly one media type: never claim the download is JSON.
+                        self.assertEqual(response['content'], {'text/plain': {'schema': {'type': 'string'}}}, (path, method))
                     else:
                         self.assertIn('$ref', response['content']['application/json']['schema'], (path, method))
+                # Errors stay JSON everywhere, including on the downloads: an
+                # HTTPException returns JSON whatever the success media type is.
                 self.assertEqual(operation['responses']['422']['content']['application/json']['schema'],
                                  {'$ref': '#/components/schemas/ErrorPayload'})
         self.assertEqual(len(operations), len(set(operations)))
+        self.assertEqual(seen_downloads, self.PLAIN_TEXT_DOWNLOADS)
 
     def test_schema_preserves_async_health_multipart_and_nullable_fields(self):
         schema = exporter.schema()

@@ -250,3 +250,124 @@ def full_export(scan_id: int, format: Literal['json', 'csv'], *, automation: boo
         raise HTTPException(413, 'Full export exceeds 2 MiB. Use the legacy export.')
     return SummaryExport(filename=f'masp-scan-{scan_id}-full.{format}',
                          media_type='application/json' if format == 'json' else 'text/csv', content=content)
+
+
+PRINT_OUTPUT_LIMIT = 8192
+MAX_PRINT_FINDINGS = 200
+PRINT_EVIDENCE_LIMIT = 512
+
+
+class PrintFinding(BaseModel):
+    engine: str
+    severity: str
+    finding: str
+    title: str
+    matched_evidence: list[str]
+    classification: list[str]
+
+
+class PrintEngine(BaseModel):
+    engine_name: str
+    status: str
+    detected: bool
+    severity: str
+    confidence: int
+    signature: str | None
+    duration_ms: int | None
+    error_message: str | None
+    raw_output: str
+    output_truncated: bool
+
+
+class PrintSummary(BaseModel):
+    verdict: str
+    risk_score: int | None
+    assessment_reasons: list[str]
+    detection_label: str
+    detection_detail: str
+    detected_engines: list[str]
+    coverage_label: str
+    coverage_detail: str
+    coverage_ran: int
+    coverage_total: int
+    coverage_unavailable: list[str]
+
+
+class PrintableReport(BaseModel):
+    scan_id: int
+    source: str
+    filename: str
+    case_name: str
+    note: str
+    status: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    attempt_count: int
+    created_at: str
+    completed_at: str | None
+    generated_at: str
+    summary: PrintSummary
+    decision: scan_report_read.DecisionSummary | None
+    decision_warning: str | None
+    findings: list[PrintFinding]
+    findings_truncated: bool
+    engines: list[PrintEngine]
+
+
+def _bounded_text_list(values: object, limit: int = PRINT_EVIDENCE_LIMIT, count: int = 16) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(value)[:limit] for value in values[:count]]
+
+
+def printable_report(scan_id: int, *, automation: bool = False) -> PrintableReport:
+    """Print-oriented projection of the bounded full-export snapshot.
+
+    Legacy `/scans/{id}/report` embedded every engine's raw output with no
+    ceiling and no source scope, so an oversized result could render an
+    unbounded page and a manual URL could display an automation scan. This
+    reuses the export admission and server-selected scope instead, and bounds
+    each engine preview; complete output stays behind the per-result reads.
+    """
+    scan, results, required, policy_complete = _full_export_rows(scan_id, automation=automation)
+    payload = build_scan_report_payload(scan, results, required_names=required,
+                                        decision_available=policy_complete)
+    summary = payload['summary']
+    detection, coverage, assessment = summary['detection'], summary['coverage'], summary['assessment']
+    decision_payload = summary['decision']
+    if decision_payload:
+        decision_payload = dict(decision_payload)
+        decision_payload['reason'] = str(decision_payload['reason'])[:2048]
+        decision_payload['reasons'] = [str(reason)[:2048] for reason in decision_payload['reasons'][:32]]
+    raw_findings = payload['findings'] if isinstance(payload['findings'], list) else []
+    findings = [PrintFinding(engine=str(item['engine'])[:512], severity=str(item['severity'])[:64],
+        finding=str(item['finding'])[:512], title=str(item['title'])[:512],
+        matched_evidence=_bounded_text_list(item['matched_evidence']),
+        classification=_bounded_text_list(item['classification']))
+        for item in raw_findings[:MAX_PRINT_FINDINGS]]
+    engines = [PrintEngine(engine_name=result.engine_name[:512], status=result.status,
+        detected=result.detected and result.status == 'completed', severity=result.severity,
+        confidence=result.confidence, signature=(result.signature or None) and result.signature[:1024],
+        duration_ms=result.duration_ms, error_message=(result.error_message or None) and result.error_message[:2048],
+        raw_output=(result.raw_output or '')[:PRINT_OUTPUT_LIMIT],
+        output_truncated=len(result.raw_output or '') > PRINT_OUTPUT_LIMIT) for result in results]
+    report = PrintableReport(scan_id=scan.id, source=scan.source, filename=scan.original_filename[:512],
+        case_name=scan.case_name[:200], note=scan.note[:4000], status=scan.status,
+        content_type=scan.content_type[:255], size_bytes=scan.size_bytes, sha256=scan.sha256,
+        attempt_count=scan.attempt_count, created_at=scan.created_at, completed_at=scan.completed_at,
+        generated_at=str(payload['generated_at']),
+        summary=PrintSummary(verdict=str(assessment['verdict']), risk_score=assessment['score'],
+            assessment_reasons=_bounded_text_list(assessment['reasons'], 2048, 32),
+            detection_label=str(detection['label'])[:512], detection_detail=str(detection['detail'])[:2048],
+            detected_engines=_bounded_text_list(detection['detected_engines']),
+            coverage_label=str(coverage['label'])[:512], coverage_detail=str(coverage['detail'])[:2048],
+            coverage_ran=int(coverage['ran']), coverage_total=int(coverage['total']),
+            coverage_unavailable=_bounded_text_list(coverage['unavailable'], 2048, 32)),
+        decision=scan_report_read.DecisionSummary(**decision_payload) if decision_payload else None,
+        decision_warning=None if policy_complete else
+            'Decision unavailable: engine policy details are invalid or exceed the reader limit. Open the legacy report.',
+        findings=findings, findings_truncated=len(raw_findings) > MAX_PRINT_FINDINGS, engines=engines)
+    if len(report.model_dump_json().encode('utf-8')) > EXPORT_LIMIT:
+        raise HTTPException(413, 'Printable report exceeds the 2 MiB browser response limit. Download the full export instead.')
+    return report

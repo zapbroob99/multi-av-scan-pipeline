@@ -37,11 +37,14 @@ describe('Full engine output', () => {
     expect(screen.queryByText(payload.raw_output)).toBeNull()
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
-  it('shows an oversized response fallback without claiming complete output', async () => {
+  it('offers the plain-text download instead of the legacy report when the JSON read is refused', async () => {
     mount('/scans/42/results/7', 413)
     expect(await screen.findByRole('alert')).toHaveTextContent('Output exceeds limit')
     expect(screen.queryByRole('heading', { name: 'AV' })).toBeNull()
-    expect(screen.getByRole('link', { name: 'legacy report' })).toHaveAttribute('href', '/scans/42')
+    expect(screen.queryByRole('link', { name: 'legacy report' })).toBeNull()
+    // Served directly by the browser: the response never enters React state.
+    expect(screen.getByRole('link', { name: 'Download raw output (plain text)' }))
+      .toHaveAttribute('href', '/api/ui/v1/scans/42/results/7/output')
   })
   it('rejects unsafe IDs without a request', () => {
     const { fetcher } = mount('/scans/42/results/9007199254740992')

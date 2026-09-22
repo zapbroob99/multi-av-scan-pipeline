@@ -18,6 +18,7 @@ from app.services import auth, ui_api
 from app.services import dashboard_read, archive_read, batch_read
 from app.services import scan_report_read, scan_assessment
 from app.services import scan_management
+from app.services import scan_report_read as scan_report_read
 from app.services import browser_db_budget
 from app.services import system_read
 from app.services import retention_admin
@@ -49,7 +50,7 @@ class BrowserApiTests(unittest.TestCase):
         self.temp.cleanup()
 
     def request(self, path, method='GET', body=None, *, session=True, csrf=True, origin='http://testserver', chunks=None,
-                content_type='application/json', content_length=None):
+                content_type='application/json', content_length=None, raw=False):
         headers = [(b'host', b'testserver'), (b'content-type', content_type.encode()), (b'x-masp-ui', b'1')]
         if content_length is not None:
             headers.append((b'content-length', str(content_length).encode()))
@@ -78,6 +79,8 @@ class BrowserApiTests(unittest.TestCase):
         asyncio.run(self.app(scope, receive, send))
         start = next(m for m in messages if m['type'] == 'http.response.start')
         data = b''.join(m.get('body', b'') for m in messages if m['type'] == 'http.response.body')
+        if raw:
+            return start['status'], data, dict(start['headers'])
         return start['status'], json.loads(data) if data else None, dict(start['headers'])
 
     def create_clamav(self, name='ClamAV A'):
@@ -1698,6 +1701,82 @@ class BrowserApiTests(unittest.TestCase):
         batch = db.create_scan_batch(source='manual', original_filename='outer.zip', archive_mode='lazy_extract_on_detection')
         parent = self.create_scan('outer.zip', batch_id=batch, scan_role='container', status='completed')
         return parent, batch
+
+    def test_printable_report_is_source_scoped_for_analysts(self):
+        scan, _ = self.report_fixture(detected=True)
+        automation = self.create_scan(source='api', status='completed',
+                                      profile_snapshot_json=json.dumps({'engines': []}))
+        self.assertEqual(self.request(f'/scans/{scan}/print', session=False)[0], 401)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        status, payload, headers = self.request(f'/scans/{scan}/print')
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(payload['scan_id'], scan)
+        self.assertEqual(payload['source'], 'manual')
+        # Legacy /scans/{id}/report had no source scope at all; both directions
+        # must now refuse the other history.
+        self.assertEqual(self.request(f'/scans/{automation}/print')[0], 404)
+        self.assertEqual(self.request(f'/api-ledger/scans/{scan}/print')[0], 404)
+        self.assertEqual(self.request(f'/api-ledger/scans/{automation}/print')[0], 200)
+        self.assertEqual(self.request('/scans/0/print')[0], 422)
+        for method in ('POST', 'PUT', 'DELETE'):
+            self.assertEqual(self.request(f'/scans/{scan}/print', method, {})[0], 405)
+
+    def test_printable_report_bounds_output_and_omits_storage_metadata(self):
+        scan = self.create_scan(status='completed', verdict='info', risk_score=0,
+                                profile_snapshot_json=json.dumps({'engines': []}))
+        db.create_engine_result(scan, EngineResultInput(engine_name='Verbose Engine', status='completed',
+            detected=False, severity='info', confidence=100, signature=None,
+            raw_output='v' * 20000, duration_ms=7))
+        payload = self.request(f'/scans/{scan}/print')[1]
+        engine = payload['engines'][0]
+        self.assertEqual(len(engine['raw_output']), scan_management.PRINT_OUTPUT_LIMIT)
+        self.assertTrue(engine['output_truncated'])
+        serialized = json.dumps(payload)
+        for private in ('/private/storage', 'internal.bin', 'password', 'details_json'):
+            self.assertNotIn(private, serialized)
+
+    def test_printable_report_suppresses_a_decision_on_invalid_policy(self):
+        scan, _ = self.report_fixture(details='not-json')
+        payload = self.request(f'/scans/{scan}/print')[1]
+        self.assertIsNone(payload['decision'])
+        self.assertIn('Decision unavailable', payload['decision_warning'])
+
+    def test_raw_output_download_serves_text_beyond_the_json_limit(self):
+        scan, result = self.report_fixture()
+        oversized = 'z' * (scan_report_read.FULL_OUTPUT_LIMIT + 1024)
+        with db.connect() as connection:
+            connection.execute('UPDATE engine_results SET raw_output = ? WHERE id = ?', (oversized, result))
+        # The JSON reader still refuses it; the download is the browser path.
+        self.assertEqual(self.request(f'/scans/{scan}/results/{result}/full')[0], 413)
+        status, served, headers = self.request(f'/scans/{scan}/results/{result}/output', raw=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(served.decode(), oversized)
+        self.assertEqual(headers[b'content-type'], b'text/plain; charset=utf-8')
+        self.assertEqual(headers[b'content-disposition'],
+                         f'attachment; filename="masp-scan-{scan}-result-{result}-output.txt"'.encode())
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+
+    def test_raw_output_download_is_scoped_bounded_and_read_only(self):
+        scan, result = self.report_fixture()
+        automation = self.create_scan(source='api', status='completed')
+        self.assertEqual(self.request(f'/scans/{scan}/results/{result}/output', session=False)[0], 401)
+        self.assertEqual(self.request(f'/api-ledger/scans/{scan}/results/{result}/output')[0], 404)
+        self.assertEqual(self.request(f'/scans/{automation}/results/{result}/output')[0], 404)
+        self.assertEqual(self.request(f'/scans/{scan}/results/999999/output')[0], 404)
+        for method in ('POST', 'PUT', 'DELETE'):
+            self.assertEqual(self.request(f'/scans/{scan}/results/{result}/output', method, {})[0], 405)
+        with patch.dict(os.environ, {'MASP_UI_RAW_OUTPUT_LIMIT': '1'}):
+            # Never below the JSON ceiling this download exists to exceed.
+            self.assertEqual(scan_report_read.raw_output_limit(), scan_report_read.FULL_OUTPUT_LIMIT)
+        with patch.dict(os.environ, {'MASP_UI_RAW_OUTPUT_LIMIT': 'not-a-number'}):
+            self.assertEqual(scan_report_read.raw_output_limit(), scan_report_read.RAW_OUTPUT_DEFAULT_LIMIT)
+        with patch.object(scan_report_read, 'raw_output_limit', return_value=scan_report_read.FULL_OUTPUT_LIMIT):
+            with db.connect() as connection:
+                connection.execute('UPDATE engine_results SET raw_output = ? WHERE id = ?',
+                                   ('y' * (scan_report_read.FULL_OUTPUT_LIMIT + 1), result))
+            self.assertEqual(self.request(f'/scans/{scan}/results/{result}/output')[0], 413)
 
     def test_batch_auth_manual_scope_and_cursor_validation(self):
         _, batch = self.archive_fixture()

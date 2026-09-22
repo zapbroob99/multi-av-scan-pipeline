@@ -1,5 +1,11 @@
 # MASP - Multi AV Scan Pipeline
 
+Manual and automation scan reports now offer a bounded printable view at
+`/console/scans/{id}/print`. Unlike the legacy report it enforces the scan's
+source scope and caps each engine's embedded output. Recorded engine output above
+the 2 MiB JSON limit downloads as plain text instead of falling back to the legacy
+report; `MASP_UI_RAW_OUTPUT_LIMIT` bounds that download (default 32 MiB).
+
 Admin `/console/audit` now reads the append-only security audit trail with bounded
 pages, literal actor/action/target/request-ID search and outcome filtering. The
 console cannot edit or delete an event and calculates no total. `/console/about`

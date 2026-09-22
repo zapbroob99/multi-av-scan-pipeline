@@ -221,6 +221,13 @@ Browser reads also force custom plans inside their transaction because archive
 parent selectivity varies sharply. Budget expiry returns a sanitized 503; retain
 database logs/metrics to distinguish query pressure from lock contention.
 
+`MASP_UI_RAW_OUTPUT_LIMIT` bounds the plain-text engine-output download that
+serves recorded output above the 2 MiB browser JSON limit. It defaults to 32 MiB,
+clamps to 256 MiB, and is never lowered below the 2 MiB JSON ceiling the download
+exists to exceed. Each download reads one recorded result into memory in a worker
+thread, so size this against app-container memory and the number of analysts who
+may retrieve large output concurrently; it is not a streaming transfer.
+
 Database pooling is per process. Budget the maximum as:
 
 ```text

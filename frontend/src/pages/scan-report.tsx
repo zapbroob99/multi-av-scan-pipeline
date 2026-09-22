@@ -55,6 +55,7 @@ export default function Report({ automation = false }: { automation?: boolean })
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">{automation ? 'AUTOMATION' : 'MANUAL'} SCAN #{scan.id}</p>
     <h1 className="report-filename">{scan.filename}</h1><p className="muted">Status: {scan.status} · Attempt {scan.attempt_count}</p></div>
     <div className="report-actions"><Button variant="secondary" disabled={report.isFetching} onClick={() => { void report.refetch() }}>{report.isFetching ? 'Refreshing…' : 'Refresh report'}</Button>
+      <Link className="button button-secondary" to={`${automation ? '/api-ledger' : ''}/scans/${scan.id}/print`}>Printable report</Link>
       <Link className="button button-secondary" to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></div></div>
     {automation && <p className="callout">Source: {scan.source} ? Client: {scan.service_client_id ?? 'Unassigned'}. Operator view; accepted routing determines coverage.</p>}
     {automation && <p><Link to={`/api-ledger/scans/${scan.id}/status-json`}>Integration status JSON</Link> ? <Link to={`/api-ledger/scans/${scan.id}/result-json`}>Integration result JSON</Link></p>}

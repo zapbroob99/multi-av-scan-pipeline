@@ -13,7 +13,9 @@ test('manual failed report, lazy technical text and legacy escape hatch', async 
   await expect(page.getByText('Synthetic worker failure')).toBeVisible()
   expect(technical).toEqual([])
   await page.getByRole('button', { name: 'Show technical output for Static Metadata' }).click()
-  await expect(page.getByText('<script>benign fixture text</script>', { exact: true })).toBeVisible()
+  // The fixture output is long enough to exercise the printable-report bound,
+  // so assert the inert script text is present rather than the whole string.
+  await expect(page.locator('.technical-panel pre').first()).toContainText('<script>benign fixture text</script>')
   expect(technical).toHaveLength(1)
   await expect(page.getByRole('link', { name: /Legacy report:/ })).toHaveAttribute('href', '/scans/25')
   await page.evaluate(() => window.scrollTo(0, 0))
@@ -23,7 +25,7 @@ test('manual failed report, lazy technical text and legacy escape hatch', async 
   await page.screenshot({ path: '../artifacts/console-e2e/report-mobile.png', fullPage: true })
   await page.getByRole('link', { name: 'Full output for Static Metadata' }).click()
   await expect(page.getByRole('heading', { name: 'Full engine output' })).toBeVisible()
-  await expect(page.getByLabel('Raw output text')).toHaveText('<script>benign fixture text</script>')
+  await expect(page.getByLabel('Raw output text')).toContainText('<script>benign fixture text</script>')
   await expect(page.getByLabel('Details JSON text')).toContainText('FULL_OUTPUT_END')
   expect(technical.filter(url => url.endsWith('/full'))).toHaveLength(1)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

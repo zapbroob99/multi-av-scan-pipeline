@@ -171,6 +171,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/api-ledger/scans/{scan_id}/print": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Automation Printable Report */
+        get: operations["automation_printable_report_api_ui_v1_api_ledger_scans__scan_id__print_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/api-ledger/scans/{scan_id}/result-json": {
         parameters: {
             query?: never;
@@ -214,6 +231,23 @@ export interface paths {
         };
         /** Automation Full Output */
         get: operations["automation_full_output_api_ui_v1_api_ledger_scans__scan_id__results__result_id__full_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/api-ledger/scans/{scan_id}/results/{result_id}/output": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Automation Result Output */
+        get: operations["automation_result_output_api_ui_v1_api_ledger_scans__scan_id__results__result_id__output_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -601,6 +635,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/scans/{scan_id}/print": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Manual Printable Report */
+        get: operations["manual_printable_report_api_ui_v1_scans__scan_id__print_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/scans/{scan_id}/results/{result_id}": {
         parameters: {
             query?: never;
@@ -627,6 +678,23 @@ export interface paths {
         };
         /** Read Full Engine Output */
         get: operations["read_full_engine_output_api_ui_v1_scans__scan_id__results__result_id__full_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/scans/{scan_id}/results/{result_id}/output": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Manual Result Output */
+        get: operations["manual_result_output_api_ui_v1_scans__scan_id__results__result_id__output_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1873,6 +1941,108 @@ export interface components {
             name: string;
             /** Selector */
             selector: string;
+        };
+        /** PrintableReport */
+        PrintableReport: {
+            /** Attempt Count */
+            attempt_count: number;
+            /** Case Name */
+            case_name: string;
+            /** Completed At */
+            completed_at: string | null;
+            /** Content Type */
+            content_type: string;
+            /** Created At */
+            created_at: string;
+            decision: components["schemas"]["DecisionSummary"] | null;
+            /** Decision Warning */
+            decision_warning: string | null;
+            /** Engines */
+            engines: components["schemas"]["PrintEngine"][];
+            /** Filename */
+            filename: string;
+            /** Findings */
+            findings: components["schemas"]["PrintFinding"][];
+            /** Findings Truncated */
+            findings_truncated: boolean;
+            /** Generated At */
+            generated_at: string;
+            /** Note */
+            note: string;
+            /** Scan Id */
+            scan_id: number;
+            /** Sha256 */
+            sha256: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Source */
+            source: string;
+            /** Status */
+            status: string;
+            summary: components["schemas"]["PrintSummary"];
+        };
+        /** PrintEngine */
+        PrintEngine: {
+            /** Confidence */
+            confidence: number;
+            /** Detected */
+            detected: boolean;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Engine Name */
+            engine_name: string;
+            /** Error Message */
+            error_message: string | null;
+            /** Output Truncated */
+            output_truncated: boolean;
+            /** Raw Output */
+            raw_output: string;
+            /** Severity */
+            severity: string;
+            /** Signature */
+            signature: string | null;
+            /** Status */
+            status: string;
+        };
+        /** PrintFinding */
+        PrintFinding: {
+            /** Classification */
+            classification: string[];
+            /** Engine */
+            engine: string;
+            /** Finding */
+            finding: string;
+            /** Matched Evidence */
+            matched_evidence: string[];
+            /** Severity */
+            severity: string;
+            /** Title */
+            title: string;
+        };
+        /** PrintSummary */
+        PrintSummary: {
+            /** Assessment Reasons */
+            assessment_reasons: string[];
+            /** Coverage Detail */
+            coverage_detail: string;
+            /** Coverage Label */
+            coverage_label: string;
+            /** Coverage Ran */
+            coverage_ran: number;
+            /** Coverage Total */
+            coverage_total: number;
+            /** Coverage Unavailable */
+            coverage_unavailable: string[];
+            /** Detected Engines */
+            detected_engines: string[];
+            /** Detection Detail */
+            detection_detail: string;
+            /** Detection Label */
+            detection_label: string;
+            /** Risk Score */
+            risk_score: number | null;
+            /** Verdict */
+            verdict: string;
         };
         /** ProfileEngineChoice */
         ProfileEngineChoice: {
@@ -3452,6 +3622,100 @@ export interface operations {
             };
         };
     };
+    automation_printable_report_api_ui_v1_api_ledger_scans__scan_id__print_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scan_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrintableReport"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
     automation_result_json_api_ui_v1_api_ledger_scans__scan_id__result_json_get: {
         parameters: {
             query?: never;
@@ -3732,6 +3996,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    automation_result_output_api_ui_v1_api_ledger_scans__scan_id__results__result_id__output_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                result_id: number;
+                scan_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
                 };
             };
         };
@@ -6322,6 +6689,100 @@ export interface operations {
             };
         };
     };
+    manual_printable_report_api_ui_v1_scans__scan_id__print_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scan_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrintableReport"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
     read_scan_technical_details_api_ui_v1_scans__scan_id__results__result_id__get: {
         parameters: {
             query?: never;
@@ -6508,6 +6969,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    manual_result_output_api_ui_v1_scans__scan_id__results__result_id__output_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                result_id: number;
+                scan_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                    "text/plain": components["schemas"]["ErrorPayload"];
                 };
             };
         };

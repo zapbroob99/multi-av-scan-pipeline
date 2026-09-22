@@ -290,8 +290,20 @@ paths, adapter keys, engine configuration or secrets. Read only small configurat
 under the shared budget; never aggregate scan history for this screen. Enabled engines and
 schedulable nodes are configuration state, not proof of complete coverage. `app.APP_VERSION`
 is the single version constant.
-Next UI slice: remaining manual, hash, System and oversized-output parity, then the final
-cutover inventory. Keep legacy System metric/detail parity, legacy audit detail/printable
+`/console/scans/{id}/print` and the automation twin render a bounded printable report for
+analysts and admins. Reuse the full-export snapshot loader and shared payload builder so the
+printed decision, coverage, findings and engine rows come from one repeatable read; React
+calculates no decision. Legacy `/scans/{id}/report` had no source scope and embedded every
+engine's raw output with no ceiling: keep the server-selected scope so each route refuses the
+other history, cap each engine preview at 8 KiB with a truncation flag, cap findings at 200
+rows and keep the 2 MiB serialized ceiling. Print only on explicit operator action.
+Result output routes serve one engine's recorded raw output as attachment `text/plain`,
+replacing the legacy dead end above the 2 MiB JSON ceiling. Keep it outside the typed JSON
+contract and out of React state and caches; build the filename from validated integers only.
+`MASP_UI_RAW_OUTPUT_LIMIT` bounds it, defaulting to 32 MiB, clamped to 256 MiB and never below
+the JSON ceiling it exists to exceed. Source scope, result ownership and read budgets still apply.
+Next UI slice: remaining manual filter parity, hash provider detail, System metric parity and
+oversized complete integration payloads, then the final cutover inventory. Keep legacy System metric/detail parity, legacy audit detail/printable
 parity, deployment-shaped audit-trail volume validation and deployment acceptance open;
 engine pool assignment already lives in React Engines.
 

@@ -20,7 +20,9 @@ export default function EngineOutput({ automation = false }: { automation?: bool
       onClick={() => { void output.refetch() }}>Refresh output</Button></div>
     <p><Link to={`${automation ? '/api-ledger' : ''}/scans/${scanId}`}>Back to report</Link> · <Link to={`${automation ? '/api-ledger' : ''}/scans/${scanId}/manage`}>{automation ? 'Scan management' : 'Exports and scan management'}</Link></p>
     <p className="callout">One recorded engine result, loaded on request. This is not live output or a policy decision.
-      Complete text is shown up to the 2 MiB browser limit. Larger output remains available in the <a href={`/scans/${scanId}`}>legacy report</a>.</p>
+      Complete text is shown up to the 2 MiB browser limit. Above it, download the raw output as plain text instead;
+      the download is served directly and is never held in this page.</p>
+    <p><a href={`/api/ui/v1${automation ? '/api-ledger' : ''}/scans/${scanId}/results/${resultId}/output`}>Download raw output (plain text)</a></p>
     {output.isFetching && <p role="status">Loading full engine output…</p>}
     {output.error && <p role="alert" className="error">{output.error.message} Return to the report for current results.</p>}
     {data && <><h2 className="report-filename">{data.engine_name}</h2><p className="muted">Attempt {data.attempt_count} · Result #{data.result_id}</p>

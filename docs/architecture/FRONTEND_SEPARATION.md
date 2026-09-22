@@ -57,7 +57,7 @@ authorization/regression tests, responsive browser verification and documentatio
 
 | Slice | Current state and remaining work |
 | --- | --- |
-| Manual scan workflow | Dashboard, submission, reports, archive/batch navigation, summary/full exports, retry and protected single/bulk deletion implemented. Finish legacy filter/report parity, printable report and oversized-output access. |
+| Manual scan workflow | Dashboard, submission, reports, archive/batch navigation, summary/full exports, retry, protected single/bulk deletion, a bounded printable report and plain-text access to oversized engine output implemented. Finish legacy filter/report parity. |
 | Engines | Instance setup/settings, enable/disable/delete, checks, local rules and pool assignment implemented. Retain instance identity and secret omission. |
 | System — current slice | Worker inventory, lifecycle, credential revocation, worker-pool create/edit/delete and paginated worker runtime/active queue implemented. |
 | System — overview | Admin-only cached all-source totals, worker liveness, read-only retention policy and on-demand bounded historical engine-name metrics. Full-history aggregation scale gate remains. |
@@ -66,9 +66,9 @@ authorization/regression tests, responsive browser verification and documentatio
 | Scan policy | `/console/scan-policy` implements admin-only reads and confirmed atomic updates of the three operational limits with shared backend validation/resolution. |
 | Hash lookup | `/console/hash-scan` provides analyst/admin explicit manual lookup, backend decisions, quota-aware adapters and bounded result summaries. Rich provider-detail parity remains before cutover. |
 | Integration administration | `/console/service-clients` lists client metadata and confirms name/enabled-state changes; client profile routes read bounded profiles and confirm engine assignment. Atomic client/default-profile creation and credential add/list/scoped revocation are implemented. Tokens are supplied by the admin and never returned. |
-| Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Remaining: oversized complete-payload and final legacy-action parity; preserve ownership and manual-history isolation. |
+| Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Automation printable reports and oversized engine-output downloads reuse the manual readers under automation scope. Remaining: oversized complete integration payloads and final legacy-action parity; preserve ownership and manual-history isolation. |
 | Users and account | Bounded inventory, confirmed local creation, administrative role/password edit and deletion, and own-account password change implemented. Shared last-admin/session protections and stale revision fences; LDAP shadow deletion does not disable directory access. Final cutover/deployment acceptance remains. |
-| Audit and information | Admin `/console/audit` provides bounded descending ID-keyset audit pages, literal search, outcome filtering and bounded inert details; no total is calculated and no write verb exists. `/console/about` gives analysts and admins the product boundary and a non-sensitive runtime snapshot with admin-scoped client counts. Remaining: legacy detail/printable parity, About metric parity and deployment-shaped trail-volume validation. |
+| Audit and information | Admin `/console/audit` provides bounded descending ID-keyset audit pages, literal search, outcome filtering and bounded inert details; no total is calculated and no write verb exists. `/console/about` gives analysts and admins the product boundary and a non-sensitive runtime snapshot with admin-scoped client counts. Remaining: legacy pretty-printed detail rendering, About metric parity and deployment-shaped trail-volume validation. Legacy audit has no printable view. |
 | Cutover | Route/deep-link compatibility, all legacy actions and error states checked against the route inventory, feature/permission parity, static deployment/TLS and performance gates, then retire HTML rendering. |
 
 Inventory covers the legacy login/logout, Dashboard, scans/batches/reports/exports,
@@ -1517,3 +1517,55 @@ Remaining in this group: legacy audit detail/printable parity, deployment-shaped
 trail volume validation (this is the largest append-only table in a long-running
 deployment) and About metric parity are cutover gates. Next: remaining manual,
 hash, System and oversized-output parity, then the final cutover inventory.
+
+### Printable report and oversized engine output
+
+`/console/scans/{id}/print` and `/console/api-ledger/scans/{id}/print` render a
+print-oriented view for analysts and admins. The reader reuses the existing
+full-export snapshot loader and the shared report payload builder, so the printed
+decision, coverage, findings and engine rows come from one repeatable read and the
+same backend helpers as the report and exports; React calculates no decision.
+
+Two legacy defects are closed rather than reproduced. Legacy `/scans/{id}/report`
+applied **no source scope**: a manual URL rendered an API or ICAP scan to any
+signed-in user. The browser routes use the server-selected scope, so each route
+refuses the other history with 404. Legacy also embedded **every engine's raw
+output with no ceiling**, so one verbose result produced an unbounded page. Each
+engine preview is now capped at 8 KiB with an explicit truncation flag, findings
+are capped at 200 rows, and the serialized response keeps the shared 2 MiB
+ceiling. Printing is invoked only by the operator; nothing prints automatically.
+Print styling hides console chrome and expands output blocks for paper.
+
+`GET /api/ui/v1/scans/{id}/results/{result_id}/output` (and its automation twin)
+serves one engine's recorded raw output as `text/plain` with an attachment
+disposition. This replaces the "use the legacy report" dead end that the 2 MiB
+JSON reader produced: JSON escaping of scanner output can multiply its size and
+React would hold the whole string, while plain text has neither cost and is
+streamed by the browser without entering React state, the query cache or the
+typed JSON contract. The filename is built only from validated integers, so no
+sample or engine name reaches the `Content-Disposition` header.
+
+The download is still explicitly bounded, unlike legacy. `MASP_UI_RAW_OUTPUT_LIMIT`
+sets the byte ceiling, defaulting to 32 MiB, clamped to 256 MiB and never below
+the 2 MiB JSON ceiling this path exists to exceed; an invalid value falls back to
+the default. Source scope, result ownership and the shared PostgreSQL read budget
+apply as they do to every other result read.
+
+Printable/oversized validation (2026-09-22): full Python suite with disposable
+PostgreSQL ran 798 tests (796 passed, 2 skipped). New checks cover analyst access,
+both source-scope refusals, absent write verbs, per-engine output bounding,
+storage-metadata omission, decision suppression on invalid policy, a download that
+serves output the JSON reader refuses, cross-scan and cross-source refusal, and
+the configured-limit clamps. Frontend: 119 tests; 28 Edge workflows including a new
+printable/download scenario that checks inert output, the mobile viewport, print
+media and the served plain-text response. Production build and contract drift check
+passed. The console fixture's engine output was widened to exercise the new bound,
+so two existing report assertions moved from exact-match to containment.
+
+Remaining here: legacy manual filter parity, oversized complete integration
+payloads, and deployment-shaped validation of very large recorded outputs. Legacy
+`/scans/{id}/report` can be retired with the rest of the HTML rendering at cutover.
+
+With this slice every legacy HTML route has a React equivalent, so no screen is
+missing. What remains before legacy removal is parity of behaviour inside those
+screens, the cutover inventory and the deployment gates, not new pages.

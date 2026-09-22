@@ -34,6 +34,7 @@ const ClientCredentials = lazy(() => import('./pages/client-credentials'))
 const ClientProfiles = lazy(() => import('./pages/client-profiles'))
 const Audit = lazy(() => import('./pages/audit'))
 const About = lazy(() => import('./pages/about'))
+const ScanPrint = lazy(() => import('./pages/scan-print'))
 const client = new QueryClient({ defaultOptions: {
   queries: { staleTime: 15000, retry: false, refetchOnWindowFocus: false, refetchIntervalInBackground: false },
   mutations: { retry: false },
@@ -99,7 +100,7 @@ function App() {
     </nav>
     <div className="sidebar-footer"><span>{session.data.user.username}<small>{session.data.user.role}</small></span><div className="sidebar-controls">
       <ThemeToggle /><Button variant="secondary" disabled={busy} onClick={logout} aria-label="Sign out"><LogOut size={17} /></Button></div></div>
-  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="offline-label">SELF-HOSTED</span></header>
+  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname.endsWith('/print') ? 'Printable report' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="offline-label">SELF-HOSTED</span></header>
     {error && <p role="alert" className="error">{error}</p>}
       <Suspense fallback={<p role="status">Loading page…</p>}><Routes>
         <Route path="/account" element={<Account session={session.data} onPasswordChanged={() => {
@@ -123,6 +124,8 @@ function App() {
         <Route path="/scans/:scanId" element={<Report />} />
         <Route path="/scans/:scanId/results/:resultId" element={<EngineOutput />} />
         <Route path="/scans/:scanId/manage" element={<ScanManagement key={location.pathname} session={session.data} />} />
+        <Route path="/scans/:scanId/print" element={<ScanPrint key={location.pathname} />} />
+        <Route path="/api-ledger/scans/:scanId/print" element={<ScanPrint key={location.pathname} automation />} />
         <Route path="/api-ledger/scans/:scanId/children" element={<ArchiveChildren key={location.pathname} automation />} />
         <Route path="/scans/:scanId/children" element={<ArchiveChildren />} />
         <Route path="/batches/:batchId" element={<BatchOverview />} />

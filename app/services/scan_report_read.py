@@ -1,6 +1,7 @@
 """Bounded, session-facing report projections with server-selected source scope. No adapter execution."""
 from dataclasses import asdict
 import json
+import os
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -15,6 +16,19 @@ POLICY_LIMIT = 65536
 TEXT_LIMIT = 16384
 SNAPSHOT_LIMIT = 262144
 FULL_OUTPUT_LIMIT = 2 * 1024 * 1024
+RAW_OUTPUT_DEFAULT_LIMIT = 32 * 1024 * 1024
+RAW_OUTPUT_MAX_LIMIT = 256 * 1024 * 1024
+
+
+def raw_output_limit() -> int:
+    raw = os.getenv('MASP_UI_RAW_OUTPUT_LIMIT', str(RAW_OUTPUT_DEFAULT_LIMIT)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return RAW_OUTPUT_DEFAULT_LIMIT
+    # Never below the JSON reader's ceiling: this download exists to serve what
+    # the JSON reader already refuses.
+    return max(FULL_OUTPUT_LIMIT, min(value, RAW_OUTPUT_MAX_LIMIT))
 
 
 class EngineSummary(BaseModel):
@@ -114,6 +128,34 @@ def full_technical_details(scan_id: int, result_id: int, *, automation: bool = F
     if len(payload.model_dump_json().encode('utf-8')) > FULL_OUTPUT_LIMIT:
         raise HTTPException(413, 'Full engine output exceeds the 2 MiB browser response limit. Use the legacy report.')
     return payload
+
+
+def raw_output(scan_id: int, result_id: int, *, automation: bool = False) -> tuple[str, str]:
+    """Serve one engine's raw output as plain text, outside the JSON envelope.
+
+    The typed full-detail reader refuses above 2 MiB because JSON escaping of
+    scanner output can multiply its size and React would hold the whole string.
+    Plain text has neither cost, so this is the browser path for output the JSON
+    reader rejects; legacy stays unnecessary. It is still explicitly bounded:
+    legacy rendered every result inline with no ceiling at all.
+    """
+    limit = raw_output_limit()
+    with db.connect() as connection:
+        connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+        apply_read_budget(connection)
+        byte_length = ("OCTET_LENGTH(COALESCE(r.raw_output, ''))" if db.using_postgres()
+                       else "LENGTH(CAST(COALESCE(r.raw_output, '') AS BLOB))")
+        source = (f"FROM engine_results r JOIN scan_jobs j ON j.id = r.scan_job_id "
+                  f"WHERE r.id = ? AND j.id = ? AND {source_clause(automation)}")
+        size = connection.execute(f'SELECT {byte_length} AS source_bytes {source}', (result_id, scan_id)).fetchone()
+        if size is None:
+            raise HTTPException(404, 'Automation scan result not found.' if automation else 'Manual scan result not found.')
+        if int(size['source_bytes']) > limit:
+            raise HTTPException(413, f'Engine output exceeds the {limit} byte download limit configured for this deployment.')
+        row = connection.execute(f'SELECT r.raw_output {source}', (result_id, scan_id)).fetchone()
+    # Filename is built from validated integers only; no sample or engine name
+    # reaches the Content-Disposition header.
+    return f'masp-scan-{scan_id}-result-{result_id}-output.txt', row['raw_output'] or ''
 
 
 def report(scan_id: int, *, automation: bool = False) -> ScanReport:

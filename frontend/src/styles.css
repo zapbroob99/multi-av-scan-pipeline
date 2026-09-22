@@ -117,6 +117,18 @@ label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color:
 .worker-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-top: 20px; }.worker-actions label { margin: 0; max-width: 100%; overflow-wrap: anywhere; }
 .report-engine > .button { margin-top: 16px; }.technical-panel { margin-top: 20px; min-width: 0; }
 .technical-panel h3 { margin: 18px 0 8px; text-transform: capitalize; }.technical-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; padding: 16px; border: 1px solid var(--border); background: #0b1017; font-size: 12px; }
+.print-sheet { max-width: 100%; }
+.print-sheet section { margin-block: 20px; }
+.print-engine { margin-block: 16px; }
+.print-header { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: flex-start; }
+@media print {
+  .sidebar, .topbar, .print-hidden, .button { display: none !important; }
+  .app-shell, .workspace, .page { display: block; margin: 0; padding: 0; background: #fff; color: #000; }
+  .print-sheet, .print-sheet section, .technical-panel pre { background: #fff; color: #000; border-color: #666; }
+  .technical-panel pre { max-height: none; overflow: visible; }
+  .print-engine, .history-table-wrap { break-inside: avoid; overflow: visible; }
+  .history-table-wrap { border: 0; }
+}
 .about-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 .submission-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 24px; align-items: start; }
 .submission-card { min-width: 0; padding: 24px; border: 1px solid var(--border); border-radius: 10px; background: #101823; }
