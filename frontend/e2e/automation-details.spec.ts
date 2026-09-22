@@ -30,6 +30,16 @@ test('automation report, full output, batch and protected single deletion', asyn
     await expect(page.getByLabel(`Batch ${kind} JSON text`)).toContainText('ledger-21.bin')
     await expect(page.getByLabel(`Batch ${kind} JSON text`)).not.toContainText('raw_output')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    // The complete contract downloads directly, covering batches the inline view refuses.
+    const href = await page.getByRole('link', { name: `Download complete ${kind} contract` }).getAttribute('href')
+    const served = await page.request.get(href!)
+    expect(served.status()).toBe(200)
+    expect(served.headers()['content-type']).toContain('application/json')
+    expect(served.headers()['content-disposition']).toContain('attachment; filename="masp-batch-')
+    const document_ = await served.json()
+    expect(Array.isArray(document_.scans)).toBe(true)
+    expect(JSON.stringify(document_)).toContain('ledger-21.bin')
+    expect(JSON.stringify(document_)).not.toContain('raw_output')
     await page.getByRole('link', { name: 'Back to batch overview' }).click()
   }
   await page.getByRole('link', { name: 'ledger-19.bin', exact: true }).click()

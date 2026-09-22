@@ -94,6 +94,7 @@ class BrowserRoute(APIRoute):
                     PREFIX + "/api-ledger/scans/{scan_id}/print",
                     PREFIX + "/api-ledger/batches/{batch_id}",
                     PREFIX + "/api-ledger/batches/{batch_id}/json",
+                    PREFIX + "/api-ledger/batches/{batch_id}/download",
                     PREFIX + "/scans/options",
                     PREFIX + "/scans/{scan_id}", PREFIX + "/scans/{scan_id}/results/{result_id}",
                     PREFIX + "/scans/{scan_id}/results/{result_id}/full",
@@ -295,6 +296,21 @@ OUTPUT_ERRORS = {status: {'model': ErrorPayload,
 def _output_response(filename: str, content: str) -> PlainTextResponse:
     return PlainTextResponse(content, media_type='text/plain; charset=utf-8',
                              headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+
+
+# The document conforms to the public integration contract and is validated in
+# full before it is served; it is a download, so it carries no typed envelope.
+BATCH_DOWNLOAD_RESPONSES = OUTPUT_ERRORS | {
+    200: {'content': {'application/json': {'schema': {'type': 'object'}}},
+          'description': 'Complete public batch contract as a downloadable document'}}
+
+
+@router.get('/api-ledger/batches/{batch_id}/download', responses=BATCH_DOWNLOAD_RESPONSES, response_model=None)
+def automation_batch_download(request: Request, batch_id: int = Path(ge=1, le=9007199254740991),
+                              kind: Literal['status', 'result'] = 'status'):
+    filename, content = batch_payload.download(batch_id, kind, str(request.base_url))
+    return Response(content, media_type='application/json',
+                    headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
 
 @router.get('/scans/{scan_id}/print', response_model=scan_management.PrintableReport)

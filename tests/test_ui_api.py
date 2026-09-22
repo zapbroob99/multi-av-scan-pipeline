@@ -18,6 +18,7 @@ from app.services import auth, ui_api
 from app.services import dashboard_read, archive_read, batch_read
 from app.services import scan_report_read, scan_assessment
 from app.services import scan_management
+from app.services import batch_payload
 from app.services import scan_report_read as scan_report_read
 from app.services import browser_db_budget
 from app.services import system_read
@@ -1384,6 +1385,81 @@ class BrowserApiTests(unittest.TestCase):
                 connection.execute('UPDATE engine_results SET raw_output = ? WHERE id = ?', ('x' * 1100000, result))
         with patch('app.services.batch_payload._full_export_rows', side_effect=AssertionError('batch aggregate must reject before hydration')):
             self.assertEqual(self.request(path + '?kind=result')[0], 413)
+
+    def test_batch_download_serves_members_the_inline_view_refuses(self):
+        from app.services.api_schemas import BatchResultResponse
+        batch = db.create_scan_batch(source='api', original_filename='batch.zip', archive_mode='none')
+        for index in range(21):
+            scan = self.create_scan(name=f'member-{index}', source='api', batch_id=batch,
+                                    status='completed', verdict='info', risk_score=0,
+                                    profile_snapshot_json='{"engines":[]}')
+            db.create_engine_result(scan, EngineResultInput(engine_name='Static Metadata', status='completed',
+                detected=False, severity='info', confidence=100, signature=None, raw_output='clean', duration_ms=1))
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_batches SET status = 'completed' WHERE id = ?", (batch,))
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        inline = f'/api-ledger/batches/{batch}/json?kind=result'
+        download = f'/api-ledger/batches/{batch}/download?kind=result'
+        # The inline view refuses 21 members and now names the download.
+        status, refusal, _ = self.request(inline)
+        self.assertEqual(status, 413)
+        self.assertIn('Download the complete contract', refusal['detail'])
+        status, served, headers = self.request(download, raw=True)
+        self.assertEqual(status, 200, served[:200])
+        self.assertEqual(headers[b'content-type'], b'application/json')
+        self.assertEqual(headers[b'content-disposition'],
+                         f'attachment; filename="masp-batch-{batch}-result.json"'.encode())
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        payload = json.loads(served)
+        BatchResultResponse.model_validate(payload)
+        self.assertEqual(len(payload['scans']), 21)
+        for private in ('raw_output', 'storage_path', 'metadata_json'):
+            self.assertNotIn(private, served.decode())
+        self.assertEqual(db.get_scan_batch(batch).total_items, 0)
+
+    def test_batch_download_is_scoped_validated_and_read_only(self):
+        batch = db.create_scan_batch(source='api', original_filename='batch.zip', archive_mode='none')
+        scan, result = self.report_fixture()
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'api', batch_id = ? WHERE id = ?", (batch, scan))
+            connection.execute("UPDATE scan_batches SET status = 'completed' WHERE id = ?", (batch,))
+        path = f'/api-ledger/batches/{batch}/download'
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        self.assertEqual(self.request(path + '?kind=other')[0], 422)
+        self.assertEqual(self.request('/api-ledger/batches/0/download')[0], 422)
+        manual = db.create_scan_batch(source='manual', original_filename='manual.zip', archive_mode='none')
+        self.assertEqual(self.request(f'/api-ledger/batches/{manual}/download')[0], 404)
+        for method in ('POST', 'PUT', 'DELETE'):
+            self.assertEqual(self.request(path, method, {})[0], 405)
+        # A member that cannot satisfy the public contract fails the whole
+        # document explicitly; a partial download must never be served.
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_results SET details_json = '[]' WHERE id = ?", (result,))
+        self.assertEqual(self.request(path + '?kind=result')[0], 409)
+
+    def test_batch_download_limit_is_configurable_and_clamped(self):
+        batch = db.create_scan_batch(source='api', original_filename='batch.zip', archive_mode='none')
+        scan, _ = self.report_fixture()
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'api', batch_id = ? WHERE id = ?", (batch, scan))
+            connection.execute("UPDATE scan_batches SET status = 'completed' WHERE id = ?", (batch,))
+        path = f'/api-ledger/batches/{batch}/download'
+        self.assertEqual(self.request(path)[0], 200)
+        with patch.dict(os.environ, {'MASP_UI_BATCH_DOWNLOAD_LIMIT': '1'}):
+            # Never below the inline ceiling this download exists to exceed.
+            self.assertEqual(batch_payload.download_limit(), batch_payload.EXPORT_LIMIT)
+        with patch.dict(os.environ, {'MASP_UI_BATCH_DOWNLOAD_LIMIT': 'not-a-number'}):
+            self.assertEqual(batch_payload.download_limit(), batch_payload.DOWNLOAD_DEFAULT_LIMIT)
+        with patch.dict(os.environ, {'MASP_UI_BATCH_DOWNLOAD_LIMIT': str(10 * 1024 ** 3)}):
+            self.assertEqual(batch_payload.download_limit(), batch_payload.DOWNLOAD_MAX_LIMIT)
+        # A document over the configured ceiling is refused outright rather than
+        # truncated: a partial contract must never reach an operator.
+        with patch.object(batch_payload, 'download_limit', return_value=64):
+            status, refusal, _ = self.request(path)
+            self.assertEqual(status, 413)
+            self.assertIn('64 byte download limit', refusal['detail'])
+        # The download cap matches what an integration could actually receive.
+        self.assertEqual(batch_payload.DOWNLOAD_MAX_MEMBERS, 5000)
 
     def test_automation_status_json_contract_queue_states_and_permissions(self):
         from app.services.api_schemas import ScanStatusResponse

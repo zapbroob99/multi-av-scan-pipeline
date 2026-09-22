@@ -21,6 +21,11 @@ it.each(['status', 'result'])('renders inert batch %s JSON and clears failed ref
   expect(await screen.findByRole('alert')).toHaveTextContent('Batch exceeds the limit.')
   expect(screen.queryByLabelText(`Batch ${kind} JSON text`)).toBeNull()
   expect(fetcher).toHaveBeenCalledTimes(2)
+  // The refusal is not a dead end: the complete contract downloads directly and
+  // never enters React state or the query cache.
+  expect(screen.getByRole('link', { name: `Download complete ${kind} contract` }))
+    .toHaveAttribute('href', `/api/ui/v1/api-ledger/batches/2/download?kind=${kind}`)
+  expect(fetcher).toHaveBeenCalledTimes(2)
   view.unmount()
   await vi.waitFor(() => expect(client.getQueryData(['automation-batch-json', '2', kind])).toBeUndefined())
 })

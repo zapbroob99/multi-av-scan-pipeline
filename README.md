@@ -6,6 +6,10 @@ source scope and caps each engine's embedded output. Recorded engine output abov
 the 2 MiB JSON limit downloads as plain text instead of falling back to the legacy
 report; `MASP_UI_RAW_OUTPUT_LIMIT` bounds that download (default 32 MiB).
 
+An automation batch larger than the inline JSON view now downloads its complete
+integration contract, covering the same 5000 members the API serves;
+`MASP_UI_BATCH_DOWNLOAD_LIMIT` bounds it (default 64 MiB).
+
 Admin `/console/audit` now reads the append-only security audit trail with bounded
 pages, literal actor/action/target/request-ID search and outcome filtering. The
 console cannot edit or delete an event and calculates no total. `/console/about`

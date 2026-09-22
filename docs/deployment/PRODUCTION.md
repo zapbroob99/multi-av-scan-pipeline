@@ -228,6 +228,13 @@ exists to exceed. Each download reads one recorded result into memory in a worke
 thread, so size this against app-container memory and the number of analysts who
 may retrieve large output concurrently; it is not a streaming transfer.
 
+`MASP_UI_BATCH_DOWNLOAD_LIMIT` bounds the complete integration batch contract an
+operator can download from the console. It defaults to 64 MiB, clamps to 512 MiB,
+and is never lowered below the 2 MiB inline ceiling. The document is assembled in
+memory from every batch member, which is the same profile the integration API
+already has for that batch, but the console makes it operator-reachable: size it
+against app-container memory alongside the engine-output download above.
+
 Database pooling is per process. Budget the maximum as:
 
 ```text

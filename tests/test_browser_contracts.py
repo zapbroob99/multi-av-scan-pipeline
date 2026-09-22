@@ -18,12 +18,19 @@ class BrowserContractTests(unittest.TestCase):
         self.assertEqual(first, exporter.render())
         self.assertEqual(first, exporter.OUTPUT.read_text(encoding='utf-8'))
 
-    # File downloads are the only browser reads outside the typed JSON contract:
-    # JSON escaping of recorded engine output can multiply its size. Enumerate
-    # them so a new non-JSON route cannot appear unnoticed.
-    PLAIN_TEXT_DOWNLOADS = {
-        ('/api/ui/v1/scans/{scan_id}/results/{result_id}/output', 'get'),
-        ('/api/ui/v1/api-ledger/scans/{scan_id}/results/{result_id}/output', 'get'),
+    # File downloads are the only browser reads outside the typed JSON envelope:
+    # they carry recorded output or a complete integration contract that React
+    # must not hold in memory. Enumerate each with the exact success content it
+    # may declare, so a new untyped route cannot appear unnoticed.
+    FILE_DOWNLOADS = {
+        ('/api/ui/v1/scans/{scan_id}/results/{result_id}/output', 'get'):
+            {'text/plain': {'schema': {'type': 'string'}}},
+        ('/api/ui/v1/api-ledger/scans/{scan_id}/results/{result_id}/output', 'get'):
+            {'text/plain': {'schema': {'type': 'string'}}},
+        # Shape depends on kind; both variants are validated server-side against
+        # the public contract before the document is served.
+        ('/api/ui/v1/api-ledger/batches/{batch_id}/download', 'get'):
+            {'application/json': {'schema': {'type': 'object'}}},
     }
 
     def test_every_browser_success_and_error_has_a_contract(self):
@@ -36,16 +43,16 @@ class BrowserContractTests(unittest.TestCase):
                 if method not in ('get', 'post', 'put', 'delete'):
                     continue
                 operations.append(operation['operationId'])
-                download = (path, method) in self.PLAIN_TEXT_DOWNLOADS
+                download = self.FILE_DOWNLOADS.get((path, method))
                 success = {code: response for code, response in operation['responses'].items() if code.startswith('2')}
                 self.assertTrue(success, (path, method))
                 for code, response in success.items():
                     if code == '204':
                         self.assertNotIn('content', response)
-                    elif download:
+                    elif download is not None:
                         seen_downloads.add((path, method))
-                        # Exactly one media type: never claim the download is JSON.
-                        self.assertEqual(response['content'], {'text/plain': {'schema': {'type': 'string'}}}, (path, method))
+                        # Exactly one media type, exactly as enumerated above.
+                        self.assertEqual(response['content'], download, (path, method))
                     else:
                         self.assertIn('$ref', response['content']['application/json']['schema'], (path, method))
                 # Errors stay JSON everywhere, including on the downloads: an
@@ -53,7 +60,7 @@ class BrowserContractTests(unittest.TestCase):
                 self.assertEqual(operation['responses']['422']['content']['application/json']['schema'],
                                  {'$ref': '#/components/schemas/ErrorPayload'})
         self.assertEqual(len(operations), len(set(operations)))
-        self.assertEqual(seen_downloads, self.PLAIN_TEXT_DOWNLOADS)
+        self.assertEqual(seen_downloads, set(self.FILE_DOWNLOADS))
 
     def test_schema_preserves_async_health_multipart_and_nullable_fields(self):
         schema = exporter.schema()

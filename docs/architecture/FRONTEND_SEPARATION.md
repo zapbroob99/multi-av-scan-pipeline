@@ -66,7 +66,7 @@ authorization/regression tests, responsive browser verification and documentatio
 | Scan policy | `/console/scan-policy` implements admin-only reads and confirmed atomic updates of the three operational limits with shared backend validation/resolution. |
 | Hash lookup | `/console/hash-scan` provides analyst/admin explicit manual lookup, backend decisions, quota-aware adapters and bounded result summaries. Rich provider-detail parity remains before cutover. |
 | Integration administration | `/console/service-clients` lists client metadata and confirms name/enabled-state changes; client profile routes read bounded profiles and confirm engine assignment. Atomic client/default-profile creation and credential add/list/scoped revocation are implemented. Tokens are supplied by the admin and never returned. |
-| Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Automation printable reports and oversized engine-output downloads reuse the manual readers under automation scope. Remaining: oversized complete integration payloads and final legacy-action parity; preserve ownership and manual-history isolation. |
+| Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Automation printable reports and oversized engine-output downloads reuse the manual readers under automation scope. A batch contract larger than the inline view downloads in full, up to the same 5000 members the integration API serves. Remaining: final legacy-action parity; preserve ownership and manual-history isolation. |
 | Users and account | Bounded inventory, confirmed local creation, administrative role/password edit and deletion, and own-account password change implemented. Shared last-admin/session protections and stale revision fences; LDAP shadow deletion does not disable directory access. Final cutover/deployment acceptance remains. |
 | Audit and information | Admin `/console/audit` provides bounded descending ID-keyset audit pages, literal search, outcome filtering and bounded inert details; no total is calculated and no write verb exists. `/console/about` gives analysts and admins the product boundary and a non-sensitive runtime snapshot with admin-scoped client counts. Remaining: legacy pretty-printed detail rendering, About metric parity and deployment-shaped trail-volume validation. Legacy audit has no printable view. |
 | Cutover | Route/deep-link compatibility, all legacy actions and error states checked against the route inventory, feature/permission parity, static deployment/TLS and performance gates, then retire HTML rendering. |
@@ -1569,3 +1569,50 @@ payloads, and deployment-shaped validation of very large recorded outputs. Legac
 With this slice every legacy HTML route has a React equivalent, so no screen is
 missing. What remains before legacy removal is parity of behaviour inside those
 screens, the cutover inventory and the deployment gates, not new pages.
+
+### Complete integration batch contracts
+
+`GET /api/ui/v1/api-ledger/batches/{batch_id}/download?kind=status|result` serves
+the complete public batch contract as a downloadable JSON document for analysts
+and admins. It closes the last gap in the oversized family.
+
+The inline `/json` preview stops at 20 members, 256 results/jobs and 2 MiB
+because React renders and holds it. The integration API
+`/api/v1/batches/{id}/result` serves up to 5000 members with no byte ceiling, so
+before this the console could not show what any larger batch actually returned
+and the refusal pointed at the paginated overview instead of the contract. The
+download uses the same member cap as that API, so it refuses only what an
+integration could not have received either; the inline refusals now name the
+download rather than a dead end.
+
+Both paths share one loader, parameterized by member and byte limits, so the
+ownership, source-consistency, terminal-state, policy-validity and public-contract
+validation are identical. The whole document is validated against
+`BatchStatusResponse`/`BatchResultResponse` before any of it is served: an invalid
+member fails the request explicitly rather than producing a partial contract. The
+attachment never enters React state, the query cache or the typed JSON envelope,
+and its filename is built from validated integers and a literal kind only.
+
+`MASP_UI_BATCH_DOWNLOAD_LIMIT` bounds the aggregate engine/source bytes and the
+serialized document, defaulting to 64 MiB, clamped to 512 MiB and never below the
+2 MiB inline ceiling it exists to exceed; an invalid value falls back to the
+default. Unlike the plain-text output download, this document is assembled in
+memory from every member, which is the memory profile the integration API already
+has for the same batch — but it is now reachable by an operator, so size it in
+deployment accordingly.
+
+The contract test's download allowlist now records the exact success content each
+untyped route may declare, covering both plain-text output routes and this JSON
+document, so a new untyped route cannot appear unnoticed. Errors remain typed
+`ErrorPayload` JSON on all of them.
+
+Integration-contract validation (2026-09-22): full Python suite with disposable
+PostgreSQL ran 801 tests (799 passed, 2 skipped). New checks cover a 21-member
+batch the inline view refuses and the download serves, source scope and kind
+validation, absent write verbs, explicit failure when a member cannot satisfy the
+contract, and the configured-limit clamps. Frontend: 119 tests; 28 Edge workflows,
+with the automation batch scenario extended to fetch and inspect the served
+document. Production build and contract drift check passed.
+
+Remaining in this group: final legacy-action parity. Deployment-shaped validation
+of very large batches and outputs stays a cutover gate.

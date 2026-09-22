@@ -1,5 +1,6 @@
-"""Complete small-batch public JSON previews; never truncate contract members."""
+"""Complete public batch JSON; never truncate contract members."""
 import json
+import os
 from typing import Literal
 
 from fastapi import HTTPException
@@ -14,6 +15,21 @@ from app.services.scan_intake import scan_is_terminal
 from app.services.scan_management import _full_export_rows, EXPORT_LIMIT
 
 MAX_MEMBERS = 20
+# The integration API serves up to 5000 members, so the console download refuses
+# only what an integration could not have received either.
+DOWNLOAD_MAX_MEMBERS = 5000
+DOWNLOAD_DEFAULT_LIMIT = 64 * 1024 * 1024
+DOWNLOAD_MAX_LIMIT = 512 * 1024 * 1024
+
+
+def download_limit() -> int:
+    raw = os.getenv('MASP_UI_BATCH_DOWNLOAD_LIMIT', str(DOWNLOAD_DEFAULT_LIMIT)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return DOWNLOAD_DEFAULT_LIMIT
+    # Never below the inline ceiling this download exists to exceed.
+    return max(EXPORT_LIMIT, min(value, DOWNLOAD_MAX_LIMIT))
 
 
 class BatchPreview(BaseModel):
@@ -21,7 +37,8 @@ class BatchPreview(BaseModel):
     content: str
 
 
-def preview(batch_id: int, kind: Literal['status', 'result'], base_url: str) -> BatchPreview:
+def _build(batch_id: int, kind: Literal['status', 'result'], base_url: str,
+           *, max_members: int, source_limit: int) -> tuple[int, dict]:
     def links(resource, identifier):
         status = f'{base_url.rstrip("/")}/api/v1/{resource}/{identifier}'
         return {'status': status, 'result': status + '/result'}
@@ -41,9 +58,11 @@ def preview(batch_id: int, kind: Literal['status', 'result'], base_url: str) -> 
         if len(batch.original_filename) > 1024:
             raise HTTPException(413, 'Batch filename exceeds the browser JSON limit.')
         members = connection.execute('''SELECT id, source, service_client_id FROM scan_jobs
-            WHERE batch_id = ? ORDER BY created_at, id LIMIT ?''', (batch_id, MAX_MEMBERS + 1)).fetchall()
-        if len(members) > MAX_MEMBERS:
-            raise HTTPException(413, 'Batch JSON supports at most 20 registered scans. Use the paginated batch overview.')
+            WHERE batch_id = ? ORDER BY created_at, id LIMIT ?''', (batch_id, max_members + 1)).fetchall()
+        if len(members) > max_members:
+            raise HTTPException(413, f'Batch JSON supports at most {max_members} registered scans.'
+                + (' Download the complete contract instead.' if max_members == MAX_MEMBERS
+                   else ' The integration API does not serve a larger batch either.'))
         if any(member['source'] != batch.source or member['service_client_id'] != batch.service_client_id for member in members):
             raise HTTPException(409, 'Batch membership has inconsistent source or ownership.')
         ids = [member['id'] for member in members]
@@ -81,8 +100,11 @@ def preview(batch_id: int, kind: Literal['status', 'result'], base_url: str) -> 
             snapshots = connection.execute(f'''SELECT COALESCE(SUM({byte_length.format(field='profile_snapshot_json')}), 0) AS bytes
                 FROM scan_jobs WHERE id IN ({placeholders})''', tuple(ids)).fetchone()
             jobs = connection.execute(f'SELECT COUNT(*) AS n FROM scan_engine_jobs WHERE scan_job_id IN ({placeholders})', tuple(ids)).fetchone()
-            if size['n'] > 256 or jobs['n'] > 256 or size['bytes'] + snapshots['bytes'] > EXPORT_LIMIT:
-                raise HTTPException(413, 'Batch result exceeds the aggregate engine/source limit. Open individual reports.')
+            counted = max_members == MAX_MEMBERS
+            if (counted and (size['n'] > 256 or jobs['n'] > 256)) or size['bytes'] + snapshots['bytes'] > source_limit:
+                raise HTTPException(413, 'Batch result exceeds the aggregate engine/source limit.'
+                    + (' Download the complete contract instead.' if counted
+                       else ' Raise MASP_UI_BATCH_DOWNLOAD_LIMIT or open individual reports.'))
             for member in scans:
                 scan, results, required, valid_policy = _full_export_rows(member.id, automation=True, connection=connection)
                 if not valid_policy:
@@ -98,11 +120,39 @@ def preview(batch_id: int, kind: Literal['status', 'result'], base_url: str) -> 
         payload = {'completed': ready, 'result_ready': ready,
                    'batch': build_batch_summary_payload(batch, scans, links('batches', batch.id)),
                    'scans': entries, 'links': links('batches', batch.id)}
+    # Validate the whole document before any of it is served: a partially valid
+    # contract must fail explicitly, never reach an operator as a success.
     try:
         (BatchResultResponse if kind == 'result' else BatchStatusResponse).model_validate(payload)
     except ValidationError:
         raise HTTPException(409, 'Stored batch cannot satisfy the integration JSON contract.') from None
-    output = BatchPreview(batch_id=batch.id, content=json.dumps(payload, ensure_ascii=False, indent=2))
+    return batch.id, payload
+
+
+def preview(batch_id: int, kind: Literal['status', 'result'], base_url: str) -> BatchPreview:
+    identifier, payload = _build(batch_id, kind, base_url,
+                                 max_members=MAX_MEMBERS, source_limit=EXPORT_LIMIT)
+    output = BatchPreview(batch_id=identifier, content=json.dumps(payload, ensure_ascii=False, indent=2))
     if len(output.model_dump_json().encode('utf-8')) > EXPORT_LIMIT:
-        raise HTTPException(413, 'Batch JSON exceeds the 2 MiB browser response limit.')
+        raise HTTPException(413, 'Batch JSON exceeds the 2 MiB browser response limit. Download the complete contract instead.')
     return output
+
+
+def download(batch_id: int, kind: Literal['status', 'result'], base_url: str) -> tuple[str, str]:
+    """Serve the complete public batch contract as a downloadable document.
+
+    The inline preview stops at 20 members and 2 MiB because React holds it in
+    memory and renders it. An integration receives far more than that from
+    `/api/v1/batches/{id}/result`, so without this the console could not show
+    what a large batch actually returned. The attachment is built once and
+    validated in full, then handed to the browser; it never enters React state,
+    the query cache or the typed JSON contract.
+    """
+    limit = download_limit()
+    identifier, payload = _build(batch_id, kind, base_url,
+                                 max_members=DOWNLOAD_MAX_MEMBERS, source_limit=limit)
+    content = json.dumps(payload, ensure_ascii=False, indent=2)
+    if len(content.encode('utf-8')) > limit:
+        raise HTTPException(413, f'Batch {kind} JSON exceeds the {limit} byte download limit configured for this deployment.')
+    # Filename is built from validated integers and a literal kind only.
+    return f'masp-batch-{identifier}-{kind}.json', content

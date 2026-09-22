@@ -302,8 +302,19 @@ replacing the legacy dead end above the 2 MiB JSON ceiling. Keep it outside the 
 contract and out of React state and caches; build the filename from validated integers only.
 `MASP_UI_RAW_OUTPUT_LIMIT` bounds it, defaulting to 32 MiB, clamped to 256 MiB and never below
 the JSON ceiling it exists to exceed. Source scope, result ownership and read budgets still apply.
-Next UI slice: remaining manual filter parity, hash provider detail, System metric parity and
-oversized complete integration payloads, then the final cutover inventory. Keep legacy System metric/detail parity, legacy audit detail/printable
+The automation batch download route serves the complete public contract as a JSON attachment
+for analysts and admins, up to the same 5000 members the integration API serves, so it refuses
+only what an integration could not have received either. Share one loader with the inline
+preview, parameterized by member and byte limits, and keep ownership, source-consistency,
+terminal-state, policy-validity and public-contract validation identical. Validate the whole
+document before serving any of it: an invalid member fails explicitly, never a partial
+contract. `MASP_UI_BATCH_DOWNLOAD_LIMIT` bounds it (default 64 MiB, clamped to 512 MiB, never
+below the inline ceiling). The document is assembled in memory from every member, matching the
+integration API's profile for the same batch, but now operator-reachable.
+Every untyped browser route is enumerated in the contract test with the exact success content
+it may declare; errors stay typed ErrorPayload JSON everywhere.
+Next UI slice: a legacy parity sweep over manual filters, hash provider detail, System metric
+detail and remaining legacy actions, then the final cutover inventory. Keep legacy System metric/detail parity, legacy audit detail/printable
 parity, deployment-shaped audit-trail volume validation and deployment acceptance open;
 engine pool assignment already lives in React Engines.
 

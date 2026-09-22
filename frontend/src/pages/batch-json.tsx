@@ -17,10 +17,12 @@ export default function BatchJson({ status = false }: { status?: boolean }) {
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">AUTOMATION BATCH #{batchId}</p>
     <h1>Batch {kind} JSON</h1></div><Button variant="secondary" disabled={result.isFetching}
       onClick={() => { void result.refetch() }}>Refresh JSON</Button></div>
-    <p><Link to={`/api-ledger/batches/${batchId}`}>Back to batch overview</Link></p>
-    <p className="callout">Complete JSON for up to 20 registered scans. Stored counts can lag workers;
-      completion does not prove clean coverage or complete extraction. Larger records remain in the batch overview
-      and individual reports. API links require integration authentication. No automatic refresh.</p>
+    <p><Link to={`/api-ledger/batches/${batchId}`}>Back to batch overview</Link> · <a
+      href={`/api/ui/v1/api-ledger/batches/${batchId}/download?kind=${kind}`}>Download complete {kind} contract</a></p>
+    <p className="callout">This view renders the complete JSON for up to 20 registered scans. A larger batch is not
+      truncated here: download the complete contract instead, which covers every member an integration could have
+      received. Stored counts can lag workers; completion does not prove clean coverage or complete extraction.
+      API links require integration authentication. No automatic refresh.</p>
     {result.isFetching && <p role="status">Loading {kind} JSON…</p>}
     {result.error && <p role="alert" className="error">{result.error.message}</p>}
     {data && <div className="technical-panel"><pre tabIndex={0} aria-label={`Batch ${kind} JSON text`}>{data.content}</pre></div>}

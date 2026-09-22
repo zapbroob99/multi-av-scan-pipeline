@@ -16,9 +16,10 @@ Updated: 2026-09-22. This is a workspace checkpoint, not evidence of a deploymen
 
 Checkpoint branch: `feat/frontend-separation-hardening`.
 The migration through administrative user management is committed at `18123f7`.
-The audit/About slice is committed at `76a229c`. The printable-report and
-oversized-output slice belongs in the checkpoint commit that carries this handoff;
-confirm with `git log -1` and `git status` rather than assuming it landed. Fetch
+The audit/About slice is committed at `76a229c`. The printable-report and oversized-output slice
+is committed at `a54ff68`. The integration-batch-download slice belongs in the
+checkpoint commit that carries this handoff; confirm with `git log -1` and
+`git status` rather than assuming it landed. Fetch
 this branch when resuming from another clone. Verify local/remote branch equality and actual Git status;
 this file cannot prove that a push completed or that later work is committed.
 
@@ -67,11 +68,12 @@ Fixed while verifying: `frontend/src/pages/users.test.tsx` passed `exact: true` 
 therefore `npm run build` — at the previous checkpoint, so that checkpoint's
 recorded build pass does not hold for the committed tree.
 
-Disposable PostgreSQL containers `masp-test-pg-audit` (15433) and
-`masp-test-pg-print` (15434) were removed after their runs. Live containers were
+Disposable PostgreSQL containers `masp-test-pg-audit` (15433),
+`masp-test-pg-print` (15434) and `masp-test-pg-batch` (15435) were removed after
+their runs. Live containers were
 untouched. No deployment was performed.
 
-Also completed and locally verified in this run: the printable-report and
+Also completed and committed at `a54ff68`: the printable-report and
 oversized-engine-output slice. `/console/scans/{id}/print` and the automation twin
 reuse the full-export snapshot loader and shared payload builder, so the printed
 decision, coverage, findings and engine rows come from one repeatable read. Two
@@ -96,8 +98,33 @@ workflows; production build and contract drift check passed. The console fixture
 engine output was widened to exercise the new bound, so two existing report
 assertions moved from exact-match to containment.
 
-Next: remaining manual filter parity, hash provider detail, System metric parity,
-oversized complete integration payloads, then the final cutover inventory. All UI
+Also completed and locally verified in this run: complete integration batch
+contracts. `GET /api/ui/v1/api-ledger/batches/{id}/download?kind=status|result`
+serves the full public contract as a JSON attachment, up to the same 5000 members
+the integration API serves, so it refuses only what an integration could not have
+received either. The inline `/json` preview keeps its 20-member/2 MiB bounds and
+now names the download instead of pointing at the paginated overview. Both share
+one loader parameterized by member and byte limits, so ownership, source
+consistency, terminal state, policy validity and contract validation are
+identical. The whole document is validated before any of it is served: an invalid
+member fails explicitly rather than producing a partial contract.
+`MASP_UI_BATCH_DOWNLOAD_LIMIT` bounds it (default 64 MiB, clamped to 512 MiB,
+never below the inline ceiling). It is assembled in memory from every member —
+the profile the integration API already has for that batch, but now
+operator-reachable, so PRODUCTION.md sizes it against container memory.
+
+The contract test's download allowlist now maps each untyped route to the exact
+success content it may declare, covering both plain-text output routes and this
+JSON document. This closes the oversized family; no "use the legacy report"
+fallback remains in the console.
+
+Integration-contract validation (2026-09-22): full suite with disposable
+PostgreSQL ran 801 tests (799 passed, 2 skipped); 119 frontend tests; 28 Edge
+workflows; production build, contract drift check, compileall and diff whitespace
+check passed.
+
+Next: a legacy parity sweep over manual filters, hash provider detail, System
+metric detail and remaining legacy actions, then the final cutover inventory. All UI
 is the target; legacy links are temporary. Do not remove legacy before parity and
 security/performance gates pass. Recursive batch deletion remains separate work.
 
