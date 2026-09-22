@@ -1,4 +1,4 @@
-"""Bounded, read-only browser view of one registered manual scan batch."""
+"""Bounded, read-only browser batch view with explicit source and owner scope."""
 from fastapi import HTTPException
 from pydantic import BaseModel
 
@@ -33,6 +33,8 @@ class BatchScan(BaseModel):
 
 
 class BatchPage(BaseModel):
+    source: str = 'manual'
+    service_client_id: int | None = None
     batch_id: int
     filename: str
     filename_truncated: bool
@@ -48,24 +50,33 @@ class BatchPage(BaseModel):
 
 
 def page(batch_id: int, *, limit: int, after_id: int | None,
-         after_created: str | None) -> BatchPage:
+         after_created: str | None, automation: bool = False) -> BatchPage:
     with db.connect() as connection:
         connection.execute(
             'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN'
         )
         apply_read_budget(connection)
-        batch = connection.execute('''SELECT id,
+        source_filter = "source IN ('api', 'icap')" if automation else "source = 'manual'"
+        batch = connection.execute(f'''SELECT id, source, service_client_id,
             SUBSTR(original_filename, 1, 512) AS filename,
             CASE WHEN LENGTH(original_filename) > 512 THEN 1 ELSE 0 END AS filename_truncated,
             archive_mode, status, total_items, queued_items, running_items,
             completed_items, failed_items, malicious_items, skipped_items,
             created_at, updated_at, completed_at
-            FROM scan_batches WHERE id = ? AND source = 'manual' ''', (batch_id,)).fetchone()
+            FROM scan_batches WHERE id = ? AND {source_filter} ''', (batch_id,)).fetchone()
         if batch is None:
-            raise HTTPException(404, 'Manual batch not found.')
+            raise HTTPException(404, 'Automation batch not found.' if automation else 'Manual batch not found.')
 
         conditions = ["j.batch_id = ?", "j.source = 'manual'"]
         params: list[object] = [batch_id]
+        if automation:
+            conditions = ['j.batch_id = ?', 'j.source = ?']
+            params = [batch_id, batch['source']]
+            if batch['service_client_id'] is None:
+                conditions.append('j.service_client_id IS NULL')
+            else:
+                conditions.append('j.service_client_id = ?')
+                params.append(batch['service_client_id'])
         if after_id is not None and after_created is not None:
             conditions.append('(j.created_at, j.id) > (?, ?)')
             params.extend((after_created, after_id))
@@ -89,6 +100,7 @@ def page(batch_id: int, *, limit: int, after_id: int | None,
     has_next = len(rows) > limit
     cursor = items[-1] if has_next and items else None
     return BatchPage(
+        source=batch['source'], service_client_id=batch['service_client_id'],
         batch_id=batch['id'], filename=batch['filename'],
         filename_truncated=bool(batch['filename_truncated']), archive_mode=batch['archive_mode'],
         status=batch['status'],

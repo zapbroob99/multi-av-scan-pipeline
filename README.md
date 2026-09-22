@@ -1,5 +1,44 @@
 # MASP - Multi AV Scan Pipeline
 
+Admin `/console/service-clients` now lists integration clients with bounded pages
+and confirms display-name and enabled-state changes. The managed `legacy-default`
+client remains read-only. Each client links to its React profile routing editor,
+with confirmed instance selection and stale-selection protection. Client creation
+and credential add/list/revoke now stay in React too. Tokens are supplied by the
+admin, never returned, and excluded from the frontend query/mutation cache.
+
+`/console/api-ledger` now lists API/ICAP submissions for analysts and admins,
+with source, exact client ID, unassigned ownership, status, recorded-risk and text
+filters. Reads use bounded cursor pages without loading engine output or totals.
+Automation reports, bounded engine output, batch overviews and protected single
+scan deletion now stay in React. Summary/full JSON/CSV downloads are available
+to analysts and admins. Integration payload views and bulk-action parity
+is tracked before legacy UI removal.
+
+Admin `/console/scan-policy` now edits API wait time, retry-after interval and the
+upload policy cap. Changes use shared backend validation and one atomic save;
+blank fields restore environment/default behavior. Deployment HTTP limits still
+apply when the upload policy cap is zero. `/console/hash-scan` now provides manual
+SHA-256 reputation lookup for analysts/admins, using existing provider quotas and
+backend decisions. It uploads no file contents and does not create scan history.
+
+Admin `/console/system` now lists worker nodes with lifecycle controls and agent
+credential revocation. `/console/system/pools` adds pool creation, selector/state
+editing and protected deletion. All browser UI is planned for incremental frontend migration;
+see the [complete UI inventory](docs/architecture/FRONTEND_SEPARATION.md#complete-ui-migration-inventory)
+for the remaining screens and cutover gates.
+Admin `/console/system/runtime` provides paginated worker runtime and active scans
+across submission sources. It refreshes first pages every 30 seconds.
+`/console/system/overview` adds cached all-source totals, worker liveness,
+read-only retention policy and on-demand historical engine metrics by recorded name.
+`/console/system/retention` previews and confirms up to 20 expired inactive records
+per run, with per-record protections and explicit deletion/cleanup outcomes.
+Historical aggregates and retention previews need
+deployment-scale validation before production acceptance.
+The console supports light and dark themes from the login screen and signed-in
+sidebar. The first visit follows the operating-system preference; an explicit
+choice is stored in that browser and applied before React renders.
+
 An independent React/TypeScript console includes a manual Dashboard, admin
 Engines management and manual sample submission (`/console/scans/new`).
 Manual scan reports now show backend decisions, required-engine coverage and
@@ -12,8 +51,10 @@ and protected single-scan deletion for admins. Full JSON contains raw engine out
 details and findings; CSV contains normalized report rows. Both have a 2 MiB browser
 ceiling and omit sample bytes/storage paths. Admins can confirm deletion of up to
 20 selected visible Dashboard scans with per-record stale-state and safety checks;
-partial results and storage cleanup failures are reported explicitly. Full-output
-and recursive batch actions retain legacy links. Batch pages use indexed keyset pagination and recorded counters
+partial results and storage cleanup failures are reported explicitly. Each engine
+result links to a full-output screen in React, with separate 2 MiB source/response
+limits and plain-text rendering. Oversized output retains a legacy fallback;
+recursive batch actions remain planned. Batch pages use indexed keyset pagination and recorded counters
 without loading engine output. Retry queues atomically; acceptance does
 not mean completion. Active scans and undelivered notifications are protected.
 With the backend running, use `npm --prefix frontend ci` and
@@ -559,3 +600,64 @@ by the deploying party and remain subject to their own terms; Apache-2.0 covers
 only the source in this repository. Operators who build container images that
 bundle an engine are responsible for that engine's license obligations. See
 [NOTICE](NOTICE) for details.
+
+
+The React automation report now links to an on-demand integration result JSON
+preview for terminal scans. Session-authenticated analyst/admin reads reuse
+bounded coherent export admission and the public result projection, with no
+private engine output and a 2 MiB serialized response limit. Invalid policy,
+active scans and unavailable historical routing fail explicitly. Oversized batch
+JSON, remaining UI parity and deployment-scale acceptance are still open; this
+adds no worker transport or production support claim.
+
+Automation status JSON now has a separate React view for active/terminal scans.
+Scan, polling policy, accepted-instance eligibility and global queue counts use
+one bounded repeatable read. Global history aggregates remain subject to statement
+timeouts and deployment-scale acceptance; there is no automatic browser polling.
+Status requires an accepted engine snapshot, preserves backend coverage decisions
+and omits private engine output. Oversized batch JSON and final legacy-action parity remain pending.
+
+React automation batch status/result JSON now supports complete batches of up to
+20 members, with exact source/owner consistency and a shared repeatable snapshot.
+Result admission caps aggregate engine/snapshot bytes before hydration; response
+envelopes stay within 2 MiB. Status reads no engine blobs. Stored counters may lag;
+JSON never proves clean coverage by itself. Oversized batches use the overview
+and individual reports; complete oversized-payload parity, final legacy-action checks
+and deployment acceptance remain open before legacy removal.
+
+Automation archive navigation now stays in React, with direct-child ID-keyset
+pages and attempt guards. Parent, nested and upward navigation preserves exact
+API/ICAP source, nullable client and batch boundaries. Reads use existing indexed
+probes and PostgreSQL snapshot/time budgets, never engine blobs or counter writes.
+Empty lists do not prove complete extraction. Final legacy-action and deployment-scale
+acceptance remain open; this does not enable recursive deletion or remove legacy.
+
+Admin ledger bulk deletion now confirms at most 20 top-level API/ICAP records with
+displayed attempt/job-revision fences. Shared row-locked protections and independent
+commits remain authoritative; receipts identify deleted, blocked and cleanup-failed
+IDs. Ambiguous writes are never replayed and the UI requires explicit fresh reads
+before reselection. This does not delete batches recursively. Ledger revision-probe
+load and remaining security/deployment acceptance gates stay open.
+
+Admin React Users now lists bounded local/LDAP metadata and confirms local user
+creation with an explicit role and write-only initial password. Password hashes,
+directory identifiers and sessions are excluded from list DTOs; shared hashing and
+database uniqueness remain authoritative. No automatic creation replay occurs.
+Own-password management now uses React Account for local analysts and admins.
+Both browser UIs share validation, a password-only conditional update and atomic
+session revocation. Local login rechecks the verified hash under a row lock before
+creating a session, preventing old-password login from surviving a concurrent
+password change/reset. LDAP passwords remain directory-managed. Admin Users now
+confirms role changes, optional password resets and removal, with a displayed
+management revision checked under shared legacy/browser transaction locks. The
+writer rechecks the actor's administrator role, blocks self-management and preserves
+the last local administrator across concurrent operations. LDAP shadow removal
+revokes MASP sessions but does not disable directory access; a later directory
+sign-in may recreate it. Passwords never enter console state or caches; inputs
+clear on cancellation/send and uncertain writes are not replayed. Explicit list
+refresh is required after management writes. Startup adds the default-zero
+users.management_revision column in place; old account data is retained. Roll out
+all app processes together so old writers cannot bypass the revision/locking rules.
+Startup adds an auth-session user index in place. PostgreSQL password changes use
+the existing UI lock timeout; deployment-scale login/revocation acceptance remains
+open. No worker topology or engine support status changes.

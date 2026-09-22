@@ -1,0 +1,42 @@
+import { test, expect } from '@playwright/test'
+
+test('admin changes role, resets password and removes a local account', async ({ page, browser }) => {
+  const other = await browser.newContext()
+  const target = await other.newPage()
+  async function login(tab: typeof page, username: string, password: string, route: string) {
+    await tab.goto(`http://127.0.0.1:5175/console/${route}`)
+    await tab.getByLabel('Username', { exact: true }).fill(username)
+    await tab.getByLabel('Password', { exact: true }).fill(password)
+    await tab.getByRole('button', { name: 'Sign in', exact: true }).click()
+  }
+  try {
+    await login(target, 'managed-analyst', 'console-test-only', 'account')
+    await expect(target.getByRole('heading', { name: 'Account', exact: true })).toBeVisible()
+    await login(page, 'console-admin', 'console-test-only', 'users')
+    const row = page.locator('article').filter({ has: page.getByRole('heading', { name: 'managed-analyst', exact: true }) })
+    await row.getByRole('button', { name: /Manage user/ }).click()
+    await page.getByLabel('Account role').selectOption('admin')
+    await page.getByLabel('Replacement password').fill('reset-test-only')
+    await page.getByRole('button', { name: 'Review changes' }).click()
+    await page.setViewportSize({ width: 390, height: 844 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.getByRole('button', { name: 'Confirm changes' }).click()
+    await expect(page.getByRole('status')).toContainText('updated')
+    await page.getByRole('button', { name: 'Refresh users' }).click()
+    await expect(row).toContainText('admin')
+    await target.getByRole('button', { name: 'Check session' }).click()
+    await expect(target.getByRole('heading', { name: 'Welcome back.' })).toBeVisible()
+    await target.getByLabel('Username', { exact: true }).fill('managed-analyst')
+    await target.getByLabel('Password', { exact: true }).fill('reset-test-only')
+    await target.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expect(target.getByRole('link', { name: 'Users', exact: true })).toBeVisible()
+    await row.getByRole('button', { name: /Manage user/ }).click()
+    await page.getByRole('button', { name: 'Review removal' }).click()
+    await page.getByRole('button', { name: 'Confirm removal' }).click()
+    await expect(page.getByRole('status')).toContainText('removed')
+    await page.getByRole('button', { name: 'Refresh users' }).click()
+    await expect(row).toHaveCount(0)
+    await target.getByRole('button', { name: 'Check session' }).click()
+    await expect(target.getByRole('heading', { name: 'Welcome back.' })).toBeVisible()
+  } finally { await other.close() }
+})

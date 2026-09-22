@@ -8,22 +8,22 @@ export function reportPollInterval(report?: ScanReport) {
   return report && ['queued', 'running', 'finalizing'].includes(report.status) ? 3000 : false
 }
 
-function Technical({ scanId, resultId }: { scanId: number; resultId: number }) {
-  const details = useQuery({ queryKey: ['scan-details', scanId, resultId],
-    queryFn: ({ signal }) => request('/api/ui/v1/scans/{scan_id}/results/{result_id}', 'get', { params: { scan_id: scanId, result_id: resultId }, signal }),
+function Technical({ scanId, resultId, automation }: { scanId: number; resultId: number; automation: boolean }) {
+  const details = useQuery({ queryKey: ['scan-details', automation, scanId, resultId],
+    queryFn: ({ signal }) => request(automation ? '/api/ui/v1/api-ledger/scans/{scan_id}/results/{result_id}' : '/api/ui/v1/scans/{scan_id}/results/{result_id}', 'get', { params: { scan_id: scanId, result_id: resultId }, signal }),
     staleTime: 0, gcTime: 0, retry: false })
   return <div className="technical-panel">
     {details.isPending && <p role="status">Loading technical output…</p>}
     {details.error && <p role="alert" className="error">{details.error.message}</p>}
     {details.data && <><p className="muted">On-demand snapshot, not live output. Close and reopen to refresh.</p>
-      {details.data.truncated.length > 0 && <p className="callout">Truncated previews: {details.data.truncated.join(', ')}. Full output is available in the legacy report.</p>}
+      {details.data.truncated.length > 0 && <p className="callout">Truncated previews: {details.data.truncated.join(', ')}. Open the full engine output to read more.</p>}
       {(['raw_output', 'details_json', 'findings_json'] as const).map(field => <section key={field}>
         <h3>{field.replaceAll('_', ' ')}</h3><pre>{details.data![field] || '(empty)'}</pre></section>)}
     </>}
   </div>
 }
 
-function EngineRow({ scanId, engine }: { scanId: number; engine: ReportEngine }) {
+function EngineRow({ scanId, engine, automation }: { scanId: number; engine: ReportEngine; automation: boolean }) {
   const [open, setOpen] = useState(false)
   return <article className="submission-card report-engine"><div className="history-heading"><div>
     <h2>{engine.name}</h2><p className="muted">{engine.required ? 'Required detection engine' : 'Additional result'}</p></div>
@@ -34,27 +34,30 @@ function EngineRow({ scanId, engine }: { scanId: number; engine: ReportEngine })
     {engine.duration_ms !== null && <p className="muted">Duration: {engine.duration_ms.toLocaleString()} ms</p>}
     {engine.result_id !== null && <><Button variant="secondary" aria-expanded={open} onClick={() => setOpen(value => !value)}>
       {open ? 'Hide' : 'Show'} technical output for {engine.name}</Button>
-      {open && <Technical scanId={scanId} resultId={engine.result_id} />}</>}
+      <p><Link to={`${automation ? '/api-ledger' : ''}/scans/${scanId}/results/${engine.result_id}`}>Full output for {engine.name}</Link></p>
+      {open && <Technical automation={automation} scanId={scanId} resultId={engine.result_id} />}</>}
   </article>
 }
 
-export default function Report() {
+export default function Report({ automation = false }: { automation?: boolean }) {
   const { scanId = '' } = useParams()
   const valid = /^\d+$/.test(scanId) && Number.isSafeInteger(Number(scanId)) && Number(scanId) > 0
-  const report = useQuery({ queryKey: ['scan-report', scanId], enabled: valid,
-    queryFn: ({ signal }) => request('/api/ui/v1/scans/{scan_id}', 'get', { params: { scan_id: Number(scanId) }, signal }), retry: false,
+  const report = useQuery({ queryKey: ['scan-report', automation, scanId], enabled: valid,
+    queryFn: ({ signal }) => request(automation ? '/api/ui/v1/api-ledger/scans/{scan_id}' : '/api/ui/v1/scans/{scan_id}', 'get', { params: { scan_id: Number(scanId) }, signal }), retry: false,
     refetchInterval: query => reportPollInterval(query.state.data), refetchIntervalInBackground: false,
     refetchOnWindowFocus: true, refetchOnMount: 'always', gcTime: 60000 })
   const scan = report.data
-  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to="/dashboard">Dashboard</Link></section>
+  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></section>
   // Do not leave an earlier allow card visible when a refresh fails or expires.
   if (report.error) return <section className="page"><h1>Report unavailable</h1><p role="alert" className="error">{report.error.message}</p>
     <Button onClick={() => { void report.refetch() }}>Retry report</Button> <a href={`/scans/${scanId}`}>Legacy report</a></section>
   if (!scan) return <section className="page"><p role="status">Loading scan report…</p></section>
-  return <section className="page"><div className="page-heading"><div><p className="eyebrow">MANUAL SCAN #{scan.id}</p>
+  return <section className="page"><div className="page-heading"><div><p className="eyebrow">{automation ? 'AUTOMATION' : 'MANUAL'} SCAN #{scan.id}</p>
     <h1 className="report-filename">{scan.filename}</h1><p className="muted">Status: {scan.status} · Attempt {scan.attempt_count}</p></div>
     <div className="report-actions"><Button variant="secondary" disabled={report.isFetching} onClick={() => { void report.refetch() }}>{report.isFetching ? 'Refreshing…' : 'Refresh report'}</Button>
-      <Link className="button button-secondary" to="/dashboard">Dashboard</Link></div></div>
+      <Link className="button button-secondary" to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></div></div>
+    {automation && <p className="callout">Source: {scan.source} ? Client: {scan.service_client_id ?? 'Unassigned'}. Operator view; accepted routing determines coverage.</p>}
+    {automation && <p><Link to={`/api-ledger/scans/${scan.id}/status-json`}>Integration status JSON</Link> ? <Link to={`/api-ledger/scans/${scan.id}/result-json`}>Integration result JSON</Link></p>}
     {scan.warning && <p role="alert" className="error">{scan.warning}</p>}
     <section className={`submission-card report-decision decision-${scan.decision?.action || 'unknown'}`} aria-label="Policy decision">
       <p className="eyebrow">BACKEND POLICY DECISION</p><h2>{scan.decision?.label || 'Decision unavailable'}</h2>
@@ -73,10 +76,10 @@ export default function Report() {
       <dt>Case</dt><dd>{scan.case_name}</dd><dt>Submitted (server time)</dt><dd>{scan.created_at}</dd>
       {scan.note && <><dt>Analyst note</dt><dd>{scan.note}</dd></>}</dl>
     <div className="history-heading"><h2>Engine results</h2><p className="muted">Technical output loads only when opened.</p></div>
-    <div className="report-engines">{scan.engines.map(engine => <EngineRow key={`${scan.attempt_count}-${engine.result_id ?? engine.name}`} scanId={scan.id} engine={engine} />)}</div>
+    <div className="report-engines">{scan.engines.map(engine => <EngineRow key={`${scan.attempt_count}-${engine.result_id ?? engine.name}`} scanId={scan.id} engine={engine} automation={automation} />)}</div>
     {scan.engines.length === 0 && <p className="empty">No engine results recorded yet.</p>}
-    {scan.batch_id !== null && <p className="callout"><Link to={`/batches/${scan.batch_id}`}>Open batch overview</Link> · <Link to={`/scans/${scan.id}/children`}>Browse registered direct children</Link></p>}
-    <p className="callout"><Link to={`/scans/${scan.id}/manage`}>Exports and scan management</Link> · <a href={`/scans/${scan.id}`}>Legacy report: full output</a>
-      {scan.parent_scan_id && <> · <Link to={`/scans/${scan.parent_scan_id}`}>Parent scan</Link></>}</p>
+    {scan.batch_id !== null && <p className="callout"><Link to={`${automation ? '/api-ledger' : ''}/batches/${scan.batch_id}`}>Open batch overview</Link> · <Link to={`${automation ? "/api-ledger" : ""}/scans/${scan.id}/children`}>Browse registered direct children</Link></p>}
+    <p className="callout"><Link to={`${automation ? '/api-ledger' : ''}/scans/${scan.id}/manage`}>{automation ? 'Scan management' : 'Exports and scan management'}</Link> · <a href={`/scans/${scan.id}`}>Legacy report: fallback</a>
+      {scan.parent_scan_id && <> · <Link to={`${automation ? '/api-ledger' : ''}/scans/${scan.parent_scan_id}`}>Parent scan</Link></>}</p>
   </section>
 }

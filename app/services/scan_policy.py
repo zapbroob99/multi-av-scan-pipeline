@@ -110,6 +110,12 @@ def resolve_int(key: str) -> int:
     except Exception:  # noqa: BLE001 - never let a settings read break the API
         raw = None
 
+    return resolve_raw(key, raw)
+
+
+def resolve_raw(key: str, raw: str | None) -> int:
+    """Resolve a previously read override with the same runtime fallback rules."""
+    spec = _SPEC_BY_KEY[key]
     if raw is None or raw.strip() == "":
         raw = os.getenv(spec.env_var, "").strip()
 

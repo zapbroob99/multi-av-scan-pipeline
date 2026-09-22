@@ -17,6 +17,10 @@ from app.services import dashboard_read, archive_read, batch_read
 from app.services import scan_report_read, scan_assessment
 from app.services import scan_management
 from app.services import browser_db_budget
+from app.services import system_read
+from app.services import retention_admin
+from app.services import scan_policy, scan_policy_admin
+from app.services import hash_console
 
 
 class BrowserApiTests(unittest.TestCase):
@@ -26,6 +30,7 @@ class BrowserApiTests(unittest.TestCase):
         db.DB_PATH, db.DATABASE_URL = Path(self.temp.name) / 'browser.db', ''
         db.init_db()
         dashboard_read._summary_cache = None
+        system_read._summary_cache = system_read._metrics_cache = None
         self.user_id = db.create_user('browser-admin', auth.hash_password('test-password'), 'admin')
         self.token = 'synthetic-browser-session'
         db.create_auth_session(user_id=self.user_id, token_hash=auth.hash_session_token(self.token), expires_at=int(time.time()) + 3600)
@@ -80,6 +85,233 @@ class BrowserApiTests(unittest.TestCase):
         })
         self.assertEqual(status, 201, body)
         return body['id']
+
+    def test_user_management_prebody_guards_and_revision_contract(self):
+        target = db.create_user('managed', auth.hash_password('managed-password'), 'analyst')
+        path = f'/users/{target}'
+        for method, body in [('PUT', {'expected_revision': 0, 'role': 'admin'}), ('DELETE', {'expected_revision': 0})]:
+            for options in ({'session': False}, {'csrf': False}, {'origin': 'http://evil'}):
+                self.assertIn(self.request(path, method, body, **options)[0], (401, 403))
+                self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request(path, method, {**body, 'expected_revision': True})[0], 422)
+            self.assertEqual(self.request(path, method, {**body, 'extra': 'private-password'})[0], 422)
+        self.assertEqual(self.request(path, 'PUT', {'expected_revision': 0, 'role': 'admin', 'password': 'short'})[0], 422)
+        self.assertEqual(self.request(path, 'PUT', {'expected_revision': 0, 'role': 'admin'})[0], 204)
+        self.assertEqual(next(row for row in self.request('/users')[1]['items'] if row['id'] == target)['management_revision'], 1)
+        self.assertEqual(self.request(path, 'DELETE', {'expected_revision': 0})[0], 409)
+        self.assertEqual(self.request(f'/users/{self.user_id}', 'DELETE', {'expected_revision': 0})[0], 403)
+        db.update_user(self.user_id, 'analyst')
+        self.assertEqual(self.request(path, 'DELETE', {'expected_revision': 1})[0], 403)
+        self.assertEqual(self.reads, 0)
+
+    def test_user_management_reset_omits_secret_and_deletes_account(self):
+        target = db.create_user('managed', auth.hash_password('managed-password'), 'analyst')
+        old = auth.login('managed', 'managed-password')
+        path = f'/users/{target}'
+        status, body, _ = self.request(path, 'PUT', {'expected_revision': 0, 'role': 'analyst', 'password': 'replacement-password'})
+        self.assertEqual(status, 204)
+        self.assertIsNone(body)
+        self.assertIsNone(db.get_user_by_session(auth.hash_session_token(old.session_token), int(time.time())))
+        self.assertIsNotNone(auth.login('managed', 'replacement-password'))
+        self.assertNotIn('replacement-password', json.dumps(self.request('/users')[1]))
+        self.assertEqual(self.request(path, 'DELETE', {'expected_revision': 1})[0], 204)
+        self.assertIsNone(db.get_user_by_id(target))
+
+    def test_account_prebody_auth_csrf_and_strict_password_fields(self):
+        body = dict(current_password='test-password', new_password='new-test-password', confirm_password='new-test-password')
+        self.assertEqual(self.request('/account', session=False)[0], 401)
+        for options in ({'session': False}, {'csrf': False}, {'origin': 'http://evil'}):
+            self.assertIn(self.request('/account/password', 'POST', body, **options)[0], (401, 403))
+            self.assertEqual(self.reads, 0)
+        for invalid in ({**body, 'user_id': 999}, {**body, 'new_password': 'short'},
+                        {**body, 'current_password': 'x' * 4097}, {**body, 'confirm_password': 123}):
+            status, payload, _ = self.request('/account/password', 'POST', invalid)
+            self.assertEqual(status, 422)
+            self.assertNotIn('test-password', json.dumps(payload))
+        self.assertEqual(self.request('/account/password', 'POST', {**body, 'current_password': 'wrong-password'})[0], 403)
+        self.assertEqual(self.request('/account/password', 'POST', {**body, 'confirm_password': 'different-password'})[0], 422)
+        self.assertEqual(self.request('/account/password', 'POST', {
+            **body, 'new_password': 'test-password', 'confirm_password': 'test-password'})[0], 422)
+        self.assertEqual(self.request('/session')[0], 200)
+
+    def test_account_analyst_change_revokes_all_sessions_and_clears_cookie(self):
+        db.update_user(self.user_id, 'analyst')
+        other_session = auth.login('browser-admin', 'test-password')
+        status, payload, headers = self.request('/account')
+        self.assertEqual(status, 200)
+        self.assertEqual(payload, dict(user_id=self.user_id, username='browser-admin', role='analyst', auth_source='local'))
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        with patch.object(ui_api, 'set_audit_context', wraps=ui_api.set_audit_context) as audit:
+            status, payload, headers = self.request('/account/password', 'POST', dict(
+                current_password='test-password', new_password='new-test-password', confirm_password='new-test-password'))
+        self.assertEqual(status, 204)
+        self.assertIsNone(payload)
+        self.assertIn(b'Max-Age=0', headers[b'set-cookie'])
+        self.assertEqual(audit.call_args.kwargs['action'], 'user.password_change')
+        self.assertNotIn('new-test-password', str(audit.call_args.kwargs.get('details', {})))
+        self.assertEqual(self.request('/session')[0], 401)
+        self.assertIsNone(db.get_user_by_session(auth.hash_session_token(other_session.session_token), int(time.time())))
+        self.assertIsNone(auth.login('browser-admin', 'test-password'))
+        self.assertEqual(auth.login('browser-admin', 'new-test-password').user.role, 'analyst')
+
+    def test_account_directory_metadata_omits_private_identity_and_denies_change(self):
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET auth_source = 'ldap', external_id = 'PRIVATE-DN', password_hash = '!ldap' WHERE id = ?", (self.user_id,))
+        status, payload, _ = self.request('/account')
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['auth_source'], 'ldap')
+        self.assertNotIn('PRIVATE', json.dumps(payload))
+        self.assertNotIn('!ldap', json.dumps(payload))
+        self.assertEqual(self.request('/account/password', 'POST', dict(
+            current_password='test-password', new_password='new-test-password', confirm_password='new-test-password'))[0], 403)
+        self.assertEqual(self.request('/session')[0], 200)
+
+    def test_pool_crud_validation_identity_and_assignment_protection(self):
+        path = '/system/pools'
+        body = {'name': ' Istanbul ', 'selector': 'site=istanbul,os=windows'}
+        status, created, _ = self.request(path, 'POST', body)
+        self.assertEqual(status, 201)
+        pool_id = created['id']
+        self.assertEqual(db.get_worker_pool(pool_id).name, 'Istanbul')
+        self.assertEqual(json.loads(db.get_worker_pool(pool_id).selector_json), {'site': 'istanbul', 'os': 'windows'})
+        self.assertEqual(self.request(path, 'POST', body)[0], 422)
+        for invalid in ({'name': ' ', 'selector': 'site=x'}, {'name': 'X', 'selector': '{}'},
+                        {'name': 'X', 'selector': 'invalid'}, {'name': 'X', 'selector': ' '},
+                        {'name': 'X', 'selector': 'x=' + 'a' * 4096}, {**body, 'command': 'no'}):
+            self.assertEqual(self.request(path, 'POST', invalid)[0], 422)
+        other = db.create_worker_pool('Other', '{"site":"other"}')
+        update = {'name': 'Changed', 'selector': '{"site":"lab"}', 'enabled': False}
+        self.assertEqual(self.request(f'{path}/{pool_id}', 'PUT', update)[0], 200)
+        self.assertFalse(db.get_worker_pool(pool_id).enabled)
+        self.assertTrue(db.get_worker_pool(other).enabled)
+        self.assertEqual(self.request(f'{path}/99999', 'PUT', {**update, 'name': 'Missing'})[0], 404)
+        engine_id = self.create_clamav()
+        db.set_engine_instance_worker_pool(engine_id, pool_id)
+        self.assertTrue(self.request(path)[1]['items'][0]['has_assignments'])
+        self.assertEqual(self.request(f'{path}/{pool_id}', 'DELETE')[0], 409)
+        self.assertIsNotNone(db.get_worker_pool(pool_id))
+        if db.psycopg is not None:
+            with patch.object(db, 'delete_worker_pool', side_effect=db.psycopg.errors.ForeignKeyViolation('concurrent assignment')):
+                self.assertEqual(self.request(f'{path}/{pool_id}', 'DELETE')[0], 409)
+        db.set_engine_instance_worker_pool(engine_id, None)
+        self.assertEqual(self.request(f'{path}/{pool_id}', 'DELETE')[0], 204)
+        self.assertEqual(self.request(f'{path}/{pool_id}', 'DELETE')[0], 404)
+        self.assertIsNotNone(db.get_worker_pool(other))
+
+    def test_pool_routes_enforce_prebody_admin_csrf(self):
+        paths = [('/system/pools', 'POST', {'name': 'Pool', 'selector': 'site=lab'}),
+                 ('/system/pools/1', 'PUT', {'name': 'Pool', 'selector': 'site=lab', 'enabled': True}),
+                 ('/system/pools/1', 'DELETE', None)]
+        self.assertEqual(self.request('/system/pools', session=False)[0], 401)
+        for path, method, body in paths:
+            self.assertEqual(self.request(path, method, body, session=False)[0], 401)
+            self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request(path, method, body, csrf=False)[0], 403)
+            self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request(path, method, body, origin='http://evil')[0], 403)
+        with db.connect() as connection:
+            connection.execute('UPDATE users SET role = ? WHERE id = ?', ('analyst', self.user_id))
+        self.assertEqual(self.request('/system/pools')[0], 403)
+        for path, method, body in paths:
+            self.assertEqual(self.request(path, method, body)[0], 403)
+            self.assertEqual(self.reads, 0)
+
+    def test_pool_pages_bound_metadata_and_allow_deleted_cursor(self):
+        first = db.create_worker_pool('A', '{"site":"a"}')
+        second = db.create_worker_pool('B', 'x' * 10000)
+        third = db.create_worker_pool('C', '[]')
+        page = self.request('/system/pools?limit=1')[1]
+        self.assertEqual(page['next_after'], first)
+        db.delete_worker_pool(first)
+        page = self.request(f'/system/pools?limit=1&after={first}')[1]
+        self.assertEqual(page['items'][0]['id'], second)
+        self.assertTrue(page['items'][0]['metadata_incomplete'])
+        self.assertEqual(page['items'][0]['selector'], '')
+        last = self.request(f'/system/pools?after={second}')[1]
+        self.assertEqual(last['items'][0]['id'], third)
+        self.assertTrue(last['items'][0]['metadata_incomplete'])
+        self.assertIsNone(last['next_after'])
+        for query in ('limit=0', 'limit=101', 'after=0', 'after=9007199254740992'):
+            self.assertEqual(self.request('/system/pools?' + query)[0], 422)
+
+    def create_worker(self, node_id='node-a', **overrides):
+        values = dict(node_id=node_id, display_name=node_id, hostname='host', platform='windows',
+            agent_version='test', labels_json='{"site":"lab"}', capacity=2,
+            advertised_engine_keys_json='["microsoft_defender"]', runtime_state='idle',
+            active_scan_id=None, process_id=1, last_heartbeat_at=int(time.time()))
+        values.update(overrides)
+        return db.upsert_worker_node_heartbeat(**values)
+
+    def test_system_workers_are_admin_only_and_mutations_require_csrf(self):
+        self.create_worker()
+        reads = '/system/workers'
+        writes = [('/system/workers/lifecycle', {'node_id': 'node-a', 'lifecycle_state': 'draining'}),
+                  ('/system/workers/credentials/revoke', {'node_id': 'node-a'})]
+        self.assertEqual(self.request(reads, session=False)[0], 401)
+        for path, body in writes:
+            self.assertEqual(self.request(path, 'POST', body, session=False)[0], 401)
+            self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request(path, 'POST', body, csrf=False)[0], 403)
+            self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request(path, 'POST', body, origin='https://elsewhere.invalid')[0], 403)
+            self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(reads)[0], 403)
+        for path, body in writes:
+            self.assertEqual(self.request(path, 'POST', body)[0], 403)
+            self.assertEqual(self.reads, 0)
+        self.assertEqual(db.get_worker_node('node-a').lifecycle_state, 'active')
+
+    def test_system_workers_use_bounded_keyset_and_separate_heartbeat_from_lifecycle(self):
+        self.create_worker('node-a')
+        self.create_worker('node-b', last_heartbeat_at=1, labels_json='x' * 5000)
+        db.update_worker_node_lifecycle('node-b', 'draining')
+        self.create_worker('node-c')
+        db.create_worker_agent_credential(node_id='node-a', token_hash='private-hash', token_prefix='private-prefix')
+        status, first, headers = self.request('/system/workers?limit=1')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(first['next_after'], 'node-a')
+        self.assertTrue(first['items'][0]['online'])
+        self.assertNotIn('private', json.dumps(first))
+        self.assertEqual(first['items'][0]['labels'], {'site': 'lab'})
+        second = self.request('/system/workers?limit=1&after=node-a')[1]
+        node = second['items'][0]
+        self.assertEqual(node['node_id'], 'node-b')
+        self.assertEqual(node['lifecycle_state'], 'draining')
+        self.assertFalse(node['online'])
+        self.assertTrue(node['metadata_incomplete'])
+        self.assertEqual(node['labels'], {})
+        with db.connect() as connection:
+            connection.execute("DELETE FROM worker_nodes WHERE node_id = 'node-b'")
+        last = self.request('/system/workers?limit=1&after=node-b')[1]
+        self.assertEqual(last['items'][0]['node_id'], 'node-c')
+        self.assertIsNone(last['next_after'])
+        for query in ('limit=0', 'limit=101', 'after=' + 'x' * 129):
+            self.assertEqual(self.request('/system/workers?' + query)[0], 422)
+
+    def test_system_worker_actions_preserve_identity_and_heartbeat_lifecycle(self):
+        self.create_worker('node-a')
+        self.create_worker('node-b')
+        for node in ('node-a', 'node-b'):
+            db.create_worker_agent_credential(node_id=node, token_hash=f'hash-{node}', token_prefix='secret')
+        path = '/system/workers/lifecycle'
+        for body in ({'node_id': 'node-a', 'lifecycle_state': 'offline'},
+                     {'node_id': 'node-a', 'lifecycle_state': 'draining', 'extra': True}):
+            self.assertEqual(self.request(path, 'POST', body)[0], 422)
+        self.assertEqual(self.request(path, 'POST', {'node_id': 'absent', 'lifecycle_state': 'active'})[0], 404)
+        status, payload, _ = self.request(path, 'POST', {'node_id': 'node-a', 'lifecycle_state': 'draining'})
+        self.assertEqual((status, payload), (200, {'node_id': 'node-a', 'lifecycle_state': 'draining'}))
+        self.create_worker('node-a')
+        self.assertEqual(db.get_worker_node('node-a').lifecycle_state, 'draining')
+        self.assertEqual(db.get_worker_node('node-b').lifecycle_state, 'active')
+        path = '/system/workers/credentials/revoke'
+        status, payload, _ = self.request(path, 'POST', {'node_id': 'node-a'})
+        self.assertEqual((status, payload), (200, {'node_id': 'node-a', 'revoked_count': 1}))
+        self.assertIsNone(db.authenticate_worker_agent_credential('hash-node-a'))
+        self.assertIsNotNone(db.authenticate_worker_agent_credential('hash-node-b'))
+        self.assertEqual(self.request(path, 'POST', {'node_id': 'node-a'})[0], 409)
 
     def test_scan_management_auth_scope_csrf_and_strict_attempt(self):
         scan = self.create_scan(status='completed')
@@ -355,6 +587,1018 @@ class BrowserApiTests(unittest.TestCase):
             self.assertIsNone(deleted.result(timeout=10))
         self.assertEqual(db.get_scan(scan).status, 'queued')
         self.assertEqual(len(db.list_scan_engine_jobs(scan)), 1)
+
+    def test_active_queue_is_admin_only_and_validates_cursors(self):
+        self.assertEqual(self.request('/system/queue', session=False)[0], 401)
+        for query in ('limit=0', 'limit=101', 'after=0', 'after=9007199254740992'):
+            self.assertEqual(self.request('/system/queue?' + query)[0], 422)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/system/queue')[0], 403)
+
+    def test_active_queue_projects_all_sources_without_private_fields(self):
+        ids = [self.create_scan(name='x' * 600, source=source, status=status)
+            for source, status in [('manual', 'queued'), ('api', 'running'), ('icap', 'finalizing')]]
+        self.create_scan(status='completed')
+        self.create_scan(status='failed')
+        status, page, headers = self.request('/system/queue?limit=2')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual([row['id'] for row in page['items']], ids[:2])
+        self.assertEqual(len(page['items'][0]['filename']), 512)
+        self.assertEqual(set(page['items'][0]), {'id', 'filename', 'source', 'status', 'priority', 'created_at'})
+        self.assertNotIn('/private/storage', json.dumps(page))
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET status = 'completed' WHERE id = ?", (ids[1],))
+        last = self.request('/system/queue?after=' + str(page['next_after']))[1]
+        self.assertEqual([row['id'] for row in last['items']], ids[2:])
+        self.assertIsNone(last['next_after'])
+
+    def test_active_queue_index_is_restored_on_upgrade(self):
+        with db.connect() as connection:
+            connection.execute('DROP INDEX idx_scan_jobs_active_seek')
+        db.init_db()
+        with db.connect() as connection:
+            plan = connection.execute("EXPLAIN QUERY PLAN SELECT id FROM scan_jobs WHERE status IN ('queued', 'running', 'finalizing') AND id > ? ORDER BY id LIMIT ?", (1, 21)).fetchall()
+        self.assertIn('idx_scan_jobs_active_seek', str([dict(row) for row in plan]))
+
+    def test_system_aggregates_require_admin_and_bound_metrics_pages(self):
+        for path in ('/system/summary', '/system/engine-metrics'):
+            self.assertEqual(self.request(path, session=False)[0], 401)
+        for query in ('limit=0', 'limit=101', 'after=0', 'after=9007199254740992'):
+            self.assertEqual(self.request('/system/engine-metrics?' + query)[0], 422)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        for path in ('/system/summary', '/system/engine-metrics'):
+            self.assertEqual(self.request(path)[0], 403)
+
+    def test_system_summary_counts_sources_and_separates_liveness_from_lifecycle(self):
+        self.create_scan(source='api', status='finalizing')
+        self.create_scan(source='manual', status='completed')
+        self.create_worker('online')
+        self.create_worker('offline', last_heartbeat_at=1)
+        self.create_worker('draining')
+        db.update_worker_node_lifecycle('draining', 'draining')
+        with patch.dict('os.environ', {'MASP_RETENTION_DAYS': '30', 'MASP_RETENTION_BATCH_SIZE': '10'}):
+            status, result, headers = self.request('/system/summary')
+            self.assertEqual(status, 200)
+            self.assertEqual(headers[b'cache-control'], b'no-store')
+            self.assertEqual((result['total'], result['finalizing'], result['completed']), (2, 1, 1))
+            self.assertEqual((result['registered_nodes'], result['online_nodes'], result['active_online_nodes']), (3, 2, 1))
+            self.assertEqual((result['retention_days'], result['retention_batch_size']), (30, 10))
+            with patch.object(db, 'connect', side_effect=AssertionError('Cache miss')):
+                self.assertEqual(system_read.summary().total, 2)
+
+    def test_engine_metrics_preserve_recorded_names_and_never_select_raw_output(self):
+        one = self.create_scan(source='manual', status='completed')
+        two = self.create_scan(source='api', status='failed')
+        for scan, name, status, detected, duration in ((one, 'Old name', 'completed', True, 10),
+                (two, 'Old name', 'failed', False, 30), (one, 'x' * 600, 'skipped', False, 0)):
+            db.create_engine_result(scan, EngineResultInput(name, status, detected, 'info', 0, None, 'PRIVATE_OUTPUT', duration))
+        _, first, headers = self.request('/system/engine-metrics?limit=1')
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        row = first['items'][0]
+        self.assertEqual((row['total'], row['completed'], row['failed'], row['detections']), (2, 1, 1, 1))
+        self.assertEqual(row['avg_duration_ms'], 20)
+        self.assertNotIn('PRIVATE_OUTPUT', json.dumps(first))
+        with patch.object(db, 'connect', side_effect=AssertionError('Cache miss')):
+            self.assertEqual(system_read.metrics(limit=1, after=None).items[0].total, 2)
+        second = self.request('/system/engine-metrics?limit=1&after=' + str(first['next_after']))[1]
+        self.assertEqual(len(second['items'][0]['engine_name']), 512)
+        self.assertTrue(second['items'][0]['name_truncated'])
+        self.assertIsNone(second['next_after'])
+
+    def test_system_summary_uses_one_read_snapshot(self):
+        self.create_scan(status='queued')
+        self.create_worker('before')
+        original = db.connect
+        with original() as connection:
+            connection.execute('PRAGMA journal_mode=WAL')
+        fired = False
+        class Reader:
+            def __enter__(self):
+                self.connection = original()
+                self.connection.__enter__()
+                return self
+            def __exit__(self, *args):
+                try:
+                    return self.connection.__exit__(*args)
+                finally:
+                    self.connection.close()
+            def execute(self, sql, params=()):
+                nonlocal fired
+                if 'FROM worker_nodes' in sql and not fired:
+                    fired = True
+                    with original() as writer:
+                        writer.execute("UPDATE scan_jobs SET status = 'completed'")
+                        writer.execute("UPDATE worker_nodes SET lifecycle_state = 'disabled'")
+                return self.connection.execute(sql, params)
+        with patch.object(db, 'connect', return_value=Reader()):
+            result = system_read.summary()
+        self.assertTrue(fired)
+        self.assertEqual((result.queued, result.active_online_nodes), (1, 1))
+        system_read._summary_cache = None
+        result = system_read.summary()
+        self.assertEqual((result.completed, result.active_online_nodes), (1, 0))
+
+    def test_scan_policy_auth_validation_and_no_partial_invalid_save(self):
+        body = {'api_max_wait_seconds': '20', 'api_retry_after_seconds': '3', 'upload_max_bytes': ''}
+        self.assertEqual(self.request('/scan-policy', session=False)[0], 401)
+        for options, expected in (({'session': False}, 401), ({'csrf': False}, 403)):
+            self.assertEqual(self.request('/scan-policy', 'PUT', body, **options)[0], expected)
+            self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/scan-policy')[0], 403)
+        self.assertEqual(self.request('/scan-policy', 'PUT', body)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        for change in ({'api_retry_after_seconds': '0'}, {'upload_max_bytes': str(5 * 1024**3 + 1)},
+                       {'api_max_wait_seconds': True}, {'api_max_wait_seconds': '1.5'},
+                       {'upload_max_bytes': '1' * 129}, {'command': 'no'}):
+            self.assertEqual(self.request('/scan-policy', 'PUT', body | change)[0], 422)
+            self.assertIsNone(db.get_setting('scan_policy.api_max_wait_seconds'))
+        self.assertEqual(self.request('/scan-policy', 'PUT', {})[0], 422)
+
+    @patch.dict('os.environ', {'MASP_API_MAX_WAIT_SECONDS': '25', 'MASP_API_RETRY_AFTER_SECONDS': '', 'MASP_UPLOAD_MAX_BYTES': '4096'})
+    def test_scan_policy_shared_resolution_save_clear_and_secret_omission(self):
+        db.set_setting('integration.private', 'PRIVATE_TOKEN')
+        db.set_setting('scan_policy.api_max_wait_seconds', '900')
+        status, result, headers = self.request('/scan-policy')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(len(result['fields']), 3)
+        self.assertEqual(result['fields'][0]['value'], scan_policy.resolve_int('api_max_wait_seconds'))
+        self.assertEqual(result['fields'][0]['value'], 300)
+        self.assertNotIn('PRIVATE_TOKEN', json.dumps(result))
+        body = {'api_max_wait_seconds': '0', 'api_retry_after_seconds': '30', 'upload_max_bytes': str(5 * 1024**3)}
+        self.assertEqual(self.request('/scan-policy', 'PUT', body)[0], 204)
+        self.assertEqual(scan_policy.resolve_int('upload_max_bytes'), 5 * 1024**3)
+        self.assertEqual(self.request('/scan-policy', 'PUT', {key: '' for key in body})[0], 204)
+        result = self.request('/scan-policy')[1]
+        self.assertEqual([field['value'] for field in result['fields']], [25, 2, 4096])
+        self.assertEqual(result['fields'][0]['source'], 'environment (MASP_API_MAX_WAIT_SECONDS)')
+
+    def test_scan_policy_oversized_stored_value_fails_closed(self):
+        db.set_setting('scan_policy.api_max_wait_seconds', '9' * 129)
+        self.assertEqual(self.request('/scan-policy')[0], 409)
+
+    def test_scan_policy_rolls_back_whole_save_on_database_failure(self):
+        db.set_setting('scan_policy.api_max_wait_seconds', '10')
+        with db.connect() as connection:
+            connection.execute('''CREATE TRIGGER reject_policy BEFORE INSERT ON app_settings
+                WHEN NEW.key = 'scan_policy.api_retry_after_seconds'
+                BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END''')
+        body = scan_policy_admin.ScanPolicyBody(api_max_wait_seconds='30', api_retry_after_seconds='3', upload_max_bytes='100')
+        with self.assertRaises(db.IntegrityViolation):
+            scan_policy_admin.save(body)
+        self.assertEqual(db.get_setting('scan_policy.api_max_wait_seconds'), '10')
+        self.assertIsNone(db.get_setting('scan_policy.upload_max_bytes'))
+
+    def test_hash_lookup_auth_csrf_validation_and_manual_source(self):
+        body = {'sha256': 'a' * 64}
+        with patch.object(hash_console, 'enabled_hash_engines', return_value=[]) as engines:
+            self.assertEqual(self.request('/hash-scan/options', session=False)[0], 401)
+            self.assertEqual(self.request('/hash-scan', 'POST', body, session=False)[0], 401)
+            self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request('/hash-scan', 'POST', body, csrf=False)[0], 403)
+            self.assertEqual(self.reads, 0)
+            engines.assert_not_called()
+            with db.connect() as connection:
+                connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+            self.assertEqual(self.request('/hash-scan/options')[0], 200)
+            engines.assert_called_with(source='manual')
+            self.assertEqual(self.request('/hash-scan', 'POST', body)[0], 409)
+            for value in ('x' * 64, 'a' * 63, 'a' * 129, 123):
+                self.assertEqual(self.request('/hash-scan', 'POST', {'sha256': value})[0], 422)
+            self.assertEqual(self.request('/hash-scan', 'POST', body | {'source': 'api'})[0], 422)
+
+    def test_hash_lookup_uses_backend_decisions_and_omits_provider_data(self):
+        from types import SimpleNamespace
+        from app.services.hash_scanning import HashEngineExecution
+        engine = SimpleNamespace(id=7, display_name='<script>Engine</script>', adapter_key='virustotal')
+        for action in ('allow', 'review', 'block'):
+            execution = HashEngineExecution(EngineResultInput('engine', 'completed', action == 'block', 'info', 0, None, 'PRIVATE_TOKEN', 1),
+                {'decision': {'action': action, 'reason': 'PRIVATE_TOKEN'}, 'found': action != 'review', 'raw': 'PRIVATE_TOKEN'})
+            with patch.object(hash_console, 'enabled_hash_engines', return_value=[engine]), patch.object(hash_console, 'run_hash_engine', return_value=execution) as run:
+                status, result, headers = self.request('/hash-scan', 'POST', {'sha256': 'A' * 64})
+            self.assertEqual(status, 200)
+            self.assertEqual(result['action'], action)
+            self.assertEqual(result['sha256'], 'a' * 64)
+            self.assertNotIn('PRIVATE_TOKEN', json.dumps(result))
+            self.assertEqual(headers[b'cache-control'], b'no-store')
+            run.assert_called_once_with(engine, 'a' * 64)
+
+    def test_hash_lookup_caps_engine_count_and_sanitizes_failures(self):
+        from types import SimpleNamespace
+        from app.services.hash_scanning import HashEngineQuotaError
+        engine = SimpleNamespace(id=7, display_name='Engine', adapter_key='virustotal')
+        with patch.object(hash_console, 'enabled_hash_engines', return_value=[engine] * 17), patch.object(hash_console, 'run_hash_engine') as run:
+            self.assertEqual(self.request('/hash-scan', 'POST', {'sha256': 'a' * 64})[0], 409)
+            run.assert_not_called()
+        quota = HashEngineQuotaError('PRIVATE_TOKEN')
+        quota.retry_after = 30
+        for error, expected in ((quota, 503), (ValueError('PRIVATE_TOKEN'), 502)):
+            with patch.object(hash_console, 'enabled_hash_engines', return_value=[engine]), patch.object(hash_console, 'run_hash_engine', side_effect=error) as run:
+                status, result, headers = self.request('/hash-scan', 'POST', {'sha256': 'a' * 64})
+            self.assertEqual(status, expected)
+            self.assertNotIn('PRIVATE_TOKEN', json.dumps(result))
+            self.assertNotIn('action', result)
+            self.assertEqual(run.call_count, 1)
+            if error is quota:
+                self.assertEqual(headers[b'retry-after'], b'30')
+        from app.services.hash_scanning import HashEngineExecution
+        first = HashEngineExecution(EngineResultInput('engine', 'completed', False, 'info', 0, None, '', 1),
+            {'decision': {'action': 'allow'}, 'found': True})
+        with patch.object(hash_console, 'enabled_hash_engines', return_value=[engine, engine]), patch.object(hash_console, 'run_hash_engine', side_effect=[first, quota]) as run:
+            status, result, _ = self.request('/hash-scan', 'POST', {'sha256': 'a' * 64})
+        self.assertEqual(status, 503)
+        self.assertNotIn('action', result)
+        self.assertEqual(run.call_count, 2)
+
+    def test_service_clients_admin_csrf_and_strict_update(self):
+        client = db.create_service_client('test', 'Test')
+        body = {'display_name': 'Updated', 'enabled': False}
+        self.assertEqual(self.request('/service-clients', session=False)[0], 401)
+        self.assertEqual(self.request(f'/service-clients/{client}', 'PUT', body, csrf=False)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/service-clients')[0], 403)
+        self.assertEqual(self.request(f'/service-clients/{client}', 'PUT', body)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        for change in ({'enabled': 'false'}, {'display_name': ' '}, {'display_name': 'x' * 101}, {'client_key': 'other'}, {'token': 'secret'}):
+            self.assertEqual(self.request(f'/service-clients/{client}', 'PUT', body | change)[0], 422)
+        self.assertEqual(db.get_service_client(client).display_name, 'Test')
+
+    def test_service_client_pages_are_bounded_and_do_not_read_credentials(self):
+        one = db.create_service_client('first', 'x' * 101)
+        two = db.create_service_client('second', '<script>Second</script>')
+        status, first, headers = self.request('/service-clients?limit=1')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(first['next_after'], one)
+        self.assertEqual(len(first['items'][0]['display_name']), 100)
+        self.assertTrue(first['items'][0]['metadata_incomplete'])
+        # Deleted cursors remain usable. The projection works without a credential table.
+        with db.connect() as connection:
+            connection.execute('DELETE FROM service_clients WHERE id = ?', (one,))
+            connection.execute('DROP TABLE api_client_credentials')
+        second = self.request(f'/service-clients?limit=1&after={one}')[1]
+        self.assertEqual(second['items'][0]['id'], two)
+        self.assertIsNone(second['next_after'])
+        self.assertEqual(set(second['items'][0]), {'id', 'client_key', 'display_name', 'enabled', 'managed', 'metadata_incomplete'})
+        for query in ('limit=0', 'limit=101', 'after=0', 'after=9007199254740992'):
+            self.assertEqual(self.request('/service-clients?' + query)[0], 422)
+
+    def test_service_client_update_is_scoped_and_managed_client_is_protected(self):
+        managed = db.create_service_client('legacy-default', 'Managed')
+        one = db.create_service_client('one', 'One')
+        other = db.create_service_client('other', 'Other')
+        body = {'display_name': ' Updated ', 'enabled': False}
+        self.assertEqual(self.request(f'/service-clients/{managed}', 'PUT', body)[0], 409)
+        self.assertEqual(self.request('/service-clients/999999', 'PUT', body)[0], 409)
+        self.assertEqual(self.request(f'/service-clients/{one}', 'PUT', body)[0], 204)
+        self.assertEqual((db.get_service_client(one).display_name, db.get_service_client(one).enabled), ('Updated', False))
+        self.assertTrue(db.get_service_client(other).enabled)
+        self.assertTrue(db.get_service_client(managed).enabled)
+        self.assertEqual(db.get_service_client(one).client_key, 'one')
+
+    def test_client_creation_credentials_secrets_atomicity_and_revocation(self):
+        from app.services.service_clients import hash_api_token
+        engine = db.create_engine_instance('static_metadata', 'Credential engine')
+        token = 'synthetic-credential-token-' + 'a' * 32
+        body = dict(client_key='new-client', display_name='New client', profile_name='Default',
+                    engine_ids=[engine], credential_label='Initial', api_token=token)
+        status, created, _ = self.request('/service-clients', 'POST', body)
+        self.assertEqual(status, 201, created)
+        self.assertEqual(set(created), {'client_id', 'profile_id', 'credential_id'})
+        client, credential = created['client_id'], created['credential_id']
+        self.assertIsNotNone(db.get_api_client_credential_by_hash(hash_api_token(token), current_time=int(time.time())))
+        for bad in ({**body, 'client_key': 'rolled-back'}, body):
+            status, error, _ = self.request('/service-clients', 'POST', bad)
+            self.assertEqual(status, 409)
+            self.assertNotIn(token, json.dumps(error))
+        self.assertIsNone(db.get_service_client_by_key('rolled-back'))
+        path = f'/service-clients/{client}/credentials'
+        status, page, _ = self.request(path)
+        self.assertEqual(status, 200)
+        self.assertEqual(set(page['items'][0]), {'id', 'label', 'created_at', 'last_used_at', 'revoked_at'})
+        self.assertNotIn(token[:8], json.dumps(page))
+        other = db.create_service_client('other-client', 'Other')
+        self.assertEqual(self.request(f'/service-clients/{other}/credentials/{credential}/revoke', 'POST')[0], 409)
+        self.assertIsNotNone(db.get_api_client_credential_by_hash(hash_api_token(token), current_time=int(time.time())))
+        self.assertEqual(self.request(f'{path}/{credential}/revoke', 'POST')[0], 204)
+        self.assertIsNone(db.get_api_client_credential_by_hash(hash_api_token(token), current_time=int(time.time())))
+        self.assertEqual(self.request(f'{path}/{credential}/revoke', 'POST')[0], 409)
+        for index in range(22):
+            status, added, _ = self.request(path, 'POST', dict(credential_label=f'Extra {index}', api_token=f'{index:032}'))
+            self.assertEqual(status, 201, added)
+        page = self.request(path)[1]
+        self.assertEqual(len(page['items']), 20)
+        self.assertEqual(len(self.request(path + '?after=' + str(page['next_after']))[1]['items']), 3)
+        self.assertEqual(self.request(f'/service-clients/{other}/credentials')[1]['items'], [])
+        self.assertEqual(self.request('/service-clients/999999/credentials')[0], 404)
+
+    def test_credential_routes_prebody_permissions_and_strict_secret_validation(self):
+        engine = db.create_engine_instance('static_metadata', 'Credential engine')
+        client = db.create_service_client('test-client', 'Test')
+        body = dict(client_key='new-client', display_name='New', profile_name='Default',
+                    engine_ids=[engine], credential_label='Initial', api_token='s' * 32)
+        routes = [('/service-clients', body), (f'/service-clients/{client}/credentials',
+                  dict(credential_label='Initial', api_token='s' * 32)),
+                  (f'/service-clients/{client}/credentials/1/revoke', None)]
+        for path, payload in routes:
+            self.assertEqual(self.request(path, 'POST', payload, session=False)[0], 401)
+            self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request(path, 'POST', payload, csrf=False)[0], 403)
+            self.assertEqual(self.reads, 0)
+        for change in ({'api_token': 'too-short'}, {'api_token': 'x ' * 32}, {'api_token': 42},
+                       {'credential_label': ' '}, {'engine_ids': []}, {'engine_ids': [engine, engine]},
+                       {'engine_ids': [999999]}, {'client_key': 'legacy-default'}, {'display_name': ' '},
+                       {'token_hash': 'injected'}):
+            status, error, _ = self.request('/service-clients', 'POST', {**body, **change})
+            self.assertEqual(status, 422, error)
+            self.assertNotIn('too-short', json.dumps(error))
+        self.assertIsNone(db.get_service_client_by_key('new-client'))
+        options = self.request('/service-clients/create-options')[1]
+        self.assertFalse(options['incomplete'])
+        self.assertEqual(set(options['engines'][0]), {'id', 'display_name', 'adapter_key', 'enabled'})
+        with db.connect() as connection:
+            connection.execute('UPDATE users SET role = ? WHERE id = ?', ('analyst', self.user_id))
+        for path, payload in routes:
+            self.assertEqual(self.request(path, 'POST', payload)[0], 403)
+            self.assertEqual(self.reads, 0)
+        self.assertEqual(self.request('/service-clients/create-options')[0], 403)
+        self.assertEqual(self.request(f'/service-clients/{client}/credentials')[0], 403)
+
+    def test_ledger_sources_client_scope_and_deleted_cursor(self):
+        one = db.create_service_client('ledger-one', 'Ledger one')
+        two = db.create_service_client('ledger-two', 'Ledger two')
+        manual = self.create_scan('manual-only.bin')
+        api = self.create_scan('api-one.bin', source='api', service_client_id=one)
+        icap = self.create_scan('icap-two.bin', source='icap', service_client_id=two, status='finalizing')
+        child = self.create_scan('hidden-child.bin', source='api', scan_role='child', service_client_id=one)
+        unassigned = self.create_scan('unassigned.bin', source='icap')
+        ids = lambda path: [row['id'] for row in self.request(path)[1]['items']]
+        self.assertEqual(ids('/api-ledger'), [unassigned, icap, api])
+        self.assertEqual(ids(f'/api-ledger?client_id={one}'), [api])
+        self.assertEqual(ids('/api-ledger?client_id=999999'), [])
+        self.assertEqual(ids('/api-ledger?unassigned=true'), [unassigned])
+        self.assertEqual(ids('/api-ledger?source=api'), [api])
+        self.assertIn(icap, ids('/api-ledger?status=active'))
+        page = self.request('/api-ledger?limit=1')[1]
+        self.assertEqual(page['next_before'], unassigned)
+        with db.connect() as connection:
+            connection.execute('DELETE FROM scan_jobs WHERE id = ?', (unassigned,))
+        self.assertEqual(ids(f'/api-ledger?before={unassigned}'), [icap, api])
+        self.assertNotIn(child, ids('/api-ledger'))
+        self.assertEqual(ids('/dashboard/scans'), [manual])
+        self.assertEqual(self.request(f'/scans/{api}')[0], 404)
+
+    def test_ledger_projection_literal_search_no_engine_hydration(self):
+        client = db.create_service_client('ledger-long', 'x' * 300)
+        scan = self.create_scan('literal%_!.bin' + 'x' * 600, source='api', service_client_id=client,
+                                status='completed', verdict='critical', risk_score=90)
+        self.create_scan('other.bin', source='api')
+        with db.connect() as connection:
+            connection.execute('DROP TABLE engine_results')
+        status, page, _ = self.request('/api-ledger?q=%25_!&risk=critical')
+        self.assertEqual(status, 200)
+        row = page['items'][0]
+        self.assertEqual(row['id'], scan)
+        self.assertEqual(len(row['filename']), 512)
+        self.assertEqual(len(row['client_name']), 100)
+        self.assertEqual(row['risk_score'], 90)
+        self.assertNotIn('storage_path', row)
+        self.assertNotIn('profile_snapshot_json', row)
+        self.assertNotIn('internal note', json.dumps(page))
+
+    def test_ledger_browser_auth_analyst_and_invalid_filters(self):
+        self.assertEqual(self.request('/api-ledger', session=False)[0], 401)
+        for query in ('limit=101', 'limit=0', 'before=0', 'client_id=0', 'source=manual',
+                      'status=bogus', 'risk=clean', 'client_id=1&unassigned=true', 'q=' + 'a' * 201):
+            self.assertEqual(self.request('/api-ledger?' + query)[0], 422, query)
+        with db.connect() as connection:
+            connection.execute('UPDATE users SET role = ? WHERE id = ?', ('analyst', self.user_id))
+        status, _, headers = self.request('/api-ledger')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(self.request('/service-clients')[0], 403)
+
+    def test_automation_report_output_scope_policy_and_permissions(self):
+        scan, result = self.report_fixture()
+        other, other_result = self.report_fixture()
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'icap' WHERE id = ?", (scan,))
+        path = f'/api-ledger/scans/{scan}'
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        self.assertEqual(self.request(f'/scans/{scan}')[0], 404)
+        self.assertEqual(self.request(f'/api-ledger/scans/{other}')[0], 404)
+        for suffix in ('', '/full'):
+            self.assertEqual(self.request(f'{path}/results/{result}{suffix}')[0], 200)
+            self.assertEqual(self.request(f'{path}/results/{other_result}{suffix}')[0], 404)
+            self.assertEqual(self.request(f'/scans/{scan}/results/{result}{suffix}')[0], 404)
+        report = self.request(path)[1]
+        self.assertEqual(report['source'], 'icap')
+        self.assertEqual(report['coverage_basis'], 'routing_snapshot')
+        self.assertNotIn('storage_path', report)
+        self.assertEqual(report['required_engines'], 1)
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_results SET details_json = ? WHERE id = ?", ('[]', result))
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertIsNone(self.request(path)[1]['decision'])
+        self.assertEqual(self.request(f'{path}/results/{result}/full')[0], 200)
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_results SET raw_output = ? WHERE id = ?", ('x' * (2 * 1024 * 1024 + 1), result))
+        self.assertEqual(self.request(f'{path}/results/{result}/full')[0], 413)
+
+    def test_automation_batch_source_owner_cursor_and_manual_isolation(self):
+        client = db.create_service_client('auto-batch', 'Batch client')
+        other = db.create_service_client('other-batch', 'Other')
+        batch = db.create_scan_batch(source='api', original_filename='bundle.zip', archive_mode='lazy_extract_on_detection', service_client_id=client)
+        first = self.create_scan('one.bin', source='api', batch_id=batch, service_client_id=client)
+        second = self.create_scan('two.bin', source='api', batch_id=batch, service_client_id=client, parent_scan_id=first, scan_role='child')
+        self.create_scan('wrong-owner.bin', source='api', batch_id=batch, service_client_id=other)
+        self.create_scan('wrong-source.bin', source='icap', batch_id=batch, service_client_id=client)
+        self.create_scan('manual.bin', batch_id=batch)
+        path = f'/api-ledger/batches/{batch}'
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        self.assertEqual(self.request(f'/batches/{batch}')[0], 404)
+        page = self.request(path + '?limit=1')[1]
+        self.assertEqual([row['id'] for row in page['items']], [first])
+        next_page = self.request(path + '?' + urlencode(dict(after_id=page['next_after_id'], after_created=page['next_after_created'])))[1]
+        self.assertEqual([row['id'] for row in next_page['items']], [second])
+        self.assertEqual(self.request(path + '?after_id=1')[0], 422)
+        self.assertEqual(db.get_scan_batch(batch).total_items, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(path)[0], 200)
+
+    def test_automation_delete_admin_csrf_fences_and_protections(self):
+        body = {'attempt': 0, 'job_revision': 0}
+        scan = self.create_scan(source='api', status='completed')
+        path = f'/api-ledger/scans/{scan}'
+        for kwargs, expected in (({'session': False}, 401), ({'csrf': False}, 403)):
+            self.assertEqual(self.request(path, 'DELETE', body, **kwargs)[0], expected)
+            self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(path, 'DELETE', body)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(path, 'DELETE', {**body, 'attempt': 1})[0], 409)
+        self.assertEqual(self.request(path, 'DELETE', {**body, 'job_revision': 1})[0], 409)
+        self.assertEqual(self.request(path, 'DELETE', {**body, 'source': 'manual'})[0], 422)
+        manual = self.create_scan(status='completed')
+        self.assertEqual(self.request(f'/api-ledger/scans/{manual}', 'DELETE', body)[0], 404)
+        self.assertEqual(self.request(f'/scans/{scan}', 'DELETE', body)[0], 404)
+        protected = [self.create_scan(source='icap', status=state) for state in ('queued', 'running', 'finalizing')]
+        parent = self.create_scan(source='api', status='completed')
+        self.create_scan(source='api', parent_scan_id=parent, scan_role='child')
+        shared = self.create_scan(source='api', status='completed')
+        db.create_scan_job(db.get_scan(shared).sample_id, '', 'normal', '', status='completed')
+        pending = self.create_scan(source='icap', status='completed')
+        client = db.create_service_client('auto-outbox', 'Outbox')
+        with db.connect() as connection:
+            connection.execute("INSERT INTO notification_outbox (scan_job_id, service_client_id, event_type, idempotency_key, payload_json) VALUES (?, ?, 'malware.detected', 'auto-event', '{}')", (pending, client))
+        with patch.object(scan_management, 'delete_sample_file', side_effect=PermissionError('private')) as cleanup:
+            for blocked in [*protected, parent, shared, pending]:
+                self.assertEqual(self.request(f'/api-ledger/scans/{blocked}', 'DELETE', body)[0], 409)
+            cleanup.assert_not_called()
+            status, result, _ = self.request(path, 'DELETE', body)
+        self.assertEqual(status, 200)
+        self.assertFalse(result['sample_removed'])
+        self.assertIsNone(db.get_scan(scan))
+        self.assertEqual(self.request(path, 'DELETE', body)[0], 404)
+
+    def test_user_admin_permissions_csrf_and_secret_validation(self):
+        body = {'username': 'new-user', 'role': 'analyst', 'password': 'new-secret-password'}
+        self.assertEqual(self.request('/users', session=False)[0], 401)
+        self.assertEqual(self.request('/users', 'POST', body, csrf=False)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/users')[0], 403)
+        self.assertEqual(self.request('/users', 'POST', body)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        for invalid in ({'role': 'root'}, {'username': '   '}, {'password': 'short'}, {'password': 'x' * 4097}, {'auth_source': 'ldap'}):
+            status, result, _ = self.request('/users', 'POST', body | invalid)
+            self.assertEqual(status, 422, result)
+            self.assertNotIn('new-secret-password', json.dumps(result))
+        self.assertIsNone(db.get_user_by_username('new-user'))
+
+    def test_user_creation_hashes_password_preserves_duplicate_and_can_login(self):
+        body = {'username': ' new-user ', 'role': 'analyst', 'password': 'new-secret-password'}
+        status, created, _ = self.request('/users', 'POST', body)
+        self.assertEqual(status, 201, created)
+        self.assertEqual(set(created), {'user_id'})
+        user = db.get_user_by_id(created['user_id'])
+        self.assertEqual(user.auth_source, 'local')
+        self.assertEqual(user.username, 'new-user')
+        self.assertTrue(auth.verify_password(body['password'], user.password_hash))
+        duplicate = body | {'role': 'admin', 'password': 'different-secret'}
+        self.assertEqual(self.request('/users', 'POST', duplicate)[0], 409)
+        self.assertEqual(db.get_user_by_id(user.id).password_hash, user.password_hash)
+        self.assertEqual(db.get_user_by_id(user.id).role, 'analyst')
+        login = self.request('/session/login', 'POST', {'username': 'new-user', 'password': body['password']}, session=False, csrf=False)
+        self.assertEqual(login[0], 200)
+        self.assertEqual(login[1]['user']['role'], 'analyst')
+
+    def test_user_inventory_keyset_ldap_and_secret_omission(self):
+        directory = db.sync_external_user(username='directory-user', role='analyst', external_id='PRIVATE-DIRECTORY-DN', display_name='Directory user')
+        for index in range(20):
+            db.create_user(f'user-{index}', 'PRIVATE-HASH', 'analyst')
+        status, page, headers = self.request('/users')
+        self.assertEqual(status, 200)
+        self.assertEqual(len(page['items']), 20)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(next(row for row in page['items'] if row['id'] == directory.id)['auth_source'], 'ldap')
+        self.assertNotIn('PRIVATE-', json.dumps(page))
+        self.assertNotIn('password_hash', json.dumps(page))
+        next_page = self.request('/users?after=' + str(page['next_after']))[1]
+        self.assertEqual(len(next_page['items']), 2)
+        self.assertTrue(all(row['id'] > page['next_after'] for row in next_page['items']))
+        self.assertEqual(self.request('/users?after=0')[0], 422)
+
+    def test_automation_bulk_delete_auth_bounds_and_partial_receipts(self):
+        deleted = self.create_scan(source='api', status='completed')
+        active = self.create_scan(source='icap', status='running')
+        manual = self.create_scan(status='completed')
+        child = self.create_scan(source='api', status='completed', scan_role='child')
+        stale = self.create_scan(source='api', status='completed')
+        parent = self.create_scan(source='api', status='completed')
+        self.create_scan(source='api', parent_scan_id=parent, scan_role='child')
+        ids = [deleted, active, manual, child, stale, parent]
+        body = {'scans': [{'scan_id': value, 'attempt': 1 if value == stale else 0, 'job_revision': 0} for value in ids]}
+        path = '/api-ledger/scans'
+        self.assertEqual(self.request(path, 'DELETE', body, session=False)[0], 401)
+        self.assertEqual(self.request(path, 'DELETE', body, csrf=False)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(path, 'DELETE', body)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        for items in ([], [body['scans'][0]] * 2, [body['scans'][0]] * 21):
+            self.assertEqual(self.request(path, 'DELETE', {'scans': items})[0], 422)
+        self.assertEqual(self.request(path, 'DELETE', {'scans': [{'scan_id': deleted, 'attempt': True, 'job_revision': 0}]})[0], 422)
+        with patch.object(scan_management, 'delete_sample_file', return_value=False):
+            status, receipt, _ = self.request(path, 'DELETE', body)
+        self.assertEqual(status, 200, receipt)
+        self.assertEqual(receipt['deleted_ids'], [deleted])
+        self.assertEqual(receipt['cleanup_failed_ids'], [deleted])
+        self.assertEqual(receipt['blocked_ids'], ids[1:])
+        self.assertIsNone(db.get_scan(deleted))
+        for scan in ids[1:]:
+            self.assertIsNotNone(db.get_scan(scan))
+
+    def test_ledger_delete_fences_are_metadata_only_and_stale_revision_blocks(self):
+        scan = self.create_scan(source='icap', status='completed', profile_snapshot_json='{"engines":[]}')
+        page = self.request('/api-ledger')[1]
+        row = next(row for row in page['items'] if row['id'] == scan)
+        self.assertEqual(row['attempt_count'], 0)
+        self.assertEqual(row['job_revision'], 0)
+        self.assertNotIn('engine_results', row)
+        body = {'scans': [{'scan_id': scan, 'attempt': row['attempt_count'], 'job_revision': 1}]}
+        self.assertEqual(self.request('/api-ledger/scans', 'DELETE', body)[1]['blocked_ids'], [scan])
+        self.assertIsNotNone(db.get_scan(scan))
+        self.assertEqual(self.request('/scans', 'DELETE', {'scans': [{'scan_id': scan, 'attempt': 0, 'job_revision': 0}]})[1]['blocked_ids'], [scan])
+
+    def test_automation_archive_source_owner_batch_and_nested_scope(self):
+        owner = db.create_service_client('archive-owner', 'Archive owner')
+        other = db.create_service_client('archive-other', 'Other')
+        batch = db.create_scan_batch(source='api', original_filename='outer.zip', archive_mode='none', service_client_id=owner)
+        parent = self.create_scan(source='api', batch_id=batch, service_client_id=owner)
+        first = self.create_scan('100%_one.zip', source='api', batch_id=batch, service_client_id=owner, parent_scan_id=parent, scan_role='child')
+        second = self.create_scan('two.bin', source='api', batch_id=batch, service_client_id=owner, parent_scan_id=parent, scan_role='child')
+        for fields in ({'source': 'manual'}, {'source': 'icap'}, {'service_client_id': other}, {'service_client_id': None}, {'batch_id': None}):
+            params = dict(source='api', batch_id=batch, service_client_id=owner, parent_scan_id=parent, scan_role='child') | fields
+            self.create_scan(**params)
+        self.create_scan(source='api', batch_id=batch, service_client_id=other, parent_scan_id=first, scan_role='child')
+        path = f'/api-ledger/scans/{parent}/children'
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        self.assertEqual(self.request(f'/scans/{parent}/children')[0], 404)
+        manual = self.create_scan()
+        self.assertEqual(self.request(f'/api-ledger/scans/{manual}/children')[0], 404)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        status, page, _ = self.request(path + '?limit=1')
+        self.assertEqual(status, 200, page)
+        self.assertEqual([row['id'] for row in page['items']], [first])
+        self.assertFalse(page['items'][0]['has_children'])
+        next_page = self.request(path + '?' + urlencode({'after': page['next_after'], 'attempt': page['attempt_count']}))[1]
+        self.assertEqual([row['id'] for row in next_page['items']], [second])
+        nested = self.create_scan(source='api', batch_id=batch, service_client_id=owner, parent_scan_id=first, scan_role='child')
+        self.assertTrue(self.request(path)[1]['items'][0]['has_children'])
+        nested_page = self.request(f'/api-ledger/scans/{first}/children')[1]
+        self.assertEqual(nested_page['parent_scan_id'], parent)
+        self.assertEqual([row['id'] for row in nested_page['items']], [nested])
+        filtered = self.request(path + '?' + urlencode({'q': '100%_'}))[1]
+        self.assertEqual([row['id'] for row in filtered['items']], [first])
+        self.assertEqual(self.request(path + '?after=1')[0], 422)
+        with db.connect() as connection:
+            connection.execute('UPDATE scan_jobs SET attempt_count = attempt_count + 1 WHERE id = ?', (parent,))
+        self.assertEqual(self.request(path + '?after=1&attempt=0')[0], 409)
+        self.assertEqual(db.get_scan_batch(batch).total_items, 0)
+
+    def test_automation_archive_unassigned_owner_and_cross_boundary_up_link(self):
+        owner = db.create_service_client('assigned-archive', 'Assigned')
+        batch = db.create_scan_batch(source='icap', original_filename='icap.zip', archive_mode='none')
+        invalid_up = self.create_scan(source='manual', batch_id=batch)
+        parent = self.create_scan(source='icap', batch_id=batch, parent_scan_id=invalid_up, scan_role='child')
+        child = self.create_scan(source='icap', batch_id=batch, parent_scan_id=parent, scan_role='child')
+        self.create_scan(source='icap', batch_id=batch, parent_scan_id=parent, scan_role='child', service_client_id=owner)
+        path = f'/api-ledger/scans/{parent}/children'
+        page = self.request(path)[1]
+        self.assertIsNone(page['parent_scan_id'])
+        self.assertEqual([row['id'] for row in page['items']], [child])
+        self.create_scan(source='icap', batch_id=batch, parent_scan_id=child, scan_role='child')
+        self.assertTrue(self.request(path)[1]['items'][0]['has_children'])
+        with db.connect() as connection:
+            connection.execute('UPDATE scan_batches SET service_client_id = ? WHERE id = ?', (owner, batch))
+        self.assertEqual(self.request(path)[0], 409)
+
+    def test_batch_json_contract_permissions_and_no_status_engine_hydration(self):
+        from app.services.api_schemas import BatchStatusResponse, BatchResultResponse
+        batch = db.create_scan_batch(source='api', original_filename='batch.zip', archive_mode='none')
+        scan, _ = self.report_fixture()
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'api', batch_id = ? WHERE id = ?", (batch, scan))
+            connection.execute("UPDATE scan_batches SET status = 'completed' WHERE id = ?", (batch,))
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        path = f'/api-ledger/batches/{batch}/json'
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        self.assertEqual(self.request(path + '?kind=other')[0], 422)
+        manual = db.create_scan_batch(source='manual', original_filename='manual.zip', archive_mode='none')
+        self.assertEqual(self.request(f'/api-ledger/batches/{manual}/json')[0], 404)
+        with patch('app.services.batch_payload._full_export_rows', side_effect=AssertionError('status must not read engine blobs')):
+            status, body, headers = self.request(path)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        payload = json.loads(body['content'])
+        BatchStatusResponse.model_validate(payload)
+        self.assertEqual([entry['id'] for entry in payload['scans']], [scan])
+        self.assertEqual(payload['batch']['counts']['total_items'], 0)
+        status, body, _ = self.request(path + '?kind=result')
+        self.assertEqual(status, 200, body)
+        BatchResultResponse.model_validate(json.loads(body['content']))
+        for private in ('raw_output', 'storage_path', 'metadata_json', '<script>'):
+            self.assertNotIn(private, body['content'])
+        self.assertEqual(db.get_scan_batch(batch).total_items, 0)
+
+    def test_batch_json_rejects_partial_owner_mismatch_and_oversized_results(self):
+        batch = db.create_scan_batch(source='icap', original_filename='batch.zip', archive_mode='none')
+        scan, result = self.report_fixture()
+        path = f'/api-ledger/batches/{batch}/json'
+        with db.connect() as connection:
+            connection.execute('UPDATE scan_jobs SET batch_id = ? WHERE id = ?', (batch, scan))
+        self.assertEqual(self.request(path)[0], 409)
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'icap' WHERE id = ?", (scan,))
+        self.assertEqual(self.request(path + '?kind=result')[0], 409)
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_batches SET status = 'completed' WHERE id = ?", (batch,))
+            connection.execute("UPDATE scan_jobs SET status = 'running' WHERE id = ?", (scan,))
+        self.assertEqual(self.request(path + '?kind=result')[0], 409)
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET status = 'completed' WHERE id = ?", (scan,))
+            connection.execute("UPDATE engine_results SET details_json = '[]' WHERE id = ?", (result,))
+        self.assertEqual(self.request(path + '?kind=result')[0], 409)
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_results SET details_json = '{}', raw_output = ? WHERE id = ?", ('x' * (2 * 1024 * 1024 + 1), result))
+        with patch('app.services.batch_payload._full_export_rows', side_effect=AssertionError('must preflight before hydration')):
+            self.assertEqual(self.request(path + '?kind=result')[0], 413)
+        self.assertEqual(self.request(path)[0], 200)
+        with patch('app.services.batch_payload.EXPORT_LIMIT', 1):
+            self.assertEqual(self.request(path)[0], 413)
+        owner = db.create_service_client('batch-owner', 'Owner')
+        with db.connect() as connection:
+            connection.execute('UPDATE scan_jobs SET service_client_id = ? WHERE id = ?', (owner, scan))
+        self.assertEqual(self.request(path)[0], 409)
+
+    def test_batch_json_member_and_aggregate_source_limits(self):
+        batch = db.create_scan_batch(source='api', original_filename='batch.zip', archive_mode='none')
+        for index in range(21):
+            self.create_scan(name=f'member-{index}', source='api', batch_id=batch, status='completed', profile_snapshot_json='{"engines":[]}')
+        path = f'/api-ledger/batches/{batch}/json'
+        for kind in ('status', 'result'):
+            self.assertEqual(self.request(path + '?kind=' + kind)[0], 413)
+        with db.connect() as connection:
+            connection.execute('UPDATE scan_jobs SET batch_id = NULL WHERE batch_id = ?', (batch,))
+            connection.execute("UPDATE scan_batches SET status = 'completed' WHERE id = ?", (batch,))
+        for index in range(2):
+            scan, result = self.report_fixture()
+            with db.connect() as connection:
+                connection.execute("UPDATE scan_jobs SET source = 'api', batch_id = ? WHERE id = ?", (batch, scan))
+                connection.execute('UPDATE engine_results SET raw_output = ? WHERE id = ?', ('x' * 1100000, result))
+        with patch('app.services.batch_payload._full_export_rows', side_effect=AssertionError('batch aggregate must reject before hydration')):
+            self.assertEqual(self.request(path + '?kind=result')[0], 413)
+
+    def test_automation_status_json_contract_queue_states_and_permissions(self):
+        from app.services.api_schemas import ScanStatusResponse
+        scan, result = self.report_fixture()
+        path = f'/api-ledger/scans/{scan}/status-json'
+        self.assertEqual(self.request(path)[0], 404)
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'api' WHERE id = ?", (scan,))
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        db.set_setting('scan_policy.api_retry_after_seconds', '7')
+        for state in ('queued', 'running', 'finalizing', 'completed', 'failed'):
+            with self.subTest(state=state):
+                with db.connect() as connection:
+                    connection.execute('UPDATE scan_jobs SET status = ? WHERE id = ?', (state, scan))
+                status, body, headers = self.request(path)
+                self.assertEqual(status, 200, body)
+                payload = json.loads(body['content'])
+                ScanStatusResponse.model_validate(payload)
+                self.assertEqual(headers[b'cache-control'], b'no-store')
+                self.assertEqual(payload['queue'], db.get_queue_metrics() | {'position': db.get_scan_queue_position(scan)})
+                ready = state in ('completed', 'failed')
+                self.assertEqual(payload['result_ready'], ready)
+                self.assertEqual(payload['recommended_poll_seconds'], None if ready else 7)
+                self.assertNotIn('raw_output', body['content'])
+                self.assertNotIn('<script>', body['content'])
+
+    def test_automation_status_expected_engines_preserves_snapshot_and_source_filtering(self):
+        from app.services.service_clients import engines_for_scan
+        scan, _ = self.report_fixture()
+        metadata = db.create_engine_instance('static_metadata', 'Accepted metadata')
+        quota = db.create_engine_instance('virustotal', 'Quota')
+        disabled = db.create_engine_instance('clamav', 'Disabled', enabled=False)
+        db.create_engine_instance('clamav', 'New unrelated instance')
+        snapshot = json.dumps({'engines': [{'id': value, 'name': 'Recorded', 'detection': False}
+                                         for value in (metadata, quota, disabled, metadata)]})
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'icap', profile_snapshot_json = ? WHERE id = ?", (snapshot, scan))
+        status, body, _ = self.request(f'/api-ledger/scans/{scan}/status-json')
+        self.assertEqual(status, 200, body)
+        expected = json.loads(body['content'])['engines']['expected']
+        self.assertEqual(expected, 1)
+        self.assertEqual(expected, len(engines_for_scan(db.get_scan(scan))))
+
+    def test_automation_status_admission_invalid_policy_and_response_limit(self):
+        scan, result = self.report_fixture(details='[]')
+        path = f'/api-ledger/scans/{scan}/status-json'
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'api' WHERE id = ?", (scan,))
+        self.assertEqual(self.request(path)[0], 409)
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_results SET details_json = '{}' WHERE id = ?", (result,))
+        with patch('app.services.automation_payload.EXPORT_LIMIT', 1):
+            self.assertEqual(self.request(path)[0], 413)
+        with db.connect() as connection:
+            connection.execute('UPDATE engine_results SET raw_output = ? WHERE id = ?', ('x' * (2 * 1024 * 1024 + 1), result))
+        self.assertEqual(self.request(path)[0], 413)
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_results SET raw_output = '' WHERE id = ?", (result,))
+            connection.execute("UPDATE scan_jobs SET profile_snapshot_json = '{}' WHERE id = ?", (scan,))
+        self.assertEqual(self.request(path)[0], 413)
+
+    def test_automation_result_json_scope_contract_and_private_field_omission(self):
+        from app.services.api_schemas import ScanResultResponse
+        scan, result = self.report_fixture()
+        path = f'/api-ledger/scans/{scan}/result-json'
+        self.assertEqual(self.request(path)[0], 404)
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'icap' WHERE id = ?", (scan,))
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        status, body, headers = self.request(path)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        payload = json.loads(body['content'])
+        ScanResultResponse.model_validate(payload)
+        self.assertTrue(payload['result_ready'])
+        self.assertEqual(payload['scan']['id'], scan)
+        self.assertTrue(payload['links']['result'].endswith(f'/api/v1/scans/{scan}/result'))
+        for private in ('raw_output', 'details_json', 'storage_path', 'stored_filename', '<script>'):
+            self.assertNotIn(private, body['content'])
+
+    def test_automation_result_json_rejects_incomplete_invalid_and_oversized_records(self):
+        scan, result = self.report_fixture(details='[]')
+        path = f'/api-ledger/scans/{scan}/result-json'
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'api' WHERE id = ?", (scan,))
+        self.assertEqual(self.request(path)[0], 409)
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_results SET details_json = '{}' WHERE id = ?", (result,))
+            connection.execute("UPDATE scan_jobs SET status = 'running' WHERE id = ?", (scan,))
+        self.assertEqual(self.request(path)[0], 409)
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET status = 'completed' WHERE id = ?", (scan,))
+            connection.execute('UPDATE engine_results SET raw_output = ? WHERE id = ?', ('x' * (2 * 1024 * 1024 + 1), result))
+        self.assertEqual(self.request(path)[0], 413)
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_results SET raw_output = '' WHERE id = ?", (result,))
+        with patch('app.services.automation_payload.EXPORT_LIMIT', 1):
+            self.assertEqual(self.request(path)[0], 413)
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET profile_snapshot_json = '{}' WHERE id = ?", (scan,))
+        self.assertEqual(self.request(path)[0], 413)
+
+    def test_automation_exports_authorization_scope_and_policy(self):
+        scan, result = self.report_fixture(details='[]')
+        manual, _ = self.report_fixture()
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'icap' WHERE id = ?", (scan,))
+        for endpoint in ('summary-export', 'export'):
+            path = f'/api-ledger/scans/{scan}/{endpoint}'
+            self.assertEqual(self.request(path, session=False)[0], 401)
+            self.assertEqual(self.request(f'/api-ledger/scans/{manual}/{endpoint}')[0], 404)
+            self.assertEqual(self.request(f'/scans/{scan}/{endpoint}')[0], 404)
+            self.assertEqual(self.request(path + '?format=html')[0], 422)
+            status, exported, headers = self.request(path)
+            self.assertEqual(status, 200)
+            self.assertEqual(headers[b'cache-control'], b'no-store')
+            self.assertNotIn('/private/storage', exported['content'])
+            self.assertNotIn('stored_filename', exported['content'])
+            payload = json.loads(exported['content'])
+            decision = payload['report']['decision'] if endpoint == 'summary-export' else payload['summary']['decision']
+            self.assertIsNone(decision)
+            if endpoint == 'summary-export':
+                self.assertIn('Automation', payload['scope'])
+                self.assertNotIn('raw_output', payload['report'])
+            else:
+                self.assertIn('<script>not executable</script>', exported['content'])
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(f'/api-ledger/scans/{scan}/export?format=csv')[0], 200)
+        self.assertEqual(self.request(f'/api-ledger/scans/{scan}/summary-export?format=csv')[0], 200)
+
+    def test_automation_full_export_admission_and_missing_historical_routing(self):
+        scan, result = self.report_fixture()
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'api' WHERE id = ?", (scan,))
+            connection.execute('UPDATE engine_results SET raw_output = ? WHERE id = ?', ('x' * (2 * 1024 * 1024 + 1), result))
+        path = f'/api-ledger/scans/{scan}/export'
+        self.assertEqual(self.request(path)[0], 413)
+        self.assertEqual(self.request(f'/api-ledger/scans/{scan}/summary-export')[0], 200)
+        with db.connect() as connection:
+            connection.execute('UPDATE engine_results SET raw_output = ? WHERE id = ?', ('\x01' * 400000, result))
+        self.assertEqual(self.request(path)[0], 413)
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_results SET raw_output = '' WHERE id = ?", (result,))
+            connection.execute("UPDATE scan_jobs SET profile_snapshot_json = '{}' WHERE id = ?", (scan,))
+        self.assertEqual(self.request(path)[0], 413)
+
+    def profile_fixture(self, key='profile-client'):
+        client = db.create_service_client(key, 'Profile client')
+        engine = db.create_engine_instance('static_metadata', 'Metadata ' + key)
+        profile = db.create_scan_profile(client, 'Default', engine_instance_ids=[engine], is_default=True, policy_json='{"private":"SECRET_POLICY"}')
+        return client, profile, engine
+
+    def test_profile_routing_requires_admin_csrf_and_strict_bounded_ids(self):
+        client, profile, engine = self.profile_fixture()
+        path = f'/service-clients/{client}/profiles/{profile}/engines'
+        body = {'engine_ids': [engine], 'expected_engine_ids': [engine]}
+        self.assertEqual(self.request(f'/service-clients/{client}/profiles', session=False)[0], 401)
+        self.assertEqual(self.request(path, 'PUT', body, csrf=False)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(f'/service-clients/{client}/profiles')[0], 403)
+        self.assertEqual(self.request(path, 'PUT', body)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        for fields in ({'engine_ids': []}, {'engine_ids': [True]}, {'engine_ids': [engine, engine]}, {'engine_ids': [engine] * 101}, {'source': 'manual'}):
+            self.assertEqual(self.request(path, 'PUT', body | fields)[0], 422)
+
+    def test_profile_routing_is_client_scoped_fenced_and_preserves_snapshots(self):
+        client, profile, engine = self.profile_fixture()
+        managed, managed_profile, managed_engine = self.profile_fixture('legacy-default')
+        replacement = db.create_engine_instance('static_metadata', 'Replacement')
+        scan = self.create_scan(source='api', status='completed', service_client_id=client, scan_profile_id=profile, profile_snapshot_json='{"immutable":true}')
+        body = {'engine_ids': [replacement], 'expected_engine_ids': [engine]}
+        self.assertEqual(self.request(f'/service-clients/{managed}/profiles/{profile}/engines', 'PUT', body)[0], 409)
+        self.assertEqual(self.request(f'/service-clients/{managed}/profiles/{managed_profile}/engines', 'PUT', {'engine_ids': [replacement], 'expected_engine_ids': [managed_engine]})[0], 409)
+        path = f'/service-clients/{client}/profiles/{profile}/engines'
+        self.assertEqual(self.request(path, 'PUT', body | {'engine_ids': [999999]})[0], 409)
+        self.assertEqual([e.id for e in db.list_scan_profile_engines(profile)], [engine])
+        self.assertEqual(self.request(path, 'PUT', body)[0], 204)
+        self.assertEqual(self.request(path, 'PUT', body)[0], 409)
+        self.assertEqual([e.id for e in db.list_scan_profile_engines(profile)], [replacement])
+        self.assertEqual(db.get_scan(scan).profile_snapshot_json, '{"immutable":true}')
+
+    def test_profile_pages_hide_policy_and_use_client_scoped_id_cursors(self):
+        client, profile, engine = self.profile_fixture()
+        for index in range(20):
+            db.create_scan_profile(client, f'Profile {index}', engine_instance_ids=[engine])
+        self.profile_fixture('other-client')
+        path = f'/service-clients/{client}/profiles'
+        status, first, headers = self.request(path)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(len(first['items']), 20)
+        self.assertNotIn('SECRET_POLICY', json.dumps(first))
+        self.assertNotIn('policy_json', json.dumps(first))
+        second = self.request(path + '?after=' + str(first['next_after']))[1]
+        self.assertEqual(len(second['items']), 1)
+        self.assertIsNone(second['next_after'])
+        self.assertEqual(self.request('/service-clients/999999/profiles')[0], 404)
+
+    def test_profile_overflow_is_marked_and_cannot_silently_drop_assignments(self):
+        client, profile, engine = self.profile_fixture()
+        ids = [engine] + [db.create_engine_instance('static_metadata', f'Extra {n}') for n in range(100)]
+        db.set_scan_profile_engines(profile, ids)
+        data = self.request(f'/service-clients/{client}/profiles')[1]
+        self.assertTrue(data['engines_incomplete'])
+        self.assertTrue(data['items'][0]['incomplete'])
+        self.assertEqual(len(data['engines']), 100)
+        self.assertEqual(len(data['items'][0]['engine_ids']), 100)
+        body = {'engine_ids': [engine], 'expected_engine_ids': data['items'][0]['engine_ids']}
+        self.assertEqual(self.request(f'/service-clients/{client}/profiles/{profile}/engines', 'PUT', body)[0], 409)
+        self.assertEqual(len(db.list_scan_profile_engines(profile)), 101)
+
+    def expired_scan(self, **kwargs):
+        scan = self.create_scan(**kwargs)
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET created_at = '2000-01-01 00:00:00' WHERE id = ?", (scan,))
+        return scan
+
+    @patch.dict('os.environ', {'MASP_RETENTION_DAYS': '30', 'MASP_RETENTION_BATCH_SIZE': '2'})
+    def test_retention_authorization_before_body_and_strict_limits(self):
+        item = {'scan_id': 1, 'attempt': 0, 'job_revision': 0}
+        body = {'days': 30, 'batch_size': 2, 'scans': [item]}
+        self.assertEqual(self.request('/system/retention', session=False)[0], 401)
+        for options, expected in (({'session': False}, 401), ({'csrf': False}, 403)):
+            self.assertEqual(self.request('/system/retention/run', 'POST', body, **options)[0], expected)
+            self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/system/retention')[0], 403)
+        self.assertEqual(self.request('/system/retention/run', 'POST', body)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        for fields in ({'scans': []}, {'scans': [item, item]}, {'days': '30'}, {'cutoff': '2099-01-01'},
+                       {'scans': [item] * 21}, {'scans': [dict(item, scan_id=n) for n in (1, 2, 3)]}):
+            self.assertEqual(self.request('/system/retention/run', 'POST', body | fields)[0], 422)
+
+    @patch.dict('os.environ', {'MASP_RETENTION_DAYS': '30', 'MASP_RETENTION_BATCH_SIZE': '2'})
+    def test_retention_preview_is_bounded_all_source_and_skips_active(self):
+        one = self.expired_scan(status='completed', source='api')
+        two = self.expired_scan(status='failed', source='icap')
+        three = self.expired_scan(status='completed', scan_role='child')
+        for status in ('queued', 'running', 'finalizing'):
+            self.expired_scan(status=status)
+        self.create_scan(status='completed')
+        status, first, headers = self.request('/system/retention')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual([r['scan_id'] for r in first['items']], [one, two])
+        self.assertNotIn('/private/storage', json.dumps(first))
+        second = self.request('/system/retention?after=' + str(first['next_after']))[1]
+        self.assertEqual([r['scan_id'] for r in second['items']], [three])
+        self.assertIsNone(second['next_after'])
+        self.assertEqual(self.request('/system/retention?after=0')[0], 422)
+
+    @patch.dict('os.environ', {'MASP_RETENTION_DAYS': '30', 'MASP_RETENTION_BATCH_SIZE': '20'})
+    def test_retention_rechecks_age_attempt_revision_and_protections(self):
+        deleted = self.expired_scan(status='completed', source='api')
+        active = self.expired_scan(status='finalizing')
+        stale = self.expired_scan(status='completed')
+        revision = self.expired_scan(status='completed')
+        young = self.create_scan(status='completed')
+        parent = self.expired_scan(status='completed')
+        self.create_scan(parent_scan_id=parent, scan_role='child', status='completed')
+        shared = self.expired_scan(status='completed')
+        db.create_scan_job(db.get_scan(shared).sample_id, '', 'normal', '', status='completed')
+        pending = self.expired_scan(status='completed', source='api')
+        client = db.create_service_client('retention-client', 'Retention client')
+        with db.connect() as connection:
+            connection.execute('''INSERT INTO notification_outbox
+                (scan_job_id, service_client_id, event_type, idempotency_key, payload_json)
+                VALUES (?, ?, 'malware.detected', 'retention-event', '{}')''', (pending, client))
+        ids = [deleted, active, stale, revision, young, parent, shared, pending]
+        rows = [{'scan_id': n, 'attempt': 1 if n == stale else 0, 'job_revision': 1 if n == revision else 0} for n in ids]
+        with patch.object(retention_admin, 'delete_sample_file', side_effect=PermissionError('private')):
+            status, result, _ = self.request('/system/retention/run', 'POST', {'days': 30, 'batch_size': 20, 'scans': rows})
+        self.assertEqual(status, 200)
+        self.assertEqual(result['deleted_ids'], [deleted])
+        self.assertEqual(result['cleanup_failed_ids'], [deleted])
+        self.assertEqual(result['blocked_ids'], ids[1:])
+        for scan in ids[1:]:
+            self.assertIsNotNone(db.get_scan(scan))
+
+    def test_retention_disabled_changed_policy_and_invalid_date_fail_closed(self):
+        scan = self.expired_scan(status='completed')
+        body = {'days': 30, 'batch_size': 20, 'scans': [{'scan_id': scan, 'attempt': 0, 'job_revision': 0}]}
+        for days in ('0', '31', '999999999999999999'):
+            with patch.dict('os.environ', {'MASP_RETENTION_DAYS': days, 'MASP_RETENTION_BATCH_SIZE': '20'}):
+                self.assertEqual(self.request('/system/retention/run', 'POST', body)[0], 409)
+                self.assertIsNotNone(db.get_scan(scan))
+                if days == '0':
+                    self.assertEqual(self.request('/system/retention')[1]['items'], [])
 
     def create_scan(self, name='sample.bin', **kwargs):
         sample_id = db.create_sample(StoredSample(name, 'internal.bin', '/private/storage',
@@ -669,6 +1913,87 @@ class BrowserApiTests(unittest.TestCase):
             self.assertEqual(len(details_payload['raw_output']), scan_report_read.TEXT_LIMIT)
             self.assertIn('raw_output', details_payload['truncated'])
             self.assertIn('findings_json', details_payload['truncated'])
+
+    def test_full_output_auth_source_ownership_and_complete_plain_text(self):
+        scan, result = self.report_fixture()
+        text = '<script>never execute</script>' + 'İ😀' * 17000
+        with db.connect() as connection:
+            connection.execute('UPDATE engine_results SET raw_output = ?, details_json = ?, findings_json = ? WHERE id = ?',
+                               (text, '{invalid json', '["complete findings"]', result))
+        path = f'/scans/{scan}/results/{result}/full'
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        status, payload, headers = self.request(path)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(payload, {'scan_id': scan, 'result_id': result, 'engine_name': 'Historic Defender',
+            'attempt_count': 0, 'raw_output': text, 'details_json': '{invalid json', 'findings_json': '["complete findings"]'})
+        self.assertEqual(self.request(f'/scans/{scan}/results/{result}')[1]['truncated'], ['raw_output'])
+        self.assertEqual(self.request(f'/scans/{scan}/results/{result + 1}/full')[0], 404)
+        for source in ('api', 'icap'):
+            other = self.create_scan(source=source)
+            self.assertEqual(self.request(f'/scans/{other}/results/{result}/full')[0], 404)
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_jobs SET source = 'api' WHERE id = ?", (scan,))
+        self.assertEqual(self.request(path)[0], 404)
+        self.assertEqual(self.request('/scans/0/results/1/full')[0], 422)
+        self.assertEqual(self.request('/scans/1/results/9007199254740992/full')[0], 422)
+
+    def test_full_output_preflight_and_serialized_limits_reject_without_truncation(self):
+        scan, result = self.report_fixture()
+        path = f'/scans/{scan}/results/{result}/full'
+        original = db.connect
+        statements = []
+        def traced():
+            connection = original()
+            connection.set_trace_callback(statements.append)
+            return connection
+        with db.connect() as connection:
+            connection.execute('UPDATE engine_results SET raw_output = ? WHERE id = ?', ('😀' * 300, result))
+        with patch.object(scan_report_read, 'FULL_OUTPUT_LIMIT', 1024), patch.object(db, 'connect', side_effect=traced):
+            status, payload, _ = self.request(path)
+        self.assertEqual(status, 413)
+        self.assertIn('source limit', payload['detail'])
+        self.assertFalse(any('j.id AS scan_id' in sql for sql in statements))
+        with db.connect() as connection:
+            connection.execute('UPDATE engine_results SET raw_output = ?, details_json = ?, findings_json = ? WHERE id = ?',
+                               ('\x01' * 300, '{}', '[]', result))
+        with patch.object(scan_report_read, 'FULL_OUTPUT_LIMIT', 1024):
+            status, payload, _ = self.request(path)
+        self.assertEqual(status, 413)
+        self.assertIn('response limit', payload['detail'])
+
+    def test_full_output_preflight_and_hydration_share_retry_snapshot(self):
+        scan, result = self.report_fixture()
+        original = db.connect
+        with original() as connection:
+            connection.execute('PRAGMA journal_mode=WAL')
+        fired = False
+        class Reader:
+            def __enter__(self):
+                self.connection = original()
+                self.connection.__enter__()
+                return self
+            def __exit__(self, *args):
+                try:
+                    return self.connection.__exit__(*args)
+                finally:
+                    self.connection.close()
+            def execute(self, sql, params=()):
+                nonlocal fired
+                if 'j.id AS scan_id' in sql and not fired:
+                    fired = True
+                    with original() as writer:
+                        writer.execute('DELETE FROM engine_results WHERE scan_job_id = ?', (scan,))
+                        writer.execute('UPDATE scan_jobs SET attempt_count = 1 WHERE id = ?', (scan,))
+                return self.connection.execute(sql, params)
+        with patch.object(db, 'connect', return_value=Reader()):
+            output = scan_report_read.full_technical_details(scan, result)
+        self.assertTrue(fired)
+        self.assertEqual((output.result_id, output.attempt_count, output.raw_output),
+                         (result, 0, '<script>not executable</script>'))
+        self.assertEqual(self.request(f'/scans/{scan}/results/{result}/full')[0], 404)
 
     def test_report_manual_scope_analyst_auth_and_result_ownership(self):
         scan, result = self.report_fixture()

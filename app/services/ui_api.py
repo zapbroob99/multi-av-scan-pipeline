@@ -20,6 +20,20 @@ from app.services import scan_report_read
 from app.services import archive_read
 from app.services import batch_read
 from app.services import scan_management
+from app.services import automation_payload
+from app.services import batch_payload
+from app.services import worker_admin
+from app.services import queue_read
+from app.services import system_read
+from app.services import retention_admin
+from app.services import scan_policy_admin
+from app.services import hash_console
+from app.services import client_admin
+from app.services import profile_admin
+from app.services import credential_admin
+from app.services import ledger_read
+from app.services import user_admin
+from app.services import account
 from app.services.ingest import store_upload, configured_upload_max_bytes, UploadTooLargeError
 from app.services.scan_intake import enqueue_scan_from_stored_sample, NoEligibleEnginesError, DEFAULT_ARCHIVE_MODE
 from app.services.upload_admission import bounded_upload, upload_body_limit
@@ -64,15 +78,29 @@ class BrowserRoute(APIRoute):
                 request.state.ui_user = user
                 dashboard_read_allowed = request.method == "GET" and self.path in {
                     PREFIX + "/dashboard/summary", PREFIX + "/dashboard/scans",
+                    PREFIX + "/api-ledger",
+                    PREFIX + "/api-ledger/scans/{scan_id}",
+                    PREFIX + "/api-ledger/scans/{scan_id}/children",
+                    PREFIX + "/api-ledger/scans/{scan_id}/summary-export",
+                    PREFIX + "/api-ledger/scans/{scan_id}/export",
+                    PREFIX + "/api-ledger/scans/{scan_id}/result-json",
+                    PREFIX + "/api-ledger/scans/{scan_id}/status-json",
+                    PREFIX + "/api-ledger/scans/{scan_id}/results/{result_id}",
+                    PREFIX + "/api-ledger/scans/{scan_id}/results/{result_id}/full",
+                    PREFIX + "/api-ledger/batches/{batch_id}",
+                    PREFIX + "/api-ledger/batches/{batch_id}/json",
                     PREFIX + "/scans/options",
                     PREFIX + "/scans/{scan_id}", PREFIX + "/scans/{scan_id}/results/{result_id}",
+                    PREFIX + "/scans/{scan_id}/results/{result_id}/full",
                     PREFIX + "/scans/{scan_id}/children",
                     PREFIX + "/scans/{scan_id}/summary-export",
                     PREFIX + "/scans/{scan_id}/export",
                     PREFIX + "/batches/{batch_id}",
                 }
                 retry_allowed = request.method == 'POST' and self.path == PREFIX + '/scans/{scan_id}/retry'
-                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and user.role != "admin":
+                hash_allowed = (request.method == 'GET' and self.path == PREFIX + '/hash-scan/options') or (request.method == 'POST' and self.path == PREFIX + '/hash-scan')
+                account_allowed = (request.method == 'GET' and self.path == PREFIX + '/account') or (request.method == 'POST' and self.path == PREFIX + '/account/password')
+                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not hash_allowed and not account_allowed and user.role != "admin":
                     raise HTTPException(403, "Admin permission is required.")
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 origin = str(request.base_url).rstrip("/")
@@ -135,6 +163,21 @@ class SubmissionOptions(BaseModel):
     archive_mode: str
 
 
+@router.get('/api-ledger', response_model=ledger_read.LedgerPage)
+def browser_api_ledger(limit: int = Query(default=20, ge=1, le=100),
+    before: int | None = Query(default=None, ge=1, le=9007199254740991),
+    q: str = Query(default='', max_length=200),
+    source: Literal['all', 'api', 'icap'] = 'all',
+    status: Literal['all', 'active', 'queued', 'running', 'finalizing', 'completed', 'partial', 'failed', 'skipped'] = 'all',
+    risk: Literal['all', 'pending', 'info', 'metadata_only', 'low', 'medium', 'high', 'critical'] = 'all',
+    client_id: int | None = Query(default=None, ge=1, le=9007199254740991), unassigned: bool = False,
+):
+    if client_id is not None and unassigned:
+        raise HTTPException(422, 'Choose either a client ID or unassigned records.')
+    return ledger_read.page(limit=limit, before=before, query=q, source=source, status=status,
+                            risk=risk, client_id=client_id, unassigned=unassigned)
+
+
 class SubmissionAccepted(BaseModel):
     scan_id: int
     status: Literal["accepted"] = "accepted"
@@ -163,10 +206,27 @@ def read_archive_children(scan_id: int = Path(ge=1, le=9007199254740991),
     return archive_read.children(scan_id, limit=limit, after=after, attempt=attempt, query=q, status=status)
 
 
+@router.get('/api-ledger/scans/{scan_id}/children', response_model=archive_read.ArchivePage)
+def read_automation_archive_children(scan_id: int = Path(ge=1, le=9007199254740991),
+    limit: int = Query(default=20, ge=1, le=100), after: int | None = Query(default=None, ge=1, le=9007199254740991),
+    attempt: int | None = Query(default=None, ge=0, le=2147483647), q: str = Query(default='', max_length=200),
+    status: Literal['all', 'active', 'queued', 'running', 'finalizing', 'completed', 'partial', 'failed', 'skipped'] = 'all',
+):
+    if after is not None and attempt is None:
+        raise HTTPException(422, 'Archive pagination requires the parent attempt from the first page.')
+    return archive_read.children(scan_id, limit=limit, after=after, attempt=attempt, query=q, status=status, automation=True)
+
+
 @router.get('/scans/{scan_id}/results/{result_id}', response_model=scan_report_read.TechnicalDetails)
 def read_scan_technical_details(scan_id: int = Path(ge=1, le=9007199254740991),
                                 result_id: int = Path(ge=1, le=9007199254740991)):
     return scan_report_read.technical_details(scan_id, result_id)
+
+
+@router.get('/scans/{scan_id}/results/{result_id}/full', response_model=scan_report_read.FullTechnicalDetails)
+def read_full_engine_output(scan_id: int = Path(ge=1, le=9007199254740991),
+                            result_id: int = Path(ge=1, le=9007199254740991)):
+    return scan_report_read.full_technical_details(scan_id, result_id)
 
 
 @router.get('/batches/{batch_id}', response_model=batch_read.BatchPage)
@@ -179,6 +239,88 @@ def read_manual_batch(
     if (after_id is None) != (after_created is None):
         raise HTTPException(422, 'Batch pagination requires both cursor fields from the previous page.')
     return batch_read.page(batch_id, limit=limit, after_id=after_id, after_created=after_created)
+
+
+@router.get('/api-ledger/batches/{batch_id}/json', response_model=batch_payload.BatchPreview)
+def automation_batch_json(request: Request, batch_id: int = Path(ge=1, le=9007199254740991),
+                          kind: Literal['status', 'result'] = 'status'):
+    return batch_payload.preview(batch_id, kind, str(request.base_url))
+
+
+@router.get('/users', response_model=user_admin.UserPage)
+def browser_users(after: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return user_admin.page(after)
+
+
+@router.post('/users', response_model=user_admin.UserCreated, status_code=201)
+def browser_create_user(request: Request, body: user_admin.CreateUserBody):
+    set_audit_context(request, action='user.create', target_type='user', actor=request.state.ui_user,
+                      details={'username': body.username.strip(), 'role': body.role})
+    result = user_admin.create(body)
+    set_audit_context(request, target_id=result.user_id)
+    return result
+
+
+@router.put('/users/{user_id}', status_code=204)
+def browser_update_user(request: Request, body: user_admin.UpdateUserBody,
+                        user_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='user.update', target_type='user', target_id=user_id,
+                      actor=request.state.ui_user, details={'role': body.role, 'credentials_replaced': body.password is not None})
+    user_admin.manage(request.state.ui_user.id, user_id, expected_revision=body.expected_revision,
+                       role=body.role, password=body.password.get_secret_value() if body.password is not None else None)
+
+
+@router.delete('/users/{user_id}', status_code=204)
+def browser_delete_user(request: Request, body: user_admin.UserFence,
+                        user_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='user.delete', target_type='user', target_id=user_id, actor=request.state.ui_user)
+    user_admin.manage(request.state.ui_user.id, user_id, expected_revision=body.expected_revision, delete=True)
+
+
+@router.get('/api-ledger/scans/{scan_id}', response_model=scan_report_read.ScanReport)
+def automation_report(scan_id: int = Path(ge=1, le=9007199254740991)):
+    return scan_report_read.report(scan_id, automation=True)
+
+
+@router.get('/api-ledger/scans/{scan_id}/status-json', response_model=automation_payload.ResultPreview)
+def automation_status_json(request: Request, scan_id: int = Path(ge=1, le=9007199254740991)):
+    return automation_payload.status_preview(scan_id, str(request.base_url))
+
+
+@router.get('/api-ledger/scans/{scan_id}/result-json', response_model=automation_payload.ResultPreview)
+def automation_result_json(request: Request, scan_id: int = Path(ge=1, le=9007199254740991)):
+    return automation_payload.result_preview(scan_id, str(request.base_url))
+
+
+@router.get('/api-ledger/scans/{scan_id}/summary-export', response_model=scan_management.SummaryExport)
+def automation_summary_export(scan_id: int = Path(ge=1, le=9007199254740991), format: Literal['json', 'csv'] = 'json'):
+    return scan_management.summary_export(scan_id, format, automation=True)
+
+
+@router.get('/api-ledger/scans/{scan_id}/export', response_model=scan_management.SummaryExport)
+def automation_full_export(scan_id: int = Path(ge=1, le=9007199254740991), format: Literal['json', 'csv'] = 'json'):
+    return scan_management.full_export(scan_id, format, automation=True)
+
+
+@router.get('/api-ledger/scans/{scan_id}/results/{result_id}', response_model=scan_report_read.TechnicalDetails)
+def automation_technical(scan_id: int = Path(ge=1, le=9007199254740991), result_id: int = Path(ge=1, le=9007199254740991)):
+    return scan_report_read.technical_details(scan_id, result_id, automation=True)
+
+
+@router.get('/api-ledger/scans/{scan_id}/results/{result_id}/full', response_model=scan_report_read.FullTechnicalDetails)
+def automation_full_output(scan_id: int = Path(ge=1, le=9007199254740991), result_id: int = Path(ge=1, le=9007199254740991)):
+    return scan_report_read.full_technical_details(scan_id, result_id, automation=True)
+
+
+@router.get('/api-ledger/batches/{batch_id}', response_model=batch_read.BatchPage)
+def automation_batch(batch_id: int = Path(ge=1, le=9007199254740991),
+    limit: int = Query(default=20, ge=1, le=100),
+    after_id: int | None = Query(default=None, ge=1, le=9007199254740991),
+    after_created: str | None = Query(default=None, min_length=1, max_length=64),
+):
+    if (after_id is None) != (after_created is None):
+        raise HTTPException(422, 'Batch pagination requires both cursor fields from the previous page.')
+    return batch_read.page(batch_id, limit=limit, after_id=after_id, after_created=after_created, automation=True)
 
 
 @router.post("/scans", response_model=SubmissionAccepted, status_code=202)
@@ -228,6 +370,235 @@ class StrictBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class WorkerIdentityBody(StrictBody):
+    node_id: str = Field(min_length=1, max_length=128)
+
+
+@router.get('/system/queue', response_model=queue_read.ActiveQueuePage)
+def read_active_queue(limit: int = Query(default=20, ge=1, le=100),
+                       after: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return queue_read.page(limit=limit, after=after)
+
+
+@router.get('/system/summary', response_model=system_read.SystemSummary)
+def read_system_summary():
+    return system_read.summary()
+
+
+@router.get('/scan-policy', response_model=scan_policy_admin.ScanPolicySnapshot)
+def read_browser_scan_policy():
+    return scan_policy_admin.read()
+
+
+@router.get('/service-clients', response_model=client_admin.ServiceClientPage)
+def read_browser_service_clients(limit: int = Query(default=20, ge=1, le=100),
+                                after: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return client_admin.page(limit, after)
+
+
+@router.get('/service-clients/create-options', response_model=credential_admin.ClientCreateOptions)
+def browser_client_create_options():
+    return credential_admin.options()
+
+
+@router.post('/service-clients', response_model=credential_admin.ClientCreated, status_code=201)
+def browser_create_client(request: Request, body: credential_admin.ClientCreateBody):
+    set_audit_context(request, action='service_client.create', target_type='service_client', actor=request.state.ui_user)
+    result = credential_admin.create_client(body)
+    set_audit_context(request, target_id=result.client_id)
+    return result
+
+
+@router.get('/service-clients/{client_id}/credentials', response_model=credential_admin.CredentialPage)
+def browser_credentials(client_id: int = Path(ge=1, le=9007199254740991), after: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return credential_admin.page(client_id, after)
+
+
+@router.post('/service-clients/{client_id}/credentials', response_model=credential_admin.CredentialCreated, status_code=201)
+def browser_create_credential(request: Request, body: credential_admin.CredentialBody, client_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='api_credential.create', target_type='service_client', target_id=client_id, actor=request.state.ui_user)
+    return credential_admin.create_credential(client_id, body)
+
+
+@router.post('/service-clients/{client_id}/credentials/{credential_id}/revoke', status_code=204)
+def browser_revoke_credential(request: Request, client_id: int = Path(ge=1, le=9007199254740991), credential_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='api_credential.revoke', target_type='api_credential', target_id=credential_id, actor=request.state.ui_user)
+    credential_admin.revoke(client_id, credential_id)
+    return Response(status_code=204)
+
+
+@router.get('/service-clients/{client_id}/profiles', response_model=profile_admin.ClientProfiles)
+def read_browser_profiles(client_id: int = Path(ge=1, le=9007199254740991),
+                          after: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return profile_admin.page(client_id, after)
+
+
+@router.put('/service-clients/{client_id}/profiles/{profile_id}/engines', status_code=204)
+def save_browser_profile(request: Request, body: profile_admin.ProfileRoutingBody,
+                          client_id: int = Path(ge=1, le=9007199254740991), profile_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='scan_profile.engines_update', target_type='scan_profile', target_id=profile_id, actor=request.state.ui_user)
+    profile_admin.save(client_id, profile_id, body)
+    set_audit_context(request, details={'client_id': client_id, 'engine_ids': body.engine_ids})
+    return Response(status_code=204)
+
+
+@router.put('/service-clients/{client_id}', status_code=204)
+def update_browser_service_client(request: Request, body: client_admin.ServiceClientUpdate,
+                                  client_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='service_client.update', target_type='service_client',
+                      target_id=client_id, actor=request.state.ui_user)
+    client_admin.update(client_id, body)
+    set_audit_context(request, details={'enabled': body.enabled})
+    return Response(status_code=204)
+
+
+@router.get('/hash-scan/options', response_model=hash_console.HashLookupOptions)
+def read_hash_lookup_options():
+    return hash_console.options()
+
+
+@router.post('/hash-scan', response_model=hash_console.HashLookupResult)
+def browser_hash_lookup(request: Request, body: hash_console.HashLookupBody):
+    set_audit_context(request, action='hash_scan.lookup', target_type='hash', actor=request.state.ui_user)
+    result = hash_console.lookup(body)
+    set_audit_context(request, details={'action': result.action, 'engine_count': len(result.results)})
+    return result
+
+
+@router.put('/scan-policy', status_code=204)
+def save_browser_scan_policy(request: Request, body: scan_policy_admin.ScanPolicyBody):
+    set_audit_context(request, action='scan_policy.update', target_type='scan_policy', actor=request.state.ui_user)
+    resolved = scan_policy_admin.save(body)
+    set_audit_context(request, details={'settings': resolved})
+    return Response(status_code=204)
+
+
+@router.get('/system/retention', response_model=retention_admin.RetentionPage)
+def read_retention_candidates(after: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return retention_admin.preview(after)
+
+
+@router.post('/system/retention/run', response_model=scan_management.BulkDeleteResult)
+def run_browser_retention(request: Request, body: retention_admin.RetentionRunBody):
+    set_audit_context(request, action='retention.run', target_type='scan', actor=request.state.ui_user,
+                      details={'requested_ids': [item.scan_id for item in body.scans]})
+    result = retention_admin.run(body)
+    set_audit_context(request, details=result.model_dump())
+    system_read._summary_cache = system_read._metrics_cache = None
+    dashboard_read._summary_cache = None
+    return result
+
+
+@router.get('/system/engine-metrics', response_model=system_read.EngineMetricPage)
+def read_engine_metrics(limit: int = Query(default=20, ge=1, le=100),
+                        after: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return system_read.metrics(limit=limit, after=after)
+
+
+class PoolCreateBody(StrictBody):
+    name: str = Field(min_length=1, max_length=100)
+    selector: str = Field(min_length=1, max_length=4096)
+
+
+class PoolUpdateBody(PoolCreateBody):
+    enabled: bool
+
+
+class PoolSaved(BaseModel):
+    id: int
+
+
+def browser_pool_values(body: PoolCreateBody) -> tuple[str, str]:
+    try:
+        name, selector = worker_admin.normalized_pool_form(body.name, body.selector)
+    except RecursionError as exc:
+        raise HTTPException(422, 'Worker pool selector is too deeply nested.') from exc
+    if selector == '{}' or len(selector) > 4096:
+        raise HTTPException(422, 'Supply a non-empty selector within 4096 serialized characters.')
+    return name, selector
+
+
+@router.get('/system/pools', response_model=worker_admin.PoolPage)
+def read_worker_pools(limit: int = Query(default=20, ge=1, le=100),
+                      after: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return worker_admin.pool_page(limit=limit, after=after)
+
+
+@router.post('/system/pools', response_model=PoolSaved, status_code=201)
+def create_browser_pool(request: Request, body: PoolCreateBody):
+    name, selector = browser_pool_values(body)
+    pool_id = db.create_worker_pool(name, selector)
+    set_audit_context(request, action='worker_pool.create', target_type='worker_pool',
+        target_id=pool_id, actor=request.state.ui_user)
+    return PoolSaved(id=pool_id)
+
+
+@router.put('/system/pools/{pool_id}', response_model=PoolSaved)
+def update_browser_pool(request: Request, body: PoolUpdateBody, pool_id: int = Path(ge=1, le=9007199254740991)):
+    name, selector = browser_pool_values(body)
+    if not db.update_worker_pool(pool_id, name=name, selector_json=selector, enabled=body.enabled):
+        raise HTTPException(404, 'Worker pool not found.')
+    set_audit_context(request, action='worker_pool.update', target_type='worker_pool',
+        target_id=pool_id, actor=request.state.ui_user)
+    return PoolSaved(id=pool_id)
+
+
+@router.delete('/system/pools/{pool_id}', status_code=204)
+def delete_browser_pool(request: Request, pool_id: int = Path(ge=1, le=9007199254740991)):
+    try:
+        deleted = db.delete_worker_pool(pool_id)
+    except (ValueError, *db.IntegrityViolation) as exc:
+        raise HTTPException(409, 'Pool is still assigned or changed concurrently. Refresh and remove engine assignments first.') from exc
+    except db.DatabaseOperationalError as exc:
+        if getattr(exc, 'sqlstate', None) == '23503':
+            raise HTTPException(409, 'Pool acquired an engine assignment. Refresh and remove assignments first.') from exc
+        raise
+    if not deleted:
+        raise HTTPException(404, 'Worker pool not found.')
+    set_audit_context(request, action='worker_pool.delete', target_type='worker_pool',
+        target_id=pool_id, actor=request.state.ui_user)
+    return Response(status_code=204)
+
+
+class WorkerLifecycleBody(WorkerIdentityBody):
+    lifecycle_state: Literal['active', 'draining', 'disabled']
+
+
+class WorkerLifecycleSaved(BaseModel):
+    node_id: str
+    lifecycle_state: str
+
+
+class WorkerCredentialsRevoked(BaseModel):
+    node_id: str
+    revoked_count: int
+
+
+@router.get('/system/workers', response_model=worker_admin.WorkerPage)
+def read_system_workers(limit: int = Query(default=20, ge=1, le=100),
+                        after: str | None = Query(default=None, min_length=1, max_length=128)):
+    return worker_admin.page(limit=limit, after=after)
+
+
+@router.post('/system/workers/lifecycle', response_model=WorkerLifecycleSaved)
+def change_worker_lifecycle(request: Request, body: WorkerLifecycleBody):
+    if not db.update_worker_node_lifecycle(body.node_id, body.lifecycle_state):
+        raise HTTPException(404, 'Worker node not found.')
+    set_audit_context(request, action='worker.lifecycle.update', target_type='worker_node',
+        target_id=body.node_id, actor=request.state.ui_user, details={'lifecycle_state': body.lifecycle_state})
+    return WorkerLifecycleSaved(node_id=body.node_id, lifecycle_state=body.lifecycle_state)
+
+
+@router.post('/system/workers/credentials/revoke', response_model=WorkerCredentialsRevoked)
+def revoke_worker_credentials(request: Request, body: WorkerIdentityBody):
+    revoked = db.revoke_worker_agent_credentials(body.node_id)
+    if revoked == 0:
+        raise HTTPException(409, 'No active agent credential found. Refresh the worker list.')
+    set_audit_context(request, action='worker.credential.revoke', target_type='worker_node',
+        target_id=body.node_id, actor=request.state.ui_user, details={'revoked_count': revoked})
+    return WorkerCredentialsRevoked(node_id=body.node_id, revoked_count=revoked)
+
+
 class ScanAttemptBody(StrictBody):
     attempt: int = Field(ge=0, le=2147483647)
     job_revision: int = Field(ge=0, le=9007199254740991)
@@ -260,6 +631,26 @@ def delete_manual_scan(request: Request, body: ScanAttemptBody, scan_id: int = P
     set_audit_context(request, details={'expected_attempt': body.attempt, 'sample_removed': result.sample_removed})
     return result
 
+
+@router.delete('/api-ledger/scans/{scan_id}', response_model=scan_management.ScanDeleted)
+def delete_automation_scan(request: Request, body: ScanAttemptBody, scan_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='scan.delete', target_type='scan', target_id=scan_id, actor=request.state.ui_user)
+    result = scan_management.delete(scan_id, body.attempt, body.job_revision, automation=True)
+    set_audit_context(request, details={'sample_removed': result.sample_removed})
+    return result
+
+
+@router.delete('/api-ledger/scans', response_model=scan_management.BulkDeleteResult)
+def bulk_delete_automation_scans(request: Request, body: scan_management.BulkDeleteBody):
+    result = scan_management.bulk_delete(body.scans, automation=True)
+    set_audit_context(request, action='scan.bulk_delete', target_type='scan',
+        actor=request.state.ui_user, details={
+            'requested_count': result.requested_count,
+            'deleted_count': len(result.deleted_ids),
+            'blocked_count': len(result.blocked_ids),
+            'cleanup_failed_count': len(result.cleanup_failed_ids),
+        })
+    return result
 
 @router.delete('/scans', response_model=scan_management.BulkDeleteResult)
 def bulk_delete_manual_scans(request: Request, body: scan_management.BulkDeleteBody):
@@ -394,6 +785,22 @@ def session_payload(user, token: str):
 @router.get("/session", response_model=SessionPayload)
 def session(request: Request):
     return session_payload(request.state.ui_user, request.cookies[auth.SESSION_COOKIE])
+
+
+@router.get('/account', response_model=account.AccountPayload)
+def own_account(request: Request):
+    user = request.state.ui_user
+    return account.AccountPayload(user_id=user.id, username=user.username[:128],
+                                  role=user.role, auth_source=user.auth_source)
+
+
+@router.post('/account/password', status_code=204)
+def change_own_password(request: Request, body: account.PasswordChangeBody, response: Response):
+    user = request.state.ui_user
+    set_audit_context(request, action='user.password_change', target_type='user', target_id=user.id, actor=user)
+    account.change_password(user, body.current_password.get_secret_value(),
+                            body.new_password.get_secret_value(), body.confirm_password.get_secret_value())
+    response.delete_cookie(auth.SESSION_COOKIE, path='/')
 
 
 @router.post("/session/login", response_model=SessionPayload)

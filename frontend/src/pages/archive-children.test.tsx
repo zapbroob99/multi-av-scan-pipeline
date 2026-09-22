@@ -11,16 +11,28 @@ const payload: ArchivePage = { parent_id: 42, parent_filename: 'outer.zip', pare
   items: [43, 44].map(id => ({ id, path: '<script>alert(1)</script>', path_truncated: false, filename: 'child.zip',
     size_bytes: 12, status: 'failed', risk_score: 0, risk_level: 'info', has_children: id === 43 })) }
 
-function mount(page = payload, path = '/scans/42/children') {
+function mount(page = payload, path = '/scans/42/children', automation = false) {
   const fetcher = vi.fn(async (_url: string) => new Response(JSON.stringify(page)))
   vi.stubGlobal('fetch', fetcher)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Routes>
-    <Route path="/scans/:scanId/children" element={<ArchiveChildren />} /></Routes></MemoryRouter></QueryClientProvider>)
+    <Route path="/scans/:scanId/children" element={<ArchiveChildren automation={automation} />} /></Routes></MemoryRouter></QueryClientProvider>)
   return fetcher
 }
 
 describe('Archive child navigation', () => {
+  it('keeps automation report, nested, upward and batch links in automation scope', async () => {
+    const fetcher = mount({ ...payload, parent_scan_id: 40 }, '/scans/42/children', true)
+    await screen.findByText('outer.zip')
+    expect(fetcher.mock.calls[0][0]).toContain('/api/ui/v1/api-ledger/scans/42/children')
+    expect(screen.getByRole('link', { name: 'Parent report' })).toHaveAttribute('href', '/api-ledger/scans/42')
+    expect(screen.getByRole('link', { name: 'Browse children of #43' })).toHaveAttribute('href', '/api-ledger/scans/43/children')
+    expect(screen.getByRole('link', { name: 'Up one level' })).toHaveAttribute('href', '/api-ledger/scans/40/children')
+    expect(screen.getByRole('link', { name: 'Batch overview' })).toHaveAttribute('href', '/api-ledger/batches/1')
+    expect(screen.getByRole('link', { name: 'Open report #44' })).toHaveAttribute('href', '/api-ledger/scans/44')
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    await waitFor(() => expect(fetcher.mock.calls.at(-1)?.[0]).toContain('after=44&attempt=2'))
+  })
   it('renders duplicate paths as text with distinct ID links, never a clean decision', async () => {
     mount()
     const paths = await screen.findAllByRole('link', { name: '<script>alert(1)</script>' })

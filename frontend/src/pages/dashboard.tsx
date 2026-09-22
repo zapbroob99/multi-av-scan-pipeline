@@ -106,11 +106,11 @@ export default function Dashboard({ session }: { session: Session }) {
     {scans.isPending ? <div role="status" className="skeleton">Loading scan history…</div> : scans.data && <>
       {scans.data.items.length === 0 ? <div className="empty"><h2>No scans found</h2><p>Change the filters or return to the latest submissions.</p></div> :
         <div className="history-table-wrap" tabIndex={0} role="region" aria-label="Scan history table"><table className="history-table">
-          <thead><tr>{session.user.role === 'admin' && <th scope="col">Select</th>}<th scope="col">Sample</th><th scope="col">Status</th><th scope="col">Recorded risk</th><th scope="col">Submitted</th></tr></thead>
+          <thead><tr>{session.user.role === 'admin' && <th scope="col" className="selection-column">Select</th>}<th scope="col" className="sample-column">Sample</th><th scope="col">Status</th><th scope="col">Recorded risk</th><th scope="col">Submitted</th></tr></thead>
           <tbody>{scans.data.items.map(scan => <tr key={scan.id}>
-            {session.user.role === 'admin' && <td><input type="checkbox" aria-label={`Select scan ${scan.id}`} checked={selectedIds.has(scan.id)}
+            {session.user.role === 'admin' && <td className="selection-column"><input type="checkbox" aria-label={`Select scan ${scan.id}`} checked={selectedIds.has(scan.id)}
               disabled={['queued', 'running', 'finalizing'].includes(scan.status) || deletion.isPending} onChange={() => toggle(scan.id)} /></td>}
-            <td><Link className="sample-link" to={`/scans/${scan.id}`}>{scan.filename}</Link>
+            <td className="sample-column"><Link className="sample-link" to={`/scans/${scan.id}`}>{scan.filename}</Link>
               <small className="sample-hash" title={scan.sha256}>{scan.sha256}</small>
               <small>#{scan.id} · {(scan.size_bytes / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} KB{scan.case_name ? ` · ${scan.case_name}` : ''}</small></td>
             <td><span className={`health-pill ${scan.status === 'failed' ? 'health-failed' : ''}`}>{scan.status}</span></td>

@@ -1,4 +1,5 @@
-"""Manual browser operations; reuse the queue and bounded report boundary."""
+"""Browser operations sharing queue protections; manual by default."""
+from contextlib import nullcontext
 import csv
 import io
 import json
@@ -84,9 +85,14 @@ def retry(scan_id: int, attempt: int, job_revision: int) -> RetryAccepted:
 
 
 def delete(scan_id: int, attempt: int, job_revision: int, *,
-           allowed_scan_roles: frozenset[str] | None = None) -> ScanDeleted:
-    manual_scan(scan_id)
-    scan = db.delete_scan(scan_id, source='manual', expected_attempt=attempt, protect_children=True,
+           allowed_scan_roles: frozenset[str] | None = None, automation: bool = False) -> ScanDeleted:
+    if automation:
+        current = db.get_scan(scan_id)
+        if current is None or current.source not in {'api', 'icap'}:
+            raise HTTPException(404, 'Automation scan not found.')
+    else:
+        current = manual_scan(scan_id)
+    scan = db.delete_scan(scan_id, source=current.source, expected_attempt=attempt, protect_children=True,
                           allowed_scan_roles=allowed_scan_roles,
                           expected_job_revision=job_revision,
                           lock_timeout_ms=write_lock_timeout_ms())
@@ -101,7 +107,7 @@ def delete(scan_id: int, attempt: int, job_revision: int, *,
     return ScanDeleted(scan_id=scan_id, sample_removed=removed)
 
 
-def bulk_delete(candidates: list[BulkDeleteCandidate]) -> BulkDeleteResult:
+def bulk_delete(candidates: list[BulkDeleteCandidate], *, automation: bool = False) -> BulkDeleteResult:
     ids = [candidate.scan_id for candidate in candidates]
     if len(set(ids)) != len(ids):
         raise HTTPException(422, 'Each selected scan may appear only once.')
@@ -110,10 +116,10 @@ def bulk_delete(candidates: list[BulkDeleteCandidate]) -> BulkDeleteResult:
     cleanup_failed_ids: list[int] = []
     for candidate in candidates:
         try:
-            # The locked delete rechecks this Dashboard-only role boundary along
+            # The locked delete rechecks this top-level history role boundary along
             # with source, attempt, job revision and all existing protections.
             result = delete(candidate.scan_id, candidate.attempt, candidate.job_revision,
-                            allowed_scan_roles=DASHBOARD_DELETE_ROLES)
+                            allowed_scan_roles=DASHBOARD_DELETE_ROLES, automation=automation)
         except HTTPException as exc:
             if exc.status_code not in {404, 409}:
                 raise
@@ -126,9 +132,9 @@ def bulk_delete(candidates: list[BulkDeleteCandidate]) -> BulkDeleteResult:
                             blocked_ids=blocked_ids, cleanup_failed_ids=cleanup_failed_ids)
 
 
-def summary_export(scan_id: int, format: Literal['json', 'csv']) -> SummaryExport:
-    report = scan_report_read.report(scan_id)
-    payload = {'schema_version': 1, 'scope': EXPORT_SCOPE, 'report': report.model_dump(mode='json')}
+def summary_export(scan_id: int, format: Literal['json', 'csv'], *, automation: bool = False) -> SummaryExport:
+    report = scan_report_read.report(scan_id, automation=automation)
+    payload = {'schema_version': 1, 'scope': EXPORT_SCOPE.replace('Manual', 'Automation') if automation else EXPORT_SCOPE, 'report': report.model_dump(mode='json')}
     if format == 'json':
         content = json.dumps(payload, ensure_ascii=False, indent=2)
     else:
@@ -157,11 +163,13 @@ def summary_export(scan_id: int, format: Literal['json', 'csv']) -> SummaryExpor
                          media_type='application/json' if format == 'json' else 'text/csv', content=content)
 
 
-def _full_export_rows(scan_id: int):
-    with db.connect() as connection:
-        connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+def _full_export_rows(scan_id: int, *, automation: bool = False, connection=None):
+    owned = connection is None
+    with (db.connect() if owned else nullcontext(connection)) as connection:
+        if owned:
+            connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
         apply_read_budget(connection)
-        row = connection.execute('''SELECT j.id, j.sample_id, j.case_name, j.priority, j.note, j.source,
+        row = connection.execute(f'''SELECT j.id, j.sample_id, j.case_name, j.priority, j.note, j.source,
             j.batch_id, j.parent_scan_id, j.relative_path, j.scan_role, j.service_client_id,
             j.scan_profile_id, SUBSTR(j.profile_snapshot_json, 1, ?) AS profile_snapshot_json,
             j.status, j.verdict, j.risk_score, j.created_at, j.started_at, j.completed_at,
@@ -169,10 +177,10 @@ def _full_export_rows(scan_id: int):
             '' AS stored_filename, '' AS storage_path, s.content_type, s.size_bytes,
             s.md5, s.sha1, s.sha256
             FROM scan_jobs j JOIN samples s ON s.id = j.sample_id
-            WHERE j.id = ? AND j.source = 'manual' ''',
+            WHERE j.id = ? AND {scan_report_read.source_clause(automation)} ''',
             (scan_report_read.SNAPSHOT_LIMIT + 1, scan_id)).fetchone()
         if row is None:
-            raise HTTPException(404, 'Manual scan not found.')
+            raise HTTPException(404, 'Automation scan not found.' if automation else 'Manual scan not found.')
         scan = db.row_to_scan_record(row)
         if len(scan.profile_snapshot_json) > scan_report_read.SNAPSHOT_LIMIT:
             raise HTTPException(413, 'Full export routing snapshot exceeds the browser limit. Use the legacy export.')
@@ -204,6 +212,10 @@ def _full_export_rows(scan_id: int):
         snapshot = parse_profile_snapshot(scan)
         if isinstance(snapshot.get('engines'), list) or jobs:
             required = required_detection_engine_names(scan, jobs=jobs)
+        elif automation:
+            # Do not reconstruct historical automation coverage using today's global
+            # or profile routing; a bounded coherent snapshot is unavailable.
+            raise HTTPException(413, 'Historical automation routing has no snapshot or engine jobs. Use the legacy export.')
         else:
             instances = connection.execute('''SELECT adapter_key, display_name FROM engine_instances
                 WHERE enabled ORDER BY id''').fetchall()
@@ -225,8 +237,8 @@ def _full_export_rows(scan_id: int):
     return scan, results, required, policy_complete
 
 
-def full_export(scan_id: int, format: Literal['json', 'csv']) -> SummaryExport:
-    scan, results, required, policy_complete = _full_export_rows(scan_id)
+def full_export(scan_id: int, format: Literal['json', 'csv'], *, automation: bool = False) -> SummaryExport:
+    scan, results, required, policy_complete = _full_export_rows(scan_id, automation=automation)
     payload = build_scan_report_payload(
         scan, results, required_names=required, decision_available=policy_complete
     )

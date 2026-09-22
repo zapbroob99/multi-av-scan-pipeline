@@ -85,7 +85,7 @@ export default function ScanManagement({ session }: { session: Session }) {
             {session.user.role === 'admin' && <Button variant="destructive" disabled={busy || report.isFetching || active} onClick={() => setConfirmation({ action: 'delete', attempt: scan.attempt_count, job_revision: scan.job_revision ?? 0 })}>Delete scan</Button>}</div>
           <p className="muted">Deletion requires an administrator. Scans with registered children, shared samples or undelivered notifications are protected.</p>
         </section></>}
-      <p className="callout"><a href={`/scans/${scanId}/export.json`}>Legacy JSON fallback</a> · <a href={`/scans/${scanId}/export.csv`}>Legacy CSV fallback</a> · <a href={`/scans/${scanId}`}>Legacy full-output view</a></p>
+      <p className="callout"><Link to={`/scans/${scanId}`}>Open an engine's full output from the report</Link> · <a href={`/scans/${scanId}/export.json`}>Legacy JSON fallback</a> · <a href={`/scans/${scanId}/export.csv`}>Legacy CSV fallback</a></p>
     </>}
     <Dialog open={confirmation !== null} onOpenChange={open => { if (!open && !busy) setConfirmation(null) }}
       title={confirmation?.action === 'delete' ? 'Delete this scan?' : 'Retry this scan?'}

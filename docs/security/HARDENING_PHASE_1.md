@@ -98,6 +98,14 @@ batch-page reads, passed its default single-query and eight-way
 mixed-read budgets. This was loopback, warm-cache traffic without worker writes;
 no live MASP database migration or installed-SCM acceptance was performed.
 
+The 2026-09-11 full-engine-output slice passed 676 Python tests (674 passed,
+two platform skips) with a separate disposable PostgreSQL instance. Its per-result
+reader checks source bytes before hydration in the same snapshot and also limits
+serialized JSON to 2 MiB. SQLite retry-deletion and PostgreSQL concurrent-growth
+tests preserve the admitted snapshot. React displays inert text and discards
+inactive output caches. This does not close large-output concurrency, TOAST,
+serialization-memory or production proxy/TLS acceptance gates.
+
 - Repeat Windows installed-SCM identity and failure/failover acceptance; unit
   heartbeat coverage does not replace real Defender/service-policy validation.
 - Validate POSIX no-follow behavior on Linux, not only Windows handle checks.
@@ -108,3 +116,20 @@ no live MASP database migration or installed-SCM acceptance was performed.
   and stream ICAP intake.
 - Measure concurrent uploads and queue drain with p95/p99 latency, event-loop
   lag, DB load, memory, disk I/O, and complete-versus-partial engine coverage.
+
+
+## Local password/session transaction hardening (2026-09-22)
+
+Own-password changes in both browser UIs now update only the verified local hash
+and revoke all existing sessions atomically. Concurrent role edits are preserved;
+stale password changes fail rather than overwrite a newer change/reset. Local
+session issuance locks the same user row and rechecks its verified password hash,
+so an old-password login cannot insert a surviving session after revocation.
+Legacy admin password resets also revoke sessions within their update transaction.
+Existing in-flight requests are not cancelled. LDAP authentication remains separate.
+Startup adds an auth-session user index; production-sized index creation and
+login/revocation load remain acceptance items. Administrative edit/delete now shares transactional last-admin and self-management
+protections across legacy and React. Browser actions additionally fence the displayed
+management revision, and the actor role is rechecked under the write lock. All app
+processes must be upgraded together for these guarantees; mixed old/new writers
+are not covered. LDAP shadow removal does not disable the directory account.

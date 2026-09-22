@@ -23,7 +23,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.models import EngineResultRecord
+from app.models import EngineResultRecord, ScanRecord, ScanBatchRecord
+from app.services.timing import build_scan_timing_payload
 
 
 def public_engine_result_brief(result: EngineResultRecord) -> dict[str, object]:
@@ -140,3 +141,70 @@ def create_api_scan_result_payload(
     payload["decision"] = decision_payload
     payload["links"] = links
     return payload
+
+
+def build_scan_summary_payload(scan: ScanRecord) -> dict[str, object]:
+    # Vendor-safe projection: internal identifiers (sample_id), operator-only
+    # bookkeeping (attempt_count, last_error) and free-form operator text
+    # (case_name, priority, note, source) are deliberately omitted from the
+    # public API. storage_path / stored_filename are never included here.
+    return {
+        "id": scan.id,
+        "filename": scan.original_filename,
+        "status": scan.status,
+        "verdict": scan.verdict,
+        "risk_score": scan.risk_score,
+        "created_at": scan.created_at,
+        "started_at": scan.started_at,
+        "completed_at": scan.completed_at,
+        "failed_at": scan.failed_at,
+        "content_type": scan.content_type,
+        "size_bytes": scan.size_bytes,
+        "batch": {
+            "id": scan.batch_id,
+            "parent_scan_id": scan.parent_scan_id,
+            "relative_path": scan.relative_path,
+            "role": scan.scan_role,
+        },
+        "timing": build_scan_timing_payload(scan),
+        "hashes": {
+            "md5": scan.md5,
+            "sha1": scan.sha1,
+            "sha256": scan.sha256,
+        },
+    }
+
+
+def build_batch_summary_payload(
+    batch: ScanBatchRecord,
+    scans: list[ScanRecord],
+    links: dict[str, str],
+) -> dict[str, object]:
+    container_scan = next((scan for scan in scans if scan.scan_role == "container"), None)
+    child_count = sum(1 for scan in scans if scan.scan_role == "child")
+    return {
+        "id": batch.id,
+        "source": batch.source,
+        "original_filename": batch.original_filename,
+        "archive_mode": batch.archive_mode,
+        "status": batch.status,
+        "counts": {
+            "total_items": batch.total_items,
+            "queued_items": batch.queued_items,
+            "running_items": batch.running_items,
+            "completed_items": batch.completed_items,
+            "failed_items": batch.failed_items,
+            "malicious_items": batch.malicious_items,
+            "skipped_items": batch.skipped_items,
+            "child_items": child_count,
+        },
+        "container_scan_id": None if container_scan is None else container_scan.id,
+        # Free-form batch metadata and operator error text are omitted from the
+        # public API: metadata may carry internal extraction detail and
+        # last_error may leak internal paths/messages.
+        "created_at": batch.created_at,
+        "updated_at": batch.updated_at,
+        "completed_at": batch.completed_at,
+        "completed": batch.status == "completed",
+        "links": links,
+    }

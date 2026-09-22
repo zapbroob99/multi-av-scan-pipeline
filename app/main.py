@@ -18,7 +18,6 @@ from app.database import (
     count_audit_events,
     count_scan_history,
     count_scans_older_than,
-    count_users_by_role,
     create_deferred_scan_submission,
     create_worker_pool,
     create_api_client_credential,
@@ -26,7 +25,6 @@ from app.database import (
     create_scan_engine_jobs,
     create_user,
     delete_scan,
-    delete_user,
     delete_worker_pool,
     get_scan,
     get_deferred_scan_submission,
@@ -34,7 +32,6 @@ from app.database import (
     get_scan_queue_position,
     get_queue_metrics,
     get_scan_counts,
-    get_user_by_id,
     get_user_by_username,
     init_db,
     list_active_scans,
@@ -63,7 +60,6 @@ from app.database import (
     set_scan_profile_engines,
     update_scan_assessment,
     update_service_client,
-    update_user,
     update_worker_node_lifecycle,
     update_worker_pool,
     set_engine_instance_worker_pool,
@@ -94,10 +90,8 @@ from app.services.auth import (
     require_api_token,
     require_admin,
     require_user,
-    revoke_user_sessions,
     session_cookie_secure,
     seed_default_users,
-    verify_password,
 )
 from app.services.ldap_auth import ldap_enabled
 from app.services.audit import (
@@ -109,6 +103,7 @@ from app.services.audit import (
 from app.services.decisions import ScanDecision
 from app.services import api_schemas
 from app.services import metrics
+from app.services import account, user_admin
 from app.services.engine_registry import (
     ADAPTERS,
     ROADMAP_ADAPTERS,
@@ -181,7 +176,6 @@ from app.services.worker_runtime import get_worker_status
 from app.services.worker_control import router as worker_control_router
 from app.services.worker_scheduling import (
     eligible_worker_node_ids_for_engine_instance,
-    parse_worker_pool_selector,
     schedulable_engine_instance_ids,
 )
 from app.services.virustotal import (
@@ -1242,35 +1236,8 @@ def api_batch_links(request: Request, batch_id: int) -> dict[str, str]:
 
 
 def build_scan_summary_payload(scan: ScanRecord) -> dict[str, object]:
-    # Vendor-safe projection: internal identifiers (sample_id), operator-only
-    # bookkeeping (attempt_count, last_error) and free-form operator text
-    # (case_name, priority, note, source) are deliberately omitted from the
-    # public API. storage_path / stored_filename are never included here.
-    return {
-        "id": scan.id,
-        "filename": scan.original_filename,
-        "status": scan.status,
-        "verdict": scan.verdict,
-        "risk_score": scan.risk_score,
-        "created_at": scan.created_at,
-        "started_at": scan.started_at,
-        "completed_at": scan.completed_at,
-        "failed_at": scan.failed_at,
-        "content_type": scan.content_type,
-        "size_bytes": scan.size_bytes,
-        "batch": {
-            "id": scan.batch_id,
-            "parent_scan_id": scan.parent_scan_id,
-            "relative_path": scan.relative_path,
-            "role": scan.scan_role,
-        },
-        "timing": build_scan_timing_payload(scan),
-        "hashes": {
-            "md5": scan.md5,
-            "sha1": scan.sha1,
-            "sha256": scan.sha256,
-        },
-    }
+    from app.services.api_payloads import build_scan_summary_payload as public_summary
+    return public_summary(scan)
 
 
 def scan_batch_is_terminal(batch: ScanBatchRecord) -> bool:
@@ -1278,38 +1245,10 @@ def scan_batch_is_terminal(batch: ScanBatchRecord) -> bool:
 
 
 def build_scan_batch_summary_payload(
-    request: Request,
-    batch: ScanBatchRecord,
-    scans: list[ScanRecord],
+    request: Request, batch: ScanBatchRecord, scans: list[ScanRecord],
 ) -> dict[str, object]:
-    container_scan = next((scan for scan in scans if scan.scan_role == "container"), None)
-    child_count = sum(1 for scan in scans if scan.scan_role == "child")
-    return {
-        "id": batch.id,
-        "source": batch.source,
-        "original_filename": batch.original_filename,
-        "archive_mode": batch.archive_mode,
-        "status": batch.status,
-        "counts": {
-            "total_items": batch.total_items,
-            "queued_items": batch.queued_items,
-            "running_items": batch.running_items,
-            "completed_items": batch.completed_items,
-            "failed_items": batch.failed_items,
-            "malicious_items": batch.malicious_items,
-            "skipped_items": batch.skipped_items,
-            "child_items": child_count,
-        },
-        "container_scan_id": None if container_scan is None else container_scan.id,
-        # Free-form batch metadata and operator error text are omitted from the
-        # public API: metadata may carry internal extraction detail and
-        # last_error may leak internal paths/messages.
-        "created_at": batch.created_at,
-        "updated_at": batch.updated_at,
-        "completed_at": batch.completed_at,
-        "completed": scan_batch_is_terminal(batch),
-        "links": api_batch_links(request, batch.id),
-    }
+    from app.services.api_payloads import build_batch_summary_payload
+    return build_batch_summary_payload(batch, scans, api_batch_links(request, batch.id))
 
 
 def build_scan_batch_status_payload(
@@ -6787,11 +6726,8 @@ def system_page(
 
 
 def normalized_worker_pool_form(name: str, selector: str) -> tuple[str, str]:
-    clean_name = name.strip()
-    if not clean_name or len(clean_name) > 100:
-        raise ValueError("Worker pool name must be between 1 and 100 characters.")
-    parsed_selector = parse_worker_pool_selector(selector)
-    return clean_name, json.dumps(parsed_selector, sort_keys=True)
+    from app.services.worker_admin import normalized_pool_form
+    return normalized_pool_form(name, selector)
 
 
 @app.post("/worker-pools/create")
@@ -7328,10 +7264,8 @@ def service_clients_page(request: Request, message: str = "", error: str = "") -
 
 
 def validated_api_token(api_token: str) -> str:
-    token = api_token.strip()
-    if len(token) < 32 or len(token) > 512 or any(character.isspace() for character in token):
-        raise ValueError("API tokens must contain 32 to 512 non-whitespace characters.")
-    return token
+    from app.services.credential_admin import validated_api_token as validate_token
+    return validate_token(api_token)
 
 
 @app.post("/service-clients/create")
@@ -7500,81 +7434,25 @@ def update_user_route(
 ) -> RedirectResponse:
     admin_user = require_admin(request)
     set_audit_context(request, action="user.update", target_type="user", target_id=user_id)
-    target_user = get_user_by_id(user_id)
-    if target_user is None:
-        set_audit_context(request, outcome="failure", details={"reason": "not_found"})
-        return RedirectResponse(url="/users?error=User%20not%20found.", status_code=303)
-    if admin_user.id == user_id:
-        set_audit_context(request, outcome="denied", details={"reason": "self_management_blocked"})
-        return RedirectResponse(url="/users?error=Use%20Account%20to%20manage%20your%20own%20credentials.", status_code=303)
-    if target_user.auth_source == "ldap":
-        set_audit_context(request, outcome="denied", details={"reason": "directory_managed"})
-        return RedirectResponse(
-            url="/users?error=LDAP%20users%20are%20managed%20by%20the%20directory.",
-            status_code=303,
-        )
-
-    normalized_role = normalize_role(role)
-    if password and len(password) < 8:
-        set_audit_context(request, outcome="failure", details={"reason": "password_policy"})
-        return RedirectResponse(url="/users?error=Password%20must%20be%20at%20least%208%20characters.", status_code=303)
-    if (
-        target_user.role == ROLE_ADMIN
-        and normalized_role != ROLE_ADMIN
-        and count_users_by_role(ROLE_ADMIN, "local") <= 1
-    ):
-        set_audit_context(request, outcome="denied", details={"reason": "last_admin"})
-        return RedirectResponse(url="/users?error=At%20least%20one%20admin%20must%20remain%20active.", status_code=303)
-
-    new_password_hash = hash_password(password) if password else None
-    update_user(user_id, normalized_role, new_password_hash)
-    if new_password_hash is not None:
-        revoke_user_sessions(user_id)
-    set_audit_context(
-        request,
-        action="user.update",
-        target_type="user",
-        target_id=user_id,
-        details={"username": target_user.username, "role": normalized_role, "password_changed": bool(password)},
-    )
-    return RedirectResponse(
-        url=f"/users?message={quote(f'Updated user {target_user.username}.')}",
-        status_code=303,
-    )
+    try:
+        user_admin.manage(admin_user.id, user_id, role=normalize_role(role), password=password or None)
+    except HTTPException as exc:
+        set_audit_context(request, outcome="denied" if exc.status_code == 403 else "failure")
+        return RedirectResponse(url=f"/users?error={quote(str(exc.detail))}", status_code=303)
+    set_audit_context(request, details={"role": normalize_role(role), "credentials_replaced": bool(password)})
+    return RedirectResponse(url=f"/users?message={quote(f'Updated user #{user_id}.')}", status_code=303)
 
 
 @app.post("/users/{user_id}/delete")
 def delete_user_route(request: Request, user_id: int) -> RedirectResponse:
     user = require_admin(request)
     set_audit_context(request, action="user.delete", target_type="user", target_id=user_id)
-    if user.id == user_id:
-        set_audit_context(request, outcome="denied", details={"reason": "self_delete"})
-        return RedirectResponse(url="/users?error=You%20cannot%20delete%20your%20current%20user.", status_code=303)
-    target_user = get_user_by_id(user_id)
-    if target_user is None:
-        set_audit_context(request, outcome="failure", details={"reason": "not_found"})
-        return RedirectResponse(url="/users?error=User%20not%20found.", status_code=303)
-    if target_user.role == ROLE_ADMIN and (
-        count_users_by_role(ROLE_ADMIN) <= 1
-        or (
-            target_user.auth_source == "local"
-            and count_users_by_role(ROLE_ADMIN, "local") <= 1
-        )
-    ):
-        set_audit_context(request, outcome="denied", details={"reason": "last_admin"})
-        return RedirectResponse(url="/users?error=At%20least%20one%20admin%20must%20remain%20active.", status_code=303)
-    delete_user(user_id)
-    set_audit_context(
-        request,
-        action="user.delete",
-        target_type="user",
-        target_id=user_id,
-        details={"username": target_user.username, "role": target_user.role},
-    )
-    return RedirectResponse(
-        url=f"/users?message={quote(f'Deleted user {target_user.username}.')}",
-        status_code=303,
-    )
+    try:
+        user_admin.manage(user.id, user_id, delete=True)
+    except HTTPException as exc:
+        set_audit_context(request, outcome="denied" if exc.status_code == 403 else "failure")
+        return RedirectResponse(url=f"/users?error={quote(str(exc.detail))}", status_code=303)
+    return RedirectResponse(url=f"/users?message={quote(f'Deleted user #{user_id}.')}", status_code=303)
 
 
 @app.get("/account", response_class=HTMLResponse)
@@ -7603,27 +7481,12 @@ def update_account_password_route(
         target_type="user",
         target_id=user.id,
     )
-    if user.auth_source == "ldap":
-        set_audit_context(request, outcome="denied", details={"reason": "directory_managed"})
-        return RedirectResponse(
-            url="/account?error=LDAP%20passwords%20are%20managed%20by%20the%20directory.",
-            status_code=303,
-        )
-    if not verify_password(current_password, user.password_hash):
-        set_audit_context(request, outcome="denied", details={"reason": "current_password_invalid"})
-        return RedirectResponse(url="/account?error=Current%20password%20is%20incorrect.", status_code=303)
-    if len(new_password) < 8:
-        set_audit_context(request, outcome="failure", details={"reason": "password_policy"})
-        return RedirectResponse(url="/account?error=Password%20must%20be%20at%20least%208%20characters.", status_code=303)
-    if new_password != confirm_password:
-        set_audit_context(request, outcome="failure", details={"reason": "confirmation_mismatch"})
-        return RedirectResponse(url="/account?error=New%20password%20and%20confirmation%20must%20match.", status_code=303)
-    if verify_password(new_password, user.password_hash):
-        set_audit_context(request, outcome="failure", details={"reason": "password_reuse"})
-        return RedirectResponse(url="/account?error=Choose%20a%20different%20password%20than%20your%20current%20one.", status_code=303)
-
-    update_user(user.id, user.role, hash_password(new_password))
-    revoke_user_sessions(user.id)
+    try:
+        account.change_password(user, current_password, new_password, confirm_password)
+    except HTTPException as exc:
+        set_audit_context(request, outcome="denied" if exc.status_code == 403 else "failure",
+                          details={"reason": "password_change_rejected"})
+        return RedirectResponse(url=f"/account?error={quote(str(exc.detail))}", status_code=303)
     set_audit_context(
         request,
         action="user.password_change",

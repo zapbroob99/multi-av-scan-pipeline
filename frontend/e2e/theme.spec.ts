@@ -1,0 +1,22 @@
+import { test, expect } from '@playwright/test'
+
+test('light theme covers login, forms and confirmation dialogs', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('masp-console-theme', 'light'))
+  await page.goto('system/pools')
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await expect(page.locator('.login-card')).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+  await expect(page.getByRole('button', { name: 'Switch to dark theme' })).toBeVisible()
+  await page.screenshot({ path: '../artifacts/console-e2e/login-light.png', fullPage: true })
+  await page.getByLabel('Username').fill('console-admin')
+  await page.getByLabel('Password').fill('console-test-only')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  const create = page.getByRole('form', { name: 'Create worker pool' })
+  await create.getByLabel('Pool name').fill('Theme preview')
+  await create.getByLabel('Label selector').fill('site=lab')
+  await create.getByRole('button', { name: 'Create pool' }).click()
+  await expect(page.getByRole('dialog')).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: '../artifacts/console-e2e/theme-dialog-mobile.png', fullPage: true })
+  await page.getByRole('button', { name: 'Cancel' }).click()
+})

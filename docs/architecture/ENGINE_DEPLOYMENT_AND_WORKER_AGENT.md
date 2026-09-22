@@ -14,6 +14,43 @@ and `Defender Windows Pool A` without duplicating vendor parser code.
 
 ## Current State
 
+The frontend goal covers every browser screen; the complete migration inventory
+is maintained in [frontend separation](FRONTEND_SEPARATION.md#complete-ui-migration-inventory).
+Admin worker inventory, lifecycle and credential revocation now use the React
+System screen and bounded browser API. Pool CRUD is now available through paginated
+React System pages, preserving exact label selectors and assigned-pool deletion
+protection. The next slice is audit/information, followed by the remaining parity
+inventory. Existing acceptance gates
+remain in force.
+The React runtime screen now provides bounded worker snapshots and all-source
+active-queue pages. A partial active-ID index is added in-place for SQLite and
+PostgreSQL. No historical aggregates or engine output are loaded by these reads;
+the separate overview now provides a coherent cached summary, read-only retention
+policy and on-demand metrics grouped by historical engine name. Those names are
+not stable instance identities. Summary and one metric page are cached for 30
+seconds; historical aggregation remains subject to PostgreSQL time budgets and
+deployment-scale acceptance. React retention now previews and confirms at most 20
+expired inactive records per run, preserving row-locked age/attempt/job-revision
+checks and active/child/shared-sample/outbox protections. Each record commits
+separately and file cleanup failures are explicit. No recursive deletion or new
+worker protocol is introduced. Engine pool assignment already uses React Engines;
+legacy System metric/detail parity remains an acceptance item. Admin scan policy
+now uses React with shared validation/resolution, an atomic three-field save and
+pre-body CSRF/role checks. Manual hash lookup now uses React with existing source/
+quota selection, backend decision aggregation and bounded output. Partial failures
+return no complete decision and are never retried automatically. Integration
+administration now has a bounded React client inventory with confirmed name/state
+updates and managed-client protection. Client profile routing now uses bounded
+React reads and confirmed instance assignments. The shared writer serializes
+updates and browser writes fence the previous ID set, client ownership and managed
+identity. Accepted snapshots and source filtering remain unchanged. Atomic client/default-profile creation and credential add/list/scoped revoke now
+use React with write-only secrets and no automatic replay. Automation history now uses bounded React ledger reads with exact ownership/source
+filters and partial seek indexes. Automation reports/output, source-and-client-scoped batch reads and fenced
+single deletion now reuse shared services through separate browser routes.
+Automation summary/full JSON/CSV exports reuse the bounded snapshot builders;
+historical full exports without recorded routing keep an explicit legacy fallback; deployment HTTP caps,
+source-aware routing and queue semantics are unchanged.
+
 The opt-in [independent console](FRONTEND_SEPARATION.md) uses a versioned
 browser API, shared engine setup validation and a bounded manual Dashboard
 with ID-keyset pages and cached aggregate totals. Manual sample submission now
@@ -31,14 +68,17 @@ stale browser actions even when a queued retry settles before a worker starts.
 Manual batch overviews now use bounded indexed pages and stored counters without
 loading engine output or refreshing counters. Admins may bulk-delete up to 20
 visible top-level manual scans with per-row attempt/job-revision fences and partial
-receipts. Full-output views and recursive batch actions retain legacy links. This changes browser delivery, not worker
+receipts. Individual full engine outputs now have a React screen with coherent
+2 MiB source/response admission and inert text rendering. Oversized output keeps
+a legacy fallback; recursive batch actions remain planned. This changes browser delivery, not worker
 transport, scan routing or engine support state. A local disposable PostgreSQL
 run passed the documented 100k-row browser query/concurrency budgets. Full-text
 indexing and deployment-shaped PostgreSQL load remain gates, not completed work.
 Browser contracts now have offline OpenAPI export, generated TypeScript DTOs,
 route/method/JSON-body typed calls and read-only drift checks. A Windows/Linux
 CI workflow is defined; remote CI acceptance is separate from local validation.
-No worker protocol, database schema or support-state change is introduced.
+Worker protocols and engine support states are unchanged. Browser read indexes
+and the users.management_revision column are additive in-place upgrade work.
 
 The first multi-instance foundation is implemented:
 
@@ -218,3 +258,64 @@ Remote Defender is production-ready only when all of these pass:
    or offline without allowing a stale result commit.
 6. Installation, upgrade, credential rotation, logs, and uninstall are documented
    and covered by an operator acceptance run.
+
+
+The React automation report now links to an on-demand integration result JSON
+preview for terminal scans. Session-authenticated analyst/admin reads reuse
+bounded coherent export admission and the public result projection, with no
+private engine output and a 2 MiB serialized response limit. Invalid policy,
+active scans and unavailable historical routing fail explicitly. Oversized batch
+JSON, remaining UI parity and deployment-scale acceptance are still open; this
+adds no worker transport or production support claim.
+
+Automation status JSON now has a separate React view for active/terminal scans.
+Scan, polling policy, accepted-instance eligibility and global queue counts use
+one bounded repeatable read. Global history aggregates remain subject to statement
+timeouts and deployment-scale acceptance; there is no automatic browser polling.
+Status requires an accepted engine snapshot, preserves backend coverage decisions
+and omits private engine output. Oversized batch JSON and final legacy-action parity remain pending.
+
+React automation batch status/result JSON now supports complete batches of up to
+20 members, with exact source/owner consistency and a shared repeatable snapshot.
+Result admission caps aggregate engine/snapshot bytes before hydration; response
+envelopes stay within 2 MiB. Status reads no engine blobs. Stored counters may lag;
+JSON never proves clean coverage by itself. Oversized batches use the overview
+and individual reports; complete oversized-payload parity, final legacy-action checks
+and deployment acceptance remain open before legacy removal.
+
+Automation archive navigation now stays in React, with direct-child ID-keyset
+pages and attempt guards. Parent, nested and upward navigation preserves exact
+API/ICAP source, nullable client and batch boundaries. Reads use existing indexed
+probes and PostgreSQL snapshot/time budgets, never engine blobs or counter writes.
+Empty lists do not prove complete extraction. Final legacy-action and deployment-scale
+acceptance remain open; this does not enable recursive deletion or remove legacy.
+
+Admin ledger bulk deletion now confirms at most 20 top-level API/ICAP records with
+displayed attempt/job-revision fences. Shared row-locked protections and independent
+commits remain authoritative; receipts identify deleted, blocked and cleanup-failed
+IDs. Ambiguous writes are never replayed and the UI requires explicit fresh reads
+before reselection. This does not delete batches recursively. Ledger revision-probe
+load and remaining security/deployment acceptance gates stay open.
+
+Admin React Users now lists bounded local/LDAP metadata and confirms local user
+creation with an explicit role and write-only initial password. Password hashes,
+directory identifiers and sessions are excluded from list DTOs; shared hashing and
+database uniqueness remain authoritative. No automatic creation replay occurs.
+Own-password management now uses React Account for local analysts and admins.
+Both browser UIs share validation, a password-only conditional update and atomic
+session revocation. Local login rechecks the verified hash under a row lock before
+creating a session, preventing old-password login from surviving a concurrent
+password change/reset. LDAP passwords remain directory-managed. Admin Users now
+confirms role changes, optional password resets and removal, with a displayed
+management revision checked under shared legacy/browser transaction locks. The
+writer rechecks the actor's administrator role, blocks self-management and preserves
+the last local administrator across concurrent operations. LDAP shadow removal
+revokes MASP sessions but does not disable directory access; a later directory
+sign-in may recreate it. Passwords never enter console state or caches; inputs
+clear on cancellation/send and uncertain writes are not replayed. Explicit list
+refresh is required after management writes. Startup adds the default-zero
+users.management_revision column in place; old account data is retained. Roll out
+all app processes together so old writers cannot bypass the revision/locking rules.
+Startup adds an auth-session user index in place. PostgreSQL password changes use
+the existing UI lock timeout; deployment-scale login/revocation acceptance remains
+open. No worker topology or engine support status changes.

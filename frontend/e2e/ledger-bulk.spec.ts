@@ -1,0 +1,22 @@
+import { test, expect } from '@playwright/test'
+
+test('admin ledger deletion reports protected parent and deleted leaf separately', async ({ page }) => {
+  await page.goto('api-ledger?q=ledger-')
+  await page.getByLabel('Username').fill('console-admin')
+  await page.getByLabel('Password').fill('console-test-only')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  const leaf = page.locator('article').filter({ has: page.getByRole('heading', { name: 'ledger-20.bin', exact: true }) }).getByRole('checkbox')
+  const parent = page.locator('article').filter({ has: page.getByRole('heading', { name: 'ledger-19.bin', exact: true }) }).getByRole('checkbox')
+  const leafId = (await leaf.getAttribute('aria-label'))!.replace('Select scan ', '')
+  const parentId = (await parent.getAttribute('aria-label'))!.replace('Select scan ', '')
+  await leaf.check(); await parent.check()
+  await page.getByRole('button', { name: 'Delete selected (2)' }).click()
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.getByRole('button', { name: 'Confirm deletion', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText(`Deleted IDs: ${leafId}`)
+  await expect(page.getByRole('status')).toContainText(`Blocked IDs: ${parentId}`)
+  await page.getByRole('button', { name: 'Refresh ledger' }).click()
+  await expect(page.getByRole('heading', { name: 'ledger-19.bin', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'ledger-20.bin', exact: true })).toHaveCount(0)
+})

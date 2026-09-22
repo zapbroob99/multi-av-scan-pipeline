@@ -1,0 +1,23 @@
+import { test, expect } from '@playwright/test'
+
+test('admin loads overview and historical metrics; analyst is denied', async ({ page }) => {
+  await page.goto('system/overview')
+  await page.getByLabel('Username').fill('console-admin')
+  await page.getByLabel('Password').fill('console-test-only')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'System overview' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Retention policy' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Historical engine metrics' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Load engine metrics' }).click()
+  await expect(page.getByRole('region', { name: 'Historical engine metrics' })).toContainText('Static Metadata')
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: '../artifacts/console-e2e/overview-mobile.png', fullPage: true })
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await page.getByLabel('Username').fill('console-analyst')
+  await page.getByLabel('Password').fill('console-test-only')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Administrator access required' })).toBeVisible()
+  expect((await page.request.get('/api/ui/v1/system/summary')).status()).toBe(403)
+  expect((await page.request.get('/api/ui/v1/system/engine-metrics')).status()).toBe(403)
+})

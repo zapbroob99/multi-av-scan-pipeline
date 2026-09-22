@@ -1,4 +1,4 @@
-"""Bounded, session-facing manual report projections. No adapter execution."""
+"""Bounded, session-facing report projections with server-selected source scope. No adapter execution."""
 from dataclasses import asdict
 import json
 
@@ -14,6 +14,7 @@ MAX_ENGINES = 256
 POLICY_LIMIT = 65536
 TEXT_LIMIT = 16384
 SNAPSHOT_LIMIT = 262144
+FULL_OUTPUT_LIMIT = 2 * 1024 * 1024
 
 
 class EngineSummary(BaseModel):
@@ -38,6 +39,8 @@ class DecisionSummary(BaseModel):
 
 
 class ScanReport(BaseModel):
+    source: str = 'manual'
+    service_client_id: int | None = None
     id: int
     filename: str
     sha256: str
@@ -72,13 +75,54 @@ class TechnicalDetails(BaseModel):
     truncated: list[str]
 
 
-def report(scan_id: int) -> ScanReport:
+class FullTechnicalDetails(BaseModel):
+    scan_id: int
+    result_id: int
+    engine_name: str
+    attempt_count: int
+    raw_output: str
+    details_json: str
+    findings_json: str
+
+
+def source_clause(automation: bool) -> str:
+    # Server-selected scope only; never accept SQL or source sets from the caller's request.
+    return "j.source IN ('api', 'icap')" if automation else "j.source = 'manual'"
+
+
+def full_technical_details(scan_id: int, result_id: int, *, automation: bool = False) -> FullTechnicalDetails:
+    # Size admission and hydration must see the same result, including when a
+    # retry deletes it concurrently. No deployment/sample metadata is selected.
+    with db.connect() as connection:
+        connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+        apply_read_budget(connection)
+        fields = ('engine_name', 'raw_output', 'details_json', 'findings_json')
+        byte_length = ('OCTET_LENGTH(COALESCE(r.{field}, \'\'))' if db.using_postgres()
+                       else 'LENGTH(CAST(COALESCE(r.{field}, \'\') AS BLOB))')
+        size_terms = ' + '.join(byte_length.format(field=field) for field in fields)
+        source = f"FROM engine_results r JOIN scan_jobs j ON j.id = r.scan_job_id WHERE r.id = ? AND j.id = ? AND {source_clause(automation)}"
+        size = connection.execute(f'SELECT {size_terms} AS source_bytes {source}', (result_id, scan_id)).fetchone()
+        if size is None:
+            raise HTTPException(404, 'Automation scan result not found.' if automation else 'Manual scan result not found.')
+        if int(size['source_bytes']) > FULL_OUTPUT_LIMIT:
+            raise HTTPException(413, 'Full engine output exceeds the 2 MiB browser source limit. Use the legacy report.')
+        row = connection.execute(f'''SELECT j.id AS scan_id, r.id AS result_id, j.attempt_count,
+            r.engine_name, r.raw_output, r.details_json, r.findings_json {source}''', (result_id, scan_id)).fetchone()
+        payload = FullTechnicalDetails(scan_id=row['scan_id'], result_id=row['result_id'],
+            attempt_count=row['attempt_count'], **{field: row[field] or '' for field in fields})
+    # JSON control-character escaping may exceed the source size considerably.
+    if len(payload.model_dump_json().encode('utf-8')) > FULL_OUTPUT_LIMIT:
+        raise HTTPException(413, 'Full engine output exceeds the 2 MiB browser response limit. Use the legacy report.')
+    return payload
+
+
+def report(scan_id: int, *, automation: bool = False) -> ScanReport:
     with db.connect() as connection:
         # Keep state, attempt, jobs and results in one snapshot without locking
         # worker rows. PostgreSQL's default READ COMMITTED is not sufficient.
         connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
         apply_read_budget(connection)
-        row = connection.execute('''SELECT j.id, j.sample_id, SUBSTR(j.case_name, 1, 200) AS case_name,
+        row = connection.execute(f'''SELECT j.id, j.sample_id, SUBSTR(j.case_name, 1, 200) AS case_name,
             j.priority, SUBSTR(j.note, 1, 4000) AS note, j.source, j.status, j.verdict, j.risk_score,
             j.created_at, j.started_at, j.completed_at, j.failed_at, j.attempt_count,
             SUBSTR(j.last_error, 1, 2048) AS last_error, j.batch_id, j.parent_scan_id,
@@ -87,9 +131,9 @@ def report(scan_id: int) -> ScanReport:
             SUBSTR(s.original_filename, 1, 512) AS original_filename,
             '' AS stored_filename, '' AS storage_path, s.content_type, s.size_bytes, s.md5, s.sha1, s.sha256
             FROM scan_jobs j JOIN samples s ON s.id = j.sample_id
-            WHERE j.id = ? AND j.source = 'manual' ''', (SNAPSHOT_LIMIT + 1, scan_id)).fetchone()
+            WHERE j.id = ? AND {source_clause(automation)} ''', (SNAPSHOT_LIMIT + 1, scan_id)).fetchone()
         if row is None:
-            raise HTTPException(404, 'Manual scan not found.')
+            raise HTTPException(404, 'Automation scan not found.' if automation else 'Manual scan not found.')
         scan = db.row_to_scan_record(row)
         if len(scan.profile_snapshot_json) > SNAPSHOT_LIMIT:
             raise HTTPException(413, 'Large routing snapshot: open the legacy report.')
@@ -140,7 +184,7 @@ def report(scan_id: int) -> ScanReport:
             summaries.append(EngineSummary(result_id=None, name=name, required=True,
                 status='missing', detected=False, signature=None, error=None, duration_ms=None))
             seen.add(name.casefold())
-    return ScanReport(id=scan.id, filename=scan.original_filename[:512], sha256=scan.sha256,
+    return ScanReport(source=scan.source, service_client_id=scan.service_client_id, id=scan.id, filename=scan.original_filename[:512], sha256=scan.sha256,
         size_bytes=scan.size_bytes, case_name=scan.case_name[:200], note=scan.note[:4000], status=scan.status,
         risk_score=scan.risk_score, risk_level=scan.verdict, attempt_count=scan.attempt_count,
         job_revision=max((job.id for job in jobs), default=0),
@@ -153,17 +197,17 @@ def report(scan_id: int) -> ScanReport:
         engines=summaries)
 
 
-def technical_details(scan_id: int, result_id: int) -> TechnicalDetails:
+def technical_details(scan_id: int, result_id: int, *, automation: bool = False) -> TechnicalDetails:
     with db.connect() as connection:
         apply_read_budget(connection)
-        row = connection.execute('''SELECT r.id,
+        row = connection.execute(f'''SELECT r.id,
             SUBSTR(r.raw_output, 1, ?) AS raw_output, SUBSTR(r.details_json, 1, ?) AS details_json,
             SUBSTR(r.findings_json, 1, ?) AS findings_json
             FROM engine_results r JOIN scan_jobs j ON j.id = r.scan_job_id
-            WHERE r.id = ? AND j.id = ? AND j.source = 'manual' ''',
+            WHERE r.id = ? AND j.id = ? AND {source_clause(automation)} ''',
             (TEXT_LIMIT + 1, TEXT_LIMIT + 1, TEXT_LIMIT + 1, result_id, scan_id)).fetchone()
     if row is None:
-        raise HTTPException(404, 'Manual scan result not found.')
+        raise HTTPException(404, 'Automation scan result not found.' if automation else 'Manual scan result not found.')
     values = {key: row[key] or '' for key in ('raw_output', 'details_json', 'findings_json')}
     return TechnicalDetails(result_id=row['id'], **{key: value[:TEXT_LIMIT] for key, value in values.items()},
         truncated=[key for key, value in values.items() if len(value) > TEXT_LIMIT])

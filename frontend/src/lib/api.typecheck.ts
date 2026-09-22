@@ -3,13 +3,24 @@ import { request, type Session, type Health } from './api'
 
 export async function contractTypeAssertions() {
   const session: Session = await request('/api/ui/v1/session', 'get', {})
+  const workers = await request('/api/ui/v1/system/workers', 'get', {})
+  void workers.items
+  const pools = await request('/api/ui/v1/system/pools', 'get', {})
+  void pools.items
+  // @ts-expect-error Pool state must be an explicit boolean.
+  request('/api/ui/v1/system/pools/{pool_id}', 'put', { params: { pool_id: 1 }, csrf: 'token', body: { name: 'Pool', selector: 'site=lab', enabled: 'false' } })
+  // @ts-expect-error Offline is observed liveness, not an administrator lifecycle.
+  request('/api/ui/v1/system/workers/lifecycle', 'post', { csrf: 'token', body: { node_id: 'node', lifecycle_state: 'offline' } })
+  // @ts-expect-error Worker credential revocation requires CSRF.
+  request('/api/ui/v1/system/workers/credentials/revoke', 'post', { body: { node_id: 'node' } })
   const health: Health = await request('/api/ui/v1/engines/{instance_id}/checks', 'post', { params: { instance_id: 1 }, csrf: session.csrf_token })
   const fullExport = await request('/api/ui/v1/scans/{scan_id}/export', 'get', { params: { scan_id: 1 }, query: new URLSearchParams({ format: 'json' }) })
+  const fullOutput = await request('/api/ui/v1/scans/{scan_id}/results/{result_id}/full', 'get', { params: { scan_id: 1, result_id: 1 } })
   const batch = await request('/api/ui/v1/batches/{batch_id}', 'get', { params: { batch_id: 1 }, query: new URLSearchParams({ limit: '20' }) })
   const bulk = await request('/api/ui/v1/scans', 'delete', { csrf: session.csrf_token,
     body: { scans: [{ scan_id: 1, attempt: 0, job_revision: 0 }] } })
   const deleted: void = await request('/api/ui/v1/engines/{instance_id}', 'delete', { params: { instance_id: 1 }, csrf: session.csrf_token })
-  void health; void fullExport.content; void batch.items; void bulk.deleted_ids; void deleted
+  void health; void fullExport.content; void fullOutput.raw_output; void batch.items; void bulk.deleted_ids; void deleted
   // @ts-expect-error Unknown endpoint must not compile.
   request('/api/ui/v1/unknown', 'get', {})
   // @ts-expect-error Wrong HTTP method must not compile.

@@ -195,11 +195,14 @@ def login(username: str, password: str) -> LoginResult | None:
     now = int(time.time())
     delete_expired_auth_sessions(now)
     session_token = secrets.token_urlsafe(32)
-    create_auth_session(
+    session_id = create_auth_session(
         user_id=user.id,
         token_hash=hash_session_token(session_token),
         expires_at=now + SESSION_TTL_SECONDS,
+        expected_password_hash=user.password_hash if user.auth_source == 'local' else None,
     )
+    if session_id is None:
+        return None
     return LoginResult(
         user=user,
         session_token=session_token,
