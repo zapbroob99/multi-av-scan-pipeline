@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { BrowserRouter, Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { Activity, ArrowUpRight, Cpu, Info, LayoutDashboard, LogOut, ScrollText, SlidersHorizontal } from 'lucide-react'
+import { Activity, CircleUser, Cpu, Hash, Info, LayoutDashboard, LogOut, Plug, ScrollText, Server, SlidersHorizontal, Upload, Users as UsersIcon } from 'lucide-react'
 import { request } from './lib/api'
 import { Button } from './components/ui/button'
 import { ThemeToggle } from './components/theme-toggle'
@@ -86,16 +86,16 @@ function App() {
     <Link className="brand" to="/dashboard"><img src="/console/favicon.svg" width="40" height="40" alt="" /><span>MASP<small>SCAN ORCHESTRATION</small></span></Link>
     <p className="nav-label">WORKSPACE</p><nav className="console-nav" aria-label="Workspace">
     <NavLink className="nav-item" to="/dashboard"><LayoutDashboard size={18} />Dashboard</NavLink>
-    <NavLink className="nav-item" to="/scans/new"><ArrowUpRight size={18} />Submit sample</NavLink>
+    <NavLink className="nav-item" to="/scans/new"><Upload size={18} />Submit sample</NavLink>
     <NavLink className="nav-item" to="/api-ledger"><Activity size={18} />API ledger</NavLink>
-    <NavLink className="nav-item" to="/hash-scan"><ArrowUpRight size={18} />Hash lookup</NavLink>
-    <NavLink className="nav-item" to="/account"><Activity size={18} />Account</NavLink>
+    <NavLink className="nav-item" to="/hash-scan"><Hash size={18} />Hash lookup</NavLink>
+    <NavLink className="nav-item" to="/account"><CircleUser size={18} />Account</NavLink>
     <NavLink className="nav-item" to="/about"><Info size={18} />About</NavLink>
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/engines"><Cpu size={18} />Engines</NavLink>}
-    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/system"><Activity size={18} />System</NavLink>}
+    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/system"><Server size={18} />System</NavLink>}
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/scan-policy"><SlidersHorizontal size={18} />Scan policy</NavLink>}
-    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/service-clients"><Activity size={18} />Service clients</NavLink>}
-    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/users"><Activity size={18} />Users</NavLink>}
+    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/service-clients"><Plug size={18} />Service clients</NavLink>}
+    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/users"><UsersIcon size={18} />Users</NavLink>}
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/audit"><ScrollText size={18} />Audit</NavLink>}
     </nav>
     <div className="sidebar-footer"><span>{session.data.user.username}<small>{session.data.user.role}</small></span><div className="sidebar-controls">
