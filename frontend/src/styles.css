@@ -129,6 +129,12 @@ label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color:
   .print-engine, .history-table-wrap { break-inside: avoid; overflow: visible; }
   .history-table-wrap { border: 0; }
 }
+.readiness-list { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 10px; }
+.readiness-list li { display: grid; gap: 2px; padding: 10px 12px; border-left: 3px solid var(--border); background: rgba(127, 127, 127, 0.06); }
+.readiness-list strong { font-size: 13px; }
+.readiness-list span { font-size: 12px; opacity: 0.85; }
+.readiness-pass { border-left-color: #22c55e; }
+.readiness-fail { border-left-color: #f97316; }
 .about-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 .submission-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 24px; align-items: start; }
 .submission-card { min-width: 0; padding: 24px; border: 1px solid var(--border); border-radius: 10px; background: #101823; }

@@ -17,7 +17,7 @@ function ClientCard({ client, disabled, review }: { client: Client; disabled: bo
     review({ id: client.id, key: client.client_key, values: { display_name: String(data.get('display_name') || ''), enabled: data.get('enabled') === 'enabled' } })
   }
   return <article className="submission-card report-engine"><h2>{client.display_name}</h2><p className="muted">#{client.id} · {client.client_key} · {client.enabled ? 'Enabled' : 'Disabled'}</p>
-    <Link to={`/service-clients/${client.id}/profiles`}>Profile routing</Link>{' ? '}<Link to={`/service-clients/${client.id}/credentials`}>Credentials</Link>
+    <Link to={`/service-clients/${client.id}/setup`}>Connect</Link>{' · '}<Link to={`/service-clients/${client.id}/profiles`}>Profile routing</Link>{' ? '}<Link to={`/service-clients/${client.id}/credentials`}>Credentials</Link>
     {client.managed && <p>Managed compatibility client. Edit deployment configuration through the existing administration workflow.</p>}
     {client.metadata_incomplete && <p role="alert">Metadata exceeds the console limit. Use legacy administration to review the complete values before editing.</p>}
     <form onSubmit={submit} aria-label={`Edit client ${client.id}`}><fieldset disabled={disabled || client.managed || client.metadata_incomplete}>

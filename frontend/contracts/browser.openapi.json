@@ -362,6 +362,51 @@
         "title": "ArchivePage",
         "type": "object"
       },
+      "AssignedEngine": {
+        "properties": {
+          "adapter_key": {
+            "title": "Adapter Key",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "eligible": {
+            "title": "Eligible",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "excluded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excluded Reason"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "adapter_key",
+          "enabled",
+          "eligible",
+          "excluded_reason"
+        ],
+        "title": "AssignedEngine",
+        "type": "object"
+      },
       "AuditEvent": {
         "properties": {
           "action": {
@@ -1024,6 +1069,124 @@
           "next_after"
         ],
         "title": "ClientProfiles",
+        "type": "object"
+      },
+      "ClientReadiness": {
+        "properties": {
+          "active_credential_count": {
+            "title": "Active Credential Count",
+            "type": "integer"
+          },
+          "authorization_header": {
+            "title": "Authorization Header",
+            "type": "string"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ReadinessCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "integer"
+          },
+          "client_key": {
+            "title": "Client Key",
+            "type": "string"
+          },
+          "deferred_endpoint": {
+            "title": "Deferred Endpoint",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "eligible_engine_count": {
+            "title": "Eligible Engine Count",
+            "type": "integer"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "engines": {
+            "items": {
+              "$ref": "#/components/schemas/AssignedEngine"
+            },
+            "title": "Engines",
+            "type": "array"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "icap_client_key_setting": {
+            "title": "Icap Client Key Setting",
+            "type": "string"
+          },
+          "managed": {
+            "title": "Managed",
+            "type": "boolean"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
+          "profile_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Name"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "scan_endpoint": {
+            "title": "Scan Endpoint",
+            "type": "string"
+          },
+          "status_endpoint": {
+            "title": "Status Endpoint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_key",
+          "display_name",
+          "enabled",
+          "managed",
+          "ready",
+          "checks",
+          "profile_id",
+          "profile_name",
+          "engines",
+          "eligible_engine_count",
+          "active_credential_count",
+          "scan_endpoint",
+          "status_endpoint",
+          "deferred_endpoint",
+          "authorization_header",
+          "icap_client_key_setting",
+          "generated_at"
+        ],
+        "title": "ClientReadiness",
         "type": "object"
       },
       "ConfigBody": {
@@ -2773,6 +2936,34 @@
           "incomplete"
         ],
         "title": "ProfileSummary",
+        "type": "object"
+      },
+      "ReadinessCheck": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "passed",
+          "detail"
+        ],
+        "title": "ReadinessCheck",
         "type": "object"
       },
       "ResultPreview": {
@@ -11712,6 +11903,120 @@
           }
         },
         "summary": "Save Browser Profile",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/service-clients/{client_id}/readiness": {
+      "get": {
+        "operationId": "browser_client_readiness_api_ui_v1_service_clients__client_id__readiness_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Client Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientReadiness"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Client Readiness",
         "tags": [
           "Browser console"
         ]

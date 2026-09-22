@@ -875,6 +875,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/service-clients/{client_id}/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Client Readiness */
+        get: operations["browser_client_readiness_api_ui_v1_service_clients__client_id__readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/service-clients/create-options": {
         parameters: {
             query?: never;
@@ -1273,6 +1290,21 @@ export interface components {
             /** Parent Status */
             parent_status: string;
         };
+        /** AssignedEngine */
+        AssignedEngine: {
+            /** Adapter Key */
+            adapter_key: string;
+            /** Display Name */
+            display_name: string;
+            /** Eligible */
+            eligible: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Excluded Reason */
+            excluded_reason: string | null;
+            /** Id */
+            id: number;
+        };
         /** AuditEvent */
         AuditEvent: {
             /** Action */
@@ -1489,6 +1521,45 @@ export interface components {
             managed: boolean;
             /** Next After */
             next_after: number | null;
+        };
+        /** ClientReadiness */
+        ClientReadiness: {
+            /** Active Credential Count */
+            active_credential_count: number;
+            /** Authorization Header */
+            authorization_header: string;
+            /** Checks */
+            checks: components["schemas"]["ReadinessCheck"][];
+            /** Client Id */
+            client_id: number;
+            /** Client Key */
+            client_key: string;
+            /** Deferred Endpoint */
+            deferred_endpoint: string;
+            /** Display Name */
+            display_name: string;
+            /** Eligible Engine Count */
+            eligible_engine_count: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Engines */
+            engines: components["schemas"]["AssignedEngine"][];
+            /** Generated At */
+            generated_at: string;
+            /** Icap Client Key Setting */
+            icap_client_key_setting: string;
+            /** Managed */
+            managed: boolean;
+            /** Profile Id */
+            profile_id: number | null;
+            /** Profile Name */
+            profile_name: string | null;
+            /** Ready */
+            ready: boolean;
+            /** Scan Endpoint */
+            scan_endpoint: string;
+            /** Status Endpoint */
+            status_endpoint: string;
         };
         /** ConfigBody */
         ConfigBody: {
@@ -2093,6 +2164,17 @@ export interface components {
             is_default: boolean;
             /** Name */
             name: string;
+        };
+        /** ReadinessCheck */
+        ReadinessCheck: {
+            /** Detail */
+            detail: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Passed */
+            passed: boolean;
         };
         /** ResultPreview */
         ResultPreview: {
@@ -8167,6 +8249,100 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_client_readiness_api_ui_v1_service_clients__client_id__readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientReadiness"];
+                };
             };
             /** @description Bad Request */
             400: {

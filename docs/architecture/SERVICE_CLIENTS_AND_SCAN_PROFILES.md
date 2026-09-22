@@ -17,7 +17,8 @@ is an operational/security boundary, not a human UI account.
 
 ## Current behavior
 
-- Admins manage clients from **Service Clients**.
+- Admins manage clients from **Service Clients**, and each client links to a
+  setup view showing readiness and connection details.
 - A client key is stable and machine-oriented; the display name can change.
 - API tokens are stored only as SHA-256 hashes plus an eight-character
   fingerprint. Raw tokens cannot be read back from MASP.
@@ -39,6 +40,36 @@ Existing `MASP_API_TOKEN`, `MASP_API_TOKENS`, and settings-backed tokens map to
 the managed `legacy-default` compatibility client. Its routing follows globally
 configured automation-safe engines. Move integrations to database-managed
 credentials before relying on per-client isolation.
+
+## Connecting a client
+
+`/console/service-clients/{id}/setup` answers one question in one place: is this
+client ready, and what does the other system need to be told? Everything it shows
+already existed, spread across the client list, the profile routing editor and the
+credential page, and the endpoint to point an integration at was not shown at all.
+
+It reports five configuration checks, each pass or fail with its own reason: the
+client is enabled, an enabled default profile exists, that profile has assigned
+engines, at least one assigned engine is eligible for automation, and an active
+credential exists. An assigned engine that cannot run automation work says why -
+a disabled instance, an unregistered adapter, an adapter that cannot accept a
+submitted file, or a metered reputation adapter that API and ICAP exclude before
+job creation. That last exclusion is adapter-level policy, so the engine can stay
+assigned for manual use.
+
+Alongside the checks it shows the submission, status and deferred endpoints, the
+authorization header shape, and the `MASP_ICAP_SERVICE_CLIENT_KEY` value for a
+gateway bound to this client. No credential value appears: MASP stores only a
+hash and a fingerprint, so a lost token is replaced, never recovered.
+
+All reads happen in one repeatable snapshot, so a concurrent profile edit cannot
+produce a readiness state that never existed. The route is admin-only and
+read-only.
+
+This is configuration readiness, not a connectivity test. It cannot prove the
+integration can reach MASP, that its token is correct, or that an assigned engine
+is healthy at scan time. Network reachability, TLS and firewall rules stay outside
+MASP.
 
 ## ICAP mapping
 

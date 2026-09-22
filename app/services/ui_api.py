@@ -30,6 +30,7 @@ from app.services import retention_admin
 from app.services import scan_policy_admin
 from app.services import hash_console
 from app.services import client_admin
+from app.services import client_readiness
 from app.services import profile_admin
 from app.services import credential_admin
 from app.services import ledger_read
@@ -496,6 +497,11 @@ def browser_revoke_credential(request: Request, client_id: int = Path(ge=1, le=9
     set_audit_context(request, action='api_credential.revoke', target_type='api_credential', target_id=credential_id, actor=request.state.ui_user)
     credential_admin.revoke(client_id, credential_id)
     return Response(status_code=204)
+
+
+@router.get('/service-clients/{client_id}/readiness', response_model=client_readiness.ClientReadiness)
+def browser_client_readiness(request: Request, client_id: int = Path(ge=1, le=9007199254740991)):
+    return client_readiness.readiness(client_id, str(request.base_url))
 
 
 @router.get('/service-clients/{client_id}/profiles', response_model=profile_admin.ClientProfiles)

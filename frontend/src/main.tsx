@@ -32,6 +32,7 @@ const ApiLedger = lazy(() => import('./pages/api-ledger'))
 const ServiceClients = lazy(() => import('./pages/service-clients'))
 const ClientCredentials = lazy(() => import('./pages/client-credentials'))
 const ClientProfiles = lazy(() => import('./pages/client-profiles'))
+const ClientSetup = lazy(() => import('./pages/client-setup'))
 const Audit = lazy(() => import('./pages/audit'))
 const About = lazy(() => import('./pages/about'))
 const ScanPrint = lazy(() => import('./pages/scan-print'))
@@ -135,6 +136,8 @@ function App() {
           <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients/new" element={session.data.user.role === 'admin' ? <ClientCredentials key={location.pathname} create session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients/:clientId/credentials" element={session.data.user.role === 'admin' ? <ClientCredentials key={location.pathname} session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
+        <Route path="/service-clients/:clientId/setup" element={session.data.user.role === 'admin' ? <ClientSetup key={location.pathname} /> :
+          <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients/:clientId/profiles" element={session.data.user.role === 'admin' ? <ClientProfiles key={location.pathname} session={session.data} /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients" element={session.data.user.role === 'admin' ? <ServiceClients session={session.data} /> :

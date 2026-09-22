@@ -6,6 +6,11 @@ source scope and caps each engine's embedded output. Recorded engine output abov
 the 2 MiB JSON limit downloads as plain text instead of falling back to the legacy
 report; `MASP_UI_RAW_OUTPUT_LIMIT` bounds that download (default 32 MiB).
 
+Each service client now has a setup view showing whether it is ready to accept
+traffic and which endpoints, authorization header and ICAP client key the other
+system needs. Ineligible engines explain themselves; credential values are never
+shown after they are saved.
+
 A built-in File Type engine now compares each sample's declared extension with
 the content family detected from a bounded header read, flagging masquerading
 files such as an executable delivered as `.pdf`. It reads at most a few kilobytes

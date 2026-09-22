@@ -360,6 +360,14 @@ release signing, and promote support only after those gates pass.
 Direct worker database access and shared filesystem paths are compatibility modes,
 not the final remote-worker architecture.
 
+Admin `/console/service-clients/{id}/setup` reports configuration readiness and the values an
+integration must be configured with. Read client, default profile, assigned engines and active
+credential count in one repeatable snapshot so a concurrent edit cannot show a state that never
+existed. Explain every ineligible engine rather than hiding it, keeping the metered-adapter
+exclusion adapter-level so the engine stays usable for manual scans. Never return a credential
+value: only a hash and fingerprint are stored. State plainly that this is configuration
+readiness, not proof that the integration can reach MASP or that an engine is healthy.
+
 ## Change Rules
 
 - Maintain in-place SQLite and PostgreSQL upgrade compatibility.

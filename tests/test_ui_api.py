@@ -1310,6 +1310,84 @@ class BrowserApiTests(unittest.TestCase):
             connection.execute('UPDATE scan_batches SET service_client_id = ? WHERE id = ?', (owner, batch))
         self.assertEqual(self.request(path)[0], 409)
 
+    def client_with_routing(self, *, engines=('static_metadata',), enabled=True, default=True, profile_enabled=True):
+        client = db.create_service_client('connect-client', 'Connect Client')
+        ids = [db.create_engine_instance(key, f'Engine {index}') for index, key in enumerate(engines)]
+        profile = db.create_scan_profile(client, 'Default routing', engine_instance_ids=ids, is_default=default)
+        with db.connect() as connection:
+            if not enabled:
+                connection.execute('UPDATE service_clients SET enabled = ? WHERE id = ?', (db.db_bool(False), client))
+            if not profile_enabled:
+                connection.execute('UPDATE scan_profiles SET enabled = ? WHERE id = ?', (db.db_bool(False), profile))
+        return client, profile, ids
+
+    def test_client_readiness_requires_admin_and_a_known_client(self):
+        client, _, _ = self.client_with_routing()
+        path = f'/service-clients/{client}/readiness'
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(path)[0], 403)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/service-clients/999999/readiness')[0], 404)
+        self.assertEqual(self.request('/service-clients/0/readiness')[0], 422)
+        for method in ('POST', 'PUT', 'DELETE'):
+            self.assertEqual(self.request(path, method, {})[0], 405)
+
+    def test_client_readiness_reports_each_blocking_step(self):
+        client = db.create_service_client('bare-client', 'Bare Client')
+        path = f'/service-clients/{client}/readiness'
+        status, payload, headers = self.request(path)
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertFalse(payload['ready'])
+        failed = {check['key'] for check in payload['checks'] if not check['passed']}
+        self.assertEqual(failed, {'default_profile', 'assigned_engines', 'eligible_engines', 'active_credential'})
+        self.assertIsNone(payload['profile_id'])
+        self.assertEqual(payload['engines'], [])
+
+    def test_client_readiness_passes_once_routing_and_a_credential_exist(self):
+        client, profile, _ = self.client_with_routing()
+        path = f'/service-clients/{client}/readiness'
+        self.assertFalse(self.request(path)[1]['ready'])
+        db.create_api_client_credential(client, label='primary', token_hash='hash-only-value', token_prefix='prefix00')
+        payload = self.request(path)[1]
+        self.assertTrue(payload['ready'], payload['checks'])
+        self.assertEqual(payload['profile_id'], profile)
+        self.assertEqual(payload['active_credential_count'], 1)
+        self.assertEqual(payload['eligible_engine_count'], 1)
+
+    def test_client_readiness_explains_quota_and_disabled_exclusions(self):
+        client, _, ids = self.client_with_routing(engines=('static_metadata', 'virustotal'))
+        with db.connect() as connection:
+            connection.execute('UPDATE engine_instances SET enabled = ? WHERE id = ?', (db.db_bool(False), ids[0]))
+        payload = self.request(f'/service-clients/{client}/readiness')[1]
+        reasons = {engine['adapter_key']: engine['excluded_reason'] for engine in payload['engines']}
+        self.assertIn('disabled', reasons['static_metadata'].lower())
+        self.assertIn('Metered', reasons['virustotal'])
+        self.assertEqual(payload['eligible_engine_count'], 0)
+        self.assertFalse(next(c for c in payload['checks'] if c['key'] == 'eligible_engines')['passed'])
+
+    def test_client_readiness_ignores_a_disabled_or_non_default_profile(self):
+        client, _, _ = self.client_with_routing(profile_enabled=False)
+        self.assertIsNone(self.request(f'/service-clients/{client}/readiness')[1]['profile_id'])
+        other = db.create_service_client('non-default', 'Non Default')
+        engine = db.create_engine_instance('clamav', 'ClamAV routing')
+        db.create_scan_profile(other, 'Secondary', engine_instance_ids=[engine], is_default=False)
+        self.assertIsNone(self.request(f'/service-clients/{other}/readiness')[1]['profile_id'])
+
+    def test_client_readiness_exposes_endpoints_but_never_a_credential_value(self):
+        client, _, _ = self.client_with_routing()
+        db.create_api_client_credential(client, label='primary', token_hash='PRIVATE-TOKEN-HASH', token_prefix='PRIVPFX0')
+        payload = self.request(f'/service-clients/{client}/readiness')[1]
+        self.assertTrue(payload['scan_endpoint'].endswith('/api/v1/scans'))
+        self.assertTrue(payload['deferred_endpoint'].endswith('/api/v1/deferred-scans'))
+        self.assertEqual(payload['icap_client_key_setting'], 'MASP_ICAP_SERVICE_CLIENT_KEY=connect-client')
+        serialized = json.dumps(payload)
+        for secret in ('PRIVATE-TOKEN-HASH', 'PRIVPFX0', 'token_hash', 'config_json'):
+            self.assertNotIn(secret, serialized)
+
     def test_batch_json_contract_permissions_and_no_status_engine_hydration(self):
         from app.services.api_schemas import BatchStatusResponse, BatchResultResponse
         batch = db.create_scan_batch(source='api', original_filename='batch.zip', archive_mode='none')
