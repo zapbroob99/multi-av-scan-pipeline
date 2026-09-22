@@ -6,6 +6,12 @@ source scope and caps each engine's embedded output. Recorded engine output abov
 the 2 MiB JSON limit downloads as plain text instead of falling back to the legacy
 report; `MASP_UI_RAW_OUTPUT_LIMIT` bounds that download (default 32 MiB).
 
+A built-in File Type engine now compares each sample's declared extension with
+the content family detected from a bounded header read, flagging masquerading
+files such as an executable delivered as `.pdf`. It reads at most a few kilobytes
+regardless of sample size and reports a finding rather than a malware verdict;
+set its mismatch action to `detect` to let a mismatch affect the risk score.
+
 An automation batch larger than the inline JSON view now downloads its complete
 integration contract, covering the same 5000 members the API serves;
 `MASP_UI_BATCH_DOWNLOAD_LIMIT` bounds it (default 64 MiB).

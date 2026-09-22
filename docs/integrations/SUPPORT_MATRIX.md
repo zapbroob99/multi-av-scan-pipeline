@@ -38,6 +38,14 @@ protection for assigned pools reuse existing backend operations.
 React runtime/active-queue reads now cover all scan sources for administrators.
 These views add no engine support state or worker transport change.
 React overview adds cached scan/worker totals and on-demand historical metrics.
+
+The built-in File Type inspector adds no vendor dependency, no network access and
+no command execution. It reads a bounded header and compares the detected content
+family with the declared extension, so its cost is independent of sample size.
+It is registered as a non-detection adapter: a masquerading extension is an
+indicator an analyst judges, not a malware identification, and it therefore never
+contributes detection coverage. Operators who want a mismatch to reach the shared
+risk score set `mismatch_action` to `detect` on the instance.
 Metrics group by recorded engine name; renamed or reused names must not be treated
 as stable instance identity, coverage or an allow decision. No support state changes.
 React retention cleanup includes all sources with admin confirmation, stale-state
@@ -73,6 +81,7 @@ remain environment-specific.
 | Integration | Vendor | Product | Method | State | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Static Metadata | MASP | Built-in metadata analyzer | local | supported | Extracts hashes, size, content type, and storage metadata. Not a detection engine. |
+| File Type | MASP | Built-in header inspector | local | supported | Reads a bounded header (default 4096 bytes, never the whole file) and compares the detected content family against the declared extension. Not a detection engine: a mismatch is a masquerade indicator, recorded as a normalized finding. `mismatch_action=detect` additionally marks the result detected so the shared scoring layer treats it like any engine detection; the default `report` does not. Cost does not grow with sample size. |
 | ClamAV via clamd | Cisco Talos | ClamAV clamd | TCP clamd protocol | supported | Preferred ClamAV runtime in Docker/on-prem deployments. Multiple named clamd instances may use distinct host, port, timeout, and size settings. |
 | ClamAV via clamscan | Cisco Talos | ClamAV CLI | local CLI | supported | Local fallback when `clamscan` exists on PATH. |
 | YARA via local CLI | VirusTotal/community | YARA | local CLI | supported | Requires local YARA binary and local rule files. |

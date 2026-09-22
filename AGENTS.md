@@ -110,6 +110,14 @@ arbitrary command parsers.
   validate opened sources; worker-control/webhook requests reject redirects.
   See `docs/security/HARDENING_PHASE_1.md` for upgrade notes and remaining gates.
 
+The built-in `file_type` adapter inspects a bounded header (default 4096 bytes, clamped
+512..1 MiB) and compares the detected content family with the declared extension. Keep its cost
+independent of sample size: never read the whole file. It is registered with `detection=False`
+because a masquerading extension is an indicator, not a malware identification, so it must not
+contribute detection coverage. A mismatch is always a normalized finding; `mismatch_action`
+selects whether it also sets `detected`, which the shared scoring layer weights like any engine
+detection. Blank configuration values mean unset, matching the ClamAV and Defender resolution.
+
 ## Engine Identity
 
 - `adapter_key` identifies vendor behavior and is not an instance identity.

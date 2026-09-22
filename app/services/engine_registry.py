@@ -17,6 +17,8 @@ from app.database import (
     update_engine_instance_by_id,
 )
 from app.engines.clamav import check_clamav_health, get_clamav_config, run_clamav_engine
+from app.engines.file_type import ENGINE_NAME as FILE_TYPE_NAME
+from app.engines.file_type import check_file_type_health, get_file_type_config, run_file_type_engine
 from app.engines.clamav import env_or_setting as clamav_env_or_setting
 from app.engines.microsoft_defender import (
     check_microsoft_defender_health,
@@ -204,6 +206,45 @@ REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
         runtime_config_factory=static_metadata_runtime_config,
         health_check_function=static_metadata_health_check,
         scan_function=static_metadata_scan,
+    ),
+    "file_type": RegisteredEngineAdapter(
+        definition=EngineAdapterDefinition(
+            key="file_type",
+            label=FILE_TYPE_NAME,
+            short_label="FT",
+            category="metadata",
+            description="Header inspection comparing declared and actual content type.",
+            vendor="MASP",
+            product="Built-in header inspector",
+            integration_method="local",
+            support_state="supported",
+            # Not an antivirus engine: a masquerading extension is an indicator,
+            # not a malware identification, so it never counts as detection
+            # coverage. Set mismatch action to "detect" to let a mismatch reach
+            # the shared scoring layer as an engine detection.
+            detection=False,
+            configurable=True,
+            docs_path="docs/integrations/SUPPORT_MATRIX.md",
+            config_fields=(
+                EngineConfigField("header_bytes", "header bytes to read", "number", False, "4096",
+                                  help_text="Bounded header read; cost does not grow with sample size."),
+                EngineConfigField("mismatch_action", "mismatch action", "text", False, "report",
+                                  help_text='"report" records a finding only; "detect" also marks the result detected.'),
+            ),
+        ),
+        capabilities=EngineCapabilityProfile(
+            input_modes=("header", "file"),
+            deployment="worker",
+            supported_platforms=("linux", "windows"),
+            execution_model="sync",
+            supports_file_upload=True,
+            supports_hash_lookup=False,
+            supports_archives=False,
+            requires_network=False,
+        ),
+        runtime_config_factory=get_file_type_config,
+        health_check_function=check_file_type_health,
+        scan_function=run_file_type_engine,
     ),
     "clamav": RegisteredEngineAdapter(
         definition=EngineAdapterDefinition(
