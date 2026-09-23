@@ -35,6 +35,8 @@ class EngineMetric(BaseModel):
     detections: int
     avg_duration_ms: float | None
     max_duration_ms: int | None
+    # Legacy parity: when this recorded name last produced any result.
+    last_result_at: str | None
 
 
 class EngineMetricPage(BaseModel):
@@ -94,11 +96,12 @@ def metrics(*, limit: int, after: int | None) -> EngineMetricPage:
                 SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
                 SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
                 SUM(CASE WHEN detected THEN 1 ELSE 0 END) AS detections,
-                AVG(duration_ms) AS avg_duration_ms, MAX(duration_ms) AS max_duration_ms
+                AVG(duration_ms) AS avg_duration_ms, MAX(duration_ms) AS max_duration_ms,
+                MAX(created_at) AS last_result_at
                 FROM engine_results GROUP BY engine_name ''' +
                 ('HAVING MIN(id) > ? ' if after is not None else '') + 'ORDER BY MIN(id) LIMIT ?',
                 (*((after,) if after is not None else ()), limit + 1)).fetchall()
-        result = EngineMetricPage(items=[EngineMetric(**dict(row)) for row in rows[:limit]],
+        result = EngineMetricPage(items=[EngineMetric(**{**dict(row), 'last_result_at': str(row['last_result_at']) if row['last_result_at'] is not None else None}) for row in rows[:limit]],
             next_after=rows[limit - 1]['first_result_id'] if len(rows) > limit else None,
             generated_at=datetime.now(timezone.utc).isoformat())
         _metrics_cache = (key, time.monotonic() + 30, result)

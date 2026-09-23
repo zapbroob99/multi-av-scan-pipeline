@@ -667,6 +667,9 @@ class BrowserApiTests(unittest.TestCase):
         row = first['items'][0]
         self.assertEqual((row['total'], row['completed'], row['failed'], row['detections']), (2, 1, 1, 1))
         self.assertEqual(row['avg_duration_ms'], 20)
+        with db.connect() as connection:
+            latest = connection.execute("SELECT MAX(created_at) AS at FROM engine_results WHERE engine_name = 'Old name'").fetchone()['at']
+        self.assertEqual(row['last_result_at'], str(latest))
         self.assertNotIn('PRIVATE_OUTPUT', json.dumps(first))
         with patch.object(db, 'connect', side_effect=AssertionError('Cache miss')):
             self.assertEqual(system_read.metrics(limit=1, after=None).items[0].total, 2)
@@ -796,6 +799,33 @@ class BrowserApiTests(unittest.TestCase):
             self.assertNotIn('PRIVATE_TOKEN', json.dumps(result))
             self.assertEqual(headers[b'cache-control'], b'no-store')
             run.assert_called_once_with(engine, 'a' * 64)
+
+    def test_hash_lookup_projects_bounded_provider_detail(self):
+        from types import SimpleNamespace
+        from app.services.hash_scanning import HashEngineExecution
+        engine = SimpleNamespace(id=7, display_name='Engine', adapter_key='virustotal')
+        payload = {'decision': {'action': 'block', 'reason': 'PRIVATE_TOKEN'}, 'found': True, 'status': 'malicious',
+                   'stats': {'malicious': 12, 'suspicious': 1, 'undetected': 50, 'harmless': 3, 'total': 70, 'timeout': 'x'},
+                   'last_analysis_date': '2026-09-20T10:00:00+00:00', 'cached': True,
+                   'permalink': 'https://www.virustotal.com/gui/file/' + 'a' * 64, 'policy': {'api_key': 'PRIVATE_TOKEN'}}
+        execution = HashEngineExecution(EngineResultInput('engine', 'completed', True, 'high', 0, None, '', 42), payload)
+        with patch.object(hash_console, 'enabled_hash_engines', return_value=[engine]), patch.object(hash_console, 'run_hash_engine', return_value=execution):
+            row = self.request('/hash-scan', 'POST', {'sha256': 'a' * 64})[1]['results'][0]
+        self.assertEqual(row['status'], 'malicious')
+        self.assertEqual(row['stats'], {'malicious': 12, 'suspicious': 1, 'undetected': 50, 'harmless': 3, 'total': 70})
+        self.assertEqual((row['last_analysis_date'], row['cached'], row['duration_ms']), ('2026-09-20T10:00:00+00:00', True, 42))
+        self.assertTrue(row['permalink'].startswith('https://www.virustotal.com/'))
+        self.assertNotIn('PRIVATE_TOKEN', json.dumps(row))
+        hostile = payload | {'status': '<script>', 'permalink': 'javascript:alert(1)', 'cached': 'yes',
+                             'stats': {'malicious': -5, 'total': True}, 'last_analysis_date': 7}
+        execution = HashEngineExecution(EngineResultInput('engine', 'completed', True, 'high', 0, None, '', 1), hostile)
+        with patch.object(hash_console, 'enabled_hash_engines', return_value=[engine]), patch.object(hash_console, 'run_hash_engine', return_value=execution):
+            row = self.request('/hash-scan', 'POST', {'sha256': 'a' * 64})[1]['results'][0]
+        self.assertEqual(row['status'], 'other')
+        self.assertIsNone(row['permalink'])
+        self.assertIsNone(row['cached'])
+        self.assertIsNone(row['last_analysis_date'])
+        self.assertEqual(row['stats'], {'malicious': 0, 'suspicious': 0, 'undetected': 0, 'harmless': 0, 'total': 0})
 
     def test_hash_lookup_caps_engine_count_and_sanitizes_failures(self):
         from types import SimpleNamespace
@@ -2681,9 +2711,23 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual(self.request('/dashboard/scans?q=%27%20OR%201%3D1--')[1]['items'], [])
         self.assertEqual(self.request('/dashboard/scans?status=completed&risk=high')[1]['items'], [])
 
+    def test_dashboard_detection_filter_uses_recorded_results_without_hydration(self):
+        detected, _ = self.report_fixture(detected=True)
+        clean, _ = self.report_fixture(detected=False)
+        failed_engine, _ = self.report_fixture(detected=False, result_status='failed')
+        running = self.create_scan(status='running')
+        metadata = self.create_scan(status='completed', verdict='metadata_only')
+        ids = lambda query: [row['id'] for row in self.request('/dashboard/scans?' + query)[1]['items']]
+        self.assertEqual(ids('detection=detected'), [detected])
+        # Finished with no recorded detection; an active scan is never "undetected".
+        self.assertEqual(ids('detection=undetected'), [metadata, failed_engine, clean])
+        self.assertNotIn(running, ids('detection=undetected'))
+        self.assertEqual(ids('risk=metadata_only'), [metadata])
+        self.assertEqual(self.request('/dashboard/scans?detection=clean')[0], 422)
+
     def test_dashboard_query_limits_fail_closed(self):
         for query in ('limit=0', 'limit=101', 'before=0', 'before=-1', 'before=9007199254740992',
-                      'before=invalid', 'status=invalid', 'risk=clean', 'q=' + 'a' * 201):
+                      'before=invalid', 'status=invalid', 'risk=clean', 'detection=malicious', 'q=' + 'a' * 201):
             with self.subTest(query=query):
                 self.assertEqual(self.request('/dashboard/scans?' + query)[0], 422)
 

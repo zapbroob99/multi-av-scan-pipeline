@@ -66,7 +66,8 @@ def summary() -> DashboardSummary:
         return result
 
 
-def scan_page(*, limit: int, before: int | None, query: str, status: str, risk: str) -> ScanPage:
+def scan_page(*, limit: int, before: int | None, query: str, status: str, risk: str,
+              detection: str = 'all') -> ScanPage:
     conditions = ["j.source = 'manual'", "j.scan_role != 'child'"]
     params: list[object] = []
     if before is not None:
@@ -80,6 +81,15 @@ def scan_page(*, limit: int, before: int | None, query: str, status: str, risk: 
     if risk != 'all':
         conditions.append('j.verdict = ?')
         params.append(risk)
+    # Legacy dashboard parity ("malicious"/"undetected"), bounded: one indexed
+    # probe per candidate row instead of loading every scan and its results.
+    # Recorded engine results only; "undetected" is not coverage or a clean verdict.
+    detected = ("EXISTS (SELECT 1 FROM engine_results r WHERE r.scan_job_id = j.id "
+                "AND r.status = 'completed' AND r.detected)")
+    if detection == 'detected':
+        conditions.append(detected)
+    elif detection == 'undetected':
+        conditions.append(f"j.status NOT IN ('queued', 'running', 'finalizing') AND NOT {detected}")
     if query.strip():
         # Literal substring matching: user '%'/'_' must not become wildcards.
         pattern = '%' + query.strip().lower().replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'

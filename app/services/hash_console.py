@@ -21,9 +21,56 @@ class HashLookupOptions(BaseModel):
     engines: list[HashEngineSummary]
 
 
+class HashProviderStats(BaseModel):
+    malicious: int
+    suspicious: int
+    undetected: int
+    harmless: int
+    total: int
+
+
 class HashLookupRow(HashEngineSummary):
     action: Literal['allow', 'review', 'block']
     found: bool
+    # Legacy parity: a bounded, named projection of the provider result. The
+    # raw payload, free-text reasons and the engine's policy configuration are
+    # never returned; adapter text may carry deployment details.
+    status: Literal['malicious', 'suspicious', 'undetected', 'stale', 'unknown', 'other']
+    stats: HashProviderStats | None
+    last_analysis_date: str | None
+    permalink: str | None
+    cached: bool | None
+    duration_ms: int
+
+
+PROVIDER_STATUSES = {'malicious', 'suspicious', 'undetected', 'stale', 'unknown'}
+
+
+def _count(stats: dict, key: str) -> int:
+    value = stats.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _row(run: HashEngineRun, row: dict) -> HashLookupRow:
+    data = row.get('data') if isinstance(row.get('data'), dict) else {}
+    stats = data.get('stats') if isinstance(data.get('stats'), dict) else None
+    permalink = data.get('permalink')
+    # Only an HTTPS provider link is rendered as a link; anything else is dropped.
+    if not (isinstance(permalink, str) and permalink.startswith('https://') and len(permalink) <= 512):
+        permalink = None
+    analysed = data.get('last_analysis_date')
+    cached = data.get('cached')
+    return HashLookupRow(
+        id=run.engine.id, name=run.engine.display_name[:512],
+        action=row['decision']['action'], found=row['found'],
+        status=row.get('status') if row.get('status') in PROVIDER_STATUSES else 'other',
+        stats=HashProviderStats(**{key: _count(stats, key) for key in ('malicious', 'suspicious', 'undetected', 'harmless', 'total')})
+        if stats is not None else None,
+        last_analysis_date=analysed[:64] if isinstance(analysed, str) else None,
+        permalink=permalink,
+        cached=cached if isinstance(cached, bool) else None,
+        duration_ms=max(0, int(row.get('duration_ms') or 0)),
+    )
 
 
 class HashLookupResult(BaseModel):
@@ -62,5 +109,4 @@ def lookup(body: HashLookupBody) -> HashLookupResult:
         # Adapter messages and payloads may contain deployment details or secrets.
         raise HTTPException(502, 'Hash lookup failed. Earlier engines may have consumed quota; no complete decision is available.') from exc
     return HashLookupResult(sha256=sha256, action=payload['decision']['action'], reason=payload['decision']['reason'],
-        results=[HashLookupRow(id=run.engine.id, name=run.engine.display_name[:512],
-            action=row['decision']['action'], found=row['found']) for run, row in zip(runs, payload['results'])])
+        results=[_row(run, row) for run, row in zip(runs, payload['results'])])

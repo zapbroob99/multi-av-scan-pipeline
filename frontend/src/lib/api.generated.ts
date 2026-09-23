@@ -1880,6 +1880,8 @@ export interface components {
             failed: number;
             /** First Result Id */
             first_result_id: number;
+            /** Last Result At */
+            last_result_at: string | null;
             /** Max Duration Ms */
             max_duration_ms: number | null;
             /** Name Truncated */
@@ -2066,12 +2068,39 @@ export interface components {
              * @enum {string}
              */
             action: "allow" | "review" | "block";
+            /** Cached */
+            cached: boolean | null;
+            /** Duration Ms */
+            duration_ms: number;
             /** Found */
             found: boolean;
             /** Id */
             id: number;
+            /** Last Analysis Date */
+            last_analysis_date: string | null;
             /** Name */
             name: string;
+            /** Permalink */
+            permalink: string | null;
+            stats: components["schemas"]["HashProviderStats"] | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "malicious" | "suspicious" | "undetected" | "stale" | "unknown" | "other";
+        };
+        /** HashProviderStats */
+        HashProviderStats: {
+            /** Harmless */
+            harmless: number;
+            /** Malicious */
+            malicious: number;
+            /** Suspicious */
+            suspicious: number;
+            /** Total */
+            total: number;
+            /** Undetected */
+            undetected: number;
         };
         /** HealthPayload */
         HealthPayload: {
@@ -5051,9 +5080,10 @@ export interface operations {
         parameters: {
             query?: {
                 before?: number | null;
+                detection?: "all" | "detected" | "undetected";
                 limit?: number;
                 q?: string;
-                risk?: "all" | "pending" | "info" | "low" | "medium" | "high" | "critical";
+                risk?: "all" | "pending" | "info" | "metadata_only" | "low" | "medium" | "high" | "critical";
                 status?: "all" | "active" | "queued" | "running" | "finalizing" | "completed" | "partial" | "failed";
             };
             header?: never;

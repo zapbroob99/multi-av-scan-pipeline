@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
-import Audit from './audit'
+import Audit, { prettyDetails } from './audit'
 
 const EVENT = {
   id: 42, created_at: '2026-09-20 10:00:00', actor_type: 'user', actor_id: '3', actor_name: '<script>alice</script>',
@@ -17,6 +17,15 @@ function mount() {
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Audit /></MemoryRouter></QueryClientProvider>)
   return fetcher
 }
+
+describe('prettyDetails', () => {
+  it('indents complete JSON with sorted keys and leaves truncated or invalid text as recorded', () => {
+    expect(prettyDetails('{"b": 1, "a": {"d": 2, "c": 3}}', false))
+      .toBe(['{', '  "a": {', '    "c": 3,', '    "d": 2', '  },', '  "b": 1', '}'].join('\n'))
+    expect(prettyDetails('{"b": 1', true)).toBe('{"b": 1')
+    expect(prettyDetails('not json', false)).toBe('not json')
+  })
+})
 
 describe('Audit trail', () => {
   it('renders recorded values as inert text and keeps the page bounded without a total', async () => {

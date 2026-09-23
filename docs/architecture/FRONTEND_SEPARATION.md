@@ -57,19 +57,19 @@ authorization/regression tests, responsive browser verification and documentatio
 
 | Slice | Current state and remaining work |
 | --- | --- |
-| Manual scan workflow | Dashboard, submission, reports, archive/batch navigation, summary/full exports, retry, protected single/bulk deletion, a bounded printable report and plain-text access to oversized engine output implemented. Finish legacy filter/report parity. |
+| Manual scan workflow | Dashboard, submission, reports, archive/batch navigation, summary/full exports, retry, protected single/bulk deletion, a bounded printable report and plain-text access to oversized engine output implemented. Legacy filter parity: an engine-detection filter and the `metadata_only` risk option. |
 | Engines | Instance setup/settings, enable/disable/delete, checks, local rules and pool assignment implemented. `/console/engines/hash-list` manages the institution hash list (new; no legacy equivalent). Retain instance identity and secret omission. |
 | System — current slice | Worker inventory, lifecycle, credential revocation, worker-pool create/edit/delete and paginated worker runtime/active queue implemented. |
 | System — overview | Admin-only cached all-source totals, worker liveness, read-only retention policy and on-demand bounded historical engine-name metrics. Full-history aggregation scale gate remains. |
 | System — deferred intake | Admin-only read of the manifest worker's last recorded cycle (stale/failed flagged), deferred queue counts and oldest waiting age, bounded manifest rejections and pre-scan failures with paths redacted. New screen; no legacy equivalent. |
 | System — retention | Admin-only bounded preview and confirmed deletion across all sources; age and state fences, active/child/shared-sample/outbox protections, per-record outcomes. No recursive deletion. |
-| System — remaining parity | Engine pool assignment is already in React Engines. Retain legacy metric/detail comparison (including last-result timing) and deployment-sized fleet/read validation before cutover. |
+| System — remaining parity | Engine pool assignment is already in React Engines. Engine metrics now include last-result time. Deployment-sized fleet/read validation remains. |
 | Scan policy | `/console/scan-policy` implements admin-only reads and confirmed atomic updates of the three operational limits with shared backend validation/resolution. |
-| Hash lookup | `/console/hash-scan` provides analyst/admin explicit manual lookup, backend decisions, quota-aware adapters and bounded result summaries. Rich provider-detail parity remains before cutover. |
+| Hash lookup | `/console/hash-scan` provides analyst/admin explicit manual lookup, backend decisions, quota-aware adapters and bounded result summaries, now with legacy provider detail: a bounded provider status, verdict counts, last analysis date, cache source, duration, an HTTPS report link and operator guidance. Free-text provider reasons and policy configuration stay omitted. |
 | Integration administration | `/console/service-clients` lists clients and opens a tabbed settings dialog. Named-profile create/edit/disable/delete/default selection, fenced engine assignments, atomic client creation and credential add/list/scoped revocation are implemented. Tokens are supplied by the admin and never returned. `/console/service-clients/{id}/setup` reports coherent configuration readiness and connection details. `/console/service-clients/{id}/storage` manages bounded logical backend/prefix grants with explicit environment inheritance, deny-all and stale-edit protection; roots remain deployment-managed. |
 | Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Automation printable reports and oversized engine-output downloads reuse the manual readers under automation scope. A batch contract larger than the inline view downloads in full, up to the same 5000 members the integration API serves. Remaining: final legacy-action parity; preserve ownership and manual-history isolation. |
 | Users and account | Bounded inventory, confirmed local creation, administrative role/password edit and deletion, and own-account password change implemented. Shared last-admin/session protections and stale revision fences; LDAP shadow deletion does not disable directory access. Final cutover/deployment acceptance remains. |
-| Audit and information | Admin `/console/audit` provides bounded descending ID-keyset audit pages, literal search, outcome filtering and bounded inert details; no total is calculated and no write verb exists. `/console/about` gives analysts and admins the product boundary and a non-sensitive runtime snapshot with admin-scoped client counts. Remaining: legacy pretty-printed detail rendering, About metric parity and deployment-shaped trail-volume validation. Legacy audit has no printable view. |
+| Audit and information | Admin `/console/audit` provides bounded descending ID-keyset audit pages, literal search, outcome filtering and bounded inert details; no total is calculated and no write verb exists. `/console/about` gives analysts and admins the product boundary and a non-sensitive runtime snapshot with admin-scoped client counts. Complete details render indented with sorted keys as legacy did; truncated or non-JSON details stay as recorded. About matches the legacy metrics. Remaining: deployment-shaped trail-volume validation. Legacy audit has no printable view. |
 | Cutover | Route/deep-link compatibility, all legacy actions and error states checked against the route inventory, feature/permission parity, static deployment/TLS and performance gates, then retire HTML rendering. |
 
 Inventory covers the legacy login/logout, Dashboard, scans/batches/reports/exports,
@@ -1745,3 +1745,30 @@ reader. Frontend: 149 tests; 35 Edge workflows, with a new scenario covering a
 stopped worker, backlog, rejection and pre-scan failure with every seeded path
 redacted, phone-width layout and analyst refusal. Build and contract drift
 check passed.
+
+### Legacy parity sweep
+
+Before retiring the server-rendered UI, each remaining legacy feature was
+compared with its console screen.
+
+- Dashboard: the legacy verdict filter loaded every manual scan and all of its
+  results into memory. The console now offers `detection=detected|undetected`
+  on GET `/api/ui/v1/dashboard/scans`, answered by one indexed `EXISTS` probe
+  on recorded engine results per candidate row, and `metadata_only` joins the
+  recorded-risk options. "Undetected" means a finished scan with no recorded
+  detection; it is not coverage or a clean verdict, and active scans never match.
+  The default query still never touches `engine_results`.
+- Hash lookup: each engine row adds a provider status restricted to known values
+  (anything else becomes `other`), verdict counts, last analysis date, cache
+  source, duration and an HTTPS-only report link, plus the legacy operator
+  guidance derived from the decision. Free-text provider reasons remain
+  omitted, as the existing contract required, because adapter text can carry
+  deployment details.
+- System: historical engine metrics carry the legacy last-result time.
+- Audit: complete JSON details are indented with sorted keys; truncated or
+  non-JSON details are shown exactly as recorded.
+- About already matched the legacy metrics.
+
+Parity validation (2026-09-23): full Python suite with disposable PostgreSQL
+ran 958 tests (956 passed, 2 skipped). Frontend: 150 tests, 35 Edge workflows,
+build and contract drift check.

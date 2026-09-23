@@ -11,7 +11,7 @@ function mount() {
       registered_nodes: 3, online_nodes: 2, active_online_nodes: 1, retention_days: 30, retention_batch_size: 100,
       generated_at: '2026-09-14T00:00:00Z' }
     : { items: [{ first_result_id: 7, engine_name: '<script>historic</script>', name_truncated: true,
-      total: 2, completed: 1, failed: 1, skipped: 0, detections: 1, avg_duration_ms: null, max_duration_ms: null }],
+      total: 2, completed: 1, failed: 1, skipped: 0, detections: 1, avg_duration_ms: null, max_duration_ms: null, last_result_at: "2026-09-20 10:00:00" }],
       next_after: 7, generated_at: '2026-09-14T00:00:00Z' })))
   vi.stubGlobal('fetch', fetcher)
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SystemOverview /></MemoryRouter></QueryClientProvider>)

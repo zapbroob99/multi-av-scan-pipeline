@@ -25,8 +25,9 @@ export default function Dashboard({ session }: { session: Session }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [receipt, setReceipt] = useState('')
   const q = params.get('q') || '', status = params.get('status') || 'all', risk = params.get('risk') || 'all'
+  const detection = params.get('detection') || 'all'
   const before = params.get('before') || ''
-  const query = new URLSearchParams({ q, status, risk, limit: '20', ...(before ? { before } : {}) }).toString()
+  const query = new URLSearchParams({ q, status, risk, detection, limit: '20', ...(before ? { before } : {}) }).toString()
   const summary = useQuery({ queryKey: ['dashboard', 'summary'],
     queryFn: ({ signal }) => request('/api/ui/v1/dashboard/summary', 'get', { signal }),
     refetchInterval: 30000, refetchIntervalInBackground: false })
@@ -55,7 +56,7 @@ export default function Dashboard({ session }: { session: Session }) {
   function filter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget), next = new URLSearchParams()
-    for (const key of ['q', 'status', 'risk']) {
+    for (const key of ['q', 'status', 'risk', 'detection']) {
       const value = String(form.get(key) || '').trim()
       if (value && value !== 'all') next.set(key, value)
     }
@@ -92,8 +93,13 @@ export default function Dashboard({ session }: { session: Session }) {
           <option key={value} value={value}>{value === 'all' ? 'All statuses' : value}</option>)}
       </select></label>
       <label>Recorded risk<select name="risk" defaultValue={risk}>
-        {['all', 'pending', 'info', 'low', 'medium', 'high', 'critical'].map(value =>
+        {['all', 'pending', 'info', 'metadata_only', 'low', 'medium', 'high', 'critical'].map(value =>
           <option key={value} value={value}>{value === 'all' ? 'All risk levels' : value}</option>)}
+      </select></label>
+      <label>Engine detections<select name="detection" defaultValue={detection}>
+        <option value="all">Any result</option>
+        <option value="detected">An engine reported a detection</option>
+        <option value="undetected">Finished, no engine reported a detection</option>
       </select></label>
       <Button variant="secondary">Apply filters</Button>
       <Button type="button" variant="secondary" onClick={() => setParams({})}>Reset</Button>

@@ -466,9 +466,11 @@ def dashboard_scans(
     before: int | None = Query(default=None, ge=1, le=9007199254740991),
     q: str = Query(default="", max_length=200),
     status: Literal["all", "active", "queued", "running", "finalizing", "completed", "partial", "failed"] = "all",
-    risk: Literal["all", "pending", "info", "low", "medium", "high", "critical"] = "all",
+    risk: Literal["all", "pending", "info", "metadata_only", "low", "medium", "high", "critical"] = "all",
+    detection: Literal["all", "detected", "undetected"] = "all",
 ):
-    return dashboard_read.scan_page(limit=limit, before=before, query=q, status=status, risk=risk)
+    return dashboard_read.scan_page(limit=limit, before=before, query=q, status=status, risk=risk,
+                                    detection=detection)
 
 
 class StrictBody(BaseModel):

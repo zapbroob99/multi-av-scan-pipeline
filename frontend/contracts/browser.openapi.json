@@ -1708,6 +1708,17 @@
             "title": "First Result Id",
             "type": "integer"
           },
+          "last_result_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Result At"
+          },
           "max_duration_ms": {
             "anyOf": [
               {
@@ -1742,7 +1753,8 @@
           "skipped",
           "detections",
           "avg_duration_ms",
-          "max_duration_ms"
+          "max_duration_ms",
+          "last_result_at"
         ],
         "title": "EngineMetric",
         "type": "object"
@@ -2246,6 +2258,21 @@
             "title": "Action",
             "type": "string"
           },
+          "cached": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cached"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
           "found": {
             "title": "Found",
             "type": "boolean"
@@ -2254,8 +2281,52 @@
             "title": "Id",
             "type": "integer"
           },
+          "last_analysis_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Analysis Date"
+          },
           "name": {
             "title": "Name",
+            "type": "string"
+          },
+          "permalink": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permalink"
+          },
+          "stats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HashProviderStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "malicious",
+              "suspicious",
+              "undetected",
+              "stale",
+              "unknown",
+              "other"
+            ],
+            "title": "Status",
             "type": "string"
           }
         },
@@ -2263,9 +2334,48 @@
           "id",
           "name",
           "action",
-          "found"
+          "found",
+          "status",
+          "stats",
+          "last_analysis_date",
+          "permalink",
+          "cached",
+          "duration_ms"
         ],
         "title": "HashLookupRow",
+        "type": "object"
+      },
+      "HashProviderStats": {
+        "properties": {
+          "harmless": {
+            "title": "Harmless",
+            "type": "integer"
+          },
+          "malicious": {
+            "title": "Malicious",
+            "type": "integer"
+          },
+          "suspicious": {
+            "title": "Suspicious",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "undetected": {
+            "title": "Undetected",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "malicious",
+          "suspicious",
+          "undetected",
+          "harmless",
+          "total"
+        ],
+        "title": "HashProviderStats",
         "type": "object"
       },
       "HashesAdded": {
@@ -8045,12 +8155,28 @@
                 "all",
                 "pending",
                 "info",
+                "metadata_only",
                 "low",
                 "medium",
                 "high",
                 "critical"
               ],
               "title": "Risk",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "detection",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "detected",
+                "undetected"
+              ],
+              "title": "Detection",
               "type": "string"
             }
           }

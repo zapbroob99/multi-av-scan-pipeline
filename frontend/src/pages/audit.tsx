@@ -6,6 +6,20 @@ import { Button } from '../components/ui/button'
 
 const OUTCOMES = ['all', 'success', 'failure', 'denied'] as const
 
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys)
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort()
+    .map(key => [key, sortKeys((value as Record<string, unknown>)[key])]))
+  return value
+}
+
+/** Legacy parity: complete JSON details are indented with sorted keys. A
+ * truncated or non-JSON value is shown exactly as recorded, never repaired. */
+export function prettyDetails(details: string, truncated: boolean) {
+  if (truncated) return details
+  try { return JSON.stringify(sortKeys(JSON.parse(details)), null, 2) } catch { return details }
+}
+
 export default function Audit() {
   const [params, setParams] = useSearchParams()
   const query = new URLSearchParams(params)
@@ -51,7 +65,7 @@ export default function Audit() {
         <p>Target: {event.target_type}{event.target_id ? ` #${event.target_id}` : ''}</p>
         <p className="muted">Source IP: {event.source_ip || 'Not recorded'} · Request ID: {event.request_id}</p>
         <details><summary>Recorded details</summary>
-          <div className="technical-panel"><pre tabIndex={0} aria-label={`Audit event ${event.id} details text`}>{event.details}</pre></div>
+          <div className="technical-panel"><pre tabIndex={0} aria-label={`Audit event ${event.id} details text`}>{prettyDetails(event.details, event.details_truncated)}</pre></div>
           {event.details_truncated && <p className="muted">Details truncated for display.</p>}
         </details>
       </article>)}

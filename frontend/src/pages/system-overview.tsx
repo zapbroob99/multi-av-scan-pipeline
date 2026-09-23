@@ -46,10 +46,11 @@ export default function SystemOverview() {
     {metrics.error && <p role="alert" className="error">{metrics.error.message}</p>}
     {showMetrics && !metrics.error && metrics.data && <>
       <div className="history-table-wrap" role="region" aria-label="Historical engine metrics" tabIndex={0}><table className="history-table"><thead><tr>
-        <th>Recorded engine name</th><th>Total</th><th>Completed</th><th>Failed</th><th>Skipped</th><th>Detections</th><th>Avg / max duration</th></tr></thead><tbody>
+        <th>Recorded engine name</th><th>Total</th><th>Completed</th><th>Failed</th><th>Skipped</th><th>Detections</th><th>Avg / max duration</th><th>Last result</th></tr></thead><tbody>
         {metrics.data.items.map(metric => <tr key={metric.first_result_id}><td>{metric.engine_name}{metric.name_truncated && <small>Name truncated</small>}</td>
           <td>{metric.total}</td><td>{metric.completed}</td><td>{metric.failed}</td><td>{metric.skipped}</td><td>{metric.detections}</td>
-          <td>{metric.avg_duration_ms === null ? 'Unknown' : `${metric.avg_duration_ms.toFixed(1)} ms`} / {metric.max_duration_ms === null ? 'Unknown' : `${metric.max_duration_ms} ms`}</td></tr>)}</tbody></table></div>
+          <td>{metric.avg_duration_ms === null ? 'Unknown' : `${metric.avg_duration_ms.toFixed(1)} ms`} / {metric.max_duration_ms === null ? 'Unknown' : `${metric.max_duration_ms} ms`}</td>
+          <td><small>{metric.last_result_at || 'Unknown'}</small></td></tr>)}</tbody></table></div>
       {!metrics.data.items.length && <p className="empty">No recorded engine results on this page.</p>}
       <p className="muted">Metrics generated {new Date(metrics.data.generated_at).toLocaleString()}; cached for up to 30 seconds.</p>
       <div className="history-pagination"><Button variant="secondary" disabled={!after || metrics.isFetching} onClick={() => setParams({})}>First engine names</Button>
