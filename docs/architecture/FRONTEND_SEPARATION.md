@@ -58,7 +58,7 @@ authorization/regression tests, responsive browser verification and documentatio
 | Slice | Current state and remaining work |
 | --- | --- |
 | Manual scan workflow | Dashboard, submission, reports, archive/batch navigation, summary/full exports, retry, protected single/bulk deletion, a bounded printable report and plain-text access to oversized engine output implemented. Finish legacy filter/report parity. |
-| Engines | Instance setup/settings, enable/disable/delete, checks, local rules and pool assignment implemented. Retain instance identity and secret omission. |
+| Engines | Instance setup/settings, enable/disable/delete, checks, local rules and pool assignment implemented. `/console/engines/hash-list` manages the institution hash list (new; no legacy equivalent). Retain instance identity and secret omission. |
 | System — current slice | Worker inventory, lifecycle, credential revocation, worker-pool create/edit/delete and paginated worker runtime/active queue implemented. |
 | System — overview | Admin-only cached all-source totals, worker liveness, read-only retention policy and on-demand bounded historical engine-name metrics. Full-history aggregation scale gate remains. |
 | System — retention | Admin-only bounded preview and confirmed deletion across all sources; age and state fences, active/child/shared-sample/outbox protections, per-record outcomes. No recursive deletion. |
@@ -1692,3 +1692,36 @@ document. Production build and contract drift check passed.
 
 Remaining in this group: final legacy-action parity. Deployment-shaped validation
 of very large batches and outputs stays a cutover gate.
+
+### Institution hash list
+
+Admin `/console/engines/hash-list` manages the single institution-wide SHA-256
+list that the built-in Hash List engine checks. It has no legacy equivalent. GET
+`/api/ui/v1/hash-list` returns 20-row descending ID-keyset pages (at most 100)
+filtered by list and a literal query; a full digest is an exact match on the
+unique index, shorter text matches a hash prefix or a note substring with `%` and
+`_` escaped. Block/allow counts are returned on the first page only, because
+counting is a full scan of the list. Reads use the shared PostgreSQL budget.
+
+POST `/api/ui/v1/hash-list` takes an explicit list, 1 to 1000 digests and one
+optional note of at most 256 characters. Every digest is validated before one
+transactional insert, so a malformed entry rejects the whole request. A digest
+already on either list is left unchanged and reported with the list it is on:
+silently moving a blocked hash to the allowlist is the edit this must never make.
+DELETE `/api/ui/v1/hash-list/{entry_id}` removes one entry; entries are otherwise
+immutable. Both writes are admin/CSRF-checked, audited (`hash_list.add`,
+`hash_list.remove`), confirmed in a dialog and never automatically replayed.
+
+The page states the semantics next to the controls: a blocklist match is a
+detection, an allowlist match never suppresses another engine or produces an
+allow decision, an unlisted hash proves nothing, and changes apply only to engine
+jobs that run afterwards. It warns when no enabled Hash List engine exists, since
+entries are then stored but checked by nothing.
+
+Hash list validation (2026-09-23): full Python suite with disposable PostgreSQL
+ran 937 tests (935 passed, 2 skipped), including PostgreSQL variants of the
+adapter, storage and admin-read tests. Frontend: 142 tests; 34 Edge workflows,
+with a new scenario covering explicit-list addition, the already-listed report,
+confirmed removal, phone-width layout and the engine-readiness warning clearing
+once a Hash List engine is created from the Engines page. Production build and
+contract drift check passed.

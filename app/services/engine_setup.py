@@ -62,8 +62,18 @@ def engine_setup_from_form(
     if len(display_name) > 128:
         raise ValueError("Engine instance name must be 128 characters or fewer.")
 
-    if adapter_key == "static_metadata":
+    if adapter_key in {"static_metadata", "hash_list"}:
         return display_name, {}
+
+    if adapter_key == "file_type":
+        return display_name, {
+            "header_bytes": _required_setup_int(
+                form, "file_type_header_bytes", "File type header bytes", 512, 1024 * 1024
+            ),
+            "mismatch_action": _required_setup_choice(
+                form, "file_type_mismatch_action", "File type mismatch action", {"report", "detect"}
+            ),
+        }
 
     if adapter_key == "clamav":
         mode = _required_setup_choice(

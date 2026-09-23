@@ -120,6 +120,16 @@ contribute detection coverage. A mismatch is always a normalized finding; `misma
 selects whether it also sets `detected`, which the shared scoring layer weights like any engine
 detection. Blank configuration values mean unset, matching the ClamAV and Defender resolution.
 
+The built-in `hash_list` adapter checks the sample's MASP-computed SHA-256 against one
+institution-wide list in `hash_list_entries`; it reads no sample bytes and never compares a
+client-supplied digest. A blocklist match sets `detected`; an allowlist match is an informational
+finding that must never suppress another engine's detection or produce an allow decision. It is
+`detection=False`: "not listed" proves nothing, so it never contributes coverage. A failed lookup
+is a `failed` result, never "not listed". It reads MASP's database live (`requires_database`), so
+control-API workers must not advertise or run it. A digest is on at most one list; adding one that
+is already listed leaves it unchanged and reports where it is. The default Linux worker keys and
+compose engine lists include `file_type` and `hash_list`.
+
 ## Engine Identity
 
 - `adapter_key` identifies vendor behavior and is not an instance identity.
@@ -142,9 +152,9 @@ Large-file mapped-source inspection is a design-only initiative: see
 decisions there (copy vs. in-place reading, TOCTOU mitigation, result-semantics for a
 deliberately narrow profile, worker-to-backend routing) block implementation; the agreed
 sequence starts with header inspection and a local hash list, both of which stay inside
-today's copy path, before any in-place reading. The file_type header adapter (first step) is
-implemented; multiple named profiles are also implemented independently. The local
-hash list, deliberately narrow coverage semantics and in-place reading remain open.
+today's copy path, before any in-place reading. The file_type header adapter and the local
+hash list (steps 1 and 2) are implemented; multiple named profiles are also implemented
+independently. Deliberately narrow coverage semantics and in-place reading remain open.
 
 The frontend target is all browser UI migrated incrementally, not permanent
 legacy escape links. Track every remaining screen and cutover gate in the complete
@@ -330,6 +340,13 @@ paths, adapter keys, engine configuration or secrets. Read only small configurat
 under the shared budget; never aggregate scan history for this screen. Enabled engines and
 schedulable nodes are configuration state, not proof of complete coverage. `app.APP_VERSION`
 is the single version constant.
+Admin `/console/engines/hash-list` manages the hash list through GET/POST `/api/ui/v1/hash-list`
+and DELETE `/api/ui/v1/hash-list/{entry_id}`. Pages are 20-row descending ID-keyset reads; counts
+are computed on the first page only. A full SHA-256 filter is an exact indexed match, shorter text a
+literal hash prefix or note substring. Additions take an explicit list, at most 1000 digests and
+one note; every digest is validated before one transactional insert. Entries are immutable: moving
+a hash between lists is removal plus a fresh addition. Confirm both writes, never auto-replay them.
+Changes affect engine jobs that run afterwards and never rewrite completed results.
 `/console/scans/{id}/print` and the automation twin render a bounded printable report for
 analysts and admins. Reuse the full-export snapshot loader and shared payload builder so the
 printed decision, coverage, findings and engine rows come from one repeatable read; React

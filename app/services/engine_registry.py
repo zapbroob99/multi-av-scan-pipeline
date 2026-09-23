@@ -20,6 +20,8 @@ from app.engines.clamav import check_clamav_health, get_clamav_config, run_clama
 from app.engines.file_type import ENGINE_NAME as FILE_TYPE_NAME
 from app.engines.file_type import check_file_type_health, get_file_type_config, run_file_type_engine
 from app.engines.clamav import env_or_setting as clamav_env_or_setting
+from app.engines.hash_list import ENGINE_NAME as HASH_LIST_NAME
+from app.engines.hash_list import check_hash_list_health, get_hash_list_config, run_hash_list_engine
 from app.engines.microsoft_defender import (
     check_microsoft_defender_health,
     get_microsoft_defender_config,
@@ -90,6 +92,9 @@ class EngineCapabilityProfile:
     supports_file_hash_scan: bool = False
     consumes_external_quota: bool = False
     allows_multiple_instances: bool = False
+    # Reads MASP's own database while scanning. A control-API worker has no
+    # database connection, so it must never advertise or run such an adapter.
+    requires_database: bool = False
 
 
 @dataclass(frozen=True)
@@ -245,6 +250,39 @@ REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
         runtime_config_factory=get_file_type_config,
         health_check_function=check_file_type_health,
         scan_function=run_file_type_engine,
+    ),
+    "hash_list": RegisteredEngineAdapter(
+        definition=EngineAdapterDefinition(
+            key="hash_list",
+            label=HASH_LIST_NAME,
+            short_label="HL",
+            category="metadata",
+            description="Institution-controlled SHA-256 blocklist and allowlist.",
+            vendor="MASP",
+            product="Built-in hash list",
+            integration_method="local",
+            support_state="supported",
+            # Not detection coverage: "not listed" proves nothing about a file.
+            # A blocklist match still sets detected, so it scores like any
+            # engine detection; an allowlist match is informational only.
+            detection=False,
+            configurable=False,
+            docs_path="docs/integrations/SUPPORT_MATRIX.md",
+        ),
+        capabilities=EngineCapabilityProfile(
+            input_modes=("hash",),
+            deployment="local",
+            supported_platforms=("linux", "windows"),
+            execution_model="sync",
+            supports_file_upload=True,
+            supports_hash_lookup=False,
+            supports_archives=False,
+            requires_network=False,
+            requires_database=True,
+        ),
+        runtime_config_factory=get_hash_list_config,
+        health_check_function=check_hash_list_health,
+        scan_function=run_hash_list_engine,
     ),
     "clamav": RegisteredEngineAdapter(
         definition=EngineAdapterDefinition(

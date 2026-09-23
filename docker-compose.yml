@@ -115,7 +115,7 @@ services:
       MASP_VIRUSTOTAL_API_KEY: ${MASP_VIRUSTOTAL_API_KEY:-}
       MASP_WORKER_POLL_SECONDS: "2"
       MASP_WORKER_TIMING_EVENTS_ENABLED: ${MASP_WORKER_TIMING_EVENTS_ENABLED:-1}
-      MASP_WORKER_ENGINE_KEYS: static_metadata,clamav,yara,virustotal
+      MASP_WORKER_ENGINE_KEYS: static_metadata,file_type,hash_list,clamav,yara,virustotal
       MASP_WORKER_NODE_ID: dev-linux-combined
       MASP_WORKER_NODE_NAME: Dev Linux Combined Worker
       MASP_WORKER_LABELS: site=local,profile=combined,os=linux
@@ -152,7 +152,7 @@ services:
       MASP_VIRUSTOTAL_API_KEY: ${MASP_VIRUSTOTAL_API_KEY:-}
       MASP_WORKER_POLL_SECONDS: "2"
       MASP_WORKER_TIMING_EVENTS_ENABLED: ${MASP_WORKER_TIMING_EVENTS_ENABLED:-1}
-      MASP_WORKER_ENGINE_KEYS: static_metadata,virustotal
+      MASP_WORKER_ENGINE_KEYS: static_metadata,file_type,hash_list,virustotal
       MASP_WORKER_NODE_ID: dev-static-worker
       MASP_WORKER_NODE_NAME: Dev Static Worker
       MASP_WORKER_LABELS: site=local,profile=split,os=linux

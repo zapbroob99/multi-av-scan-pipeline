@@ -35,6 +35,7 @@ const ClientProfiles = lazy(() => import('./pages/client-profiles'))
 const ClientStorage = lazy(() => import('./pages/client-storage'))
 const ClientSetup = lazy(() => import('./pages/client-setup'))
 const Audit = lazy(() => import('./pages/audit'))
+const HashList = lazy(() => import('./pages/hash-list'))
 const About = lazy(() => import('./pages/about'))
 const ScanPrint = lazy(() => import('./pages/scan-print'))
 const client = new QueryClient({ defaultOptions: {
@@ -102,7 +103,7 @@ function App() {
     </nav>
     <div className="sidebar-footer"><span>{session.data.user.username}<small>{session.data.user.role}</small></span><div className="sidebar-controls">
       <ThemeToggle /><Button variant="secondary" disabled={busy} onClick={logout} aria-label="Sign out"><LogOut size={17} /></Button></div></div>
-  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname.endsWith('/print') ? 'Printable report' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="offline-label">SELF-HOSTED</span></header>
+  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname.endsWith('/print') ? 'Printable report' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines/hash-list' ? 'Hash list' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="offline-label">SELF-HOSTED</span></header>
     {error && <p role="alert" className="error">{error}</p>}
       <Suspense fallback={<p role="status">Loading page…</p>}><Routes>
         <Route path="/account" element={<Account session={session.data} onPasswordChanged={() => {
@@ -153,6 +154,7 @@ function App() {
           <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/system" element={session.data.user.role === 'admin' ? <System session={session.data} /> :
           <section className="empty"><h1>Administrator access required</h1><p>Your session does not have system-management permissions.</p></section>} />
+        <Route path="/engines/hash-list" element={session.data.user.role === 'admin' ? <HashList session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/engines" element={session.data.user.role === 'admin' ? <Engines session={session.data} /> :
           <section className="empty"><h1>Administrator access required</h1><p>Your session does not have engine-management permissions.</p></section>} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

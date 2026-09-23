@@ -530,6 +530,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/hash-list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Hash List */
+        get: operations["browser_hash_list_api_ui_v1_hash_list_get"];
+        put?: never;
+        /** Browser Add Hashes */
+        post: operations["browser_add_hashes_api_ui_v1_hash_list_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/hash-list/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Browser Remove Hash */
+        delete: operations["browser_remove_hash_api_ui_v1_hash_list__entry_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/hash-scan": {
         parameters: {
             query?: never;
@@ -1302,6 +1337,21 @@ export interface components {
             /** Support State */
             support_state: string;
         };
+        /** AddHashesBody */
+        AddHashesBody: {
+            /** Hashes */
+            hashes: string[];
+            /**
+             * List Kind
+             * @enum {string}
+             */
+            list_kind: "block" | "allow";
+            /**
+             * Note
+             * @default
+             */
+            note?: string;
+        };
         /** ArchiveChild */
         ArchiveChild: {
             /** Filename */
@@ -1768,6 +1818,11 @@ export interface components {
             /** Max File Size Bytes */
             max_file_size_bytes?: number | null;
             /**
+             * Requires Database
+             * @default false
+             */
+            requires_database?: boolean;
+            /**
              * Requires Network
              * @default false
              */
@@ -1870,6 +1925,16 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /** ExistingHash */
+        ExistingHash: {
+            /**
+             * List Kind
+             * @enum {string}
+             */
+            list_kind: "block" | "allow" | "removed";
+            /** Sha256 */
+            sha256: string;
+        };
         /** FieldPayload */
         FieldPayload: {
             /** Choices */
@@ -1912,6 +1977,46 @@ export interface components {
             id: number;
             /** Name */
             name: string;
+        };
+        /** HashesAdded */
+        HashesAdded: {
+            /** Added */
+            added: number;
+            /** Existing */
+            existing: components["schemas"]["ExistingHash"][];
+        };
+        /** HashListCounts */
+        HashListCounts: {
+            /** Allow */
+            allow: number;
+            /** Block */
+            block: number;
+        };
+        /** HashListEntry */
+        HashListEntry: {
+            /** Created At */
+            created_at: number;
+            /** Created By */
+            created_by: string | null;
+            /** Id */
+            id: number;
+            /**
+             * List Kind
+             * @enum {string}
+             */
+            list_kind: "block" | "allow";
+            /** Note */
+            note: string;
+            /** Sha256 */
+            sha256: string;
+        };
+        /** HashListPage */
+        HashListPage: {
+            counts: components["schemas"]["HashListCounts"] | null;
+            /** Items */
+            items: components["schemas"]["HashListEntry"][];
+            /** Next Before */
+            next_before: number | null;
         };
         /** HashLookupBody */
         HashLookupBody: {
@@ -5996,6 +6101,291 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RuleSaved"];
                 };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_hash_list_api_ui_v1_hash_list_get: {
+        parameters: {
+            query?: {
+                before?: number | null;
+                kind?: "all" | "block" | "allow";
+                limit?: number;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HashListPage"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_add_hashes_api_ui_v1_hash_list_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddHashesBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HashesAdded"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_remove_hash_api_ui_v1_hash_list__entry_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Bad Request */
             400: {

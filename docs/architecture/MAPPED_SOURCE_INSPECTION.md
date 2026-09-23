@@ -1,9 +1,9 @@
 # Mapped-source inspection for large files
 
 Status: **design draft for in-place inspection.** The bounded `file_type` header
-adapter, multiple named profiles and client storage-access administration are
-implemented within today's copy path. In-place reading and the local hash list
-are not implemented. Sections marked **OPEN** remain unresolved.
+adapter, the local hash list, multiple named profiles and client storage-access
+administration are implemented within today's copy path. In-place reading is not
+implemented. Sections marked **OPEN** remain unresolved.
 
 ## The use case
 
@@ -58,10 +58,10 @@ Two facts materially reduce the work:
 2. **Magic-byte inspection — implemented.** The separate `file_type` adapter
    reads a bounded header and reports declared-versus-actual content mismatch.
    `static_metadata` remains metadata-only. Neither adapter avoids the deferred copy.
-3. **Local hash lists.** The only `supports_hash_lookup` adapter is VirusTotal,
-   which is `support_state="blocked"`, consumes external quota and is excluded
-   from API/ICAP by design. There is no institution-controlled blocklist or
-   allowlist.
+3. **Local hash lists — implemented.** The built-in `hash_list` adapter checks the
+   MASP-computed SHA-256 against one institution-wide blocklist/allowlist managed
+   at `/console/engines/hash-list`, without external quota and without reading
+   sample bytes. An allowlist match is informational only.
 4. **Path execution mode.** `input_modes=("file", "path")` is declarative only.
    It appears in UI and routing metadata and drives nothing.
 5. **Backend mapping in the UI — implemented.** Client Storage administration
@@ -184,12 +184,14 @@ Each step is independently useful and independently verifiable:
 1. **Magic-byte inspection adapter.** Reads a bounded header, compares detected
    type against the declared one, reports a mismatch. Works with today's copy
    path, so it needs no storage change and no new security boundary.
-2. **Local hash list adapter.** Institution-controlled blocklist/allowlist with
-   list management in the console. MASP computes the digest itself.
+2. **Local hash list adapter — implemented.** One institution-wide
+   blocklist/allowlist with list management in the console. MASP computes the
+   digest itself. A blocklist match is a detection; an allowlist match is
+   informational and never suppresses another engine or produces an allow
+   decision, which keeps it clear of the result-semantics question in step 4.
 3. **Multiple named profiles — implemented.** Client administration supports
    create, rename, delete and default selection, so a lightweight profile can
-   exist beside a full one. This independent routing slice was completed before
-   the local hash list; steps 2, 4 and 5 remain open.
+   exist beside a full one. Steps 4 and 5 remain open.
 4. **Result semantics.** Make deliberately narrow coverage explicit everywhere a
    decision is shown.
 5. **In-place reading.** Only after 1-4, because it carries the security decisions

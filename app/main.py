@@ -2505,7 +2505,7 @@ def render_adapter_setup_panel(adapter_key: str, selected: bool) -> str:
     )
     panel_close = "</section>"
 
-    if adapter_key == "static_metadata":
+    if adapter_key in {"static_metadata", "hash_list"}:
         return f"""
         {panel_open}
           <div class="adapter-setup-heading">

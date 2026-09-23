@@ -1,5 +1,13 @@
 # MASP - Multi AV Scan Pipeline
 
+A built-in Hash List engine checks each sample's SHA-256, computed by MASP
+itself, against one institution-wide blocklist and allowlist managed at
+`/console/engines/hash-list`. A blocklist match is a detection; an allowlist
+match is informational and never clears a file other engines flagged. It reads
+no sample bytes, so its cost does not depend on file size. The default Linux
+worker now runs the File Type and Hash List engines; File Type instances can
+also now be created from the Engines page.
+
 Manual and automation scan reports now offer a bounded printable view at
 `/console/scans/{id}/print`. Unlike the legacy report it enforces the scan's
 source scope and caps each engine's embedded output. Recorded engine output above

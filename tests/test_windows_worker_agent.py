@@ -124,7 +124,7 @@ class StoppableControlWorkerTests(unittest.TestCase):
         ), patch(
             "app.workers.control_api_worker.current_worker_node_id", return_value="node-1"
         ), patch(
-            "app.workers.control_api_worker.worker_engine_keys",
+            "app.workers.control_api_worker.control_api_engine_keys",
             return_value={"microsoft_defender"},
         ):
             control_api_worker.run_forever(stop_event=stop)

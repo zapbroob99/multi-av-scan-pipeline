@@ -5,7 +5,7 @@ from app.services.engine_registry import adapter_capabilities
 
 
 WINDOWS_DEFAULT_ENGINE_KEYS = ("static_metadata", "microsoft_defender")
-POSIX_DEFAULT_ENGINE_KEYS = ("static_metadata", "clamav", "yara")
+POSIX_DEFAULT_ENGINE_KEYS = ("static_metadata", "file_type", "hash_list", "clamav", "yara")
 
 
 def worker_platform() -> str:
@@ -37,6 +37,15 @@ def worker_engine_keys() -> set[str]:
         adapter_key
         for adapter_key in raw_keys
         if adapter_supported_on_platform(adapter_key, platform_name)
+    }
+
+
+def control_api_engine_keys() -> set[str]:
+    """Keys a control-API worker may advertise: it has no MASP database."""
+    return {
+        adapter_key
+        for adapter_key in worker_engine_keys()
+        if not adapter_capabilities(adapter_key).requires_database
     }
 
 

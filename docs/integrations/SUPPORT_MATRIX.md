@@ -53,6 +53,13 @@ It is registered as a non-detection adapter: a masquerading extension is an
 indicator an analyst judges, not a malware identification, and it therefore never
 contributes detection coverage. Operators who want a mismatch to reach the shared
 risk score set `mismatch_action` to `detect` on the instance.
+
+The built-in Hash List engine likewise adds no vendor dependency, network access or
+command execution. It compares the digest MASP computed during ingestion or copy
+with one institution-wide list, so a client cannot supply the value that clears its
+own file, and it reads no sample bytes. It reads MASP's database while scanning:
+it runs on direct-database workers only, and a control-API worker neither
+advertises nor runs it. A lookup failure is reported as failed, never as unlisted.
 Metrics group by recorded engine name; renamed or reused names must not be treated
 as stable instance identity, coverage or an allow decision. No support state changes.
 React retention cleanup includes all sources with admin confirmation, stale-state
@@ -88,6 +95,7 @@ remain environment-specific.
 | Integration | Vendor | Product | Method | State | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Static Metadata | MASP | Built-in metadata analyzer | local | supported | Extracts hashes, size, content type, and storage metadata. Not a detection engine. |
+| Hash List | MASP | Built-in hash list | local database | supported | Compares the MASP-computed SHA-256 with one institution-wide blocklist/allowlist; reads no sample bytes. Not a detection engine: "not listed" is not coverage. A blocklist match sets `detected`; an allowlist match is an informational finding that never suppresses other engines or produces an allow decision. Requires a worker with MASP database access; control-API workers never advertise it. |
 | File Type | MASP | Built-in header inspector | local | supported | Reads a bounded header (default 4096 bytes, never the whole file) and compares the detected content family against the declared extension. Not a detection engine: a mismatch is a masquerade indicator, recorded as a normalized finding. `mismatch_action=detect` additionally marks the result detected so the shared scoring layer treats it like any engine detection; the default `report` does not. Cost does not grow with sample size. |
 | ClamAV via clamd | Cisco Talos | ClamAV clamd | TCP clamd protocol | supported | Preferred ClamAV runtime in Docker/on-prem deployments. Multiple named clamd instances may use distinct host, port, timeout, and size settings. |
 | ClamAV via clamscan | Cisco Talos | ClamAV CLI | local CLI | supported | Local fallback when `clamscan` exists on PATH. |

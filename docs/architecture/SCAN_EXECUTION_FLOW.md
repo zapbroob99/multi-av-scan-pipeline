@@ -213,12 +213,12 @@ Default worker capabilities are defined in
 
 ```python
 WINDOWS_DEFAULT_ENGINE_KEYS = ("static_metadata", "microsoft_defender")
-POSIX_DEFAULT_ENGINE_KEYS = ("static_metadata", "clamav", "yara")
+POSIX_DEFAULT_ENGINE_KEYS = ("static_metadata", "file_type", "hash_list", "clamav", "yara")
 ```
 
 That means:
 
-- A Linux worker normally runs `static_metadata`, `clamav`, and `yara`.
+- A Linux worker normally runs `static_metadata`, `file_type`, `hash_list`, `clamav`, and `yara`.
 - A Windows worker normally runs `static_metadata` and `microsoft_defender`.
 - `MASP_WORKER_ENGINE_KEYS` can override the engine assignment.
 - Unsupported engine/platform combinations are filtered out.

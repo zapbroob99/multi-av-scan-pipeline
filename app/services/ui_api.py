@@ -37,6 +37,7 @@ from app.services import credential_admin
 from app.services import ledger_read
 from app.services import user_admin
 from app.services import audit_read
+from app.services import hash_list_admin
 from app.services import about_read
 from app.services import account
 from app.services.ingest import store_upload, configured_upload_max_bytes, UploadTooLargeError
@@ -343,6 +344,31 @@ def browser_audit(limit: int = Query(default=20, ge=1, le=100),
                   q: str = Query(default='', max_length=200),
                   outcome: Literal['all', 'success', 'failure', 'denied'] = 'all'):
     return audit_read.page(limit=limit, before=before, query=q, outcome=outcome)
+
+
+@router.get('/hash-list', response_model=hash_list_admin.HashListPage)
+def browser_hash_list(limit: int = Query(default=20, ge=1, le=100),
+                      before: int | None = Query(default=None, ge=1, le=9007199254740991),
+                      q: str = Query(default='', max_length=200),
+                      kind: Literal['all', 'block', 'allow'] = 'all'):
+    return hash_list_admin.page(limit=limit, before=before, kind=kind, query=q)
+
+
+@router.post('/hash-list', response_model=hash_list_admin.HashesAdded, status_code=201)
+def browser_add_hashes(request: Request, body: hash_list_admin.AddHashesBody):
+    user = request.state.ui_user
+    details = {'list_kind': body.list_kind, 'submitted': len(body.hashes)}
+    set_audit_context(request, action='hash_list.add', target_type='hash_list', actor=user, details=details)
+    result = hash_list_admin.add(body, user.username)
+    set_audit_context(request, details={**details, 'added': result.added, 'existing': len(result.existing)})
+    return result
+
+
+@router.delete('/hash-list/{entry_id}', status_code=204)
+def browser_remove_hash(request: Request, entry_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='hash_list.remove', target_type='hash_list_entry',
+                      target_id=entry_id, actor=request.state.ui_user)
+    hash_list_admin.remove(entry_id)
 
 
 @router.get('/about', response_model=about_read.AboutPayload)
@@ -948,7 +974,7 @@ def sign_out(request: Request, response: Response):
 
 CHOICES = {
     "mode": ["clamd", "cli"], "execution_mode": ["powershell", "mpcmdrun"],
-    "default_scan_type": ["custom", "quick", "full"],
+    "default_scan_type": ["custom", "quick", "full"], "mismatch_action": ["report", "detect"],
 }
 
 

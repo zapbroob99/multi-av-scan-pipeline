@@ -22,7 +22,7 @@ from app.services.engine_registry import (
     engine_health,
     run_engine,
 )
-from app.services.worker_capabilities import worker_engine_keys
+from app.services.worker_capabilities import control_api_engine_keys
 from app.services.http_transport import open_without_redirects as urlopen
 from app.services.worker_runtime import (
     current_worker_node_id,
@@ -216,7 +216,7 @@ def identity_payload(*, process_id: int, runtime_state: str | None = None,
         or "unknown",
         "labels": worker_node_labels(),
         "capacity": worker_node_capacity(),
-        "engine_keys": sorted(worker_engine_keys()),
+        "engine_keys": sorted(control_api_engine_keys()),
         "process_id": process_id,
     }
     if runtime_state is not None:
@@ -382,6 +382,10 @@ def run_claim(client: WorkerControlClient, claim: dict[str, object], process_id:
                 raise WorkerControlError("Job ownership could not be renewed during download.")
             try:
                 engine = engine_from_claim(claim)
+                if adapter_capabilities(engine.adapter_key).requires_database:
+                    # Never advertised, but refuse explicitly: run here it would
+                    # read an empty local database and report "not listed".
+                    raise WorkerControlError(f"{engine.adapter_key} requires the MASP database.")
                 scan = scan_from_claim(claim, local_path)
                 print(f"Running {engine.display_name} for remote scan job {scan.id}", flush=True)
                 result = run_engine(engine, scan)
@@ -480,7 +484,7 @@ def run_forever(stop_event: threading.Event | None = None) -> None:
     print(
         "MASP control API worker started "
         f"(node: {current_worker_node_id()}, engines: "
-        f"{', '.join(sorted(worker_engine_keys())) or 'none'})",
+        f"{', '.join(sorted(control_api_engine_keys())) or 'none'})",
         flush=True,
     )
     while not stop.is_set():

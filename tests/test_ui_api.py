@@ -1168,6 +1168,66 @@ class BrowserApiTests(unittest.TestCase):
         self.assertTrue(large['details_truncated'])
         self.assertEqual(len(large['details']), 4096)
 
+    def test_hash_list_is_admin_only_and_writes_require_csrf(self):
+        self.assertEqual(self.request('/hash-list', session=False)[0], 401)
+        body = {'list_kind': 'block', 'hashes': ['a' * 64]}
+        self.assertEqual(self.request('/hash-list', 'POST', body, csrf=False)[0], 403)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/hash-list')[0], 403)
+        self.assertEqual(self.request('/hash-list', 'POST', body)[0], 403)
+        self.assertEqual(self.request('/hash-list/1', 'DELETE')[0], 403)
+        self.assertIsNone(db.get_hash_list_entry('a' * 64))
+
+    def test_hash_list_add_normalizes_dedupes_and_never_reclassifies(self):
+        status, added, _ = self.request('/hash-list', 'POST', {
+            'list_kind': 'block', 'hashes': [' ' + 'A' * 64, 'a' * 64, 'b' * 64], 'note': 'Incident 14'})
+        self.assertEqual(status, 201, added)
+        self.assertEqual(added, {'added': 2, 'existing': []})
+        self.assertEqual(db.get_hash_list_entry('a' * 64)['note'], 'Incident 14')
+        status, again, _ = self.request('/hash-list', 'POST', {'list_kind': 'allow', 'hashes': ['a' * 64, 'c' * 64]})
+        self.assertEqual(status, 201, again)
+        self.assertEqual(again, {'added': 1, 'existing': [{'sha256': 'a' * 64, 'list_kind': 'block'}]})
+        self.assertEqual(db.get_hash_list_entry('a' * 64)['list_kind'], 'block')
+
+    def test_hash_list_add_validates_every_entry_before_writing(self):
+        status, error, _ = self.request('/hash-list', 'POST', {'list_kind': 'block', 'hashes': ['a' * 64, 'not-a-hash']})
+        self.assertEqual(status, 422)
+        self.assertIn('Entry 2', error['detail'])
+        self.assertIsNone(db.get_hash_list_entry('a' * 64))
+        for body in ({'list_kind': 'maybe', 'hashes': ['a' * 64]}, {'list_kind': 'block', 'hashes': []},
+                     {'list_kind': 'block', 'hashes': ['a' * 64] * 1001},
+                     {'list_kind': 'block', 'hashes': ['a' * 64], 'note': 'x' * 257},
+                     {'list_kind': 'block', 'hashes': ['a' * 64], 'extra': True}):
+            with self.subTest(body=list(body)):
+                self.assertEqual(self.request('/hash-list', 'POST', body)[0], 422)
+
+    def test_hash_list_page_is_keyset_bounded_filtered_and_counts_first_page_only(self):
+        digests = [f'{index:064x}' for index in range(1, 23)]
+        db.add_hash_list_entries([(d, 'block' if int(d, 16) % 2 else 'allow', f'feed {int(d, 16)}') for d in digests], 'admin')
+        status, page, headers = self.request('/hash-list')
+        self.assertEqual(status, 200, page)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(len(page['items']), 20)
+        self.assertEqual(page['counts'], {'block': 11, 'allow': 11})
+        tail = self.request('/hash-list?before=' + str(page['next_before']))[1]
+        self.assertEqual(len(tail['items']), 2)
+        self.assertIsNone(tail['counts'])
+        self.assertIsNone(tail['next_before'])
+        self.assertEqual({row['list_kind'] for row in self.request('/hash-list?kind=allow')[1]['items']}, {'allow'})
+        exact = self.request('/hash-list?q=' + digests[4].upper())[1]['items']
+        self.assertEqual([row['sha256'] for row in exact], [digests[4]])
+        self.assertEqual([row['note'] for row in self.request('/hash-list?q=feed 17')[1]['items']], ['feed 17'])
+        self.assertEqual(self.request('/hash-list?q=%25')[1]['items'], [])
+        self.assertEqual(self.request('/hash-list?kind=other')[0], 422)
+
+    def test_hash_list_remove_is_explicit_and_reports_missing_entries(self):
+        db.add_hash_list_entries([('a' * 64, 'block', '')], 'admin')
+        entry_id = db.get_hash_list_entry('a' * 64)['id']
+        self.assertEqual(self.request(f'/hash-list/{entry_id}', 'DELETE')[0], 204)
+        self.assertIsNone(db.get_hash_list_entry('a' * 64))
+        self.assertEqual(self.request(f'/hash-list/{entry_id}', 'DELETE')[0], 404)
+
     def test_about_is_readable_by_analysts_and_scopes_client_counts_to_admins(self):
         db.create_service_client('integration', 'Integration')
         self.assertEqual(self.request('/about', session=False)[0], 401)

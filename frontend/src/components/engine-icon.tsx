@@ -1,4 +1,4 @@
-import { Binary, Cpu, FileSearch, Globe, ScanSearch, ShieldCheck } from 'lucide-react'
+import { Binary, Cpu, FileSearch, Globe, Hash, ScanSearch, ShieldCheck } from 'lucide-react'
 
 /** Per-adapter icons so engines are told apart at a glance.
  *
@@ -12,6 +12,7 @@ const ICONS: Record<string, typeof Cpu> = {
   virustotal: Globe,
   static_metadata: Binary,
   file_type: FileSearch,
+  hash_list: Hash,
 }
 
 export function EngineIcon({ adapterKey, size = 23 }: { adapterKey: string; size?: number }) {

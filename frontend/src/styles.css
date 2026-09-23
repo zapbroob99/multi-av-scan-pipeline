@@ -395,3 +395,5 @@ tr.row-alert > td:first-child { box-shadow: inset 3px 0 0 #ef4444; }
   .client-engine-options { grid-template-columns: minmax(0, 1fr); }
   .client-form-footer .button { width: 100%; }
 }
+/* 64-character digests have no break opportunity and would widen phone layouts. */
+.hash-value { overflow-wrap: anywhere; }
