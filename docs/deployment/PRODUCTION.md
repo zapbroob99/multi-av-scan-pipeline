@@ -290,6 +290,35 @@ shared root, scope clients to prefixes, for example
 `{"shared":{"drive":["drive/inbox"],"large-transfer":["transfer/inbox"]}}`.
 Set `MASP_DEFERRED_MAX_BYTES` to the largest deferred object MASP may copy.
 
+### Client storage access rollout
+
+Storage roots and mounts remain deployment-owned. The console's client **Storage**
+tab controls only logical backend grants, with optional relative object prefixes.
+Existing clients inherit `MASP_DEFERRED_BACKEND_CLIENTS_JSON` until an admin confirms
+a custom policy; an empty custom policy denies access. Returning to inheritance is
+also an explicit confirmed action. Custom grants never add roots to
+`MASP_DEFERRED_STORAGE_BACKENDS_JSON` or alter the single-backend mount variables.
+
+For an existing deployment, upgrade **all API replicas and all deferred-intake
+workers to the same version before saving custom grants**. Quiesce deferred
+admission/intake during that transition: an older process ignores database grants
+and could still use broader environment permissions. Startup creates the new
+policy table in place; it neither imports nor deletes environment configuration.
+Retain a database backup and inspect pending submissions as part of deployment.
+
+Verify an allowed prefix, a sibling-prefix rejection, explicit deny-all, and
+worker rejection of a queued request whose access was revoked. This console screen
+does not prove mount reachability. Each process must retain the correct approved
+backend key/root configuration; environment inheritance may differ between replicas
+if their configuration differs. A copy already authorized and in progress may
+continue after an edit. Scan snapshots and completed results remain unchanged.
+
+Before rolling back to an older version, quiesce deferred admission/intake again
+and translate the intended effective grants into the old environment configuration
+on every API/worker process. Otherwise rollback would silently restore old
+environment permissions. The same requirement applies to empty custom deny-all
+policies. No automatic downgrade translation is performed.
+
 Set `MASP_SIEM_WEBHOOK_URL` to an HTTPS endpoint; optionally set
 `MASP_SIEM_WEBHOOK_SECRET` so each body carries `X-MASP-Signature-SHA256`.
 HTTP webhooks are rejected unless `MASP_SIEM_WEBHOOK_ALLOW_HTTP=true` is set

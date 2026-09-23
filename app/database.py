@@ -1385,6 +1385,25 @@ def ensure_service_client_schema(connection: Any) -> None:
         id_type = "INTEGER"
         snapshot_type = "TEXT NOT NULL DEFAULT '{}'"
 
+    connection.execute('''CREATE TABLE IF NOT EXISTS service_client_storage_policies (
+        service_client_id INTEGER PRIMARY KEY REFERENCES service_clients(id) ON DELETE CASCADE,
+        mode TEXT NOT NULL CHECK (mode IN ('environment', 'custom')),
+        grants_json TEXT NOT NULL DEFAULT '[]',
+        revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0)
+    )''')
+    ensure_column(connection, "scan_profiles", "management_revision", "BIGINT NOT NULL DEFAULT 0")
+    ensure_column(connection, "scan_profiles", "deleted_at", "BIGINT")
+    # Preserve the previously preferred enabled/lowest-ID default on old databases
+    # that could acquire two defaults through concurrent profile creation.
+    connection.execute('''UPDATE scan_profiles SET is_default = ?, management_revision = management_revision + 1
+        WHERE id IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY service_client_id ORDER BY enabled DESC, id) AS ordinal
+            FROM scan_profiles WHERE is_default = ? AND deleted_at IS NULL) ranked WHERE ordinal > 1)''',
+        (db_bool(False), db_bool(True)))
+    connection.execute('''CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_profiles_one_default
+        ON scan_profiles (service_client_id) WHERE is_default = TRUE AND deleted_at IS NULL''')
+    connection.execute('''CREATE INDEX IF NOT EXISTS idx_scan_profiles_client_seek
+        ON scan_profiles (service_client_id, id) WHERE deleted_at IS NULL''')
     ensure_column(connection, "scan_jobs", "service_client_id", id_type)
     ensure_column(connection, "scan_jobs", "scan_profile_id", id_type)
     ensure_column(connection, "scan_jobs", "profile_snapshot_json", snapshot_type)
@@ -2255,6 +2274,21 @@ def update_service_client(
         return bool(cursor.rowcount)
 
 
+@contextmanager
+def profile_write_transaction(client_id: int, lock_timeout_ms: int | None = None):
+    """Order all profile writes: owning client, then its profile rows."""
+    with connect() as connection:
+        if not using_postgres():
+            connection.execute('BEGIN IMMEDIATE')
+        elif lock_timeout_ms is not None:
+            connection.execute("SELECT set_config('lock_timeout', ?, true)", (f'{max(100, min(lock_timeout_ms, 60000))}ms',))
+        client = connection.execute('SELECT id, client_key FROM service_clients WHERE id = ?' +
+            (' FOR UPDATE' if using_postgres() else ''), (client_id,)).fetchone()
+        if client is None:
+            raise ValueError('Service client not found.')
+        yield connection, client
+
+
 def create_scan_profile(
     service_client_id: int,
     name: str,
@@ -2263,16 +2297,15 @@ def create_scan_profile(
     enabled: bool = True,
     is_default: bool = False,
     policy_json: str = "{}",
+    managed_guard: bool = False,
+    lock_timeout_ms: int | None = None,
 ) -> int:
     unique_engine_ids = sorted(set(engine_instance_ids))
     if not unique_engine_ids:
         raise ValueError("A scan profile requires at least one engine instance.")
-    with connect() as connection:
-        client = connection.execute(
-            "SELECT id FROM service_clients WHERE id = ?", (service_client_id,)
-        ).fetchone()
-        if client is None:
-            raise ValueError("Service client not found.")
+    with profile_write_transaction(service_client_id, lock_timeout_ms) as (connection, client):
+        if managed_guard and client['client_key'] == 'legacy-default':
+            raise ValueError('Profiles for the compatibility client are deployment-managed.')
         placeholders = ", ".join("?" for _ in unique_engine_ids)
         engine_rows = connection.execute(
             f"SELECT id FROM engine_instances WHERE id IN ({placeholders})",
@@ -2282,7 +2315,7 @@ def create_scan_profile(
             raise ValueError("One or more engine instances do not exist.")
         if is_default:
             connection.execute(
-                "UPDATE scan_profiles SET is_default = ? WHERE service_client_id = ?",
+                "UPDATE scan_profiles SET is_default = ?, management_revision = management_revision + 1 WHERE service_client_id = ? AND is_default = TRUE",
                 (db_bool(False), service_client_id),
             )
         cursor = connection.execute(
@@ -2328,7 +2361,7 @@ def get_default_scan_profile_for_client(
         row = connection.execute(
             """
             SELECT * FROM scan_profiles
-            WHERE service_client_id = ? AND enabled = ?
+            WHERE service_client_id = ? AND enabled = ? AND deleted_at IS NULL
             ORDER BY is_default DESC, id ASC
             LIMIT 1
             """,
@@ -2341,9 +2374,9 @@ def list_scan_profiles(
     service_client_id: int | None = None,
 ) -> list[ScanProfileRecord]:
     params: tuple[object, ...] = ()
-    where_sql = ""
+    where_sql = "WHERE deleted_at IS NULL"
     if service_client_id is not None:
-        where_sql = "WHERE service_client_id = ?"
+        where_sql = "WHERE deleted_at IS NULL AND service_client_id = ?"
         params = (service_client_id,)
     with connect() as connection:
         rows = connection.execute(
@@ -2362,25 +2395,31 @@ def set_scan_profile_engines(
     engine_instance_ids: list[int],
     *, client_id: int | None = None,
     expected_engine_ids: list[int] | None = None,
+    expected_revision: int | None = None,
     lock_timeout_ms: int | None = None,
 ) -> None:
     unique_engine_ids = sorted(set(engine_instance_ids))
     if not unique_engine_ids:
         raise ValueError("A scan profile requires at least one engine instance.")
+    # Resolve ownership first; IDs never change owner. Recheck after acquiring the
+    # client lock so deletion/default changes cannot race this engine replacement.
     with connect() as connection:
-        if not using_postgres():
-            connection.execute('BEGIN IMMEDIATE')
-        elif lock_timeout_ms is not None:
-            connection.execute("SELECT set_config('lock_timeout', ?, true)", (f'{max(100, min(lock_timeout_ms, 60000))}ms',))
+        owner = connection.execute('SELECT service_client_id FROM scan_profiles WHERE id = ? AND deleted_at IS NULL',
+            (profile_id,)).fetchone()
+    if owner is None:
+        raise ValueError('Scan profile not found.')
+    with profile_write_transaction(owner['service_client_id'], lock_timeout_ms) as (connection, _client):
         profile = connection.execute(
-            "SELECT p.id, p.service_client_id, c.client_key FROM scan_profiles p "
-            "JOIN service_clients c ON c.id = p.service_client_id WHERE p.id = ? "
+            "SELECT p.id, p.service_client_id, p.management_revision, c.client_key FROM scan_profiles p "
+            "JOIN service_clients c ON c.id = p.service_client_id WHERE p.id = ? AND p.deleted_at IS NULL "
             + ('FOR UPDATE OF p' if using_postgres() else ''), (profile_id,)
         ).fetchone()
         if profile is None:
             raise ValueError("Scan profile not found.")
         if client_id is not None and (profile['service_client_id'] != client_id or profile['client_key'] == 'legacy-default'):
             raise ValueError('Profile is not editable for this client.')
+        if expected_revision is not None and profile['management_revision'] != expected_revision:
+            raise ValueError('Profile changed. Refresh before saving.')
         if expected_engine_ids is not None:
             current = connection.execute('SELECT engine_instance_id FROM scan_profile_engines WHERE scan_profile_id = ? ORDER BY engine_instance_id LIMIT 101', (profile_id,)).fetchall()
             if [row['engine_instance_id'] for row in current] != sorted(set(expected_engine_ids)):
@@ -2405,7 +2444,7 @@ def set_scan_profile_engines(
                 (profile_id, engine_id, db_bool(True)),
             )
         connection.execute(
-            "UPDATE scan_profiles SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            "UPDATE scan_profiles SET updated_at = CURRENT_TIMESTAMP, management_revision = management_revision + 1 WHERE id = ?",
             (profile_id,),
         )
 
@@ -2827,6 +2866,8 @@ def ensure_legacy_service_client_profile(
 ) -> tuple[ServiceClientRecord, ScanProfileRecord]:
     """Idempotently provision the compatibility identity for existing tokens."""
     with connect() as connection:
+        if not using_postgres():
+            connection.execute('BEGIN IMMEDIATE')
         connection.execute(
             """
             INSERT INTO service_clients (client_key, display_name, enabled, updated_at)
@@ -2836,32 +2877,41 @@ def ensure_legacy_service_client_profile(
             (db_bool(True),),
         )
         client_row = connection.execute(
-            "SELECT * FROM service_clients WHERE client_key = 'legacy-default'"
+            "SELECT * FROM service_clients WHERE client_key = 'legacy-default'" +
+            (' FOR UPDATE' if using_postgres() else '')
         ).fetchone()
         if client_row is None:
             raise RuntimeError("Legacy service client could not be provisioned.")
         client_id = int(row_value(client_row, "id"))
-        connection.execute(
-            """
-            INSERT INTO scan_profiles (
-                service_client_id, name, enabled, is_default, policy_json, updated_at
-            ) VALUES (?, 'Default automation', ?, ?, '{}', CURRENT_TIMESTAMP)
-            ON CONFLICT(service_client_id, name) DO NOTHING
-            """,
-            (client_id, db_bool(True), db_bool(True)),
-        )
         profile_row = connection.execute(
-            """
-            SELECT * FROM scan_profiles
-            WHERE service_client_id = ? AND name = 'Default automation'
-            """,
-            (client_id,),
+            '''SELECT * FROM scan_profiles WHERE service_client_id = ? AND deleted_at IS NULL
+               AND (is_default = ? OR name = 'Default automation')
+               ORDER BY is_default DESC, id LIMIT 1''',
+            (client_id, db_bool(True)),
         ).fetchone()
+        if profile_row is None:
+            connection.execute(
+                """
+                INSERT INTO scan_profiles (
+                    service_client_id, name, enabled, is_default, policy_json, updated_at
+                ) VALUES (?, 'Default automation', ?, ?, '{}', CURRENT_TIMESTAMP)
+                ON CONFLICT(service_client_id, name) DO NOTHING
+                """,
+                (client_id, db_bool(True), db_bool(True)),
+            )
+            profile_row = connection.execute(
+                """
+                SELECT * FROM scan_profiles
+                WHERE service_client_id = ? AND name = 'Default automation' AND deleted_at IS NULL
+                """,
+                (client_id,),
+            ).fetchone()
         if profile_row is None:
             raise RuntimeError("Legacy scan profile could not be provisioned.")
         profile_id = int(row_value(profile_row, "id"))
+        changed = False
         for engine_id in sorted(set(engine_instance_ids)):
-            connection.execute(
+            cursor = connection.execute(
                 """
                 INSERT INTO scan_profile_engines (
                     scan_profile_id, engine_instance_id, required
@@ -2870,6 +2920,10 @@ def ensure_legacy_service_client_profile(
                 """,
                 (profile_id, engine_id, db_bool(True)),
             )
+            changed = changed or cursor.rowcount > 0
+        if changed:
+            connection.execute('''UPDATE scan_profiles SET management_revision = management_revision + 1,
+                updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (profile_id,))
     return (
         row_to_service_client_record(client_row),
         row_to_scan_profile_record(profile_row),

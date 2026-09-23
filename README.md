@@ -29,10 +29,15 @@ snapshot; service-client totals stay admin-only.
 
 Admin `/console/service-clients` now lists integration clients with bounded pages
 and confirms display-name and enabled-state changes. The managed `legacy-default`
-client remains read-only. Each client links to its React profile routing editor,
-with confirmed instance selection and stale-selection protection. Client creation
+client remains read-only. Clicking a client opens a large dialog with Settings,
+Connection, Profile routing, Storage and Credentials tabs. Profile routing supports multiple
+named profiles, create/rename/disable/delete and default selection, with confirmed
+engine assignments and stale-edit protection. Client creation
 and credential add/list/revoke now stay in React too. Tokens are supplied by the
 admin, never returned, and excluded from the frontend query/mutation cache.
+Storage access lets admins retain deployment grants or replace them per client
+with whole-backend/prefix permissions; an empty custom list denies access.
+Filesystem roots remain deployment-managed and are never exposed by the console.
 
 `/console/api-ledger` now lists API/ICAP submissions for analysts and admins,
 with source, exact client ID, unassigned ownership, status, recorded-risk and text
@@ -396,8 +401,11 @@ MASP's asynchronous service-integration surface is the file scan API:
 - `GET /api/v1/scans/{scan_id}/result`
 
 Create dedicated integrations from **Service Clients**. Each bearer token maps
-to one client and its default engine profile; status/result reads are limited to
-that client's scans. Existing environment/settings tokens remain supported and
+to one client. Requests use its default engine profile or select an enabled own
+profile using `profile_id` (upload multipart field, deferred JSON field, hash-lookup
+query parameter). Status/result reads are limited to that client's scans.
+Profile changes affect future submissions; accepted scans and deferred work retain
+their routing. Existing environment/settings tokens remain supported and
 map to the shared `legacy-default` compatibility client.
 
 API and ICAP submissions use only engines eligible for automation. Registry
@@ -410,7 +418,10 @@ Large-file clients can use `POST /api/v1/deferred-scans` to submit a
 deployment-approved backend/object reference instead of uploading bytes. The
 backend must be explicitly mapped to the service client, optional prefix scopes
 can constrain shared roots, and the intake worker enforces the configured
-maximum byte limit before copying into MASP storage.
+maximum byte limit before copying into MASP storage. Client **Storage** settings
+can replace `MASP_DEFERRED_BACKEND_CLIENTS_JSON` grants without changing deployment
+roots. Upgrade all API and intake processes before using custom grants; see
+[storage rollout guidance](docs/deployment/PRODUCTION.md#client-storage-access-rollout).
 
 HTTP uploads authenticate before multipart parsing and have a separate total
 body ceiling, `MASP_HTTP_UPLOAD_MAX_BYTES` (64 MiB by default), even when the

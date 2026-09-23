@@ -1,5 +1,6 @@
 """Isolated browser acceptance backend: never imports app.main or opens MASP data."""
 from pathlib import Path
+import json
 import sys
 import tempfile
 import os
@@ -91,6 +92,13 @@ def main():
         client = db.create_service_client('console-client', 'Acceptance integration')
         metadata = next(engine for engine in db.list_engine_instances() if engine.adapter_key == 'static_metadata')
         db.create_scan_profile(client, 'Acceptance routing', engine_instance_ids=[metadata.id], is_default=True)
+        # Synthetic roots only: browser storage administration must never probe,
+        # create or expose these locations.
+        os.environ['MASP_DEFERRED_STORAGE_BACKENDS_JSON'] = json.dumps({
+            'shared': str(Path(directory) / 'unmounted-private-root'),
+            'archive': str(Path(directory) / 'unmounted-archive-root'),
+        })
+        os.environ['MASP_DEFERRED_BACKEND_CLIENTS_JSON'] = '{"shared":{"console-client":["incoming/client-a"]}}'
         automation_batch = db.create_scan_batch(source='api', original_filename='automation.zip', archive_mode='lazy_extract_on_detection', service_client_id=client)
         with db.connect() as connection:
             connection.execute("UPDATE scan_batches SET status = 'completed' WHERE id = ?", (automation_batch,))

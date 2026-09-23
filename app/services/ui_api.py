@@ -32,6 +32,7 @@ from app.services import hash_console
 from app.services import client_admin
 from app.services import client_readiness
 from app.services import profile_admin
+from app.services import client_storage_admin
 from app.services import credential_admin
 from app.services import ledger_read
 from app.services import user_admin
@@ -516,6 +517,51 @@ def save_browser_profile(request: Request, body: profile_admin.ProfileRoutingBod
     set_audit_context(request, action='scan_profile.engines_update', target_type='scan_profile', target_id=profile_id, actor=request.state.ui_user)
     profile_admin.save(client_id, profile_id, body)
     set_audit_context(request, details={'client_id': client_id, 'engine_ids': body.engine_ids})
+    return Response(status_code=204)
+
+
+@router.post('/service-clients/{client_id}/profiles', response_model=profile_admin.ProfileCreated, status_code=201)
+def create_browser_profile(request: Request, body: profile_admin.ProfileCreateBody,
+                           client_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='scan_profile.create', target_type='service_client', target_id=client_id, actor=request.state.ui_user)
+    return profile_admin.create(client_id, body)
+
+
+@router.get('/service-clients/{client_id}/storage', response_model=client_storage_admin.ClientStorageAccess)
+def read_browser_client_storage(client_id: int = Path(ge=1, le=9007199254740991)):
+    return client_storage_admin.read(client_id)
+
+
+@router.put('/service-clients/{client_id}/storage', status_code=204)
+def save_browser_client_storage(request: Request, body: client_storage_admin.StorageAccessUpdate,
+                                client_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='service_client.storage.update', target_type='service_client',
+                      target_id=client_id, actor=request.state.ui_user)
+    client_storage_admin.save(client_id, body)
+    return Response(status_code=204)
+
+
+@router.put('/service-clients/{client_id}/profiles/{profile_id}', status_code=204)
+def update_browser_profile(request: Request, body: profile_admin.ProfileUpdateBody,
+                           client_id: int = Path(ge=1, le=9007199254740991), profile_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='scan_profile.update', target_type='scan_profile', target_id=profile_id, actor=request.state.ui_user)
+    profile_admin.manage(client_id, profile_id, body, 'update')
+    return Response(status_code=204)
+
+
+@router.put('/service-clients/{client_id}/profiles/{profile_id}/default', status_code=204)
+def default_browser_profile(request: Request, body: profile_admin.ProfileDefaultBody,
+                            client_id: int = Path(ge=1, le=9007199254740991), profile_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='scan_profile.default', target_type='scan_profile', target_id=profile_id, actor=request.state.ui_user)
+    profile_admin.manage(client_id, profile_id, body, 'default')
+    return Response(status_code=204)
+
+
+@router.delete('/service-clients/{client_id}/profiles/{profile_id}', status_code=204)
+def delete_browser_profile(request: Request, body: profile_admin.ProfileFence,
+                           client_id: int = Path(ge=1, le=9007199254740991), profile_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='scan_profile.delete', target_type='scan_profile', target_id=profile_id, actor=request.state.ui_user)
+    profile_admin.manage(client_id, profile_id, body, 'delete')
     return Response(status_code=204)
 
 

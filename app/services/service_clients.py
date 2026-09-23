@@ -4,6 +4,7 @@ import hashlib
 import json
 import time
 from dataclasses import replace
+from app import database as db
 
 from app.database import (
     ensure_legacy_service_client_profile,
@@ -137,6 +138,39 @@ def hash_engines_for_profile(
         and engine_allowed_for_source(engine, source)
         and adapter_capabilities(engine.adapter_key).supports_hash_lookup
     ]
+
+
+def resolve_profile_routing(identity: ApiClientIdentity, profile_id: int | None = None, *,
+                            source: str = 'api', hash_lookup: bool = False) -> tuple[ApiClientIdentity, list[EngineInstanceRecord]]:
+    """Resolve only this client's live profile and engine set in one snapshot.
+
+    A removed profile retains its database identity for accepted/deferred work,
+    but is no longer selectable for a new submission.
+    """
+    if identity.legacy_credential:
+        if profile_id is not None:
+            raise ValueError('Scan profile is unavailable for this client.')
+        return identity, engines_for_profile(identity.profile.id, source=source)
+    with db.connect() as connection:
+        connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+        client = connection.execute('SELECT * FROM service_clients WHERE id = ? AND enabled = ?',
+            (identity.client.id, db.db_bool(True))).fetchone()
+        profile = connection.execute('''SELECT * FROM scan_profiles WHERE service_client_id = ?
+            AND enabled = ? AND deleted_at IS NULL ''' +
+            ('AND id = ? ' if profile_id is not None else '') + 'ORDER BY is_default DESC, id LIMIT 1',
+            (identity.client.id, db.db_bool(True), *((profile_id,) if profile_id is not None else ()))).fetchone()
+        if client is None or profile is None:
+            raise ValueError('Scan profile is unavailable for this client.')
+        rows = connection.execute('''SELECT e.* FROM scan_profile_engines pe JOIN engine_instances e
+            ON e.id = pe.engine_instance_id WHERE pe.scan_profile_id = ? ORDER BY e.id''', (profile['id'],)).fetchall()
+    selected = []
+    for row in rows:
+        engine = db.row_to_engine_instance_record(row)
+        if engine.enabled and engine_allowed_for_source(engine, source) and (
+            adapter_capabilities(engine.adapter_key).supports_hash_lookup if hash_lookup else _file_capable(engine)
+        ):
+            selected.append(engine)
+    return replace(identity, client=db.row_to_service_client_record(client), profile=db.row_to_scan_profile_record(profile)), selected
 
 
 def profile_snapshot_json(

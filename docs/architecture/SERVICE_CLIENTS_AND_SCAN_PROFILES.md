@@ -5,7 +5,7 @@ the same integration. The current model is:
 
 ```text
 Service client
-  -> one enabled default scan profile
+  -> multiple named scan profiles (one enabled default)
        -> explicit engine instance assignments
   -> one or more revocable API credentials
   -> API/ICAP scans, batches and ledger rows
@@ -22,8 +22,8 @@ is an operational/security boundary, not a human UI account.
 - A client key is stable and machine-oriented; the display name can change.
 - API tokens are stored only as SHA-256 hashes plus an eight-character
   fingerprint. Raw tokens cannot be read back from MASP.
-- Every custom client has an enabled default profile with an explicit set of
-  engine instance IDs.
+- Every custom client has an enabled default profile and may have additional
+  named profiles, each with an explicit set of engine instance IDs.
 - API authentication resolves the bearer token to exactly one client and its
   default profile.
 - Scan and archive-batch rows persist `service_client_id`, `scan_profile_id`, and
@@ -40,6 +40,50 @@ Existing `MASP_API_TOKEN`, `MASP_API_TOKENS`, and settings-backed tokens map to
 the managed `legacy-default` compatibility client. Its routing follows globally
 configured automation-safe engines. Move integrations to database-managed
 credentials before relying on per-client isolation.
+
+## Named profile management and selection
+
+Open a client from the Service Clients list, then its **Profile routing** tab.
+Admins can create, rename, enable/disable and delete named profiles, replace
+their engine assignments, and select the default. Standalone
+`/console/service-clients/{id}/profiles` remains available. The current default
+cannot be disabled or deleted: first select another enabled profile with engines.
+Creating a named profile leaves the current default unchanged.
+
+An integration using a stored client credential can supply its own enabled
+`profile_id` as a multipart field on `POST /api/v1/scans`, a JSON integer on
+`POST /api/v1/deferred-scans`, or a query parameter on `GET /api/v1/hashes/{sha256}`.
+Omission uses the client's current default. Invalid IDs, another client's IDs,
+disabled profiles and deleted profiles receive the same `404`; malformed IDs
+receive `422`. Environment/settings compatibility tokens cannot select an explicit
+profile. ICAP continues to use its bound client's default, without a request-level
+override. Profile selection never bypasses disabled-engine, capability or quota
+filtering; a metadata-only profile does not prove malware detection coverage.
+
+Client, selected profile and engine rows are read in one repeatable snapshot
+before accepting new API/ICAP work. Accepted routing is persisted as before;
+renaming, changing defaults, editing engines or deleting a profile does not rewrite
+existing scans, batches or deferred submissions. Deletion retains the profile
+identity and engine rows because deferred work and older reports reference them.
+Deleted names remain reserved for that client. Deferred idempotency also includes
+the captured routing: changed profile selection or routing under an existing
+`client_request_id` returns `409`; reconcile via its status URL.
+
+Browser writes require admin/CSRF checks before parsing. Client-row locking
+serializes profile changes on PostgreSQL; SQLite uses an immediate write
+transaction. Metadata/default/delete changes carry `management_revision`;
+routing also fences the displayed engine IDs. The default switch compares the
+displayed prior default ID, even on later profile pages. Stale writes return `409`
+and are never replayed automatically. Legacy engine edits take the same lock and
+advance the revision. Reads remain capped at 20 profiles and 100 engine choices
+or assignments, with incomplete data disabling editing.
+
+Startup migration adds revision/deletion columns and a partial unique default
+index in place. If an older database has multiple defaults, it retains the first
+enabled default by ID (or the first default if none is enabled), demotes the others
+and preserves historical snapshots. For compatibility, a legacy/custom database
+without a flagged enabled default retains its pre-existing first-enabled-profile
+fallback; the setup screen still reports the missing explicit default.
 
 ## Connecting a client
 
@@ -90,7 +134,7 @@ source IP behind NAT. Host firewall restrictions remain mandatory.
 ```text
 API bearer token / ICAP gateway config
   -> resolve service client
-  -> resolve enabled default profile
+  -> resolve own selected profile or enabled default
   -> filter assigned engines by source and quota capability
   -> persist scan + profile snapshot + engine jobs atomically
   -> workers execute only snapshot engine instance IDs
@@ -119,6 +163,55 @@ authorization is explicit and fail-closed; shared roots may additionally scope
 each client to object prefixes so one tenant cannot reference another tenant's
 folder.
 
+### Client storage administration
+
+The client's **Storage** tab (also `/console/service-clients/{id}/storage`) shows
+logical backend keys and their allowed object prefixes. It never returns, browses
+or changes filesystem roots. `MASP_DEFERRED_STORAGE_BACKENDS_JSON` or the single
+`MASP_DEFERRED_FILESYSTEM_BACKEND_KEY`/`MASP_DEFERRED_FILESYSTEM_ROOT` pair still
+defines deployment-approved roots separately on the API and intake processes.
+
+Each client starts in **Deployment settings** mode, preserving
+`MASP_DEFERRED_BACKEND_CLIENTS_JSON` behavior. An admin may confirm **Custom client
+access**, which replaces that client's environment grants with whole-backend or
+relative-prefix grants stored in `service_client_storage_policies`. The sources
+are never unioned: an empty custom list denies all backend access even when the
+environment grants access. Returning to deployment settings explicitly previews
+the grants that this API process will inherit. The managed `legacy-default` client
+remains read-only. No existing deployment grants are imported automatically.
+
+Both public deferred admission and the intake worker resolve the current policy
+without a retained cache. Backend keys must still exist in that process's local
+deployment catalog. Removed backends are unavailable, even if a persisted grant
+still names them. Prefixes match a complete object key or descendants across a `/`
+boundary, never a sibling with the same initial letters; they are literal relative
+paths, not glob patterns. Blank prefix lists never mean whole-backend access.
+Malformed/oversized stored grants or database failures fail closed rather than
+restoring environment access. Filesystem link, traversal, opened-handle and
+copy/hash/size checks remain unchanged.
+
+Policy changes apply to new admission and pending deferred work before copying.
+Revoking a queued submission's access causes the worker to fail it before file I/O.
+A copy already in progress may continue; this is not cancellation, and no existing
+scan/routing snapshot is rewritten. Check deployment configuration on all processes:
+the console reports this API server's catalog, not worker reachability or mount health.
+
+Admin/CSRF checks precede JSON parsing. A write replaces the entire custom grant
+set atomically under the owning client row lock (SQLite immediate transaction),
+fencing both the displayed policy revision and a fingerprint of visible deployment
+grants/backend keys. Returning to inheritance retains a revision row, so an earlier
+edit cannot overwrite a custom→environment transition. Conflicts return `409`;
+the UI requires an explicit refresh after every write outcome and never replays it.
+Limits: 50 configured backend keys/50 grants, 32 prefixes per grant, 128-character
+backend keys, 512-character normalized prefixes, and a 64 KiB serialized stored
+policy. Incomplete/invalid deployment configuration is an explicit read error,
+not a truncated editable list. No root, credential, file listing or sample data
+is included in these DTOs or audit details.
+
+Upgrade all API and deferred-intake processes before enabling custom policies;
+older processes know only the environment mappings. See the coordinated rollout
+instructions in `../deployment/PRODUCTION.md`.
+
 The opt-in deferred intake worker mounts one approved source root read-only. It
 rejects traversal, symlinks/junctions and hardlinked files (even within the same
 backend), validates the opened source handle, copies the bytes into MASP storage,
@@ -145,13 +238,11 @@ an explicitly authorized source-system integration and is not performed here.
 
 ## Next milestones
 
-1. Add multiple named profiles per client and allow an authorized API request to
-   select among its own profiles.
-2. Add per-client admission/rate limits, weighted fairness, and quota metrics.
-3. Extend global webhook delivery with per-client SIEM routes, delivery
+1. Add per-client admission/rate limits, weighted fairness, and quota metrics.
+2. Extend global webhook delivery with per-client SIEM routes, delivery
    metrics/audit, review/policy event selection, and a dead-letter UI.
-4. Add S3-compatible deferred backends, resumable fetch and bandwidth scheduling.
-5. Add client-scoped policy overrides after precedence and snapshot semantics are
+3. Add S3-compatible deferred backends, resumable fetch and bandwidth scheduling.
+4. Add client-scoped policy overrides after precedence and snapshot semantics are
    defined. Global safety ceilings must remain authoritative.
 
 The preferred remote-engine transport remains the authenticated HTTPS worker

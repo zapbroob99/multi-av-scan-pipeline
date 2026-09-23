@@ -1,8 +1,9 @@
 # Mapped-source inspection for large files
 
-Status: **design draft.** Nothing here is implemented yet. This records what the
-codebase already provides and which decisions we must make before writing code.
-Sections marked **OPEN** are unresolved.
+Status: **design draft for in-place inspection.** The bounded `file_type` header
+adapter, multiple named profiles and client storage-access administration are
+implemented within today's copy path. In-place reading and the local hash list
+are not implemented. Sections marked **OPEN** remain unresolved.
 
 ## The use case
 
@@ -54,18 +55,19 @@ Two facts materially reduce the work:
 1. **In-place reading.** `copy_deferred_source()` copies every byte into MASP
    storage. For a large file this is exactly the cost the use case exists to
    avoid.
-2. **Magic-byte inspection.** The `static_metadata` adapter never reads file
-   content. It echoes the declared filename, `content_type`, size and hashes, and
-   always reports `detected=False`. Declared-versus-actual type mismatch is not
-   detectable today.
+2. **Magic-byte inspection — implemented.** The separate `file_type` adapter
+   reads a bounded header and reports declared-versus-actual content mismatch.
+   `static_metadata` remains metadata-only. Neither adapter avoids the deferred copy.
 3. **Local hash lists.** The only `supports_hash_lookup` adapter is VirusTotal,
    which is `support_state="blocked"`, consumes external quota and is excluded
    from API/ICAP by design. There is no institution-controlled blocklist or
    allowlist.
 4. **Path execution mode.** `input_modes=("file", "path")` is declarative only.
    It appears in UI and routing metadata and drives nothing.
-5. **Backend mapping in the UI.** Backend-to-client mapping lives in environment
-   JSON. Operators cannot see or change it from the console.
+5. **Backend mapping in the UI — implemented.** Client Storage administration
+   selects whole-backend or prefix access from deployment-approved logical keys.
+   Per-client database grants replace environment grants only after confirmation;
+   filesystem roots remain deployment-owned.
 
 ## Copying versus reading in place
 
@@ -160,16 +162,16 @@ adapter category changes.
 ## Profile model
 
 The use case needs per-client profiles of different weight: one client scanning
-everything, another running inspection only. Today a service client has exactly
-one default profile, and the browser API exposes only reading profiles and
-replacing a profile engine set — there is no create, rename or delete. Multiple
-named profiles is already the first milestone in
-`SERVICE_CLIENTS_AND_SCAN_PROFILES.md`, and this use case depends on it.
+everything, another running inspection only. Multiple named profiles are now
+implemented: client administration creates, renames, disables, deletes and chooses
+a default; API requests can select an enabled profile owned by their client.
+See `SERVICE_CLIENTS_AND_SCAN_PROFILES.md`. This supplies the routing prerequisite
+only: deliberately narrow coverage semantics and in-place reading remain OPEN.
 
-Backend mapping should move from environment JSON into client administration so an
-operator can see which client may reference which backend without reading a
-container environment. The mapping stays deployment-approved: the console selects
-among roots the deployment configured and never accepts a new path.
+Backend access mapping now lives in client administration, with environment
+inheritance for existing deployments. The console selects among deployment-approved
+backend keys and never accepts or exposes a new filesystem root. See the storage
+administration contract in `SERVICE_CLIENTS_AND_SCAN_PROFILES.md`.
 
 **OPEN:** whether a mapped-source profile is a distinct profile kind or an ordinary
 profile whose engine set happens to be lightweight. A distinct kind can carry the
@@ -184,8 +186,10 @@ Each step is independently useful and independently verifiable:
    path, so it needs no storage change and no new security boundary.
 2. **Local hash list adapter.** Institution-controlled blocklist/allowlist with
    list management in the console. MASP computes the digest itself.
-3. **Multiple named profiles.** Client administration gains create, rename and
-   delete, so a lightweight profile can exist beside a full one.
+3. **Multiple named profiles — implemented.** Client administration supports
+   create, rename, delete and default selection, so a lightweight profile can
+   exist beside a full one. This independent routing slice was completed before
+   the local hash list; steps 2, 4 and 5 remain open.
 4. **Result semantics.** Make deliberately narrow coverage explicit everywhere a
    decision is shown.
 5. **In-place reading.** Only after 1-4, because it carries the security decisions

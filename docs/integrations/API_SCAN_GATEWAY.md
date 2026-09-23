@@ -7,6 +7,31 @@ The primary workflow is:
 2. Read the returned `links.status` URL until `result_ready` is `true`
 3. Fetch the normalized final payload from `links.result`
 
+## Choosing a scan profile
+
+With a stored service-client credential, omit `profile_id` to use the client's
+current default, or select an enabled profile belonging to that client:
+
+| Endpoint | Optional selection |
+|---|---|
+| `POST /api/v1/scans` | Multipart field `profile_id=12` |
+| `POST /api/v1/deferred-scans` | JSON integer `"profile_id": 12` |
+| `GET /api/v1/hashes/{sha256}` | Query `?profile_id=12` |
+
+Use the actual ID shown in the client's **Profile routing** tab. Profile IDs are
+positive integers; malformed values return `422`. Unavailable, disabled, deleted
+or foreign profiles return the same `404`, before upload sample storage or deferred
+admission. Compatibility environment/settings tokens cannot select a profile.
+ICAP uses its bound client's default and accepts no profile override.
+
+Administrators create and edit profiles and choose the default in the console.
+All selected engines remain subject to automation capability/quota rules. A small
+profile does not imply clean malware coverage; use the returned backend decision.
+Accepted scans and deferred requests retain their original routing after profile
+changes or deletion. Deleted profile names remain reserved. An existing deferred
+idempotency key with changed routing/selection returns `409`; read its status URL
+to reconcile instead of resubmitting it under different routing.
+
 ## Upload-Gateway Integration Pattern (v1)
 
 Authentication occurs before multipart parsing. Total HTTP body size (including
@@ -92,6 +117,14 @@ and contained. Supply `expected_sha256` when the source system has it; otherwise
 MASP still hashes its isolated copy and detects size/mtime changes during fetch.
 If `expected_size_bytes` exceeds `MASP_DEFERRED_MAX_BYTES`, MASP rejects the
 submission before spending intake-worker time.
+
+Administrators can manage these grants in the client's **Storage** tab. Custom
+client grants replace environment mappings; an empty custom list denies all
+storage access. Unauthorized references return `403`. The intake worker rechecks
+the current policy before copying, so a previously accepted submission may fail if
+its access is revoked while queued. `202` is admission, not guaranteed completion.
+A copy already in progress may continue. Backend roots remain deployment-approved;
+neither the API nor the console accepts a new root path.
 
 ## SHA-256 reputation lookup
 

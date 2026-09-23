@@ -10,6 +10,13 @@ test('create client, add and revoke credentials without displaying secrets', asy
   await page.getByLabel('Default profile name').fill('Default acceptance')
   await page.getByRole('checkbox', { name: /Static Metadata/ }).check()
   await page.getByLabel('Credential label').fill('Initial acceptance')
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.screenshot({ path: '../artifacts/console-e2e/client-create-desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: '../artifacts/console-e2e/client-create-mobile.png', fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
   const token = 'synthetic-acceptance-token-xxxxxxxxxxxxxxxxxxxxxxxx'
   await page.getByLabel('API token').fill(token)
   await page.getByRole('button', { name: 'Review client creation' }).click()

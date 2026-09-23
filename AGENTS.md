@@ -90,13 +90,15 @@ arbitrary command parsers.
   sample storage; direct database/shared-filesystem workers remain compatible.
 - ClamAV normally uses clamd TCP. Defender executes locally on a Windows worker.
 - API and ICAP submissions exclude adapters with `consumes_external_quota`.
-- API integrations resolve to a service client and default scan profile; ICAP
-  processes may bind to one client with `MASP_ICAP_SERVICE_CLIENT_KEY`.
+- API integrations resolve to a service client and its default or explicitly
+  selected own enabled scan profile. ICAP processes bind to a client's default
+  with `MASP_ICAP_SERVICE_CLIENT_KEY`.
 - Large-file clients may submit client-authorized, deployment-approved
   backend/object references; a separate deferred intake worker copies and
   verifies them before scan intake. Deferred backend access is fail-closed:
   every backend must be explicitly mapped to allowed service clients, and shared
-  roots should use prefix scopes.
+  roots should use prefix scopes. Client custom storage grants replace environment
+  grants; empty custom grants deny all. Deployment retains ownership of roots.
 - Deferred high/critical results enter a transactional notification outbox. The
   optional notification worker performs idempotent SIEM webhook delivery with
   retry/backoff; scan completion must never call a webhook directly. Retention
@@ -134,6 +136,15 @@ detection. Blank configuration values mean unset, matching the ClamAV and Defend
   different surviving instance that happens to share its adapter key.
 
 ## Active Roadmap
+
+Large-file mapped-source inspection is a design-only initiative: see
+`docs/architecture/MAPPED_SOURCE_INSPECTION.md` before writing code toward it. Several OPEN
+decisions there (copy vs. in-place reading, TOCTOU mitigation, result-semantics for a
+deliberately narrow profile, worker-to-backend routing) block implementation; the agreed
+sequence starts with header inspection and a local hash list, both of which stay inside
+today's copy path, before any in-place reading. The file_type header adapter (first step) is
+implemented; multiple named profiles are also implemented independently. The local
+hash list, deliberately narrow coverage semantics and in-place reading remain open.
 
 The frontend target is all browser UI migrated incrementally, not permanent
 legacy escape links. Track every remaining screen and cutover gate in the complete
@@ -181,6 +192,27 @@ policies for this list. Preserve the SQL-level `legacy-default` update exclusion
 strict admin/CSRF checks and identity-specific updates. Truncated metadata must not
 be silently saved by the UI. Client enabled state does not prove valid profile or
 credential configuration; edits do not rewrite accepted routing snapshots.
+The client list uses compact clickable rows opening a large dialog with Settings,
+Connection, Profile routing, Storage and Credentials tabs; standalone deep links remain.
+Load panels on first selection and keep visited panels mounted until dialog close
+so tab changes preserve write outcomes and explicit refresh requirements. Lock
+outer dismissal/tab changes during confirmations and writes. Clear credential
+inputs on tab leave; keep profile pagination separate from the client-list cursor.
+Admin `/console/service-clients/{id}/storage` reads bounded logical backend keys
+and grants; GET/PUT `/api/ui/v1/service-clients/{client_id}/storage` never expose or
+probe roots. Existing clients inherit `MASP_DEFERRED_BACKEND_CLIENTS_JSON`. A custom
+`service_client_storage_policies` row replaces that client's environment grants;
+never union them or treat an empty custom list as inheritance. Returning to
+environment mode retains a revision row. Writes require pre-body admin/CSRF checks,
+the displayed revision and environment-grant/backend-key fingerprint under the
+owning client row lock. Managed compatibility clients remain read-only. Bound to
+50 backends/grants, 32 prefixes/grant, 128-character keys, 512-character normalized
+prefixes and 64 KiB serialized policy. Invalid/oversized reads must not produce an
+editable partial list. Shared API/intake authorization reads current grants without
+caching and fails closed on DB/policy errors. Removed deployment backends remain
+ineligible. Workers recheck before copying; edits do not cancel an in-progress
+copy or rewrite accepted scan snapshots. Upgrade every API/intake process before
+using custom grants; older versions only enforce environment configuration.
 Admin `/console/service-clients/{id}/profiles` reads a consistent bounded profile/
 engine snapshot and confirms replacement routing. Limit pages to 20 profiles and
 choices/assignments to 100; disable editing incomplete data. Browser writes check
@@ -335,9 +367,24 @@ hashed/revocable API credentials, default profiles, engine assignments, scan and
 batch ownership, API isolation, ledger filtering, and ICAP instance binding are
 implemented. Deferred filesystem-reference intake with explicit client/backend
 mapping and a transactional global HTTPS SIEM webhook outbox are implemented as
-opt-in worker profiles. Next milestones are multiple named profiles, per-client
-fairness/rate limits, per-client notification routes, S3-compatible storage, and
+opt-in worker profiles. Multiple named profiles now support admin create/rename/
+enable/delete/default selection and own-profile API selection. Next milestones are
+per-client fairness/rate limits, per-client notification routes, S3-compatible storage, and
 review/policy event selection.
+
+Profile management keeps 20-profile/100-engine browser bounds and pre-body admin/
+CSRF checks. Metadata/default/delete writes fence `management_revision`; engine
+writes also fence the previous ID set. Serialize legacy/browser writes through the
+owning client row before profile rows (SQLite immediate transaction). Default
+switches compare the prior default ID; never disable/delete the current default.
+Deletion tombstones the identity, preserving deferred FKs, assignments and accepted
+snapshots; deleted names stay reserved. SQLite/PostgreSQL migration repairs duplicate
+defaults deterministically and adds the partial unique default index. API upload
+multipart, deferred JSON and hash query accept optional own enabled `profile_id`;
+unavailable/foreign/deleted selections return the same 404. Legacy tokens reject
+explicit selection; ICAP uses its bound default. Capture client/profile/engines in
+one repeatable snapshot and preserve source/quota filtering and existing decisions.
+No new narrow-profile allow semantics or mapped-source access is implemented.
 
 Durable worker nodes have stable identity, labels, capacity, advertised adapters,
 heartbeat/runtime metadata, and admin-managed lifecycle. Engine instances can be

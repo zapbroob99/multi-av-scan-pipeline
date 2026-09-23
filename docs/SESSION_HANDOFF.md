@@ -1,6 +1,6 @@
 # MASP session handoff
 
-Updated: 2026-09-22. This is a workspace checkpoint, not evidence of a deployment.
+Updated: 2026-09-23 (client storage access implemented and verified; client dialog, named profiles and storage access remain uncommitted). This is a workspace checkpoint, not evidence of a deployment.
 
 ## Start here
 
@@ -11,17 +11,43 @@ Updated: 2026-09-22. This is a workspace checkpoint, not evidence of a deploymen
    inventory and the latest implementation/validation sections.
 4. Read `docs/architecture/ENGINE_DEPLOYMENT_AND_WORKER_AGENT.md` and the remaining
    gates in `docs/security/HARDENING_PHASE_1.md`.
+5. If continuing the client-flexibility or large-file work, read
+   `docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md` and
+   `docs/architecture/MAPPED_SOURCE_INSPECTION.md` (design-only; several OPEN
+   decisions block implementation there).
 
 ## Git checkpoint
 
-Checkpoint branch: `feat/frontend-separation-hardening`.
-The migration through administrative user management is committed at `18123f7`.
-The audit/About slice is committed at `76a229c`. The printable-report and oversized-output slice
-is committed at `a54ff68`. The integration-batch-download slice belongs in the
-checkpoint commit that carries this handoff; confirm with `git log -1` and
-`git status` rather than assuming it landed. Fetch
-this branch when resuming from another clone. Verify local/remote branch equality and actual Git status;
-this file cannot prove that a push completed or that later work is committed.
+Checkpoint branch: `feat/frontend-separation-hardening`, HEAD `fc8738f`.
+The locally recorded `origin/feat/frontend-separation-hardening` is at `18123f7`;
+Git reports ahead by 7 commits. No fetch was performed during the 2026-09-23 check,
+so this is the local tracking state, not a fresh verification of the server.
+Commits, oldest first:
+
+- `18123f7` trailing-whitespace cleanup (recorded remote baseline; earlier history includes administrative user management)
+- `76a229c` audit-history and About slice
+- `a54ff68` printable-report and oversized-engine-output slice
+- `6915912` integration-batch-download slice (closes the oversized family)
+- `12229d8` docs only: `docs/architecture/MAPPED_SOURCE_INSPECTION.md` design draft, nothing implemented
+- `b2ec544` `file_type` header-inspection engine (first step of that design doc's sequence)
+- `1c0d03c` sidebar icon fix (five items shared `Activity`, two shared `ArrowUpRight`)
+- `fc8738f` (current `HEAD`) client-readiness/setup view per service client
+
+Confirm with `git log -1` and `git status` rather than assuming this list is still
+current — later work may exist uncommitted or in further commits. A new session
+in this same workspace can resume from the files on disk. A different clone or
+machine will NOT receive the current client dialog/profile work by fetching:
+those changes, including this handoff, have not been committed or pushed.
+
+Implementation files still untracked and required for the current work:
+`frontend/src/components/client-navigation.tsx`,
+`frontend/src/components/client-workspace.tsx`, and
+`tests/test_profile_management.py`; storage adds
+`app/services/client_storage_policy.py`, `app/services/client_storage_admin.py`,
+`frontend/src/pages/client-storage.tsx`, `frontend/src/pages/client-storage.test.tsx`,
+`frontend/e2e/client-storage.spec.ts`, and `tests/test_client_storage.py`.
+Preserve them along with the tracked diff.
+No commit or deployment was performed in the recovery/handoff check.
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
 `sample_45mb.bin`, `sample_5mb.bin`, `skills-lock.json`. These unrelated files are
@@ -34,99 +60,144 @@ has been unstaged; do not add it.
 
 ## Current work
 
-Completed before this run: React Account password changes, atomic session
-revocation, local-login password fencing, the auth-session user index, and
-administrative user role/password editing and deletion through the shared
-`user_admin.manage` writer (cross-row last-admin serialization, fresh actor-role
-checks, React revision fences, `users.management_revision`). That slice validated
-at 784 Python tests (782 passed, 2 skipped) with disposable PostgreSQL and 108
-frontend tests.
+**Uncommitted client storage access (2026-09-23).** User authorized continuing
+with backend-to-client mapping administration. A new Storage tab and standalone
+`/console/service-clients/{id}/storage` show approved backend keys and effective
+whole-backend/prefix grants. GET/PUT browser routes enforce admin/pre-body CSRF,
+strict bounded JSON, a displayed revision and a visible-environment fingerprint.
+Writes replace the grant set under the client lock; stale writes fail and the UI
+requires explicit refresh after every outcome. No roots or filesystem probes.
 
-Completed and committed at `76a229c`: the audit-history and About slice.
-Admin `/console/audit` reads the append-only trail through GET `/api/ui/v1/audit`
-with bounded descending ID-keyset pages, exact outcome selection, literal
-actor/action/target/request-ID search, 4096-character bounded inert details with a
-truncation flag, and no total. The router exposes no audit write verb, preserving
-the insert/read-only data-layer contract. Startup adds an `(outcome, id DESC)`
-seek index in place. `/console/about` is readable by analysts and admins — the
-only non-dashboard browser read outside the admin gate — and returns the product
-boundary plus a non-sensitive runtime snapshot reading only small configuration
-tables; the service-client total is admin-only and null for analysts. The FastAPI
-application version is now the single `app.APP_VERSION` constant.
+New `service_client_storage_policies` table migrates in place on SQLite/PostgreSQL.
+Existing clients inherit `MASP_DEFERRED_BACKEND_CLIENTS_JSON`. A confirmed custom
+policy replaces (never unions with) those grants; empty custom grants deny all.
+Reset to inheritance keeps a revision row. The legacy compatibility client stays
+read-only. Backend roots still come from `MASP_DEFERRED_STORAGE_BACKENDS_JSON` or
+the single-backend deployment variables. Runtime authorization is shared by API
+admission and the worker before copying, with no cache or permissive DB-error
+fallback. Revoked queued work fails before copying; already-started copies may
+continue, and accepted scan routing remains unchanged.
 
-Validation checkpoint (2026-09-22): full suite with disposable PostgreSQL ran
-793 Python tests (791 passed, 2 skipped); 114 frontend tests passed. Production
-build, contract drift check, compileall and diff whitespace check passed. Focused
-Edge acceptance (`frontend/e2e/audit.spec.ts`) pages the trail, applies a literal
-`%` search and an outcome filter, opens inert details, refuses an analyst session
-and checks admin-scoped About content at a 390px viewport. A new PostgreSQL-gated
-`BrowserReadPostgresTests` class exercises both readers on real PostgreSQL, where
-`LENGTH(...) > n` returns a boolean rather than 0/1.
+Validation at this checkpoint: full suite with disposable PostgreSQL **876 tests
+(874 passed, 2 skipped)**, including 22 storage SQLite/PostgreSQL cases and public
+deferred admission; **136 frontend tests**; all **8 relevant Edge workflows** passed
+(6 existing client workflows plus 2 storage workflows; the storage selectors were
+corrected and the 2 storage cases rerun). Build, contract drift, compile and diff
+whitespace checks passed. Desktop/mobile storage screenshots were inspected.
+Full backend log: `artifacts/storage-full-suite.log`. Browser fixtures are isolated
+SQLite; their owned processes were stopped. Test PostgreSQL uses disposable
+`masp-test-pg-storage` on port 15438, removed after tests. Live MASP containers
+remain untouched.
 
-Fixed while verifying: `frontend/src/pages/users.test.tsx` passed `exact: true` to
-`getByRole`, which is not a `ByRoleOptions` key. It was failing `tsc --noEmit` — and
-therefore `npm run build` — at the previous checkpoint, so that checkpoint's
-recorded build pass does not hold for the committed tree.
+Coordinated deployment is required: upgrade every API replica and deferred-intake
+worker before custom grants are saved; older processes enforce environment only.
+Rollback also needs reconciled environment grants. This is documented in
+`docs/deployment/PRODUCTION.md#client-storage-access-rollout`. No deployment,
+commit, new storage provider, hash-list adapter or in-place reading was performed.
 
-Disposable PostgreSQL containers `masp-test-pg-audit` (15433),
-`masp-test-pg-print` (15434) and `masp-test-pg-batch` (15435) were removed after
-their runs. Live containers were
-untouched. No deployment was performed.
+**Uncommitted multiple named profiles (2026-09-22).** User explicitly authorized
+implementation. Client Profile routing supports create/rename/enable/disable,
+default selection and delete, alongside engine assignment. Browser writes fence
+profile revisions and the previous default; shared legacy/browser locks order the
+client before profiles. Defaults cannot be disabled/deleted. Deletion tombstones
+profiles and keeps names reserved so accepted scans and deferred rows survive.
+SQLite/PostgreSQL upgrades add the revision/tombstone columns, client seek index
+and partial unique default index with deterministic duplicate-default repair.
+New API selection: `profile_id` in upload multipart, deferred JSON or hash query;
+only own enabled profiles, generic 404 for unavailable selections, omission uses
+the default. ICAP resolves the bound default in the same profile/engine snapshot.
+Legacy credentials reject explicit selection. Source/quota and decision semantics
+are preserved. No mapped-source reading, hash list or backend mapping UI was added.
+See `docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md` and
+`docs/integrations/API_SCAN_GATEWAY.md` for the complete contract.
 
-Also completed and committed at `a54ff68`: the printable-report and
-oversized-engine-output slice. `/console/scans/{id}/print` and the automation twin
-reuse the full-export snapshot loader and shared payload builder, so the printed
-decision, coverage, findings and engine rows come from one repeatable read. Two
-legacy defects are closed rather than reproduced: legacy `/scans/{id}/report` had
-no source scope at all, and it embedded every engine's raw output with no ceiling.
-Each engine preview is now capped at 8 KiB with a truncation flag, findings at 200
-rows, and the serialized response keeps the 2 MiB ceiling.
+Validation: full backend suite with disposable PostgreSQL ran **848 tests
+(846 passed, 2 skipped)**. Added ICAP/new-default and unknown-adapter regressions
+after that run; the final focused profile suite covers **27 SQLite/PostgreSQL
+tests**, including concurrent default switches, coherent routing reads, in-place
+upgrade, deferred-history preservation and real HTTP admission. Browser profile
+API checks cover **7 tests**. Frontend: **130 tests**, **6 related Edge workflows**,
+production build, browser contract drift check and Python compile/whitespace checks.
+Desktop/mobile named-profile screenshots were inspected. Full-suite log:
+`artifacts/profile-full-suite.log`; artifacts are ignored. Test PostgreSQL used
+only disposable `masp-test-pg-profiles` on port 15437. Cleanup was initially blocked
+by the Codex usage-limit approval-review error; on 2026-09-23 the container was
+verified and removed. Browser fixture processes had already been stopped.
+No live deployment was made.
 
-`GET /api/ui/v1/scans/{id}/results/{result_id}/output` and its automation twin
-serve one engine's recorded output as attachment `text/plain`, replacing the
-"use the legacy report" dead end above the 2 MiB JSON ceiling. These are the only
-browser reads outside the typed JSON contract; `tests/test_browser_contracts.py`
-now enumerates them so a new non-JSON route cannot appear unnoticed, and still
-requires JSON `ErrorPayload` on their errors. `MASP_UI_RAW_OUTPUT_LIMIT` bounds
-the download (default 32 MiB, clamped to 256 MiB, never below the JSON ceiling).
-Each download reads one result into memory in a worker thread; it is not a
-streaming transfer, so it is sized against container memory in PRODUCTION.md.
+**Uncommitted client UI refinement (2026-09-22).** The client directory now uses
+compact clickable rows. Selecting a client opens a large dialog with Settings,
+Connection, Profile routing and Credentials tabs. Existing deep-link pages remain
+available. Panels load on first selection and stay mounted while the dialog is open
+to preserve write outcomes and refresh requirements; leaving Credentials clears
+the token input. Confirmations/pending writes lock tab changes and outer dismissal.
+Profile cursors inside the dialog do not change the directory cursor. Setup separates
+readiness checks from endpoint reference, routing uses engine selection cards,
+and creation groups identity, routing and API access. Styles cover both themes
+and mobile widths. API contracts, secret handling, confirmations, mutation fences
+and explicit refresh after writes remain unchanged. All 125 frontend tests,
+5 Edge workflows, production build and whitespace check passed. Screenshots live
+under `artifacts/console-e2e/`; browser tests used the isolated SQLite fixture.
+No deployment or backend change was made. Existing staged files remain untouched.
 
-Printable/oversized validation (2026-09-22): full Python suite with disposable
-PostgreSQL ran 798 tests (796 passed, 2 skipped); 119 frontend tests; 28 Edge
-workflows; production build and contract drift check passed. The console fixture's
-engine output was widened to exercise the new bound, so two existing report
-assertions moved from exact-match to containment.
+The full narrative for each older slice (audit/About, printable report,
+oversized output, integration batch download) lives in
+`docs/architecture/FRONTEND_SEPARATION.md`; this section covers only what is
+not yet recorded there, i.e. the three most recent commits.
 
-Also completed and locally verified in this run: complete integration batch
-contracts. `GET /api/ui/v1/api-ledger/batches/{id}/download?kind=status|result`
-serves the full public contract as a JSON attachment, up to the same 5000 members
-the integration API serves, so it refuses only what an integration could not have
-received either. The inline `/json` preview keeps its 20-member/2 MiB bounds and
-now names the download instead of pointing at the paginated overview. Both share
-one loader parameterized by member and byte limits, so ownership, source
-consistency, terminal state, policy validity and contract validation are
-identical. The whole document is validated before any of it is served: an invalid
-member fails explicitly rather than producing a partial contract.
-`MASP_UI_BATCH_DOWNLOAD_LIMIT` bounds it (default 64 MiB, clamped to 512 MiB,
-never below the inline ceiling). It is assembled in memory from every member —
-the profile the integration API already has for that batch, but now
-operator-reachable, so PRODUCTION.md sizes it against container memory.
+**`1c0d03c` sidebar icons (cosmetic, no backend change).** Fixed five nav items
+sharing the `Activity` icon and two sharing `ArrowUpRight`; every sidebar entry
+now has a distinct lucide icon. `Users` the icon is imported as `UsersIcon`
+because the lazy-loaded `Users` page component already owns that name in
+`main.tsx`.
 
-The contract test's download allowlist now maps each untyped route to the exact
-success content it may declare, covering both plain-text output routes and this
-JSON document. This closes the oversized family; no "use the legacy report"
-fallback remains in the console.
+**`b2ec544` `file_type` engine.** New built-in adapter
+(`app/engines/file_type.py`) reads a bounded header (default 4096 bytes,
+clamped 512..1 MiB) and compares the detected content family against the
+declared extension — e.g. an `.exe` renamed to `.pdf`. Registered with
+`detection=False`: a masquerading extension is an indicator, not a malware
+identification, so it must never contribute detection coverage by default.
+`mismatch_action` (`report` default, or `detect`) controls whether a mismatch
+also sets `detected=True`, which the shared scoring layer (`calculate_risk`)
+weights at 70 points like any other engine detection. See
+`docs/integrations/SUPPORT_MATRIX.md` and the "Engine Identity" section of
+`AGENTS.md`. This is the first step in the `MAPPED_SOURCE_INSPECTION.md`
+sequence (design added at `12229d8`). At that commit no other step was implemented;
+the uncommitted named-profile implementation is recorded above.
 
-Integration-contract validation (2026-09-22): full suite with disposable
-PostgreSQL ran 801 tests (799 passed, 2 skipped); 119 frontend tests; 28 Edge
-workflows; production build, contract drift check, compileall and diff whitespace
-check passed.
+**`fc8738f` (HEAD) client readiness/setup view.** New
+`app/services/client_readiness.py` + `GET
+/api/ui/v1/service-clients/{id}/readiness` + `/console/service-clients/{id}/setup`.
+Answers "is this client ready, and what does the other system need to be
+told?" in one screen: five pass/fail checks (client enabled, enabled default
+profile, assigned engines, at least one automation-eligible engine, active
+credential), each assigned engine's automation eligibility with a stated
+reason when it is excluded (disabled instance, unregistered adapter, no
+file-accepting capability, or the metered-reputation exclusion), plus the
+scan/status/deferred endpoints, the `Authorization: Bearer` header shape and
+the `MASP_ICAP_SERVICE_CLIENT_KEY` value. No credential value is ever
+returned — only a hash and fingerprint are stored. Explicitly *not* a
+connectivity test: it cannot prove the integration can reach MASP, that its
+token is correct, or that an engine is healthy at scan time. Documented in
+`docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md`.
 
-Next: a legacy parity sweep over manual filters, hash provider detail, System
-metric detail and remaining legacy actions, then the final cutover inventory. All UI
-is the target; legacy links are temporary. Do not remove legacy before parity and
-security/performance gates pass. Recursive batch deletion remains separate work.
+Validation for the last three commits together: full Python suite with
+disposable PostgreSQL ran **823 tests (821 passed, 2 skipped)**; **124
+frontend tests**; **30 Edge workflows** (2 new: `client-setup.spec.ts`);
+production build, contract drift check, compileall and diff whitespace check
+all passed. Disposable PostgreSQL containers used during this work
+(`masp-test-pg-client` and earlier `-audit`/`-print`/`-batch`, ports
+15433-15436) were all removed after their runs. Live containers
+(`masp-app-1`, `masp-worker-1`, `masp-postgres-1`, `masp-clamav-1`) were never
+touched. No deployment was performed.
+
+**Next development candidate:** the local hash-list adapter (step 2 of the
+mapped-source sequence), followed by the deferred legacy parity sweep (manual
+filters, hash provider detail, System metric detail) and final cutover inventory.
+Multiple named profiles and client storage-access administration are now implemented.
+Filesystem roots deliberately remain deployment settings. In-place reading and
+deliberately narrow coverage semantics remain OPEN; do not infer authorization
+to implement those unresolved designs from completion of these admin features.
 
 ## Verification and environment safety
 

@@ -17,8 +17,15 @@ React client inventory and confirmed name/state updates preserve integration
 identity, accepted routing snapshots and existing source/quota rules. They do not
 expose credentials or change adapter/worker support states. React profile routing
 now adds bounded metadata and confirmed assignments with client ownership and stale
-selection checks. Intake source/quota filtering is unchanged; credentials remain
-separate migration work.
+selection checks. Multiple named profiles and credential management are now also
+available in React. Intake source/quota filtering is unchanged.
+
+Client Storage administration adds database-backed access grants for the existing
+filesystem deferred backend. It supports explicit environment inheritance,
+whole-backend/prefix grants and empty custom deny-all. It introduces no S3 backend,
+in-place scan mode, new mount capability or engine support promotion. Deployment
+roots and secure copy/verification remain authoritative. API and intake processes
+must be upgraded together before custom grants are used.
 
 React manual hash lookup reuses the existing hash-capable adapters and quota
 mechanism. It introduces no provider, arbitrary command execution or support

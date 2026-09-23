@@ -89,7 +89,7 @@ def readiness(client_id: int, base_url: str) -> ClientReadiness:
         if client is None:
             raise HTTPException(404, 'Service client not found.')
         profile = connection.execute('''SELECT id, SUBSTR(name, 1, 100) AS name FROM scan_profiles
-            WHERE service_client_id = ? AND is_default = ? AND enabled = ?
+            WHERE service_client_id = ? AND is_default = ? AND enabled = ? AND deleted_at IS NULL
             ORDER BY id LIMIT 1''', (client_id, db.db_bool(True), db.db_bool(True))).fetchone()
         rows = []
         if profile is not None:

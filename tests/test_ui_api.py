@@ -1693,6 +1693,89 @@ class BrowserApiTests(unittest.TestCase):
         profile = db.create_scan_profile(client, 'Default', engine_instance_ids=[engine], is_default=True, policy_json='{"private":"SECRET_POLICY"}')
         return client, profile, engine
 
+    def test_storage_access_prebody_guards_and_strict_fences(self):
+        client, _, _ = self.profile_fixture()
+        path = f'/service-clients/{client}/storage'
+        body = dict(mode='custom', grants=[], expected_revision=0, expected_environment_fingerprint='a' * 64)
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        for options in ({'session': False}, {'csrf': False}, {'origin': 'http://evil'}):
+            self.assertIn(self.request(path, 'PUT', body, **options)[0], (401, 403))
+            self.assertEqual(self.reads, 0)
+        for fields in ({'expected_revision': True}, {'expected_revision': -1}, {'unexpected': True},
+                       {'expected_environment_fingerprint': 'x'}, {'grants': [{'backend_key': 'b', 'access': 'all', 'root': '/private'}]}):
+            self.assertEqual(self.request(path, 'PUT', body | fields)[0], 422)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(path)[0], 403)
+        self.assertEqual(self.request(path, 'PUT', body)[0], 403)
+        self.assertEqual(self.reads, 0)
+
+    def test_storage_access_http_roundtrip_no_root_disclosure_and_stale_rejection(self):
+        client, _, _ = self.profile_fixture()
+        path = f'/service-clients/{client}/storage'
+        with patch.dict(os.environ, {
+            'MASP_DEFERRED_STORAGE_BACKENDS_JSON': json.dumps({'shared': str(Path(self.temp.name) / 'private-root')}),
+            'MASP_DEFERRED_BACKEND_CLIENTS_JSON': '{"shared":["profile-client"]}',
+        }):
+            status, current, headers = self.request(path)
+            self.assertEqual(status, 200)
+            self.assertEqual(headers[b'cache-control'], b'no-store')
+            self.assertNotIn('private-root', json.dumps(current))
+            self.assertEqual(current['mode'], 'environment')
+            body = dict(mode='custom', grants=[dict(backend_key='shared', access='prefixes', prefixes=['incoming/client'])],
+                expected_revision=current['revision'], expected_environment_fingerprint=current['environment_fingerprint'])
+            self.assertEqual(self.request(path, 'PUT', body)[0], 204)
+            self.assertEqual(self.request(path, 'PUT', body)[0], 409)
+            current = self.request(path)[1]
+            self.assertEqual(current['grants'][0]['prefixes'], ['incoming/client/'])
+            self.assertEqual(self.request(path, 'PUT', body | {'expected_revision': current['revision'], 'grants': []})[0], 204)
+            self.assertEqual(self.request(path)[1]['grants'], [])
+            self.assertEqual(self.request(path, 'PUT', body | {'expected_revision': 2, 'mode': 'environment', 'grants': []})[0], 204)
+            self.assertEqual(self.request(path)[1]['grants'][0]['access'], 'all')
+
+    def test_named_profile_writes_authenticate_before_body_and_enforce_strict_contracts(self):
+        client, profile, engine = self.profile_fixture()
+        path = f'/service-clients/{client}/profiles'
+        writes = [(path, 'POST', {'name': 'Named', 'engine_ids': [engine]}),
+            (f'{path}/{profile}', 'PUT', {'name': 'Default', 'enabled': True, 'expected_revision': 0}),
+            (f'{path}/{profile}', 'DELETE', {'expected_revision': 0}),
+            (f'{path}/{profile}/default', 'PUT', {'expected_revision': 0, 'expected_default_profile_id': profile})]
+        for endpoint, method, body in writes:
+            for options in ({'session': False}, {'csrf': False}, {'origin': 'http://evil'}):
+                self.assertIn(self.request(endpoint, method, body, **options)[0], (401, 403))
+                self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request(endpoint, method, body | {'unexpected': True})[0], 422)
+            if 'expected_revision' in body:
+                self.assertEqual(self.request(endpoint, method, body | {'expected_revision': True})[0], 422)
+        for body in ({'name': ' ', 'engine_ids': [engine]}, {'name': 'Named', 'engine_ids': [engine, engine]},
+                     {'name': 'Named', 'engine_ids': []}, {'name': 'Named', 'engine_ids': [True]}):
+            self.assertEqual(self.request(path, 'POST', body)[0], 422)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        for endpoint, method, body in writes:
+            self.assertEqual(self.request(endpoint, method, body)[0], 403)
+            self.assertEqual(self.reads, 0)
+
+    def test_named_profile_http_lifecycle_and_deleted_names_remain_reserved(self):
+        client, original, engine = self.profile_fixture()
+        path = f'/service-clients/{client}/profiles'
+        status, created, _ = self.request(path, 'POST', {'name': 'Fast', 'engine_ids': [engine]})
+        self.assertEqual(status, 201)
+        profile = created['profile_id']
+        self.assertEqual(self.request(path)[1]['default_profile_id'], original)
+        self.assertEqual(self.request(f'{path}/{profile}', 'PUT', {'name': 'Renamed', 'enabled': True, 'expected_revision': 0})[0], 204)
+        self.assertEqual(self.request(f'{path}/{profile}/default', 'PUT', {'expected_revision': 1, 'expected_default_profile_id': original})[0], 204)
+        self.assertEqual(self.request(path)[1]['default_profile_id'], profile)
+        self.assertEqual(self.request(f'{path}/{profile}', 'DELETE', {'expected_revision': 2})[0], 409)
+        self.assertEqual(self.request(f'{path}/{original}/default', 'PUT', {'expected_revision': 1, 'expected_default_profile_id': profile})[0], 204)
+        self.assertEqual(self.request(f'{path}/{profile}', 'DELETE', {'expected_revision': 3})[0], 204)
+        self.assertEqual([p['id'] for p in self.request(path)[1]['items']], [original])
+        self.assertEqual(self.request(path, 'POST', {'name': 'Renamed', 'engine_ids': [engine]})[0], 409)
+        managed, managed_profile, _ = self.profile_fixture('legacy-default')
+        managed_path = f'/service-clients/{managed}/profiles'
+        self.assertEqual(self.request(managed_path, 'POST', {'name': 'Blocked', 'engine_ids': [engine]})[0], 409)
+        self.assertEqual(self.request(f'{managed_path}/{managed_profile}', 'DELETE', {'expected_revision': 0})[0], 409)
+
     def test_profile_routing_requires_admin_csrf_and_strict_bounded_ids(self):
         client, profile, engine = self.profile_fixture()
         path = f'/service-clients/{client}/profiles/{profile}/engines'
@@ -1740,6 +1823,7 @@ class BrowserApiTests(unittest.TestCase):
         self.assertNotIn('policy_json', json.dumps(first))
         second = self.request(path + '?after=' + str(first['next_after']))[1]
         self.assertEqual(len(second['items']), 1)
+        self.assertEqual(second['default_profile_id'], profile)
         self.assertIsNone(second['next_after'])
         self.assertEqual(self.request('/service-clients/999999/profiles')[0], 404)
 

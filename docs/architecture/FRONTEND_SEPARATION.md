@@ -65,7 +65,7 @@ authorization/regression tests, responsive browser verification and documentatio
 | System — remaining parity | Engine pool assignment is already in React Engines. Retain legacy metric/detail comparison (including last-result timing) and deployment-sized fleet/read validation before cutover. |
 | Scan policy | `/console/scan-policy` implements admin-only reads and confirmed atomic updates of the three operational limits with shared backend validation/resolution. |
 | Hash lookup | `/console/hash-scan` provides analyst/admin explicit manual lookup, backend decisions, quota-aware adapters and bounded result summaries. Rich provider-detail parity remains before cutover. |
-| Integration administration | `/console/service-clients` lists client metadata and confirms name/enabled-state changes; client profile routes read bounded profiles and confirm engine assignment. Atomic client/default-profile creation and credential add/list/scoped revocation are implemented. Tokens are supplied by the admin and never returned. |
+| Integration administration | `/console/service-clients` lists clients and opens a tabbed settings dialog. Named-profile create/edit/disable/delete/default selection, fenced engine assignments, atomic client creation and credential add/list/scoped revocation are implemented. Tokens are supplied by the admin and never returned. `/console/service-clients/{id}/setup` reports coherent configuration readiness and connection details. `/console/service-clients/{id}/storage` manages bounded logical backend/prefix grants with explicit environment inheritance, deny-all and stale-edit protection; roots remain deployment-managed. |
 | Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Automation printable reports and oversized engine-output downloads reuse the manual readers under automation scope. A batch contract larger than the inline view downloads in full, up to the same 5000 members the integration API serves. Remaining: final legacy-action parity; preserve ownership and manual-history isolation. |
 | Users and account | Bounded inventory, confirmed local creation, administrative role/password edit and deletion, and own-account password change implemented. Shared last-admin/session protections and stale revision fences; LDAP shadow deletion does not disable directory access. Final cutover/deployment acceptance remains. |
 | Audit and information | Admin `/console/audit` provides bounded descending ID-keyset audit pages, literal search, outcome filtering and bounded inert details; no total is calculated and no write verb exists. `/console/about` gives analysts and admins the product boundary and a non-sensitive runtime snapshot with admin-scoped client counts. Remaining: legacy pretty-printed detail rendering, About metric parity and deployment-shaped trail-volume validation. Legacy audit has no printable view. |
@@ -77,6 +77,21 @@ credentials, API ledger, users/account, audit and About flows in `app.main`.
 Recursive batch deletion is separate functionality and requires its own protected
 transaction design; it must not be inferred from the existing batch read view.
 Migration does not promote engine support or waive security/performance acceptance.
+
+### Client administration presentation (2026-09-22)
+
+The client directory uses compact rows with enabled/managed badges. Selecting a row
+opens a large dialog with Settings, Connection, Profile routing, Storage and Credentials tabs.
+Keyboard tab navigation, focus return and mobile/light/dark layouts are supported.
+Panels load on first selection and remain mounted until close to preserve mutation
+outcomes and explicit refresh requirements. Credentials clear their token input when
+leaving the tab; confirmations and pending writes lock tab switching and dismissal.
+Dialog profile pagination does not modify the directory cursor. Existing deep links
+remain available. Readiness checks switch to the relevant tab; endpoint values stay
+inert text. Creation separates identity, routing and initial API access. Existing
+admin/CSRF checks, confirmations, stale-routing fences and secret lifetime remain.
+No API or schema change is needed. Validation: all 125 frontend tests, five Edge
+workflows, production build and whitespace check; isolated fixture data only.
 
 ## Run locally
 
@@ -893,6 +908,67 @@ pagination and managed/scoped updates. React tests confirmation/cancellation,
 inert names, scoped CSRF payloads, pagination and uncertain failure without replay.
 Edge verifies persisted name/state, analyst denial and mobile overflow. The light
 mobile screenshot was visually inspected; all test data was disposable.
+
+Client storage access extends client administration (2026-09-23) with a Storage
+tab and standalone `/console/service-clients/{id}/storage`. Admin GET/PUT
+`/api/ui/v1/service-clients/{client_id}/storage` expose only logical backend keys,
+whole-backend/prefix grants, inheritance mode and write fences. No root paths,
+filesystem probes, credential or sample data are returned. Existing environment
+grants remain effective until an explicit custom replacement; an empty custom
+grant list denies all. Returning to deployment inheritance is confirmed and retains
+the revision row. Saves serialize on the client and compare the prior revision
+and visible environment-grant/backend-key fingerprint. Boundaries: 50 backends/
+grants, 32 prefixes per grant, 128-character keys, 512-character normalized prefixes
+and 64 KiB serialized stored policy. Invalid or oversized reads fail explicitly;
+they never enable editing a truncated policy. Managed compatibility access remains
+read-only. Every write outcome requires an explicit read before further edits;
+confirmation/pending writes lock the outer client dialog and tab navigation.
+
+New deferred admission and workers before copying consult the same uncached
+policy resolver. Revocation may fail queued work, but does not cancel an already
+started copy or change accepted routing. Local backend presence is configuration,
+not proof of worker reachability. All API/intake processes require coordinated
+upgrade before custom grants are enabled; see deployment rollout/rollback notes.
+Storage/profile semantics remain separate from in-place reading or a new engine
+support claim. Complete deployment acceptance remains open.
+
+Storage validation: full SQLite/PostgreSQL suite ran 876 tests (874 passed,
+2 skipped), including migration, concurrent first saves, inheritance/deny-all,
+prefix boundaries, API admission and worker revocation before copy. All 136 React
+tests and 8 related Edge client workflows passed; storage scenarios were rerun
+after correcting their selectors. Build, generated contracts and whitespace checks
+passed. Desktop/mobile storage screenshots were visually inspected. No live
+deployment was performed.
+
+Named profiles extend this screen (2026-09-22): admins now create, rename,
+enable/disable, delete and choose a default inside the client's Profile routing
+tab or the standalone page. POST on the profile collection creates a named profile
+with explicit engines; PUT on a profile edits name/state; PUT `/default` switches
+the default; DELETE tombstones a non-default profile. All changes require explicit
+confirmation and a fresh read after any write outcome. The current default cannot
+be disabled/deleted. The form and cards display the integration `profile_id`.
+
+Metadata/default/delete writes fence `management_revision`; engine writes now
+add that revision to the existing expected-engine-set fence (the revision remains
+optional for compatibility with older routing clients). All shared writers lock
+the owning client before profile rows. Default changes also compare the prior
+default ID, projected even on later 20-profile pages. The migration adds revisions,
+tombstones and a partial unique default index, repairing older duplicate defaults
+without changing accepted snapshots. Deletion retains deferred foreign keys and
+engine assignments; deleted names remain reserved. Read bounds, policy/config/secret
+omission and admin/pre-body CSRF requirements remain intact. Integration API profile
+selection is documented in `SERVICE_CLIENTS_AND_SCAN_PROFILES.md`.
+
+Validation for named profiles: full backend suite with disposable PostgreSQL
+848 tests (846 passed, 2 skipped), followed by 27 focused SQLite/PostgreSQL profile
+checks including the added ICAP/default and unknown-adapter regressions; 7 browser
+profile API tests; all 130 frontend tests; 6 related Edge client workflows.
+Production build and contract drift check passed. Desktop/mobile screenshots were
+visually inspected. Deployment-scale profile/engine inventory and lock-contention
+acceptance remain open; these local tests did not change deployment support.
+
+The original profile-routing migration below describes the earlier engine-only
+slice; named-profile management supersedes its lock/schema/creation limitations.
 
 Profile routing migration adds `/console/service-clients/{id}/profiles`, a scoped
 GET `/api/ui/v1/service-clients/{client_id}/profiles` and PUT

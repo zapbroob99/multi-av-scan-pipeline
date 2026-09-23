@@ -319,6 +319,8 @@ class ScanSubmitCompletedResponse(ScanSubmitAcceptedResponse):
 
 
 class DeferredScanSubmitRequest(ContractModel):
+    profile_id: int | None = Field(default=None, ge=1, le=2147483647, strict=True,
+        description="Own enabled scan profile ID. Omit to use the client's default.")
     client_request_id: str = Field(min_length=1, max_length=128)
     backend_key: str = Field(min_length=1, max_length=64)
     object_id: str = Field(min_length=1, max_length=1024)

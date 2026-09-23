@@ -241,6 +241,10 @@ Important settings:
   explicit `MASP_DEFERRED_BACKEND_CLIENTS_JSON` client mapping, then start
   `--profile deferred`. Add `--profile notifications` only after setting and
   testing an HTTPS `MASP_SIEM_WEBHOOK_URL`; the source mount is read-only.
+  After all API/intake processes are upgraded, client **Storage** settings may
+  replace the environment grants with explicit whole-backend/prefix access.
+  Empty custom grants deny access. Roots remain deployment-owned; see
+  [coordinated rollout/rollback](PRODUCTION.md#client-storage-access-rollout).
 - Keep the 50 MiB upload and ICAP limits for the synchronous pilot.
 
 The compose file hard-codes fail-closed ICAP and block-on-review. They cannot

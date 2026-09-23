@@ -98,15 +98,27 @@ def backend_allowed_for_client(
 ) -> bool:
     """Enforce tenant-to-storage routing without accepting paths from callers.
 
-    Deferred intake is fail-closed: every client/backend pairing must be named in
-    MASP_DEFERRED_BACKEND_CLIENTS_JSON. Values can be a list of client keys or an
-    object mapping client keys to allowed object prefixes.
+    Custom database grants replace the environment policy for this client.
+    Otherwise MASP_DEFERRED_BACKEND_CLIENTS_JSON is the compatibility source.
+    Neither source can introduce a backend root absent from deployment config.
     """
     normalized_backend = backend_key.strip().lower()
     normalized_client = client_key.strip().lower()
     backends = configured_backend_keys()
     if normalized_backend not in backends:
         return False
+    # Imported lazily to keep the shared policy validator dependent on this
+    # module's existing relative-prefix normalization, without an import cycle.
+    from app.services.client_storage_policy import custom_grants_for_client
+    grants = custom_grants_for_client(normalized_client)
+    if grants is not None:
+        grant = next((item for item in grants if item.backend_key == normalized_backend), None)
+        if grant is None:
+            return False
+        if grant.access == 'all':
+            return True
+        return bool(grant.prefixes) if object_id is None else any(
+            _object_matches_prefix(object_id, prefix) for prefix in grant.prefixes)
     scopes = _configured_client_scopes()
     raw_clients = scopes.get(normalized_backend)
     if raw_clients is None:

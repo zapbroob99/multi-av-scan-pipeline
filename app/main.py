@@ -2,12 +2,13 @@ import html
 import json
 import logging
 import re
+from typing import Annotated
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, Security, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Security, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import HTTPBearer
 from fastapi.staticfiles import StaticFiles
@@ -191,12 +192,11 @@ from app.services.secret_store import (
 )
 from app.services.service_clients import (
     engines_for_scan,
-    engines_for_profile,
-    hash_engines_for_profile,
     identity_can_access_batch,
     identity_can_access_scan,
     hash_api_token,
     profile_snapshot_json,
+    resolve_profile_routing,
     required_detection_engine_names,
     seed_legacy_service_client,
     snapshot_labels,
@@ -1413,28 +1413,31 @@ async def enqueue_scan_from_upload(
     source: str,
     archive_mode: str = DEFAULT_ARCHIVE_MODE,
     api_identity: ApiClientIdentity | None = None,
+    requested_profile_id: int | None = None,
 ) -> ScanRecord:
     if not sample.filename:
         raise HTTPException(status_code=400, detail="A file must be selected.")
 
     effective_archive_mode = normalized_archive_mode(archive_mode)
+    selected_engines = None
+    service_client_id = None
+    scan_profile_id = None
+    snapshot = '{}'
+    if api_identity is not None:
+        try:
+            api_identity, selected_engines = await run_in_threadpool(resolve_profile_routing,
+                api_identity, requested_profile_id, source=source)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        service_client_id = api_identity.client.id
+        scan_profile_id = api_identity.profile.id
+        snapshot = await run_in_threadpool(profile_snapshot_json, api_identity, selected_engines)
     try:
         stored_sample = await store_upload(sample)
     except UploadTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
 
     try:
-        selected_engines = None
-        service_client_id = None
-        scan_profile_id = None
-        snapshot = "{}"
-        if api_identity is not None:
-            selected_engines = await run_in_threadpool(engines_for_profile,
-                api_identity.profile.id, source=source
-            )
-            service_client_id = api_identity.client.id
-            scan_profile_id = api_identity.profile.id
-            snapshot = await run_in_threadpool(profile_snapshot_json, api_identity, selected_engines)
         return await run_in_threadpool(enqueue_scan_from_stored_sample,
             stored_sample,
             case_name=case_name,
@@ -7934,7 +7937,7 @@ async def create_scan(
 @app.post(
     "/api/v1/scans",
     summary="Submit a file scan",
-    description="Accepts a sample upload, creates a scan job, and optionally waits for completion.",
+    description="Accepts a sample upload, creates a scan job, and optionally waits for completion. Optional profile_id selects an enabled profile owned by the authenticated client; omission uses its default.",
     dependencies=[Security(API_BEARER_SCHEME)],
     responses={
         200: {
@@ -7953,11 +7956,13 @@ async def create_scan(
             "model": api_schemas.ApiErrorResponse,
             "description": "Upload exceeds the configured size limit.",
         },
+        404: {"model": api_schemas.ApiErrorResponse, "description": "Selected scan profile is unavailable for this client."},
         **API_ERROR_RESPONSES,
     },
 )
 async def api_create_scan(
     request: Request,
+    profile_id: Annotated[int | None, Form(ge=1, le=2147483647, description="Own enabled scan profile ID. Omit to use the client's default.")] = None,
     sample: UploadFile = File(...),
     case_name: str = Form("Unassigned"),
     priority: str = Form("Normal"),
@@ -7975,6 +7980,7 @@ async def api_create_scan(
         source="api",
         archive_mode=archive_mode,
         api_identity=identity,
+        requested_profile_id=profile_id,
     )
     applied_wait_seconds = await run_in_threadpool(normalized_api_wait_seconds, wait_seconds)
     current_scan = await wait_for_terminal_scan(scan.id, applied_wait_seconds)
@@ -8009,6 +8015,7 @@ async def api_create_scan(
     responses={
         202: {"model": api_schemas.DeferredScanSubmitResponse},
         400: {"model": api_schemas.ApiErrorResponse},
+        404: {"model": api_schemas.ApiErrorResponse, "description": "Selected scan profile is unavailable for this client."},
         409: {"model": api_schemas.ApiErrorResponse},
         **API_ERROR_RESPONSES,
     },
@@ -8060,7 +8067,10 @@ def api_create_deferred_scan(
             detail="Deferred object exceeds MASP_DEFERRED_MAX_BYTES.",
         )
     archive_mode = normalized_archive_mode(body.archive_mode)
-    engines = engines_for_profile(identity.profile.id, source="api")
+    try:
+        identity, engines = resolve_profile_routing(identity, body.profile_id, source='api')
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
     if not engines:
         raise HTTPException(
             status_code=503,
@@ -8257,6 +8267,7 @@ def api_batch_result(request: Request, batch_id: int) -> JSONResponse:
         "Sends only the supplied SHA-256 digest to enabled non-metered hash-capable "
         "engines and returns normalized per-engine results. MASP never uploads file "
         "content or invokes quota-consuming engines from this API endpoint."
+        " Optional profile_id selects an enabled profile owned by the authenticated client; omission uses its default."
     ),
     dependencies=[Security(API_BEARER_SCHEME)],
     responses={
@@ -8272,6 +8283,7 @@ def api_batch_result(request: Request, batch_id: int) -> JSONResponse:
             "model": api_schemas.ApiErrorResponse,
             "description": "An enabled hash engine was unreachable or returned an invalid response.",
         },
+        404: {"model": api_schemas.ApiErrorResponse, "description": "Selected scan profile is unavailable for this client."},
         **API_ERROR_RESPONSES,
         503: {
             "model": api_schemas.ApiErrorResponse,
@@ -8282,18 +8294,21 @@ def api_batch_result(request: Request, batch_id: int) -> JSONResponse:
         },
     },
 )
-def api_hash_lookup(request: Request, sha256: str) -> JSONResponse:
+def api_hash_lookup(request: Request, sha256: str,
+                    profile_id: Annotated[int | None, Query(ge=1, le=2147483647)] = None) -> JSONResponse:
     require_api_token(request)
     identity = api_client_identity(request)
     try:
         normalized_sha256 = normalize_sha256(sha256)
     except InvalidSha256Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    engines = (
-        enabled_hash_engines(source="api")
-        if identity.legacy_credential
-        else hash_engines_for_profile(identity.profile.id, source="api")
-    )
+    if identity.legacy_credential and profile_id is None:
+        engines = enabled_hash_engines(source='api')
+    else:
+        try:
+            identity, engines = resolve_profile_routing(identity, profile_id, source='api', hash_lookup=True)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
     if not engines:
         raise HTTPException(
             status_code=503,

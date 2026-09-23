@@ -22,7 +22,7 @@ from app.services.scan_intake import (
 )
 from app.services.scan_assessment import resolve_scan_decision
 from app.services.service_clients import (
-    engines_for_profile,
+    resolve_profile_routing,
     identity_for_service_client_key,
     profile_snapshot_json,
 )
@@ -291,7 +291,7 @@ async def scan_and_decide(
 
     try:
         identity = identity_for_service_client_key(config.service_client_key)
-        engines = engines_for_profile(identity.profile.id, source=ICAP_SOURCE)
+        identity, engines = resolve_profile_routing(identity, source=ICAP_SOURCE)
         scan = enqueue_scan_from_stored_sample(
             stored_sample,
             case_name="ICAP",
