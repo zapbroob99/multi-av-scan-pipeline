@@ -415,6 +415,17 @@ exclusion adapter-level so the engine stays usable for manual scans. Never retur
 value: only a hash and fingerprint are stored. State plainly that this is configuration
 readiness, not proof that the integration can reach MASP or that an engine is healthy.
 
+Manifest intake (`app/services/manifest_intake.py`, `--profile manifest`) accepts deferred
+submissions from a storage producer that never calls MASP: it writes the object, then writes a
+sibling JSON manifest last, so the manifest appearing is the completion signal. Keep the source
+mount read-only and never mark a manifest processed on the share; `upload_id` becomes
+`client_request_id`, so the existing unique constraint makes re-reading one free. A manifest
+names what to scan and never grants access: the object must pass `backend_allowed_for_client`
+and must sit in the manifest's own directory. Keep discovery bounded to recent dated partitions
+and a batch limit rather than walking a growing share. The producer receives no delivery,
+backpressure or error feedback, so record every rejection in `manifest_rejections` with a cap,
+and clear it when the same manifest is later accepted.
+
 ## Change Rules
 
 - Maintain in-place SQLite and PostgreSQL upgrade compatibility.

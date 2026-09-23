@@ -6,6 +6,12 @@ source scope and caps each engine's embedded output. Recorded engine output abov
 the 2 MiB JSON limit downloads as plain text instead of falling back to the legacy
 report; `MASP_UI_RAW_OUTPUT_LIMIT` bounds that download (default 32 MiB).
 
+A storage producer that cannot call MASP can now have its uploads scanned by
+writing each finished file and then a sibling JSON manifest. MASP polls a
+read-only mount for manifests, so the producer holds no credential and waits for
+nothing. Start it with `--profile manifest`; see
+`docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md`.
+
 Each service client now has a setup view showing whether it is ready to accept
 traffic and which endpoints, authorization header and ICAP client key the other
 system needs. Ineligible engines explain themselves; credential values are never

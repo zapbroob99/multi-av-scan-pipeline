@@ -1385,6 +1385,17 @@ def ensure_service_client_schema(connection: Any) -> None:
         id_type = "INTEGER"
         snapshot_type = "TEXT NOT NULL DEFAULT '{}'"
 
+    connection.execute('''CREATE TABLE IF NOT EXISTS manifest_rejections (
+        backend_key TEXT NOT NULL,
+        manifest_object_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        first_seen_at BIGINT NOT NULL,
+        last_seen_at BIGINT NOT NULL,
+        occurrences BIGINT NOT NULL DEFAULT 1,
+        PRIMARY KEY (backend_key, manifest_object_id)
+    )''')
+    connection.execute('''CREATE INDEX IF NOT EXISTS idx_manifest_rejections_seen
+        ON manifest_rejections (last_seen_at DESC)''')
     connection.execute('''CREATE TABLE IF NOT EXISTS service_client_storage_policies (
         service_client_id INTEGER PRIMARY KEY REFERENCES service_clients(id) ON DELETE CASCADE,
         mode TEXT NOT NULL CHECK (mode IN ('environment', 'custom')),
@@ -2272,6 +2283,50 @@ def update_service_client(
             (display_name, db_bool(enabled), client_id),
         )
         return bool(cursor.rowcount)
+
+
+MAX_MANIFEST_REJECTIONS = 1000
+
+
+def record_manifest_rejection(backend_key: str, manifest_object_id: str, reason: str) -> None:
+    """Keep the newest rejection per manifest so an operator can see failures.
+
+    The producer never learns that MASP refused its manifest, so this table is
+    the only place a malformed or unauthorized drop becomes visible. It is
+    capped: a misconfigured producer must not grow it without bound.
+    """
+    now = int(time.time())
+    with connect() as connection:
+        connection.execute("""
+            INSERT INTO manifest_rejections (backend_key, manifest_object_id, reason, first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(backend_key, manifest_object_id) DO UPDATE SET
+                reason = excluded.reason, last_seen_at = excluded.last_seen_at,
+                occurrences = manifest_rejections.occurrences + 1
+            """, (backend_key, manifest_object_id, reason, now, now))
+        connection.execute("""
+            DELETE FROM manifest_rejections WHERE (backend_key, manifest_object_id) IN (
+                SELECT backend_key, manifest_object_id FROM manifest_rejections
+                ORDER BY last_seen_at DESC, manifest_object_id OFFSET ?)
+            """ if using_postgres() else """
+            DELETE FROM manifest_rejections WHERE rowid IN (
+                SELECT rowid FROM manifest_rejections
+                ORDER BY last_seen_at DESC, manifest_object_id LIMIT -1 OFFSET ?)
+            """, (MAX_MANIFEST_REJECTIONS,))
+
+
+def clear_manifest_rejection(backend_key: str, manifest_object_id: str) -> None:
+    with connect() as connection:
+        connection.execute('DELETE FROM manifest_rejections WHERE backend_key = ? AND manifest_object_id = ?',
+                           (backend_key, manifest_object_id))
+
+
+def list_manifest_rejections(limit: int = 50) -> list[dict]:
+    with connect() as connection:
+        rows = connection.execute("""SELECT backend_key, manifest_object_id, reason,
+            first_seen_at, last_seen_at, occurrences FROM manifest_rejections
+            ORDER BY last_seen_at DESC, manifest_object_id LIMIT ?""", (max(1, min(limit, 200)),)).fetchall()
+    return [dict(row) for row in rows]
 
 
 @contextmanager

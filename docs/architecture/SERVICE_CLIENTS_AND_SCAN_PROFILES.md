@@ -129,6 +129,73 @@ bind address/port and service name) for each client that needs different routing
 or ledger ownership. Do not infer identity from an untrusted ICAP header or from
 source IP behind NAT. Host firewall restrictions remain mandatory.
 
+## Manifest intake: a producer that never calls MASP
+
+Some storage producers cannot, or should not, call MASP at all. A file server or
+drive application can instead write each finished object and then drop a sibling
+JSON manifest next to it. MASP polls for manifests and accepts them as deferred
+submissions; the producer waits for nothing and holds no credential.
+
+The ordering is the contract. The producer writes the object first and the
+manifest last, so **a manifest appearing is the completion signal**. Without it
+MASP would have to guess whether an upload is still being written, and no
+size-stability heuristic makes that guess safe.
+
+```text
+producer writes object      uploads/2026/09/23/UP-1.pdf
+producer writes manifest    uploads/2026/09/23/UP-1.json   <- completion signal
+  -> manifest intake worker accepts a deferred submission
+  -> existing deferred intake worker copies, verifies size/SHA-256, queues engines
+```
+
+A manifest carries `upload_id`, `original_filename`, and optionally `object_id`,
+`sha256`, `size_bytes`, `content_type`, `uploaded_at`, `user_id`, `user_display`
+and `tenant_id`. Unknown keys are ignored so the producer can extend the format
+without a MASP release. `upload_id` becomes the `client_request_id`, so the
+existing `UNIQUE (service_client_id, client_request_id)` constraint makes
+re-reading a manifest free.
+
+That matters because **the mount stays read-only**. MASP never deletes, moves or
+rewrites anything on the share, so it cannot mark a manifest as processed. It
+does not need to: the second read of a manifest resolves to the existing
+submission.
+
+### Boundaries
+
+A manifest names what to scan. It never grants access:
+
+- The object must resolve inside the client's approved backend prefix, checked
+  with the same `backend_allowed_for_client` policy the copying worker re-checks
+  before it reads a byte.
+- The object must sit in the manifest's own directory. A manifest cannot point
+  across the share even within one grant.
+- Traversal, absolute paths, symlinks and junctions are rejected by the existing
+  `resolve_source_path` checks.
+- A declared `sha256` is verified against the bytes MASP copies. It can reject a
+  mismatch; it cannot satisfy a check MASP did not perform itself.
+
+### Bounded discovery
+
+A full recursive walk of a share that only grows is not a backstop; it is the
+most expensive part of such a system. Each cycle scans a fixed set of recent
+partitions (`MASP_MANIFEST_DATE_LAYOUT`, `MASP_MANIFEST_LOOKBACK_DAYS`) and reads
+at most `MASP_MANIFEST_BATCH` manifests, so cycle cost is predictable regardless
+of share size. Widening the lookback picks up older partitions without any
+rewrite. Set an empty date layout when the producer does not partition by date.
+
+### What this trades away
+
+The producer gets no delivery confirmation, no backpressure and no error
+feedback: it wrote a file and moved on. A rejected manifest is therefore
+invisible to it, so rejections are recorded in `manifest_rejections` with the
+reason, first/last seen and an occurrence count, capped so a misconfigured
+producer cannot grow the table without bound. A rejection clears once the same
+manifest is accepted. **Operators must watch this**: it is the only place a
+malformed or unauthorized drop becomes visible.
+
+Console visibility for rejections and intake lag is not implemented yet and is
+required before relying on this path in production.
+
 ## Request and execution flow
 
 ```text

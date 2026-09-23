@@ -255,6 +255,27 @@ services:
       postgres:
         condition: service_healthy
 
+  manifest-intake:
+    build: .
+    profiles: [manifest]
+    command: python -m app.workers.manifest_intake_worker
+    environment:
+      MASP_DATABASE_URL: postgresql://masp:masp_dev_password@postgres:5432/masp
+      MASP_DEFERRED_FILESYSTEM_BACKEND_KEY: ${MASP_DEFERRED_FILESYSTEM_BACKEND_KEY:-drive}
+      MASP_DEFERRED_FILESYSTEM_ROOT: /app/deferred-source
+      MASP_DEFERRED_BACKEND_CLIENTS_JSON: ${MASP_DEFERRED_BACKEND_CLIENTS_JSON:-}
+      MASP_MANIFEST_BACKEND_KEY: ${MASP_MANIFEST_BACKEND_KEY:-drive}
+      MASP_MANIFEST_CLIENT_KEY: ${MASP_MANIFEST_CLIENT_KEY:-}
+      MASP_MANIFEST_ROOT_PREFIX: ${MASP_MANIFEST_ROOT_PREFIX:-uploads}
+      MASP_MANIFEST_DATE_LAYOUT: ${MASP_MANIFEST_DATE_LAYOUT:-%Y/%m/%d}
+      MASP_MANIFEST_LOOKBACK_DAYS: ${MASP_MANIFEST_LOOKBACK_DAYS:-3}
+      MASP_MANIFEST_POLL_SECONDS: ${MASP_MANIFEST_POLL_SECONDS:-15}
+    volumes:
+      - ./deferred-source:/app/deferred-source:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   notification:
     build: .
     profiles: [notifications]
