@@ -294,25 +294,58 @@ class DeferredScanTests(unittest.TestCase):
                 copy_deferred_source(request)
         self.assertEqual(list(samples.glob("*")), [])
 
-    def test_idempotency_key_rejects_changed_metadata_payload(self) -> None:
+    def submit_variant(self, **changes):
+        fields = dict(
+            service_client_id=self.client_id,
+            scan_profile_id=self.profile_id,
+            client_request_id="drive-1",
+            backend_key="drive",
+            object_id="folder/sample.bin",
+            original_filename="sample.bin",
+            content_type="application/octet-stream",
+            expected_size_bytes=7,
+            expected_sha256=None,
+            archive_mode="container",
+            case_name="Drive",
+            priority="Normal",
+            note="",
+            profile_snapshot_json=self.snapshot,
+        )
+        return database.create_deferred_scan_submission(**(fields | changes))
+
+    def test_idempotency_compares_the_request_not_its_descriptive_metadata(self) -> None:
+        """Only what the client asserted about the work decides a conflict.
+
+        A producer that rebuilds a notification may re-derive a display name,
+        note or case; that is the same request. Making those a conflict gave a
+        409 the producer could never clear, without protecting anything: a
+        genuinely different upload changes the object, size or digest.
+        """
         self.create_request()
-        with self.assertRaises(ValueError):
-            database.create_deferred_scan_submission(
-                service_client_id=self.client_id,
-                scan_profile_id=self.profile_id,
-                client_request_id="drive-1",
-                backend_key="drive",
-                object_id="folder/sample.bin",
-                original_filename="renamed.bin",
-                content_type="application/octet-stream",
-                expected_size_bytes=7,
-                expected_sha256=None,
-                archive_mode="container",
-                case_name="Drive",
-                priority="Normal",
-                note="",
-                profile_snapshot_json=self.snapshot,
-            )
+        for label, change in (
+            ("display name", {"original_filename": "renamed.bin"}),
+            ("content type", {"content_type": "application/pdf"}),
+            ("case name", {"case_name": "Another case"}),
+            ("priority", {"priority": "High"}),
+            ("note", {"note": "user_id=42"}),
+            ("routing snapshot", {"profile_snapshot_json": '{"engines": []}'}),
+        ):
+            with self.subTest(accepted=label):
+                record, created = self.submit_variant(**change)
+                self.assertFalse(created, label)
+                self.assertEqual(record.original_filename, "sample.bin")
+
+    def test_idempotency_key_rejects_a_changed_request(self) -> None:
+        self.create_request()
+        for label, change in (
+            ("object", {"object_id": "folder/other.bin"}),
+            ("size", {"expected_size_bytes": 8}),
+            ("digest", {"expected_sha256": "a" * 64}),
+            ("archive mode", {"archive_mode": "none"}),
+            ("requested profile", {"requested_profile_id": self.profile_id}),
+        ):
+            with self.subTest(rejected=label), self.assertRaises(ValueError):
+                self.submit_variant(**change)
 
     def test_strict_snapshot_resolution_rejects_disabled_engine(self) -> None:
         database.update_engine_instance_by_id(self.engine_id, enabled=False)

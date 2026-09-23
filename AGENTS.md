@@ -426,6 +426,15 @@ and a batch limit rather than walking a growing share. The producer receives no 
 backpressure or error feedback, so record every rejection in `manifest_rejections` with a cap,
 and clear it when the same manifest is later accepted.
 
+Deferred retry safety must not depend on server-side configuration staying still. Answer a
+repeat `client_request_id` from the accepted record before resolving live routing, and compare
+only what the client asserted: backend key, object id, expected size/SHA-256, archive mode and
+the explicitly requested profile (`requested_profile_id`, NULL meaning "use the default").
+Never compare the routing snapshot or descriptive metadata: the snapshot carries display names,
+so a rename alone used to make a byte-identical retry conflict permanently. A genuinely
+different request for an existing id stays a 409, and the frozen snapshot stays authoritative
+for the accepted work.
+
 ## Change Rules
 
 - Maintain in-place SQLite and PostgreSQL upgrade compatibility.

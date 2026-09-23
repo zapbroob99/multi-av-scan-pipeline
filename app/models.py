@@ -237,6 +237,10 @@ class DeferredScanRecord:
     last_error: str | None
     created_at: str
     updated_at: str
+    # Which profile the client asked for; None means "use the default". Kept
+    # separate from the resolved scan_profile_id so a retry can be compared
+    # against the request, not against whatever the default resolved to.
+    requested_profile_id: int | None = None
 
 
 @dataclass(frozen=True)

@@ -102,9 +102,73 @@ class ProfileManagementTests(unittest.TestCase):
             self.assertEqual(row['scan_profile_id'], named)
             self.assertEqual(json.loads(row['profile_snapshot_json'])['engines'][0]['id'], self.metadata)
             self.assertEqual(submit(payload)[0], 202)
+            # Same request id, different profile preference: the conflict answer
+            # takes precedence over any check on the newly named profile.
             self.assertEqual(submit(payload | {'profile_id': self.default})[0], 409)
-            self.assertEqual(submit(payload | {'profile_id': 999999})[0], 404)
-            self.assertEqual(submit(payload | {'profile_id': True})[0], 422)
+            self.assertEqual(submit(payload | {'profile_id': 999999})[0], 409)
+            # A fresh request id still validates the profile itself.
+            fresh = payload | {'client_request_id': 'http-test-2'}
+            self.assertEqual(submit(fresh | {'profile_id': 999999})[0], 404)
+            self.assertEqual(submit(fresh | {'profile_id': True})[0], 422)
+            # An unchanged retry survives an engine change and a profile rename,
+            # which previously turned a byte-identical retry into a 409.
+            with db.connect() as connection:
+                connection.execute('UPDATE scan_profiles SET name = ? WHERE id = ?', ('Renamed', named))
+            self.assertEqual(submit(payload)[0], 202)
+
+    def test_retry_survives_configuration_edits_but_not_a_changed_request(self):
+        """A retry must depend only on what the client asserted.
+
+        Comparing the frozen routing snapshot made an operator edit -- even a
+        rename -- turn a byte-identical retry into a conflict the client could
+        never clear, and resolving the live profile first made a retry
+        unanswerable once that profile was removed.
+        """
+        named = self.create()
+        payload = dict(profile_id=named, backend_key='test', object_id='sample.bin',
+                       original_filename='sample.bin', client_request_id='retry-test',
+                       expected_size_bytes=100)
+        def submit(values):
+            return self.http('/api/v1/deferred-scans', method='POST', body=json.dumps(values).encode())
+        with patch('app.main.configured_backend_keys', return_value=['test']), patch('app.main.backend_allowed_for_client', return_value=True):
+            self.assertEqual(submit(payload)[0], 202)
+            with db.connect() as connection:
+                submission = connection.execute('SELECT id, requested_profile_id, profile_snapshot_json FROM deferred_scan_submissions WHERE client_request_id = ?', ('retry-test',)).fetchone()
+            self.assertEqual(submission['requested_profile_id'], named)
+            frozen = submission['profile_snapshot_json']
+
+            for label, statement, values in (
+                ('engine added', 'INSERT INTO scan_profile_engines (scan_profile_id, engine_instance_id) VALUES (?, ?)', (named, self.clamav)),
+                ('profile renamed', 'UPDATE scan_profiles SET name = ? WHERE id = ?', ('Renamed profile', named)),
+                ('engine renamed', 'UPDATE engine_instances SET display_name = ? WHERE id = ?', ('Metadata v2', self.metadata)),
+                ('client renamed', 'UPDATE service_clients SET display_name = ? WHERE id = ?', ('Renamed client', self.client)),
+            ):
+                with db.connect() as connection:
+                    connection.execute(statement, values)
+                with self.subTest(change=label):
+                    self.assertEqual(submit(payload)[0], 202, label)
+
+            # A removed profile leaves accepted work answerable.
+            admin.manage(self.client, named, admin.ProfileFence(expected_revision=self._revision(named)), 'delete')
+            self.assertEqual(submit(payload)[0], 202)
+
+            # The accepted routing never moved with any of those edits.
+            with db.connect() as connection:
+                self.assertEqual(connection.execute('SELECT profile_snapshot_json FROM deferred_scan_submissions WHERE id = ?',
+                                                    (submission['id'],)).fetchone()['profile_snapshot_json'], frozen)
+                self.assertEqual(connection.execute('SELECT COUNT(*) AS n FROM deferred_scan_submissions').fetchone()['n'], 1)
+
+            # What the client asserted is still compared.
+            for label, change in (('object', {'object_id': 'other.bin'}),
+                                  ('size', {'expected_size_bytes': 999}),
+                                  ('hash', {'expected_sha256': 'b' * 64}),
+                                  ('profile preference', {'profile_id': self.default})):
+                with self.subTest(conflict=label):
+                    self.assertEqual(submit(payload | change)[0], 409, label)
+
+    def _revision(self, profile_id):
+        with db.connect() as connection:
+            return connection.execute('SELECT management_revision FROM scan_profiles WHERE id = ?', (profile_id,)).fetchone()['management_revision']
 
     def test_named_profiles_preserve_source_quota_filtering_and_legacy_scope(self):
         from dataclasses import replace

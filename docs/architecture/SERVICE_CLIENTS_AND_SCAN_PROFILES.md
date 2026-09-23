@@ -129,6 +129,31 @@ bind address/port and service name) for each client that needs different routing
 or ledger ownership. Do not infer identity from an untrusted ICAP header or from
 source IP behind NAT. Host firewall restrictions remain mandatory.
 
+## Retrying a deferred submission
+
+`client_request_id` is the idempotency key, unique per service client. A retry
+carrying the same id and the same assertions returns the accepted record with
+`202` and creates no second scan.
+
+Only what the client asserted is compared: backend key, object id, expected size,
+expected SHA-256, archive mode, and the profile it explicitly selected (absent
+meaning "use the default", which is not the same as naming the profile that
+happened to be default). Descriptive metadata — case name, priority, note,
+filename, content type — is first-write-wins, because a producer that rebuilds a
+note is not making a different request.
+
+The accepted routing snapshot is deliberately excluded from that comparison, and
+the endpoint answers a retry before resolving live routing at all. Both matter:
+the snapshot embeds client, profile and engine display names, so previously a
+mere rename turned a byte-identical retry into a `409` the producer could never
+clear, and resolving the current profile first made a retry unanswerable once
+that profile had been removed. Retry safety must not depend on server-side
+configuration holding still.
+
+A genuinely different request for an existing id is still `409`. The frozen
+snapshot on the accepted row remains authoritative for the work itself, so an
+operator edit never changes what an accepted submission will run.
+
 ## Manifest intake: a producer that never calls MASP
 
 Some storage producers cannot, or should not, call MASP at all. A file server or

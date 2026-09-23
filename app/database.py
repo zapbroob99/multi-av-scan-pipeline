@@ -1402,6 +1402,7 @@ def ensure_service_client_schema(connection: Any) -> None:
         grants_json TEXT NOT NULL DEFAULT '[]',
         revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0)
     )''')
+    ensure_column(connection, "deferred_scan_submissions", "requested_profile_id", "INTEGER")
     ensure_column(connection, "scan_profiles", "management_revision", "BIGINT NOT NULL DEFAULT 0")
     ensure_column(connection, "scan_profiles", "deleted_at", "BIGINT")
     # Preserve the previously preferred enabled/lowest-ID default on old databases
@@ -2607,6 +2608,7 @@ def create_deferred_scan_submission(
     *,
     service_client_id: int,
     scan_profile_id: int,
+    requested_profile_id: int | None = None,
     client_request_id: str,
     backend_key: str,
     object_id: str,
@@ -2625,17 +2627,18 @@ def create_deferred_scan_submission(
         cursor = connection.execute(
             f"""
             INSERT INTO deferred_scan_submissions (
-                service_client_id, scan_profile_id, client_request_id,
+                service_client_id, scan_profile_id, requested_profile_id, client_request_id,
                 backend_key, object_id, original_filename, content_type,
                 expected_size_bytes, expected_sha256, archive_mode,
                 case_name, priority, note, profile_snapshot_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(service_client_id, client_request_id) DO NOTHING
             {returning_id_clause()}
             """,
             (
                 service_client_id,
                 scan_profile_id,
+                requested_profile_id,
                 client_request_id,
                 backend_key,
                 object_id,
@@ -2672,37 +2675,49 @@ def create_deferred_scan_submission(
             raise RuntimeError("Deferred scan submission could not be loaded.")
         record = row_to_deferred_scan_record(row)
         if inserted_id is None:
+            # Compare only what the client asserted about the work: which object
+            # to read, what it should contain, and which profile it asked for.
+            # Descriptive metadata is first-write-wins, and the frozen routing
+            # snapshot is deliberately excluded. Including either made a retry
+            # depend on server-side configuration staying still: adding an
+            # engine, or merely renaming a profile or engine, turned a
+            # byte-identical retry into a conflict the client could never clear.
             immutable = (
                 record.backend_key,
                 record.object_id,
-                record.original_filename,
-                record.content_type,
                 record.expected_size_bytes,
                 record.expected_sha256,
                 record.archive_mode,
-                record.case_name,
-                record.priority,
-                record.note,
-                record.profile_snapshot_json,
+                record.requested_profile_id,
             )
             requested = (
                 backend_key,
                 object_id,
-                original_filename,
-                content_type,
                 expected_size_bytes,
                 expected_sha256,
                 archive_mode,
-                case_name,
-                priority,
-                note,
-                profile_snapshot_json,
+                requested_profile_id,
             )
             if immutable != requested:
                 raise ValueError(
                     "client_request_id already exists with a different deferred payload."
                 )
         return record, inserted_id is not None
+
+
+def find_deferred_scan_submission(service_client_id: int, client_request_id: str) -> DeferredScanRecord | None:
+    """Look up an already accepted submission before resolving current routing.
+
+    A retry must not depend on configuration that has moved since the original
+    acceptance: the frozen snapshot on the existing row is what the work runs
+    with, so the live profile is irrelevant to answering the retry.
+    """
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM deferred_scan_submissions WHERE service_client_id = ? AND client_request_id = ?",
+            (service_client_id, client_request_id),
+        ).fetchone()
+    return None if row is None else row_to_deferred_scan_record(row)
 
 
 def get_deferred_scan_submission(submission_id: int) -> DeferredScanRecord | None:
@@ -6708,6 +6723,8 @@ def row_to_deferred_scan_record(row: Any) -> DeferredScanRecord:
         service_client_id=int(row_value(row, "service_client_id")),
         scan_profile_id=int(row_value(row, "scan_profile_id")),
         client_request_id=str(row_value(row, "client_request_id")),
+        requested_profile_id=(None if row_value(row, "requested_profile_id") is None
+                              else int(row_value(row, "requested_profile_id"))),
         backend_key=str(row_value(row, "backend_key")),
         object_id=str(row_value(row, "object_id")),
         original_filename=str(row_value(row, "original_filename")),

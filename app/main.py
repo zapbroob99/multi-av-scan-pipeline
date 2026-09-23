@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import APP_VERSION
 from app.database import (
+    find_deferred_scan_submission,
     IntegrityViolation,
     count_audit_events,
     count_scan_history,
@@ -8025,9 +8026,41 @@ def api_create_deferred_scan(
 ) -> JSONResponse:
     require_api_token(request)
     identity = api_client_identity(request)
+    client_request_id = body.client_request_id.strip()
     backend_key = body.backend_key.strip().lower()
     try:
         object_id = validate_object_id(body.object_id)
+    except DeferredSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    expected_sha256 = None
+    if body.expected_sha256:
+        try:
+            expected_sha256 = normalize_sha256(body.expected_sha256)
+        except InvalidSha256Error as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    archive_mode = normalized_archive_mode(body.archive_mode)
+    # Answer a retry from the accepted record before touching live routing. The
+    # work already runs against a frozen snapshot, so re-resolving the profile
+    # here only made a byte-identical retry fail once an operator edited
+    # configuration, and a removed profile made it unanswerable at all. What the
+    # client asserted is still compared, so a genuinely different request for the
+    # same id remains a conflict.
+    existing = find_deferred_scan_submission(identity.client.id, client_request_id)
+    if existing is not None:
+        asserted = (existing.backend_key, existing.object_id, existing.expected_size_bytes,
+                    existing.expected_sha256, existing.archive_mode, existing.requested_profile_id)
+        if asserted != (backend_key, object_id, body.expected_size_bytes,
+                        expected_sha256, archive_mode, body.profile_id):
+            raise HTTPException(
+                status_code=409,
+                detail="client_request_id already exists with a different deferred payload.",
+            )
+        return JSONResponse(
+            deferred_scan_payload(request, existing, duplicate=True),
+            status_code=202,
+            headers={"Location": str(request.url_for("api_deferred_scan_status", submission_id=existing.id))},
+        )
+    try:
         available_backends = configured_backend_keys()
     except DeferredSourceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -8047,12 +8080,6 @@ def api_create_deferred_scan(
             status_code=403,
             detail="This service client is not allowed to use that storage backend.",
         )
-    expected_sha256 = None
-    if body.expected_sha256:
-        try:
-            expected_sha256 = normalize_sha256(body.expected_sha256)
-        except InvalidSha256Error as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         max_bytes = max_deferred_source_bytes()
     except DeferredSourceError as exc:
@@ -8066,7 +8093,6 @@ def api_create_deferred_scan(
             status_code=413,
             detail="Deferred object exceeds MASP_DEFERRED_MAX_BYTES.",
         )
-    archive_mode = normalized_archive_mode(body.archive_mode)
     try:
         identity, engines = resolve_profile_routing(identity, body.profile_id, source='api')
     except ValueError as exc:
@@ -8076,7 +8102,6 @@ def api_create_deferred_scan(
             status_code=503,
             detail="No eligible engines are assigned to this client's deferred scan profile.",
         )
-    client_request_id = body.client_request_id.strip()
     snapshot = profile_snapshot_json(
         identity,
         engines,
@@ -8087,6 +8112,7 @@ def api_create_deferred_scan(
         record, created = create_deferred_scan_submission(
             service_client_id=identity.client.id,
             scan_profile_id=identity.profile.id,
+            requested_profile_id=body.profile_id,
             client_request_id=client_request_id,
             backend_key=backend_key,
             object_id=object_id,
