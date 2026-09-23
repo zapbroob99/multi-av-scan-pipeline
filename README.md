@@ -1,5 +1,9 @@
 # MASP - Multi AV Scan Pipeline
 
+The application image now builds and serves the browser console itself at
+`/console/` on port 8000, so pilot and production deployments get it without a
+separate web server or port. Rebuild the image to pick it up.
+
 A built-in Hash List engine checks each sample's SHA-256, computed by MASP
 itself, against one institution-wide blocklist and allowlist managed at
 `/console/engines/hash-list`. A blocklist match is a detection; an allowlist

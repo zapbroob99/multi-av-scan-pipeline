@@ -609,6 +609,19 @@ decision authority. This view adds no batch mutation or recursive deletion.
 
 ## Static deployment
 
+The application image now builds the console in a Node stage and serves it at
+`/console/` from port 8000 (`app/services/console_static.py`), so pilot and
+production deployments need no additional container or port. Headers match the
+nginx overlay below: the same CSP, `X-Frame-Options: DENY`, `nosniff`, `no-store`
+for the page and public files, and one-year immutable caching for fingerprinted
+`/console/assets/*`. A missing asset is a 404, never the single page, so a stale
+hash fails visibly. Request paths are resolved inside the build output and
+dotfiles are refused. `MASP_CONSOLE_DIST` points elsewhere when needed; without a
+build the console answers 503 with the build command. Node is needed only in the
+image build stage.
+
+The overlay remains available for local work:
+
 ```powershell
 npm --prefix frontend run build
 docker compose -f docker-compose.yml -f docker-compose.frontend.yml up --build frontend

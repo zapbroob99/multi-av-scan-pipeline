@@ -204,6 +204,7 @@ from app.services.service_clients import (
 )
 from app.services.upload_admission import UploadAdmissionRoute
 from app.services.ui_api import router as ui_router
+from app.services.console_static import router as console_router
 from app.services.engine_setup import _setup_form_text, engine_setup_from_form
 from app.services.yara_rules import (
     delete_yara_rule,
@@ -240,6 +241,7 @@ seed_legacy_service_client()
 
 app.include_router(worker_control_router)
 app.include_router(ui_router)
+app.include_router(console_router)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

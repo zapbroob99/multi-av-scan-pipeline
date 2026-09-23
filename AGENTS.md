@@ -27,6 +27,13 @@ arbitrary command parsers.
   preference; an explicit browser-local selection is applied by the same-origin
   `/console/theme-init.js` before React renders. Keep it compatible with the
   frontend CSP and never put user, scan or secret data in theme storage.
+- The application image builds the console in a Node stage and serves it from
+  `app/services/console_static.py` on port 8000; no deployment needs a separate web
+  server. Keep its headers aligned with `frontend/nginx.conf.template` (strict CSP,
+  `X-Frame-Options: DENY`, `no-store` except immutable fingerprinted assets), never
+  fall back to `index.html` for an asset, and keep request paths inside the build
+  output. `MASP_CONSOLE_DIST` overrides the build location; the nginx overlay and
+  the Vite dev server remain optional.
 - Browser contracts are exported from the router without importing `app.main`
   or accessing deployment data. Keep `frontend/contracts/browser.openapi.json`
   and `frontend/src/lib/api.generated.ts` synchronized with

@@ -1,3 +1,12 @@
+# The browser console is built here and served by the application itself, so a
+# deployment needs no separate web server. Node exists only in this stage.
+FROM node:24-alpine AS console
+WORKDIR /console
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -14,6 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY rules ./rules
+COPY --from=console /console/dist ./frontend/dist
 # Apache-2.0 4(a)/4(d): the image is a distributed copy of the Work, so it
 # carries the License and the NOTICE attribution.
 COPY LICENSE NOTICE ./
