@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { SectionTabs, SYSTEM_TABS } from '../components/section-tabs'
 
 export default function SystemOverview() {
   const [params, setParams] = useSearchParams()
@@ -17,8 +18,7 @@ export default function SystemOverview() {
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>System overview</h1>
     <p className="muted">Recorded scan totals, worker liveness and historical result statistics.</p></div>
     <Button variant="secondary" disabled={summary.isFetching} onClick={() => { void summary.refetch() }}>Refresh overview</Button></div>
-    <nav className="report-actions" aria-label="System sections"><Link to="/system">Manage worker nodes</Link><Link to="/system/pools">Worker pools</Link>
-      <Link to="/system/runtime">Runtime and active queue</Link><Link to="/engines">Engine health and placement</Link></nav>
+    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
     <p className="callout">Totals include all scan sources and archive children. Counts can be cached for 30 seconds.
       Completion and detections are recorded outcomes, not proof of complete coverage or a policy allow decision.</p>
     {summary.isPending && <p role="status">Loading system overview…</p>}

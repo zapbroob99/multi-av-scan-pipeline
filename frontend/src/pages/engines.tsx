@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Cpu, Plus, Search, RefreshCw, Settings2, Trash2, FlaskConical, FileCode2 } from 'lucide-react'
 import { request, pollInterval, type Adapter, type Engine, type Health, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { EngineIcon } from '../components/engine-icon'
+import { SectionTabs, SYSTEM_TABS } from '../components/section-tabs'
 import { Dialog } from '../components/ui/dialog'
 
 export function ConfigFields({ adapter, values, onChange, editing = false }: {
@@ -133,6 +135,7 @@ export default function Engines({ session }: { session: Session }) {
   return <section className="page">
     <div className="page-heading"><div><p className="eyebrow">SCAN INFRASTRUCTURE</p><h1>Engine deployments</h1><p className="muted">Configure your engines. Verify their health. Keep every scan accountable.</p></div>
       <Button onClick={() => { setAdding(true); setEditing(null); setAdapterKey(''); setName(''); setConfig({}); setFormError('') }}><Plus size={17} />Add engine</Button></div>
+    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
     <div className="stats-row"><div><span>Configured</span><strong>{inventory.engines.length}</strong></div><div><span>Enabled</span><strong>{inventory.engines.filter(e => e.enabled).length}</strong></div><div><span>Needs attention</span><strong>{inventory.engines.filter(e => e.enabled && ['failed', 'unavailable'].includes(e.health.state)).length}</strong></div></div>
     {notice && <div role={notice.error ? 'alert' : 'status'} className={notice.error ? 'notice error' : 'notice'}>{notice.text}</div>}
     {query.error && <div className="notice error" role="alert">Inventory refresh failed. Displayed results may be stale: {query.error.message}</div>}
@@ -143,7 +146,7 @@ export default function Engines({ session }: { session: Session }) {
       const adapter = inventory.adapters.find(a => a.key === engine.adapter_key)!
       const health = engine.enabled ? localChecks[engine.id] || engine.health : engine.health
       return <article className="engine-card" key={engine.id}>
-        <div className="card-heading"><div className="engine-icon"><Cpu size={23} /></div><div><h2>{engine.display_name}</h2><p className="muted">{adapter.label} <span>· #{engine.id}</span></p></div><span className={`health-pill health-${health.state}`}>{health.state}</span></div>
+        <div className="card-heading"><div className="engine-icon"><EngineIcon adapterKey={engine.adapter_key} /></div><div><h2>{engine.display_name}</h2><p className="muted">{adapter.label} <span>· #{engine.id}</span></p></div><span className={`health-pill health-${health.state}`}>{health.state}</span></div>
         <div className="tags"><span>{adapter.support_state}</span><span>{adapter.capabilities.deployment}</span>{adapter.capabilities.consumes_external_quota && <span>External quota · manual only</span>}</div>
         <p className="health-detail">{health.detail}</p><p className="checked-at">{health.checked_at ? `Last checked ${new Date(health.checked_at * 1000).toLocaleString()}` : 'No verified check timestamp'}</p>
         <label className="placement">Worker pool<select aria-label={`Worker pool for ${engine.display_name}`} disabled={mutation.isPending} value={engine.pool_id ?? ''} onChange={e => void perform(() => request('/api/ui/v1/engines/{instance_id}/placement', 'put', { params: { instance_id: engine.id }, csrf, body: { pool_id: e.target.value ? Number(e.target.value) : null } }), 'Worker placement saved. Health will be checked again.')}>
@@ -159,7 +162,7 @@ export default function Engines({ session }: { session: Session }) {
     <p className="migration-note">New console · Existing scans and integrations are unchanged. <a href="/engines">Open legacy Engines</a></p>
     <Dialog open={adding || !!editing} onOpenChange={open => { if (!open && !mutation.isPending) { setAdding(false); setEditing(null) } }} title={editing ? `Configure ${editing.display_name}` : 'Add engine deployment'} description="Select a vendor adapter and supply its configuration. Suggested values are placeholders, not saved defaults.">
       {!editing && <div className="adapter-picker">{inventory.adapters.filter(a => a.capabilities.allows_multiple_instances || !inventory.engines.some(e => e.adapter_key === a.key)).map(adapter =>
-        <button key={adapter.key} type="button" aria-label={`${adapter.label} ${adapter.support_state}`} aria-pressed={adapterKey === adapter.key} onClick={() => { setAdapterKey(adapter.key); setConfig({}); setFormError('') }}><strong>{adapter.label}</strong><small>{adapter.support_state}</small></button>)}</div>}
+        <button key={adapter.key} type="button" aria-label={`${adapter.label} ${adapter.support_state}`} aria-pressed={adapterKey === adapter.key} onClick={() => { setAdapterKey(adapter.key); setConfig({}); setFormError('') }}><EngineIcon adapterKey={adapter.key} size={18} /><strong>{adapter.label}</strong><small>{adapter.support_state}</small></button>)}</div>}
       {selected && <form onSubmit={save}><p className="callout">{selected.description}</p>
         {!editing && <label>Deployment name<input value={name} onChange={e => setName(e.target.value)} maxLength={128} placeholder="e.g. Defender Windows Pool A" required /></label>}
         <ConfigFields adapter={selected} values={config} editing={!!editing?.has_secret} onChange={(key, value) => setConfig(previous => ({ ...previous, [key]: value }))} />

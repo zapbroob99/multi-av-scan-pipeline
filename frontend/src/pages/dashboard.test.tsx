@@ -31,7 +31,13 @@ describe('Dashboard', () => {
     mount()
     expect(await screen.findByRole('link', { name: sample.filename })).toHaveAttribute('href', '/scans/24')
     expect(screen.getByText('failed', { selector: 'span' })).toBeInTheDocument()
-    expect(screen.getByText('0 / 100 · info')).toBeInTheDocument()
+    // The badge must carry the recorded level and score without reading as an
+    // alert, while the separate failed status stays visible beside it.
+    const risk = document.querySelector('tbody .risk-badge')
+    expect(risk).toHaveTextContent('info')
+    expect(risk).toHaveTextContent('0 / 100')
+    expect(risk).not.toHaveClass('risk-badge-alert')
+    expect(document.querySelector('tr.row-alert')).toBeNull()
     expect(screen.getByText(/Risk is not a clean verdict/)).toBeInTheDocument()
     expect(document.querySelector('img')).toBeNull()
   })

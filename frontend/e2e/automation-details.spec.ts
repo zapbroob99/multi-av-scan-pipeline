@@ -6,8 +6,9 @@ test('automation report, full output, batch and protected single deletion', asyn
   await page.getByLabel('Username').fill('console-analyst')
   await page.getByLabel('Password').fill('console-test-only')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await page.getByRole('link', { name: 'Open report', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'ledger-21.bin' })).toBeVisible()
+  await page.getByRole('link', { name: 'Report', exact: true }).first().click()
+  // The report page still titles the sample as a heading; only the ledger list became a table.
+  await expect(page.getByRole('heading', { name: 'ledger-21.bin', exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Integration status JSON', exact: true }).click()
   await expect(page.getByLabel('Integration status JSON text')).toContainText('"result_ready": true')
   await expect(page.getByLabel('Integration status JSON text')).toContainText('"queue"')

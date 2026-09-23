@@ -11,6 +11,7 @@ function mount(role = 'admin', failure = false) {
       requested_count: 1, deleted_ids: [42], blocked_ids: [], cleanup_failed_ids: [42],
     }), { status: failure ? 503 : 200 })
     : new Response(JSON.stringify({ items: [{ id: 42, filename: 'automation.bin', source: 'api',
+      sha256: 'b'.repeat(64), case_name: 'Case', client_name: null, created_at: '2026-09-17',
       size_bytes: 1, service_client_id: null, batch_id: null, status: 'completed',
       attempt_count: 2, job_revision: 19, risk_score: 0, risk_level: 'info' }], next_before: null })))
   vi.stubGlobal('fetch', fetcher)

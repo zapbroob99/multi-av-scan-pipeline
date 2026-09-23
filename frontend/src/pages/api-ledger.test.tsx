@@ -17,15 +17,15 @@ function mount() {
 describe('API ledger', () => {
   it('renders inert previews with honest risk labels and compatible report links', async () => {
     mount()
-    await screen.findByRole('heading', { name: '<script>API sample</script>' })
+    await screen.findByRole('link', { name: '<script>API sample</script>' })
     expect(document.querySelector('script')).toBeNull()
     expect(screen.getByText(/Recorded risk is not a clean verdict/)).toBeVisible()
-    expect(screen.getByRole('link', { name: 'Open report' })).toHaveAttribute('href', '/api-ledger/scans/42')
-    expect(screen.getByRole('link', { name: 'Open batch' })).toHaveAttribute('href', '/api-ledger/batches/3')
+    expect(screen.getAllByRole('link', { name: 'Report' })[0]).toHaveAttribute('href', '/api-ledger/scans/42')
+    expect(screen.getByRole('link', { name: 'Batch' })).toHaveAttribute('href', '/api-ledger/batches/3')
   })
   it('preserves scoped filters across seek pages and supports unassigned ownership', async () => {
     const fetcher = mount()
-    await screen.findByRole('heading', { name: '<script>API sample</script>' })
+    await screen.findByRole('link', { name: '<script>API sample</script>' })
     await userEvent.click(screen.getByRole('button', { name: 'Filter client #7' }))
     expect(fetcher.mock.lastCall?.[0]).toBe('/api/ui/v1/api-ledger?client_id=7&limit=20')
     await userEvent.click(screen.getByRole('button', { name: 'Older scans' }))
@@ -36,11 +36,11 @@ describe('API ledger', () => {
   })
   it('hides cached history after a failed refresh without retry', async () => {
     const fetcher = mount()
-    await screen.findByRole('heading', { name: '<script>API sample</script>' })
+    await screen.findByRole('link', { name: '<script>API sample</script>' })
     fetcher.mockImplementation(async () => new Response(JSON.stringify({ detail: 'Read budget exceeded' }), { status: 503 }))
     await userEvent.click(screen.getByRole('button', { name: 'Refresh ledger' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Read budget exceeded')
-    expect(screen.queryByRole('link', { name: 'Open report' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Report' })).toBeNull()
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 })

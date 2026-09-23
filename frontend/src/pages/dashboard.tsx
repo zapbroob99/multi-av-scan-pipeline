@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowDown, ArrowUpRight, RefreshCw, Search } from 'lucide-react'
+import { ArrowDown, ArrowUpRight, RefreshCw, Search, ShieldAlert } from 'lucide-react'
 import { request, type ScanPreview, type Session } from '../lib/api'
+import { RiskBadge, isAlertRisk } from '../components/risk-badge'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 
@@ -15,11 +16,7 @@ function displayTime(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
-function riskText(scan: ScanPreview) {
-  if (['queued', 'running', 'finalizing'].includes(scan.status)) return 'Pending'
-  if (scan.risk_score === null) return 'Not scored'
-  return `${scan.risk_score} / 100 · ${scan.risk_level}`
-}
+const ACTIVE = ['queued', 'running', 'finalizing']
 
 export default function Dashboard({ session }: { session: Session }) {
   const client = useQueryClient()
@@ -101,20 +98,24 @@ export default function Dashboard({ session }: { session: Session }) {
       <Button variant="secondary">Apply filters</Button>
       <Button type="button" variant="secondary" onClick={() => setParams({})}>Reset</Button>
     </form>
+    {scans.data && scans.data.items.some(scan => !ACTIVE.includes(scan.status) && isAlertRisk(scan.risk_level)) && <p role="alert" className="alert-banner">
+      <ShieldAlert size={18} aria-hidden="true" />
+      <span><strong>{scans.data.items.filter(scan => !ACTIVE.includes(scan.status) && isAlertRisk(scan.risk_level)).length} scan(s) on this page recorded high or critical risk.</strong>{' '}
+        Open each report for the engine detections and the policy decision.</span></p>}
     <p className="callout">Risk is not a clean verdict. A completed scan may have missing engines. Open a report for detection coverage and the policy decision.</p>
     {scans.error && <p role="alert" className="error">History unavailable: {scans.error.message} Use Refresh to retry.</p>}
     {scans.isPending ? <div role="status" className="skeleton">Loading scan history…</div> : scans.data && <>
       {scans.data.items.length === 0 ? <div className="empty"><h2>No scans found</h2><p>Change the filters or return to the latest submissions.</p></div> :
         <div className="history-table-wrap" tabIndex={0} role="region" aria-label="Scan history table"><table className="history-table">
           <thead><tr>{session.user.role === 'admin' && <th scope="col" className="selection-column">Select</th>}<th scope="col" className="sample-column">Sample</th><th scope="col">Status</th><th scope="col">Recorded risk</th><th scope="col">Submitted</th></tr></thead>
-          <tbody>{scans.data.items.map(scan => <tr key={scan.id}>
+          <tbody>{scans.data.items.map(scan => <tr key={scan.id} className={!ACTIVE.includes(scan.status) && isAlertRisk(scan.risk_level) ? 'row-alert' : ''}>
             {session.user.role === 'admin' && <td className="selection-column"><input type="checkbox" aria-label={`Select scan ${scan.id}`} checked={selectedIds.has(scan.id)}
-              disabled={['queued', 'running', 'finalizing'].includes(scan.status) || deletion.isPending} onChange={() => toggle(scan.id)} /></td>}
+              disabled={ACTIVE.includes(scan.status) || deletion.isPending} onChange={() => toggle(scan.id)} /></td>}
             <td className="sample-column"><Link className="sample-link" to={`/scans/${scan.id}`}>{scan.filename}</Link>
               <small className="sample-hash" title={scan.sha256}>{scan.sha256}</small>
               <small>#{scan.id} · {(scan.size_bytes / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} KB{scan.case_name ? ` · ${scan.case_name}` : ''}</small></td>
             <td><span className={`health-pill ${scan.status === 'failed' ? 'health-failed' : ''}`}>{scan.status}</span></td>
-            <td className={['high', 'critical'].includes(scan.risk_level) ? 'risk-high' : ''}>{riskText(scan)}</td>
+            <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} /></td>
             <td><time dateTime={scan.created_at}>{displayTime(scan.created_at)}</time></td>
           </tr>)}</tbody></table></div>}
       <div className="history-pagination"><p className="muted">{scans.data.items.length} shown · Newest submission ID first{before ? ' · History page (auto-refresh paused)' : ''}</p>

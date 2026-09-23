@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
 import type { components } from '../lib/api.generated'
 import { Button } from '../components/ui/button'
+import { SectionTabs, SYSTEM_TABS } from '../components/section-tabs'
 import { Dialog } from '../components/ui/dialog'
 
 type Worker = components['schemas']['WorkerSummary']
@@ -68,9 +69,7 @@ export default function System({ session }: { session: Session }) {
     <Button variant="secondary" disabled={busy} onClick={() => { void workers.refetch() }}>Refresh workers</Button></div>
     <p className="callout">Heartbeat indicates liveness, not engine health. Active nodes may claim work when capacity and pool rules permit.
       Draining and disabled nodes finish owned work but do not claim new jobs. Last reported runtime is not a complete list of node activity.</p>
-    <nav className="report-actions" aria-label="System sections"><Link to="/engines">Engine health and placement</Link>
-      <Link to="/system/pools">Worker pools</Link><Link to="/system/runtime">Runtime and queue</Link>
-      <Link to="/system/overview">Overview and engine metrics</Link></nav>
+    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
     {receipt && <p role="status" className="callout">{receipt}</p>}
     {action.error && <p role="alert" className="error">{action.error.message} The request may have reached the server. Refresh before trying again.</p>}
     {workers.isPending && <p role="status">Loading worker nodes…</p>}

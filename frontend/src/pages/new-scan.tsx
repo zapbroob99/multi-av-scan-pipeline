@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, Upload } from 'lucide-react'
 import { request, ApiError, type Session } from '../lib/api'
@@ -7,12 +7,16 @@ import { Button } from '../components/ui/button'
 
 export default function NewScan({ session }: { session: Session }) {
   const client = useQueryClient()
+  const navigate = useNavigate()
   const [validation, setValidation] = useState('')
   const options = useQuery({ queryKey: ['submission-options'],
     queryFn: ({ signal }) => request('/api/ui/v1/scans/options', 'get', { signal }), staleTime: 0 })
   const upload = useMutation({ mutationFn: (body: FormData) => request('/api/ui/v1/scans', 'post', {
     body, csrf: session.csrf_token,
-  }), retry: false, onSuccess: () => { void client.invalidateQueries({ queryKey: ['dashboard'] }) } })
+  }), retry: false, onSuccess: accepted => {
+    void client.invalidateQueries({ queryKey: ['dashboard'] })
+    navigate(`/scans/${accepted.scan_id}?accepted=1`)
+  } })
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (upload.isPending || upload.isSuccess) return

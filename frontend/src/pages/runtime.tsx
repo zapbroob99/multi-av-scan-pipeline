@@ -2,6 +2,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { SectionTabs, SYSTEM_TABS } from '../components/section-tabs'
 
 export default function Runtime() {
   const [params, setParams] = useSearchParams()
@@ -23,8 +24,7 @@ export default function Runtime() {
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Runtime and active queue</h1>
     <p className="muted">Recorded worker activity and accepted scans still in progress.</p></div>
     <Button variant="secondary" disabled={queue.isFetching || workers.isFetching} onClick={() => { void queue.refetch(); void workers.refetch() }}>Refresh runtime</Button></div>
-    <nav className="report-actions" aria-label="System sections"><Link to="/system">Manage worker nodes</Link><Link to="/system/pools">Worker pools</Link>
-      <Link to="/engines">Engine health and placement</Link><Link to="/system/overview">Overview and engine metrics</Link></nav>
+    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
     <p className="callout">First pages refresh every 30 seconds while visible. Later pages require manual refresh.
       Worker and queue reads are independent snapshots. Heartbeat does not establish engine health or scan coverage.</p>
     <h2>Worker runtime</h2>

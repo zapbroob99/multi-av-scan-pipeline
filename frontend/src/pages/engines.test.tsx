@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import Engines, { ConfigFields } from './engines'
 import { pollInterval, type Adapter, type Inventory } from '../lib/api'
@@ -22,7 +23,7 @@ const session = { user: { id: 1, username: 'admin', role: 'admin' }, csrf_token:
 function mount(fetcher: typeof fetch) {
   vi.stubGlobal('fetch', fetcher)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return render(<QueryClientProvider client={client}><Engines session={session} /></QueryClientProvider>)
+  return render(<QueryClientProvider client={client}><MemoryRouter><Engines session={session} /></MemoryRouter></QueryClientProvider>)
 }
 
 describe('Engine console', () => {

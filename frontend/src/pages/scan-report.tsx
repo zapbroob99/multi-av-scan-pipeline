@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type ScanReport, type ReportEngine } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { BackLink } from '../components/section-tabs'
 
 export function reportPollInterval(report?: ScanReport) {
   return report && ['queued', 'running', 'finalizing'].includes(report.status) ? 3000 : false
@@ -41,6 +42,8 @@ function EngineRow({ scanId, engine, automation }: { scanId: number; engine: Rep
 
 export default function Report({ automation = false }: { automation?: boolean }) {
   const { scanId = '' } = useParams()
+  const [searchParams] = useSearchParams()
+  const justAccepted = searchParams.get('accepted') === '1'
   const valid = /^\d+$/.test(scanId) && Number.isSafeInteger(Number(scanId)) && Number(scanId) > 0
   const report = useQuery({ queryKey: ['scan-report', automation, scanId], enabled: valid,
     queryFn: ({ signal }) => request(automation ? '/api/ui/v1/api-ledger/scans/{scan_id}' : '/api/ui/v1/scans/{scan_id}', 'get', { params: { scan_id: Number(scanId) }, signal }), retry: false,
@@ -54,9 +57,12 @@ export default function Report({ automation = false }: { automation?: boolean })
   if (!scan) return <section className="page"><p role="status">Loading scan report…</p></section>
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">{automation ? 'AUTOMATION' : 'MANUAL'} SCAN #{scan.id}</p>
     <h1 className="report-filename">{scan.filename}</h1><p className="muted">Status: {scan.status} · Attempt {scan.attempt_count}</p></div>
-    <div className="report-actions"><Button variant="secondary" disabled={report.isFetching} onClick={() => { void report.refetch() }}>{report.isFetching ? 'Refreshing…' : 'Refresh report'}</Button>
+    <div className="report-actions"><BackLink to={automation ? '/api-ledger' : '/dashboard'} />
+      <Button variant="secondary" disabled={report.isFetching} onClick={() => { void report.refetch() }}>{report.isFetching ? 'Refreshing…' : 'Refresh report'}</Button>
       <Link className="button button-secondary" to={`${automation ? '/api-ledger' : ''}/scans/${scan.id}/print`}>Printable report</Link>
       <Link className="button button-secondary" to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></div></div>
+    {justAccepted && <p role="status" className="callout">Scan #{scan.id} was stored and queued. This is not a completed scan or a clean verdict:
+      workers run the engines asynchronously and this page updates as they finish. <Link to="/scans/new">Submit another sample</Link></p>}
     {automation && <p className="callout">Source: {scan.source} ? Client: {scan.service_client_id ?? 'Unassigned'}. Operator view; accepted routing determines coverage.</p>}
     {automation && <p><Link to={`/api-ledger/scans/${scan.id}/status-json`}>Integration status JSON</Link> ? <Link to={`/api-ledger/scans/${scan.id}/result-json`}>Integration result JSON</Link></p>}
     {scan.warning && <p role="alert" className="error">{scan.warning}</p>}

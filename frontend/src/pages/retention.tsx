@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
 import type { components } from '../lib/api.generated'
 import { Button } from '../components/ui/button'
+import { SectionTabs, SYSTEM_TABS } from '../components/section-tabs'
 import { Dialog } from '../components/ui/dialog'
 
 type RunBody = components['schemas']['RetentionRunBody']
@@ -29,7 +30,7 @@ export default function Retention({ session }: { session: Session }) {
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p>
     <h1>Retention cleanup</h1><p className="muted">Review expired records before permanently deleting a bounded batch.</p></div>
     <Button variant="secondary" disabled={busy} onClick={async () => { action.reset(); const result = await preview.refetch(); if (!result.error) setNeedsRefresh(false) }}>Refresh preview</Button></div>
-    <nav className="report-actions"><Link to="/system/overview">System overview</Link><Link to="/system">Worker management</Link></nav>
+    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
     <p className="callout">Includes all scan sources and archive children. Each run is limited to 20 displayed records or the smaller server batch limit.
       Active scans, records with children, shared samples and undelivered notifications are protected. Records can become blocked after preview.</p>
     {preview.isPending && <p role="status">Loading retention preview…</p>}

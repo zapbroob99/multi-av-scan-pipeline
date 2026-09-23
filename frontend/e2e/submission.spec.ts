@@ -19,10 +19,10 @@ test('analyst sends a benign file and sees accepted scan in manual history', asy
   const submitted = page.waitForResponse(response => response.url().endsWith('/api/ui/v1/scans') && response.request().method() === 'POST')
   await page.getByRole('button', { name: 'Create scan' }).click()
   expect((await submitted).status()).toBe(202)
-  await expect(page.getByRole('heading', { name: 'Scan accepted' })).toBeVisible()
+  // Submitting now opens the report directly; the acceptance wording moves with it.
   await expect(page.getByText(/not a completed scan or a clean verdict/)).toBeVisible()
-  const report = await page.getByRole('link', { name: 'Open scan report' }).getAttribute('href')
-  expect(report).toMatch(/^\/console\/scans\/\d+$/)
+  await expect(page).toHaveURL(/\/console\/scans\/\d+\?accepted=1$/)
+  const report = new URL(page.url()).pathname
   await page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Dashboard', exact: true }).click()
   await page.getByLabel('Search scans').fill('IR-browser-upload')
   await page.getByRole('button', { name: 'Apply filters' }).click()

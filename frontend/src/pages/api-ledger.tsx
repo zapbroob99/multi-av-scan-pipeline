@@ -2,10 +2,13 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
+import { RiskBadge, isAlertRisk } from '../components/risk-badge'
 import { Dialog } from '../components/ui/dialog'
 import { Button } from '../components/ui/button'
 
 type Candidate = { scan_id: number; attempt: number; job_revision: number }
+
+const ACTIVE = ['queued', 'running', 'finalizing']
 
 export default function ApiLedger({ session }: { session?: Session }) {
   const [selected, setSelected] = useState<number[]>([])
@@ -86,21 +89,29 @@ export default function ApiLedger({ session }: { session?: Session }) {
     {scans.error && <p role="alert" className="error">{scans.error.message}</p>}
     {!requiresRefresh && !scans.error && scans.data && <>
       {!scans.data.items.length && <p>No automation scans match these filters.</p>}
-      {scans.data.items.map(scan => <article className="submission-card report-engine" key={scan.id}>
-        {admin && <label><input type="checkbox" aria-label={`Select scan ${scan.id}`} checked={selected.includes(scan.id)}
-          disabled={locked || scans.isFetching || ['queued', 'running', 'finalizing'].includes(scan.status) || (!selected.includes(scan.id) && selected.length >= 20)}
-          onChange={() => setSelected(current => current.includes(scan.id) ? current.filter(id => id !== scan.id) : [...current, scan.id])} /> Select scan #{scan.id}</label>}
-        <h2>{scan.filename}</h2><p className="muted">#{scan.id} · {scan.source.toUpperCase()} · {scan.size_bytes.toLocaleString()} bytes · {scan.case_name || 'No case'}</p>
-        <p className="report-hash">{scan.sha256}</p>
-        <p>{scan.service_client_id === null ? 'Unassigned client' : `Client #${scan.service_client_id} · ${scan.client_name || 'Name unavailable'}`}</p>
-        <p>Status: {scan.status} · Recorded risk: {scan.risk_score === null ? 'Not scored' : `${scan.risk_score} / 100 · ${scan.risk_level}`}</p>
-        <p className="muted">Submitted: {scan.created_at}</p>
-        <nav className="report-actions"><Link to={`/api-ledger/scans/${scan.id}`}>Open report</Link>
-          {scan.batch_id !== null && <Link to={`/api-ledger/batches/${scan.batch_id}`}>Open batch</Link>}
-          {scan.service_client_id !== null && <Button variant="secondary" disabled={locked} onClick={() => {
-            const next = new URLSearchParams(params); next.set('client_id', String(scan.service_client_id)); next.delete('unassigned'); next.delete('before'); setParams(next)
-          }}>Filter client #{scan.service_client_id}</Button>}</nav>
-      </article>)}
+      {scans.data.items.length > 0 && <div className="history-table-wrap" role="region" aria-label="Automation history" tabIndex={0}>
+        <table className="history-table compact-table"><thead><tr>
+          {admin && <th scope="col" className="selection-column">Select</th>}
+          <th scope="col">Sample</th><th scope="col">Source</th><th scope="col">Client</th>
+          <th scope="col">Status</th><th scope="col">Recorded risk</th><th scope="col">Submitted</th><th scope="col">Open</th>
+        </tr></thead><tbody>
+        {scans.data.items.map(scan => <tr key={scan.id} className={!ACTIVE.includes(scan.status) && isAlertRisk(scan.risk_level) ? 'row-alert' : ''}>
+          {admin && <td className="selection-column"><input type="checkbox" aria-label={`Select scan ${scan.id}`} checked={selected.includes(scan.id)}
+            disabled={locked || scans.isFetching || ACTIVE.includes(scan.status) || (!selected.includes(scan.id) && selected.length >= 20)}
+            onChange={() => setSelected(current => current.includes(scan.id) ? current.filter(id => id !== scan.id) : [...current, scan.id])} /></td>}
+          <td className="cell-name"><Link to={`/api-ledger/scans/${scan.id}`} title={scan.filename}>{scan.filename}</Link>
+            <small title={scan.sha256}>#{scan.id} · {scan.sha256.slice(0, 16)}… · {scan.size_bytes.toLocaleString()} B{scan.case_name ? ` · ${scan.case_name}` : ''}</small></td>
+          <td>{scan.source.toUpperCase()}</td>
+          <td className="cell-name">{scan.service_client_id === null ? <span className="muted">Unassigned</span>
+            : <Button variant="secondary" className="link-button" disabled={locked} onClick={() => {
+                const next = new URLSearchParams(params); next.set('client_id', String(scan.service_client_id)); next.delete('unassigned'); next.delete('before'); setParams(next)
+              }} aria-label={`Filter client #${scan.service_client_id}`} title={`Filter client #${scan.service_client_id}`}>#{scan.service_client_id} {scan.client_name || 'Name unavailable'}</Button>}</td>
+          <td>{scan.status}</td>
+          <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} /></td>
+          <td><small>{scan.created_at}</small></td>
+          <td className="cell-actions"><Link to={`/api-ledger/scans/${scan.id}`}>Report</Link>
+            {scan.batch_id !== null && <Link to={`/api-ledger/batches/${scan.batch_id}`}>Batch</Link>}</td>
+        </tr>)}</tbody></table></div>}
       <div className="history-pagination"><Button variant="secondary" disabled={locked || scans.isFetching || !params.get('before')} onClick={() => paginate()}>Newest scans</Button>
         <Button variant="secondary" disabled={locked || scans.isFetching || !scans.data.next_before} onClick={() => paginate(scans.data!.next_before!)}>Older scans</Button></div>
     </>}
