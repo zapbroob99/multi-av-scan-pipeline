@@ -1228,6 +1228,19 @@ class BrowserApiTests(unittest.TestCase):
         self.assertIsNone(db.get_hash_list_entry('a' * 64))
         self.assertEqual(self.request(f'/hash-list/{entry_id}', 'DELETE')[0], 404)
 
+    def test_intake_overview_is_admin_only_read_only_and_uncached(self):
+        self.assertEqual(self.request('/system/intake', session=False)[0], 401)
+        status, view, headers = self.request('/system/intake')
+        self.assertEqual(status, 200, view)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(set(view), {'manifest_worker', 'manifest_record_invalid', 'queue', 'rejections',
+                                     'rejections_total', 'failures', 'failures_truncated'})
+        for method in ('POST', 'PUT', 'DELETE'):
+            self.assertEqual(self.request('/system/intake', method, {})[0], 405)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/system/intake')[0], 403)
+
     def test_about_is_readable_by_analysts_and_scopes_client_counts_to_admins(self):
         db.create_service_client('integration', 'Integration')
         self.assertEqual(self.request('/about', session=False)[0], 401)

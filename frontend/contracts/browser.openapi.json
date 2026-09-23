@@ -2365,6 +2365,177 @@
         "title": "InstanceSaved",
         "type": "object"
       },
+      "IntakeFailure": {
+        "properties": {
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "backend_key": {
+            "title": "Backend Key",
+            "type": "string"
+          },
+          "client_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Name"
+          },
+          "client_request_id": {
+            "title": "Client Request Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_error": {
+            "title": "Last Error",
+            "type": "string"
+          },
+          "object_id": {
+            "title": "Object Id",
+            "type": "string"
+          },
+          "original_filename": {
+            "title": "Original Filename",
+            "type": "string"
+          },
+          "service_client_id": {
+            "title": "Service Client Id",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "service_client_id",
+          "client_name",
+          "client_request_id",
+          "backend_key",
+          "object_id",
+          "original_filename",
+          "last_error",
+          "attempt_count",
+          "updated_at"
+        ],
+        "title": "IntakeFailure",
+        "type": "object"
+      },
+      "IntakeOverview": {
+        "properties": {
+          "failures": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeFailure"
+            },
+            "title": "Failures",
+            "type": "array"
+          },
+          "failures_truncated": {
+            "title": "Failures Truncated",
+            "type": "boolean"
+          },
+          "manifest_record_invalid": {
+            "title": "Manifest Record Invalid",
+            "type": "boolean"
+          },
+          "manifest_worker": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManifestWorker"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queue": {
+            "$ref": "#/components/schemas/IntakeQueue"
+          },
+          "rejections": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestRejection"
+            },
+            "title": "Rejections",
+            "type": "array"
+          },
+          "rejections_total": {
+            "title": "Rejections Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "manifest_worker",
+          "manifest_record_invalid",
+          "queue",
+          "rejections",
+          "rejections_total",
+          "failures",
+          "failures_truncated"
+        ],
+        "title": "IntakeOverview",
+        "type": "object"
+      },
+      "IntakeQueue": {
+        "properties": {
+          "claimed": {
+            "title": "Claimed",
+            "type": "integer"
+          },
+          "oldest_pending_age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Pending Age Seconds"
+          },
+          "oldest_pending_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Pending At"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "queued": {
+            "title": "Queued",
+            "type": "integer"
+          },
+          "retrying": {
+            "title": "Retrying",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending",
+          "retrying",
+          "claimed",
+          "queued",
+          "oldest_pending_at",
+          "oldest_pending_age_seconds"
+        ],
+        "title": "IntakeQueue",
+        "type": "object"
+      },
       "InventoryPayload": {
         "properties": {
           "adapters": {
@@ -2557,6 +2728,148 @@
           "password"
         ],
         "title": "LoginBody",
+        "type": "object"
+      },
+      "ManifestRejection": {
+        "properties": {
+          "backend_key": {
+            "title": "Backend Key",
+            "type": "string"
+          },
+          "first_seen_at": {
+            "title": "First Seen At",
+            "type": "integer"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At",
+            "type": "integer"
+          },
+          "manifest_object_id": {
+            "title": "Manifest Object Id",
+            "type": "string"
+          },
+          "occurrences": {
+            "title": "Occurrences",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend_key",
+          "manifest_object_id",
+          "reason",
+          "first_seen_at",
+          "last_seen_at",
+          "occurrences"
+        ],
+        "title": "ManifestRejection",
+        "type": "object"
+      },
+      "ManifestWorker": {
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "integer"
+          },
+          "age_seconds": {
+            "title": "Age Seconds",
+            "type": "integer"
+          },
+          "at": {
+            "title": "At",
+            "type": "integer"
+          },
+          "backend_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend Key"
+          },
+          "batch_limit": {
+            "title": "Batch Limit",
+            "type": "integer"
+          },
+          "client_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Key"
+          },
+          "date_layout": {
+            "title": "Date Layout",
+            "type": "string"
+          },
+          "duplicates": {
+            "title": "Duplicates",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "lookback_days": {
+            "title": "Lookback Days",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "poll_seconds": {
+            "title": "Poll Seconds",
+            "type": "number"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "root_prefix": {
+            "title": "Root Prefix",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "at",
+          "age_seconds",
+          "stale",
+          "ok",
+          "error",
+          "accepted",
+          "duplicates",
+          "rejected",
+          "poll_seconds",
+          "backend_key",
+          "client_key",
+          "root_prefix",
+          "date_layout",
+          "lookback_days",
+          "batch_limit"
+        ],
+        "title": "ManifestWorker",
         "type": "object"
       },
       "PasswordChangeBody": {
@@ -14034,6 +14347,107 @@
           }
         },
         "summary": "Read Engine Metrics",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/system/intake": {
+      "get": {
+        "operationId": "browser_intake_overview_api_ui_v1_system_intake_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Intake Overview",
         "tags": [
           "Browser console"
         ]

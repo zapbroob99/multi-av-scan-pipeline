@@ -6,6 +6,7 @@ import errno
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import stat
 import uuid
 
@@ -27,6 +28,16 @@ class DeferredSourceChangedError(DeferredSourcePermanentError):
 
 class DeferredSourcePolicyError(DeferredSourcePermanentError):
     pass
+
+
+# OSError renders the path it failed on as a quoted absolute path. Deployment
+# roots are never shown to operators, so errors are stored and shown without them.
+_QUOTED_ABSOLUTE_PATH = re.compile(r"""(['"])(?:[A-Za-z]:[\\/]|[\\/])[^'"]*\1""")
+
+
+def redact_paths(text: str) -> str:
+    """Replace absolute filesystem paths in an error message with a placeholder."""
+    return _QUOTED_ABSOLUTE_PATH.sub(r"\1<path>\1", text)
 
 
 def configured_backends() -> dict[str, Path]:

@@ -36,6 +36,7 @@ const ClientStorage = lazy(() => import('./pages/client-storage'))
 const ClientSetup = lazy(() => import('./pages/client-setup'))
 const Audit = lazy(() => import('./pages/audit'))
 const HashList = lazy(() => import('./pages/hash-list'))
+const Intake = lazy(() => import('./pages/intake'))
 const About = lazy(() => import('./pages/about'))
 const ScanPrint = lazy(() => import('./pages/scan-print'))
 const client = new QueryClient({ defaultOptions: {
@@ -148,6 +149,7 @@ function App() {
           <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/scan-policy" element={session.data.user.role === 'admin' ? <ScanPolicy session={session.data} /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
+        <Route path="/system/intake" element={session.data.user.role === 'admin' ? <Intake /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/system/retention" element={session.data.user.role === 'admin' ? <Retention session={session.data} /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/system/overview" element={session.data.user.role === 'admin' ? <SystemOverview /> :

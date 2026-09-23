@@ -1452,6 +1452,11 @@ def ensure_service_client_schema(connection: Any) -> None:
         "CREATE INDEX IF NOT EXISTS idx_deferred_scan_claim "
         "ON deferred_scan_submissions (status, available_at, created_at, id)"
     )
+    # Console intake view: newest permanent failures without sorting history.
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_deferred_scan_status_seek "
+        "ON deferred_scan_submissions (status, id DESC)"
+    )
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_notification_outbox_claim "
         "ON notification_outbox (status, available_at, created_at, id)"

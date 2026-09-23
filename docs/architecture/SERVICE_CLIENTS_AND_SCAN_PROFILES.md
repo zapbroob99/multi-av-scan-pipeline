@@ -218,8 +218,17 @@ producer cannot grow the table without bound. A rejection clears once the same
 manifest is accepted. **Operators must watch this**: it is the only place a
 malformed or unauthorized drop becomes visible.
 
-Console visibility for rejections and intake lag is not implemented yet and is
-required before relying on this path in production.
+Admin `/console/system/intake` shows this state (GET `/api/ui/v1/system/intake`,
+read-only). The worker records each cycle, success or failure, in the
+`manifest_intake_last_cycle` setting together with the configuration it actually
+ran with, because the API process does not share the worker's environment. A
+cycle older than four poll intervals (and at least a minute) is flagged stale:
+without the record a stopped worker looks exactly like a quiet share. The page
+also shows deferred queue counts with the oldest waiting age, the newest 50
+rejections with the total, and the newest 20 submissions that failed
+permanently before becoming scans, which no scan report can show. Error text is
+stored and shown with absolute paths replaced by `<path>`; deployment roots are
+never displayed. Nothing on the page writes, retries or clears a record.
 
 ## Request and execution flow
 

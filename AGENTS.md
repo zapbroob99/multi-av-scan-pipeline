@@ -442,6 +442,14 @@ and must sit in the manifest's own directory. Keep discovery bounded to recent d
 and a batch limit rather than walking a growing share. The producer receives no delivery,
 backpressure or error feedback, so record every rejection in `manifest_rejections` with a cap,
 and clear it when the same manifest is later accepted.
+Admin `/console/system/intake` is the read-only view of that path. The manifest worker records each
+cycle and its own configuration in the `manifest_intake_last_cycle` setting (best effort; recording
+must never stop intake); the console never reads manifest configuration from the API environment.
+Report a missing record as "no cycle recorded", an unreadable one as invalid and an old one as stale,
+never as healthy. Queue counts cover pending/claimed/queued deferred submissions with the oldest
+pending age; pre-scan failures are `failed` rows without a scan, read newest-first through
+`idx_deferred_scan_status_seek`. Bound rejections to 50 and failures to 20. Store and show error
+text through `redact_paths`: absolute paths never reach the browser.
 
 Deferred retry safety must not depend on server-side configuration staying still. Answer a
 repeat `client_request_id` from the accepted record before resolving live routing, and compare

@@ -61,6 +61,7 @@ authorization/regression tests, responsive browser verification and documentatio
 | Engines | Instance setup/settings, enable/disable/delete, checks, local rules and pool assignment implemented. `/console/engines/hash-list` manages the institution hash list (new; no legacy equivalent). Retain instance identity and secret omission. |
 | System — current slice | Worker inventory, lifecycle, credential revocation, worker-pool create/edit/delete and paginated worker runtime/active queue implemented. |
 | System — overview | Admin-only cached all-source totals, worker liveness, read-only retention policy and on-demand bounded historical engine-name metrics. Full-history aggregation scale gate remains. |
+| System — deferred intake | Admin-only read of the manifest worker's last recorded cycle (stale/failed flagged), deferred queue counts and oldest waiting age, bounded manifest rejections and pre-scan failures with paths redacted. New screen; no legacy equivalent. |
 | System — retention | Admin-only bounded preview and confirmed deletion across all sources; age and state fences, active/child/shared-sample/outbox protections, per-record outcomes. No recursive deletion. |
 | System — remaining parity | Engine pool assignment is already in React Engines. Retain legacy metric/detail comparison (including last-result timing) and deployment-sized fleet/read validation before cutover. |
 | Scan policy | `/console/scan-policy` implements admin-only reads and confirmed atomic updates of the three operational limits with shared backend validation/resolution. |
@@ -1725,3 +1726,22 @@ with a new scenario covering explicit-list addition, the already-listed report,
 confirmed removal, phone-width layout and the engine-readiness warning clearing
 once a Hash List engine is created from the Engines page. Production build and
 contract drift check passed.
+
+### Deferred intake
+
+Admin `/console/system/intake` reads GET `/api/ui/v1/system/intake` in one
+budgeted snapshot: the manifest worker's last recorded cycle, deferred queue
+counts with the oldest waiting age, the newest 50 manifest rejections with their
+total, and the newest 20 submissions that failed permanently before becoming
+scans. The route has no write verb and the page never polls. A missing worker
+record reads as "no cycle recorded", an unreadable one as invalid, and a cycle
+older than four poll intervals as stale, so a stopped worker is never shown as
+healthy. Absolute paths in stored error text are replaced with `<path>` on write
+and again on read. See `SERVICE_CLIENTS_AND_SCAN_PROFILES.md` for the contract.
+
+Validation (2026-09-23): full Python suite with disposable PostgreSQL ran 956
+tests (954 passed, 2 skipped), including PostgreSQL variants of the intake
+reader. Frontend: 149 tests; 35 Edge workflows, with a new scenario covering a
+stopped worker, backlog, rejection and pre-scan failure with every seeded path
+redacted, phone-width layout and analyst refusal. Build and contract drift
+check passed.

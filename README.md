@@ -18,7 +18,10 @@ A storage producer that cannot call MASP can now have its uploads scanned by
 writing each finished file and then a sibling JSON manifest. MASP polls a
 read-only mount for manifests, so the producer holds no credential and waits for
 nothing. Start it with `--profile manifest`; see
-`docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md`.
+`docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md`. Administrators watch it
+at `/console/system/intake`: the worker's last cycle (a stopped worker is flagged
+as stale), the deferred backlog and its oldest waiting age, rejected manifests
+and submissions that failed before becoming scans.
 
 Each service client now has a setup view showing whether it is ready to accept
 traffic and which endpoints, authorization header and ICAP client key the other

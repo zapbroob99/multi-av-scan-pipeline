@@ -38,6 +38,7 @@ from app.services import ledger_read
 from app.services import user_admin
 from app.services import audit_read
 from app.services import hash_list_admin
+from app.services import intake_read
 from app.services import about_read
 from app.services import account
 from app.services.ingest import store_upload, configured_upload_max_bytes, UploadTooLargeError
@@ -344,6 +345,11 @@ def browser_audit(limit: int = Query(default=20, ge=1, le=100),
                   q: str = Query(default='', max_length=200),
                   outcome: Literal['all', 'success', 'failure', 'denied'] = 'all'):
     return audit_read.page(limit=limit, before=before, query=q, outcome=outcome)
+
+
+@router.get('/system/intake', response_model=intake_read.IntakeOverview)
+def browser_intake_overview():
+    return intake_read.overview()
 
 
 @router.get('/hash-list', response_model=hash_list_admin.HashListPage)

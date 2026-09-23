@@ -1066,6 +1066,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/system/intake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Intake Overview */
+        get: operations["browser_intake_overview_api_ui_v1_system_intake_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/system/pools": {
         parameters: {
             query?: never;
@@ -2082,6 +2099,59 @@ export interface components {
             /** Id */
             id: number;
         };
+        /** IntakeFailure */
+        IntakeFailure: {
+            /** Attempt Count */
+            attempt_count: number;
+            /** Backend Key */
+            backend_key: string;
+            /** Client Name */
+            client_name: string | null;
+            /** Client Request Id */
+            client_request_id: string;
+            /** Id */
+            id: number;
+            /** Last Error */
+            last_error: string;
+            /** Object Id */
+            object_id: string;
+            /** Original Filename */
+            original_filename: string;
+            /** Service Client Id */
+            service_client_id: number;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** IntakeOverview */
+        IntakeOverview: {
+            /** Failures */
+            failures: components["schemas"]["IntakeFailure"][];
+            /** Failures Truncated */
+            failures_truncated: boolean;
+            /** Manifest Record Invalid */
+            manifest_record_invalid: boolean;
+            manifest_worker: components["schemas"]["ManifestWorker"] | null;
+            queue: components["schemas"]["IntakeQueue"];
+            /** Rejections */
+            rejections: components["schemas"]["ManifestRejection"][];
+            /** Rejections Total */
+            rejections_total: number;
+        };
+        /** IntakeQueue */
+        IntakeQueue: {
+            /** Claimed */
+            claimed: number;
+            /** Oldest Pending Age Seconds */
+            oldest_pending_age_seconds: number | null;
+            /** Oldest Pending At */
+            oldest_pending_at: string | null;
+            /** Pending */
+            pending: number;
+            /** Queued */
+            queued: number;
+            /** Retrying */
+            retrying: number;
+        };
         /** InventoryPayload */
         InventoryPayload: {
             /** Adapters */
@@ -2137,6 +2207,54 @@ export interface components {
             password: string;
             /** Username */
             username: string;
+        };
+        /** ManifestRejection */
+        ManifestRejection: {
+            /** Backend Key */
+            backend_key: string;
+            /** First Seen At */
+            first_seen_at: number;
+            /** Last Seen At */
+            last_seen_at: number;
+            /** Manifest Object Id */
+            manifest_object_id: string;
+            /** Occurrences */
+            occurrences: number;
+            /** Reason */
+            reason: string;
+        };
+        /** ManifestWorker */
+        ManifestWorker: {
+            /** Accepted */
+            accepted: number;
+            /** Age Seconds */
+            age_seconds: number;
+            /** At */
+            at: number;
+            /** Backend Key */
+            backend_key: string | null;
+            /** Batch Limit */
+            batch_limit: number;
+            /** Client Key */
+            client_key: string | null;
+            /** Date Layout */
+            date_layout: string;
+            /** Duplicates */
+            duplicates: number;
+            /** Error */
+            error: string | null;
+            /** Lookback Days */
+            lookback_days: number;
+            /** Ok */
+            ok: boolean;
+            /** Poll Seconds */
+            poll_seconds: number;
+            /** Rejected */
+            rejected: number;
+            /** Root Prefix */
+            root_prefix: string;
+            /** Stale */
+            stale: boolean;
         };
         /** PasswordChangeBody */
         PasswordChangeBody: {
@@ -9917,6 +10035,98 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EngineMetricPage"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_intake_overview_api_ui_v1_system_intake_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeOverview"];
                 };
             };
             /** @description Bad Request */

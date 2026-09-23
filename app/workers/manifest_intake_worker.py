@@ -16,6 +16,7 @@ from app.services.manifest_intake import (
     candidate_directories,
     client_key,
     process_cycle,
+    record_cycle,
 )
 
 POLL_SECONDS = float(os.getenv('MASP_MANIFEST_POLL_SECONDS', '15'))
@@ -28,6 +29,7 @@ def run_forever() -> None:
         backend, client = backend_key(), client_key()
         directories = candidate_directories()
     except ManifestConfigError as exc:
+        record_cycle(ok=False, poll_seconds=POLL_SECONDS, error=str(exc))
         raise SystemExit(str(exc)) from exc
     print(f'MASP manifest intake worker started (backend: {backend or "unset"}, '
           f'client: {client or "unset"}, watching {len(directories)} partition(s))', flush=True)
@@ -37,11 +39,15 @@ def run_forever() -> None:
             accepted, duplicates, rejected = process_cycle()
         except ManifestConfigError as exc:
             # Configuration problems are operator errors, not transient ones.
+            record_cycle(ok=False, poll_seconds=POLL_SECONDS, error=str(exc))
             raise SystemExit(str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - a share outage must not end the worker
             print(f'Manifest intake cycle failed: {exc}', flush=True)
+            record_cycle(ok=False, poll_seconds=POLL_SECONDS, error=f'{type(exc).__name__}: {exc}')
             time.sleep(POLL_SECONDS)
             continue
+        record_cycle(ok=True, poll_seconds=POLL_SECONDS, accepted=accepted,
+                     duplicates=duplicates, rejected=rejected)
         if accepted or rejected or (time.monotonic() - last_report) >= IDLE_REPORT_SECONDS:
             print(f'Manifest intake: {accepted} accepted, {duplicates} already known, '
                   f'{rejected} rejected', flush=True)

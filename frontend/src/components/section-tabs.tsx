@@ -14,6 +14,7 @@ export const SYSTEM_TABS: Tab[] = [
   { to: '/system/pools', label: 'Worker pools' },
   { to: '/system/runtime', label: 'Runtime and queue' },
   { to: '/system/retention', label: 'Retention' },
+  { to: '/system/intake', label: 'Deferred intake' },
   { to: '/engines', label: 'Engines', end: true },
   { to: '/engines/hash-list', label: 'Hash list' },
 ]

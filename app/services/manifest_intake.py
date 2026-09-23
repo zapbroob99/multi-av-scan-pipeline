@@ -16,6 +16,7 @@ from datetime import date, timedelta
 import json
 import os
 from pathlib import Path
+import time
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -25,6 +26,7 @@ from app.services.deferred_storage import (
     DeferredSourcePermanentError,
     backend_allowed_for_client,
     configured_backends,
+    redact_paths,
     resolve_source_path,
     validate_object_id,
 )
@@ -41,6 +43,9 @@ MAX_LOOKBACK_DAYS = 90
 DEFAULT_BATCH = 200
 MAX_BATCH = 2000
 DEFAULT_DATE_LAYOUT = '%Y/%m/%d'
+# The API process does not share the worker's environment, so the worker
+# records what it actually ran with; the console reads only this row.
+LAST_CYCLE_SETTING = 'manifest_intake_last_cycle'
 
 
 class ManifestConfigError(RuntimeError):
@@ -175,7 +180,8 @@ def read_manifest(backend: str, manifest_object_id: str) -> UploadManifest:
                 f'Manifest exceeds the {MAX_MANIFEST_BYTES} byte limit.')
         raw = path.read_bytes()
     except OSError as exc:
-        raise DeferredSourceError(f'Manifest is unavailable: {exc}') from exc
+        raise DeferredSourceError(
+            f'Manifest is unavailable ({exc.strerror or type(exc).__name__}).') from exc
     try:
         payload = json.loads(raw.decode('utf-8'))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -252,9 +258,31 @@ def process_cycle(now: date | None = None) -> tuple[int, int, int]:
             _submission_id, created = submit(backend, client, manifest_object_id, listings[parent])
         except Exception as exc:  # noqa: BLE001 - one bad manifest must not stop the batch
             rejected += 1
-            db.record_manifest_rejection(backend, manifest_object_id, str(exc)[:1000])
+            db.record_manifest_rejection(backend, manifest_object_id, redact_paths(str(exc))[:1000])
             continue
         db.clear_manifest_rejection(backend, manifest_object_id)
         accepted += created
         duplicates += 0 if created else 1
     return accepted, duplicates, rejected
+
+
+def record_cycle(*, ok: bool, poll_seconds: float, accepted: int = 0, duplicates: int = 0,
+                 rejected: int = 0, error: str | None = None) -> None:
+    """Record the latest cycle so a stopped or failing worker is visible.
+
+    The producer never learns whether MASP is reading its share, so without
+    this a dead worker looks exactly like a quiet one. Recording is best
+    effort: visibility must never stop intake.
+    """
+    payload = {
+        'at': int(time.time()), 'ok': ok, 'poll_seconds': poll_seconds,
+        'accepted': accepted, 'duplicates': duplicates, 'rejected': rejected,
+        'error': redact_paths(error)[:1000] if error else None,
+        'backend_key': backend_key() or None, 'client_key': client_key() or None,
+        'root_prefix': root_prefix(), 'date_layout': date_layout(),
+        'lookback_days': lookback_days(), 'batch_limit': batch_limit(),
+    }
+    try:
+        db.set_setting(LAST_CYCLE_SETTING, json.dumps(payload, sort_keys=True))
+    except Exception:  # noqa: BLE001 - see docstring
+        pass

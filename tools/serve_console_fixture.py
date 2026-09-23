@@ -133,6 +133,27 @@ def main():
             action='engine.update', target_type='engine', target_id='1', outcome='failure',
             source_ip=None, request_id='audit-fixture-literal',
             details_json='{"marker": "' + 'z' * 5000 + '"}')
+        # Synthetic intake state: a stopped manifest worker, one rejected drop and
+        # one submission that failed before scanning. Paths are fictional and
+        # must reach the browser redacted.
+        db.set_setting('manifest_intake_last_cycle', json.dumps({
+            'at': 1790000000, 'ok': False, 'poll_seconds': 15, 'accepted': 0, 'duplicates': 0, 'rejected': 0,
+            'error': "OSError: [Errno 5] I/O error: '/mnt/fixture-share/uploads'", 'backend_key': 'shared',
+            'client_key': 'console-client', 'root_prefix': 'incoming', 'date_layout': '%Y/%m/%d',
+            'lookback_days': 3, 'batch_limit': 200}))
+        db.record_manifest_rejection('shared', 'incoming/2026/09/23/intake-fixture.json',
+                                     "Manifest is unavailable: [Errno 13] Permission denied: '/mnt/fixture-share/x.json'")
+        profile = db.list_scan_profiles(client)[0]
+        for request_id, status in (('intake-fixture-waiting', 'pending'), ('intake-fixture-failed', 'failed')):
+            record, _ = db.create_deferred_scan_submission(
+                service_client_id=client, scan_profile_id=profile.id, client_request_id=request_id,
+                backend_key='shared', object_id=f'incoming/client-a/{request_id}.pdf', original_filename=f'{request_id}.pdf',
+                content_type='application/pdf', expected_size_bytes=None, expected_sha256=None,
+                archive_mode='lazy_extract_on_detection', case_name='Storage upload', priority='Normal', note='',
+                profile_snapshot_json='{}')
+            with db.connect() as connection:
+                connection.execute("UPDATE deferred_scan_submissions SET status = ?, attempt_count = 1, last_error = ? WHERE id = ?",
+                                   (status, 'Source SHA-256 does not match expected_sha256.' if status == 'failed' else None, record.id))
         app = FastAPI()
         app.include_router(router)
         uvicorn.run(app, host="127.0.0.1", port=18765, access_log=False)
