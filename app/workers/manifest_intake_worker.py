@@ -34,6 +34,7 @@ def run_forever() -> None:
     print(f'MASP manifest intake worker started (backend: {backend or "unset"}, '
           f'client: {client or "unset"}, watching {len(directories)} partition(s))', flush=True)
     last_report = 0.0
+    last_rejected = 0
     while True:
         try:
             accepted, duplicates, rejected = process_cycle()
@@ -48,11 +49,15 @@ def run_forever() -> None:
             continue
         record_cycle(ok=True, poll_seconds=POLL_SECONDS, accepted=accepted,
                      duplicates=duplicates, rejected=rejected)
-        if accepted or rejected or (time.monotonic() - last_report) >= IDLE_REPORT_SECONDS:
+        if accepted or rejected != last_rejected or (time.monotonic() - last_report) >= IDLE_REPORT_SECONDS:
             print(f'Manifest intake: {accepted} accepted, {duplicates} already known, '
                   f'{rejected} rejected', flush=True)
             last_report = time.monotonic()
-        if not accepted and not rejected:
+        last_rejected = rejected
+        # Only a cycle that accepted new work continues at once, to drain a
+        # backlog. A rejected manifest stays on the share and is re-read every
+        # cycle, so treating rejections as work spun the loop without pause.
+        if not accepted:
             time.sleep(POLL_SECONDS)
 
 

@@ -246,3 +246,28 @@ class ManifestRejectionStoreTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ManifestWorkerLoopTests(unittest.TestCase):
+    def run_cycles(self, results):
+        from app.workers import manifest_intake_worker as worker
+
+        class Stop(BaseException):  # the worker deliberately survives Exception
+            pass
+
+        env = {'MASP_MANIFEST_BACKEND_KEY': 'drive', 'MASP_MANIFEST_CLIENT_KEY': 'drive-storage'}
+        with patch.dict(os.environ, env), patch.object(worker, 'init_db'), \
+                patch.object(worker, 'record_cycle'), \
+                patch.object(worker, 'process_cycle', side_effect=[*results, Stop()]), \
+                patch.object(worker.time, 'sleep') as sleep:
+            with self.assertRaises(Stop):
+                worker.run_forever()
+        return sleep.call_count
+
+    def test_a_persistently_rejected_manifest_does_not_spin_the_loop(self) -> None:
+        # Regression: a rejected manifest is re-read every cycle and used to
+        # count as work, so the worker polled the share without pausing.
+        self.assertEqual(self.run_cycles([(0, 0, 1)] * 3), 3)
+
+    def test_accepted_work_continues_without_waiting_then_rests(self) -> None:
+        self.assertEqual(self.run_cycles([(2, 0, 0), (0, 2, 0)]), 1)
