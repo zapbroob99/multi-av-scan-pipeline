@@ -19,7 +19,6 @@ from app.database import (
 from app.engines.clamav import check_clamav_health, get_clamav_config, run_clamav_engine
 from app.engines.file_type import ENGINE_NAME as FILE_TYPE_NAME
 from app.engines.file_type import check_file_type_health, get_file_type_config, run_file_type_engine
-from app.engines.clamav import env_or_setting as clamav_env_or_setting
 from app.engines.hash_list import ENGINE_NAME as HASH_LIST_NAME
 from app.engines.hash_list import check_hash_list_health, get_hash_list_config, run_hash_list_engine
 from app.engines.microsoft_defender import (
@@ -586,16 +585,6 @@ def adapter_capabilities(adapter_key: str) -> EngineCapabilityProfile:
     return adapter_registry_entry(adapter_key).capabilities
 
 
-def available_adapter_definitions() -> list[EngineAdapterDefinition]:
-    configured_keys = {engine.adapter_key for engine in configured_engines()}
-    return [
-        definition
-        for definition in ADAPTERS.values()
-        if definition.key not in configured_keys
-        or adapter_capabilities(definition.key).allows_multiple_instances
-    ]
-
-
 def add_engine(
     adapter_key: str,
     *,
@@ -721,108 +710,3 @@ def run_hash_engine(instance: EngineInstanceRecord, sha256: str) -> HashEngineEx
     return adapter_registry_entry(instance.adapter_key).scan_hash(sha256, config)
 
 
-def config_value(config: dict[str, str], key: str, fallback: str) -> str:
-    value = config.get(key)
-    if value is None or not value.strip():
-        return fallback
-    return value.strip()
-
-
-def clamav_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
-    # Fall back to the same env-then-setting chain the engine itself resolves
-    # (env_or_setting), not to the stored setting alone. Otherwise a host coming
-    # from MASP_CLAMD_HOST renders as an empty field, and saving the form for an
-    # unrelated reason persists host="" over the env value -- which drops ClamAV
-    # into CLI mode and breaks every scan.
-    config = engine_config(instance) if instance is not None else {}
-    host = config_value(
-        config, "host", clamav_env_or_setting("MASP_CLAMD_HOST", "clamav.host", "")
-    )
-    configured_mode = config.get("mode", "").strip().lower()
-    mode = configured_mode if configured_mode in {"clamd", "cli"} else ("clamd" if host else "cli")
-    return {
-        "mode": mode,
-        "host": host,
-        "port": config_value(
-            config, "port", clamav_env_or_setting("MASP_CLAMD_PORT", "clamav.port", "3310")
-        ),
-        "command": config_value(
-            config,
-            "command",
-            clamav_env_or_setting("MASP_CLAMAV_COMMAND", "clamav.command", "clamscan"),
-        ),
-        "timeout_seconds": config_value(
-            config,
-            "timeout_seconds",
-            clamav_env_or_setting(
-                "MASP_CLAMD_TIMEOUT_SECONDS", "clamav.timeout_seconds", "60"
-            ),
-        ),
-        "max_file_size_bytes": config_value(
-            config,
-            "max_file_size_bytes",
-            get_setting("clamav.max_file_size_bytes", "0") or "0",
-        ),
-    }
-
-
-def yara_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
-    config = engine_config(instance) if instance is not None else {}
-    return {
-        "command": config_value(
-            config,
-            "command",
-            get_setting("yara.command", "yara") or "yara",
-        ),
-        "rules_dir": config_value(
-            config,
-            "rules_dir",
-            get_setting("yara.rules_dir", "rules") or "rules",
-        ),
-        "timeout_seconds": config_value(
-            config,
-            "timeout_seconds",
-            get_setting("yara.timeout_seconds", "30") or "30",
-        ),
-    }
-
-
-def microsoft_defender_form_values(instance: EngineInstanceRecord | None) -> dict[str, str]:
-    config = engine_config(instance) if instance is not None else {}
-    return {
-        "execution_mode": config_value(
-            config,
-            "execution_mode",
-            get_setting("microsoft_defender.execution_mode", "powershell") or "powershell",
-        ),
-        "powershell_path": config_value(
-            config,
-            "powershell_path",
-            get_setting("microsoft_defender.powershell_path", "powershell.exe") or "powershell.exe",
-        ),
-        "mpcmdrun_path": config_value(
-            config,
-            "mpcmdrun_path",
-            get_setting("microsoft_defender.mpcmdrun_path", "auto") or "auto",
-        ),
-        "default_scan_type": config_value(
-            config,
-            "default_scan_type",
-            get_setting("microsoft_defender.default_scan_type", "custom") or "custom",
-        ),
-        "timeout_seconds": config_value(
-            config,
-            "timeout_seconds",
-            get_setting("microsoft_defender.timeout_seconds", "900") or "900",
-        ),
-        "update_before_scan": config_value(
-            config,
-            "update_before_scan",
-            get_setting("microsoft_defender.update_before_scan", "false") or "false",
-        ),
-        "require_real_time_enabled": config_value(
-            config,
-            "require_real_time_enabled",
-            get_setting("microsoft_defender.require_real_time_enabled", "true") or "true",
-        ),
-    }

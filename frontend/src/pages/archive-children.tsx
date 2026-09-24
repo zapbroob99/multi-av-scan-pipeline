@@ -66,7 +66,7 @@ export default function ArchiveChildren({ automation = false }: { automation?: b
           }}>Next page</Button></div></div>
       <p className="callout">{page.parent_scan_id && <><Link to={`${scope}/scans/${page.parent_scan_id}/children`}>Up one level</Link> · </>}
         {page.batch_id && <><Link to={`${scope}/batches/${page.batch_id}`}>Batch overview</Link> · </>}
-        <a href={`/scans/${scanId}`}>Legacy report: fallback</a></p>
+        <Link to={`${scope}/scans/${scanId}`}>Report</Link></p>
     </>}
   </section>
 }

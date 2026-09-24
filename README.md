@@ -1,5 +1,12 @@
 # MASP - Multi AV Scan Pipeline
 
+The server-rendered legacy UI has been retired: the browser console at
+`/console/` is the only interface. Former pages such as `/`, `/scans/{id}`,
+`/engines` and `/system` redirect to their console screens, so bookmarks keep
+working; legacy form endpoints no longer exist. `MASP_SHOW_DEV_LOGIN_HINTS` has
+no effect any more. The integration API (`/api/v1/*`), worker control, health
+and metrics are unchanged.
+
 The application image now builds and serves the browser console itself at
 `/console/` on port 8000, so pilot and production deployments get it without a
 separate web server or port. Rebuild the image to pick it up.
@@ -106,7 +113,7 @@ ceiling and omit sample bytes/storage paths. Admins can confirm deletion of up t
 20 selected visible Dashboard scans with per-record stale-state and safety checks;
 partial results and storage cleanup failures are reported explicitly. Each engine
 result links to a full-output screen in React, with separate 2 MiB source/response
-limits and plain-text rendering. Oversized output retains a legacy fallback;
+limits and plain-text rendering. Oversized output downloads as plain text;
 recursive batch actions remain planned. Batch pages use indexed keyset pagination and recorded counters
 without loading engine output. Retry queues atomically; acceptance does
 not mean completion. Active scans and undelivered notifications are protected.
@@ -115,8 +122,8 @@ With the backend running, use `npm --prefix frontend ci` and
 History uses bounded ID-keyset pages; summary totals have a 30-second server cache.
 PostgreSQL browser reads and retry/delete locks have transaction-local time budgets;
 expired work returns a generic 503 and leaves the transaction rolled back.
-The legacy UI is preserved. See [frontend separation](docs/architecture/FRONTEND_SEPARATION.md)
-for security, deployment, tests and remaining migration work.
+The legacy UI has been retired. See [frontend separation](docs/architecture/FRONTEND_SEPARATION.md)
+for security, deployment and tests.
 Browser request/response types now come from a versioned OpenAPI snapshot;
 `npm --prefix frontend run contracts:check` checks backend/schema/type drift.
 See the frontend separation guide for the isolated generator setup. Normal
@@ -268,11 +275,14 @@ below as the production runbook.
 uvicorn app.main:app --reload
 ```
 
-Open:
+Build the console once (`npm --prefix frontend ci` then
+`npm --prefix frontend run build`) so the backend can serve it, then open:
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:8000/console/
 ```
+
+For console development use the Vite server instead (see above).
 
 ## Docker Compose
 

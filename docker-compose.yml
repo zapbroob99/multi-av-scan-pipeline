@@ -20,10 +20,8 @@ services:
       MASP_WORKER_AGENT_TOKEN_TTL_DAYS: ${MASP_WORKER_AGENT_TOKEN_TTL_DAYS:-}
       MASP_WORKER_CONTROL_REQUIRE_HTTPS: ${MASP_WORKER_CONTROL_REQUIRE_HTTPS:-0}
       # Local development convenience only. The application has no built-in
-      # default password; production/pilot must supply a strong secret and keep
-      # MASP_SHOW_DEV_LOGIN_HINTS off.
+      # default password; production/pilot must supply a strong secret.
       MASP_ADMIN_PASSWORD: ${MASP_ADMIN_PASSWORD:-admin123!}
-      MASP_SHOW_DEV_LOGIN_HINTS: ${MASP_SHOW_DEV_LOGIN_HINTS:-1}
       MASP_API_MAX_WAIT_SECONDS: ${MASP_API_MAX_WAIT_SECONDS:-15}
       MASP_API_RETRY_AFTER_SECONDS: ${MASP_API_RETRY_AFTER_SECONDS:-2}
       MASP_UPLOAD_MAX_BYTES: ${MASP_UPLOAD_MAX_BYTES:-0}

@@ -5,7 +5,6 @@ from dataclasses import asdict
 import io
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Callable
 
 from app.models import EngineResultRecord, ScanRecord
@@ -26,12 +25,6 @@ def parse_json_value(value: str, fallback: object) -> object:
     except json.JSONDecodeError:
         return fallback
     return parsed
-
-
-def report_filename_base(scan: ScanRecord) -> str:
-    stem = Path(scan.original_filename).stem or f"scan-{scan.id}"
-    clean = "".join(char if char.isalnum() else "-" for char in stem).strip("-")
-    return clean or f"scan-{scan.id}"
 
 
 def result_findings(result: EngineResultRecord) -> list[dict[str, object]]:
@@ -404,14 +397,3 @@ def build_scan_report_payload(
     )
 
 
-def build_scan_report_csv(
-    scan: ScanRecord,
-    engine_results: list[EngineResultRecord],
-    *,
-    required_names: list[str] | None = None,
-    decision_available: bool = True,
-) -> str:
-    payload = build_scan_report_payload(
-        scan, engine_results, required_names=required_names, decision_available=decision_available
-    )
-    return create_scan_report_csv(scan, engine_results, payload)

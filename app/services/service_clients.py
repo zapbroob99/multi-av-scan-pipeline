@@ -333,23 +333,6 @@ def required_detection_engine_names(scan: ScanRecord, *, jobs: list[ScanEngineJo
     ]
 
 
-def snapshot_labels(scan: ScanRecord) -> tuple[str | None, str | None]:
-    snapshot = parse_profile_snapshot(scan)
-    client = snapshot.get("service_client")
-    profile = snapshot.get("scan_profile")
-    client_name = (
-        str(client.get("name"))
-        if isinstance(client, dict) and client.get("name")
-        else None
-    )
-    profile_name = (
-        str(profile.get("name"))
-        if isinstance(profile, dict) and profile.get("name")
-        else None
-    )
-    return client_name, profile_name
-
-
 def identity_can_access_scan(identity: ApiClientIdentity, scan: ScanRecord) -> bool:
     if scan.source != "api":
         return False

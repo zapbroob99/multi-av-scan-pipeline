@@ -34,7 +34,7 @@ class ApiContractTests(unittest.TestCase):
         with patch("app.main.get_queue_metrics", return_value={"queued": 1, "running": 1, "active": 2, "completed": 3, "failed": 0, "total": 5}), patch(
             "app.main.get_scan_queue_position",
             return_value=0,
-        ), patch("app.main.enabled_engines", return_value=[object(), object(), object()]):
+        ):
             payload = build_api_scan_status_payload(
                 make_request(),
                 make_scan("running"),
@@ -60,12 +60,11 @@ class ApiContractTests(unittest.TestCase):
         self.assertNotIn("ui", payload["links"])
 
     def test_result_payload_marks_completed_scans_as_ready(self) -> None:
-        with patch("app.main.enabled_engines", return_value=[object()]):
-            payload = build_api_scan_result_payload(
-                make_request(),
-                make_scan("completed"),
-                engine_results=[make_result("ClamAV", detected=True)],
-            )
+        payload = build_api_scan_result_payload(
+            make_request(),
+            make_scan("completed"),
+            engine_results=[make_result("ClamAV", detected=True)],
+        )
 
         self.assertTrue(payload["completed"])
         self.assertTrue(payload["result_ready"])
@@ -77,17 +76,16 @@ class ApiContractTests(unittest.TestCase):
 
     def test_scan_payload_exposes_batch_links_for_archive_scans(self) -> None:
         archive_scan = make_scan("completed", batch_id=44, scan_role="container", relative_path="bundle.zip")
-        with patch("app.main.enabled_engines", return_value=[object()]):
-            status_payload = build_api_scan_status_payload(
-                make_request(),
-                archive_scan,
-                engine_results=[make_result("ClamAV", detected=True)],
-            )
-            result_payload = build_api_scan_result_payload(
-                make_request(),
-                archive_scan,
-                engine_results=[make_result("ClamAV", detected=True)],
-            )
+        status_payload = build_api_scan_status_payload(
+            make_request(),
+            archive_scan,
+            engine_results=[make_result("ClamAV", detected=True)],
+        )
+        result_payload = build_api_scan_result_payload(
+            make_request(),
+            archive_scan,
+            engine_results=[make_result("ClamAV", detected=True)],
+        )
 
         self.assertEqual(status_payload["batch_links"]["status"], "http://localhost:8000/api/v1/batches/44")
         self.assertEqual(result_payload["batch_links"]["result"], "http://localhost:8000/api/v1/batches/44/result")

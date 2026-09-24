@@ -146,19 +146,6 @@ class AccountSqliteTests(AccountChecks, unittest.TestCase):
         db.DB_PATH, db.DATABASE_URL = self.original
         self.temp.cleanup()
 
-    def test_legacy_password_route_uses_shared_fenced_writer(self):
-        from app import main
-        user, session = self.seed()
-        db.update_user(user.id, 'analyst')
-        with patch.object(main, 'require_user', return_value=user):
-            response = main.update_account_password_route(object(), 'old-password', 'new-password', 'new-password')
-            self.assertEqual(response.status_code, 303)
-            self.assertTrue(response.headers['location'].startswith('/login?'))
-            self.assertIn('Max-Age=0', response.headers['set-cookie'])
-            rejected = main.update_account_password_route(object(), 'old-password', 'another-password', 'another-password')
-            self.assertTrue(rejected.headers['location'].startswith('/account?error='))
-        self.assertEqual(db.get_user_by_id(user.id).role, 'analyst')
-        self.assertIsNone(db.get_user_by_session(auth.hash_session_token(session.session_token), int(time.time())))
 
 
 @unittest.skipUnless(os.getenv('MASP_TEST_POSTGRES_URL'), 'requires disposable PostgreSQL')

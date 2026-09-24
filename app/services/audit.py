@@ -213,22 +213,8 @@ def should_audit_request(request: Request) -> bool:
         return False
 
     path = request.url.path.rstrip("/") or "/"
+    # Browser writes all go through /api/ui/v1 now that the server-rendered UI
+    # is retired; its former form paths no longer exist.
     if path.startswith("/api/ui/v1/"):
         return True
-    if path in {"/login", "/logout", "/account/password", "/scan-policy"}:
-        return True
-    if path.startswith("/users"):
-        return True
-    if path.startswith("/service-clients") or path.startswith("/scan-profiles"):
-        return True
-    if path.startswith("/engines"):
-        return not path.endswith("/test")
-    if path.startswith("/workers"):
-        return True
-    if path == "/api/v1/worker-control/enroll":
-        return True
-    if path == "/system/retention/run":
-        return True
-    return path.endswith("/delete") and (
-        path.startswith("/scans/") or path.startswith("/api-ledger/scans/")
-    )
+    return path == "/api/v1/worker-control/enroll"

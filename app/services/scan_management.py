@@ -158,7 +158,7 @@ def summary_export(scan_id: int, format: Literal['json', 'csv'], *, automation: 
         emit('', payload)
         content = output.getvalue()
     if len(content.encode('utf-8')) > EXPORT_LIMIT:
-        raise HTTPException(413, 'Summary export exceeds 2 MiB. Use the legacy report.')
+        raise HTTPException(413, 'Summary export exceeds 2 MiB. Open the report or download individual engine outputs from the report instead.')
     return SummaryExport(filename=f'masp-scan-{scan_id}-summary.{format}',
                          media_type='application/json' if format == 'json' else 'text/csv', content=content)
 
@@ -183,7 +183,7 @@ def _full_export_rows(scan_id: int, *, automation: bool = False, connection=None
             raise HTTPException(404, 'Automation scan not found.' if automation else 'Manual scan not found.')
         scan = db.row_to_scan_record(row)
         if len(scan.profile_snapshot_json) > scan_report_read.SNAPSHOT_LIMIT:
-            raise HTTPException(413, 'Full export routing snapshot exceeds the browser limit. Use the legacy export.')
+            raise HTTPException(413, 'Full export routing snapshot exceeds the browser limit, so no full export is available for this scan.')
         byte_length = ("OCTET_LENGTH(COALESCE({field}, ''))" if db.using_postgres()
                        else "LENGTH(CAST(COALESCE({field}, '') AS BLOB))")
         fields = ('engine_name', 'engine_version', 'signature_version', 'signature', 'raw_output',
@@ -193,9 +193,9 @@ def _full_export_rows(scan_id: int, *, automation: bool = False, connection=None
             COALESCE(SUM({size_terms}), 0) AS source_bytes
             FROM engine_results WHERE scan_job_id = ?''', (scan_id,)).fetchone()
         if int(preflight['result_count']) > MAX_EXPORT_ENGINES:
-            raise HTTPException(413, 'Full export has too many engine results. Use the legacy export.')
+            raise HTTPException(413, 'Full export has more engine results than the browser export supports. Download individual engine outputs from the report instead.')
         if int(preflight['source_bytes']) > FULL_EXPORT_SOURCE_LIMIT:
-            raise HTTPException(413, 'Full export engine output exceeds the 2 MiB browser source limit. Use the legacy export.')
+            raise HTTPException(413, 'Full export engine output exceeds the 2 MiB browser source limit. Download individual engine outputs from the report instead.')
         result_rows = connection.execute('''SELECT id, scan_job_id, engine_name, engine_version,
             signature_version, status, detected, signature, severity, confidence, raw_output,
             error_message, duration_ms, details_json, findings_json, created_at
@@ -207,7 +207,7 @@ def _full_export_rows(scan_id: int, *, automation: bool = False, connection=None
             FROM scan_engine_jobs WHERE scan_job_id = ? ORDER BY id LIMIT ?''',
             (scan_id, MAX_EXPORT_ENGINES + 1)).fetchall()
         if len(job_rows) > MAX_EXPORT_ENGINES:
-            raise HTTPException(413, 'Full export has too many engine jobs. Use the legacy export.')
+            raise HTTPException(413, 'Full export has more engine jobs than the browser export supports. Download individual engine outputs from the report instead.')
         jobs = [db.row_to_scan_engine_job_record(job) for job in job_rows]
         snapshot = parse_profile_snapshot(scan)
         if isinstance(snapshot.get('engines'), list) or jobs:
@@ -215,7 +215,7 @@ def _full_export_rows(scan_id: int, *, automation: bool = False, connection=None
         elif automation:
             # Do not reconstruct historical automation coverage using today's global
             # or profile routing; a bounded coherent snapshot is unavailable.
-            raise HTTPException(413, 'Historical automation routing has no snapshot or engine jobs. Use the legacy export.')
+            raise HTTPException(413, 'Historical automation routing has no snapshot or engine jobs, so its coverage cannot be reconstructed and no full export is available. The report and summary export remain available.')
         else:
             instances = connection.execute('''SELECT adapter_key, display_name FROM engine_instances
                 WHERE enabled ORDER BY id''').fetchall()
@@ -247,7 +247,7 @@ def full_export(scan_id: int, format: Literal['json', 'csv'], *, automation: boo
     content = (json.dumps(payload, ensure_ascii=False, indent=2) if format == 'json'
                else create_scan_report_csv(scan, results, payload))
     if len(content.encode('utf-8')) > EXPORT_LIMIT:
-        raise HTTPException(413, 'Full export exceeds 2 MiB. Use the legacy export.')
+        raise HTTPException(413, 'Full export exceeds 2 MiB. Download individual engine outputs from the report instead.')
     return SummaryExport(filename=f'masp-scan-{scan_id}-full.{format}',
                          media_type='application/json' if format == 'json' else 'text/csv', content=content)
 
@@ -366,7 +366,7 @@ def printable_report(scan_id: int, *, automation: bool = False) -> PrintableRepo
             coverage_unavailable=_bounded_text_list(coverage['unavailable'], 2048, 32)),
         decision=scan_report_read.DecisionSummary(**decision_payload) if decision_payload else None,
         decision_warning=None if policy_complete else
-            'Decision unavailable: engine policy details are invalid or exceed the reader limit. Open the legacy report.',
+            'Decision unavailable: engine policy details are invalid or exceed the reader limit. Review each engine\'s recorded details and output.',
         findings=findings, findings_truncated=len(raw_findings) > MAX_PRINT_FINDINGS, engines=engines)
     if len(report.model_dump_json().encode('utf-8')) > EXPORT_LIMIT:
         raise HTTPException(413, 'Printable report exceeds the 2 MiB browser response limit. Download the full export instead.')

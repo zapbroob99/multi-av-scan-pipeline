@@ -90,26 +90,6 @@ def seed_default_users() -> None:
         create_user(username, hash_password(password), role)
 
 
-def dev_login_hint() -> str | None:
-    # Off by default; opt-in only, and never invents a password — it can only
-    # reflect credentials explicitly configured in the environment. There are no
-    # hardcoded defaults left to leak.
-    show_hint = os.getenv("MASP_SHOW_DEV_LOGIN_HINTS", "0").strip().lower()
-    if show_hint not in {"1", "true", "yes", "on"}:
-        return None
-
-    admin_username = os.getenv("MASP_ADMIN_USERNAME", "admin")
-    admin_password = os.getenv("MASP_ADMIN_PASSWORD", "")
-    analyst_username = os.getenv("MASP_ANALYST_USERNAME", "analyst")
-    analyst_password = os.getenv("MASP_ANALYST_PASSWORD", "")
-    parts = []
-    if admin_password:
-        parts.append(f"{admin_username} / {admin_password}")
-    if analyst_password:
-        parts.append(f"{analyst_username} / {analyst_password}")
-    return " | ".join(parts) or None
-
-
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac(

@@ -53,6 +53,8 @@ function clearPrivateQueries() {
 function App() {
   const location = useLocation()
   const session = useQuery({ queryKey: ['session'], queryFn: ({ signal }) => request('/api/ui/v1/session', 'get', { signal }), retry: false })
+  const loginOptions = useQuery({ queryKey: ['login-options'], enabled: session.isFetched && !session.data,
+    queryFn: ({ signal }) => request('/api/ui/v1/session/options', 'get', { signal }), retry: false, staleTime: 60000 })
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
@@ -80,6 +82,7 @@ function App() {
   if (!session.data) return <main className="login-shell"><ThemeToggle className="login-theme-toggle" /><form className="login-card" onSubmit={login}>
     <img src="/console/favicon.svg" width="48" height="48" alt="MASP" /><p className="eyebrow">MASP CONSOLE</p>
     <h1>Welcome back.</h1><p className="muted">Sign in with your existing MASP account.</p>
+    {loginOptions.data?.directory_login_enabled && <p className="muted">Directory sign-in enabled: you can also use your directory username and password.</p>}
     {notice && <p role="status" className="callout">{notice}</p>}
     <label>Username<input name="username" autoComplete="username" required autoFocus /></label>
     <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>

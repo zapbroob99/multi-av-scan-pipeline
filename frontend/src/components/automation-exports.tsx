@@ -23,12 +23,11 @@ export function AutomationExports({ scanId, disabled = false }: { scanId: number
       Full JSON includes engine output, details and findings; full CSV contains normalized report rows.
       These operator reports are not the integration API status/result JSON contract.</p>
     <p>Exports use fresh backend reads with a 2 MiB limit. Stored sample paths and sample bytes are excluded.
-      Historical reports without routing snapshots or engine jobs require the legacy full export.</p>
+      A full export is unavailable for historical automation scans without a routing snapshot or engine jobs.</p>
     <div className="report-actions">{(['summary', 'full'] as const).flatMap(scope => (['json', 'csv'] as const).map(format =>
       <Button key={`${scope}-${format}`} variant="secondary" disabled={busy || disabled} onClick={() => { void download(scope, format) }}>
         Download {scope} {format.toUpperCase()}</Button>))}</div>
     {busy && <p role="status">Preparing export…</p>}
     {error && <p role="alert" className="error">{error} Downloads are not automatically retried.</p>}
-    <p><a href={`/scans/${scanId}/export.json`}>Legacy full JSON fallback</a>{' · '}<a href={`/scans/${scanId}/export.csv`}>Legacy full CSV fallback</a></p>
   </section>
 }

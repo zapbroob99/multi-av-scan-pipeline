@@ -146,16 +146,6 @@ class UserManagementSqliteTests(UserManagementChecks, unittest.TestCase):
         db.DB_PATH, db.DATABASE_URL = self.original
         self.temp.cleanup()
 
-    def test_legacy_routes_share_transactional_guards(self):
-        from app import main
-        actor, target = self.seed()
-        with patch.object(main, 'require_admin', return_value=db.get_user_by_id(actor)):
-            self.assertIn('/users?error=', main.delete_user_route(object(), target).headers['location'])
-            self.assertIn('/users?error=', main.update_user_route(object(), target, 'analyst', '').headers['location'])
-            db.create_user('remaining', 'unused', 'admin')
-            self.assertIn('/users?message=', main.update_user_route(object(), target, 'analyst', 'new-password').headers['location'])
-            self.assertEqual(self.revision(target), 1)
-            self.assertIn('/users?message=', main.delete_user_route(object(), target).headers['location'])
 
 
 @unittest.skipUnless(os.getenv('MASP_TEST_POSTGRES_URL'), 'requires disposable PostgreSQL')

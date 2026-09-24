@@ -76,7 +76,7 @@ export default function ClientCredentials({ session, create = false }: { session
     {createdId && <Link to={`/service-clients/${createdId}/credentials`}>Manage created client credentials</Link>}
     {create && locked && !createdId && <Link to="/service-clients">Review clients before trying again</Link>}
     {(options.error || credentials.error) && <p role="alert">Unable to load current configuration. Refresh before continuing.</p>}
-    {create && options.data?.incomplete && <p role="alert">More than 100 engine instances exist. Use legacy administration to review complete routing.</p>}
+    {create && options.data?.incomplete && <p role="alert">More than 100 engine instances exist, beyond what this editor can show. Assign engines after creation from the client's profile routing.</p>}
     <div className={`client-credentials-layout ${create ? 'client-create-layout' : ''}`}>
     <form onSubmit={prepare} className="submission-card client-credential-form"><fieldset disabled={disabled}>
       <legend className="client-form-title">{create ? 'Client and initial credential' : 'Add credential'}</legend>

@@ -53,7 +53,7 @@ export default function Report({ automation = false }: { automation?: boolean })
   if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></section>
   // Do not leave an earlier allow card visible when a refresh fails or expires.
   if (report.error) return <section className="page"><h1>Report unavailable</h1><p role="alert" className="error">{report.error.message}</p>
-    <Button onClick={() => { void report.refetch() }}>Retry report</Button> <a href={`/scans/${scanId}`}>Legacy report</a></section>
+    <Button onClick={() => { void report.refetch() }}>Retry report</Button></section>
   if (!scan) return <section className="page"><p role="status">Loading scan report…</p></section>
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">{automation ? 'AUTOMATION' : 'MANUAL'} SCAN #{scan.id}</p>
     <h1 className="report-filename">{scan.filename}</h1><p className="muted">Status: {scan.status} · Attempt {scan.attempt_count}</p></div>
@@ -86,7 +86,7 @@ export default function Report({ automation = false }: { automation?: boolean })
     <div className="report-engines">{scan.engines.map(engine => <EngineRow key={`${scan.attempt_count}-${engine.result_id ?? engine.name}`} scanId={scan.id} engine={engine} automation={automation} />)}</div>
     {scan.engines.length === 0 && <p className="empty">No engine results recorded yet.</p>}
     {scan.batch_id !== null && <p className="callout"><Link to={`${automation ? '/api-ledger' : ''}/batches/${scan.batch_id}`}>Open batch overview</Link> · <Link to={`${automation ? "/api-ledger" : ""}/scans/${scan.id}/children`}>Browse registered direct children</Link></p>}
-    <p className="callout"><Link to={`${automation ? '/api-ledger' : ''}/scans/${scan.id}/manage`}>{automation ? 'Scan management' : 'Exports and scan management'}</Link> · <a href={`/scans/${scan.id}`}>Legacy report: fallback</a>
+    <p className="callout"><Link to={`${automation ? '/api-ledger' : ''}/scans/${scan.id}/manage`}>{automation ? 'Scan management' : 'Exports and scan management'}</Link>
       {scan.parent_scan_id && <> · <Link to={`${automation ? '/api-ledger' : ''}/scans/${scan.parent_scan_id}`}>Parent scan</Link></>}</p>
   </section>
 }

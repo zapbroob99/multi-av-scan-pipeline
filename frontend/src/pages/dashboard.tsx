@@ -136,7 +136,6 @@ export default function Dashboard({ session }: { session: Session }) {
         <Button variant="destructive" disabled={deletion.isPending || selected.length === 0} onClick={() => deletion.mutate()}>{deletion.isPending ? 'Deleting…' : 'Confirm deletion'}</Button></div>
     </Dialog>
     <p className="muted history-footnote">Summary covers all manual history. Refresh: 30 seconds; server cache: up to 30 seconds.
-      {summary.data && <> Updated {displayTime(summary.data.generated_at)}.</>} Enabled does not mean healthy.
-      {' '}<a href="/">Legacy Dashboard fallback</a></p>
+      {summary.data && <> Updated {displayTime(summary.data.generated_at)}.</>} Enabled does not mean healthy.</p>
   </section>
 }

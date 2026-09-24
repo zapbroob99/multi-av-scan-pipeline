@@ -19,7 +19,11 @@ arbitrary command parsers.
   `/console/scans/{id}/children` archive navigation and `/console/batches/{id}`
   manual batch overviews, plus
   `/console/scans/{id}/manage` summary/full exports and single-scan management
-  through the session-authenticated `/api/ui/v1` JSON API. Legacy UI remains.
+  through the session-authenticated `/api/ui/v1` JSON API. The console is the only
+  browser UI: the server-rendered legacy UI is retired. `app/main.py` holds only the
+  integration API, health, metrics, audit middleware and GET redirects from former
+  legacy paths to console screens. Do not reintroduce HTML rendering or form routes;
+  `/scans/{id}` resolves a scan's source only for a signed-in operator.
   Share adapter validation through `app/services/engine_setup.py`; preserve
   browser CSRF/admin checks and never expose integration tokens. See
   `docs/architecture/FRONTEND_SEPARATION.md` for migration scope and gates.
@@ -377,10 +381,13 @@ below the inline ceiling). The document is assembled in memory from every member
 integration API's profile for the same batch, but now operator-reachable.
 Every untyped browser route is enumerated in the contract test with the exact success content
 it may declare; errors stay typed ErrorPayload JSON everywhere.
-Next UI slice: a legacy parity sweep over manual filters, hash provider detail, System metric
-detail and remaining legacy actions, then the final cutover inventory. Keep legacy System metric/detail parity, legacy audit detail/printable
-parity, deployment-shaped audit-trail volume validation and deployment acceptance open;
-engine pool assignment already lives in React Engines.
+The legacy parity sweep and cutover are complete: the dashboard detection filter, hash
+provider detail, engine last-result time and audit detail formatting were added, and the
+legacy UI was removed. Error messages that exceed a console bound must name a real console
+alternative (raw output download, summary export) or state the limitation plainly; never
+point at a legacy page. `/api/ui/v1/session/options` is the only unauthenticated browser
+read and reveals only whether directory sign-in is enabled, as the retired login page did.
+Deployment-shaped audit-trail volume validation and deployment acceptance remain open.
 
 The authoritative plan is
 `docs/architecture/ENGINE_DEPLOYMENT_AND_WORKER_AGENT.md`.

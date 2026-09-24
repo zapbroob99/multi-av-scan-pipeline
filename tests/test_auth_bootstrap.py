@@ -35,7 +35,6 @@ class AuthBootstrapTests(unittest.TestCase):
             "MASP_ANALYST_USERNAME": "analyst",
             "MASP_ADMIN_PASSWORD": "",
             "MASP_ANALYST_PASSWORD": "",
-            "MASP_SHOW_DEV_LOGIN_HINTS": "",
             "MASP_LDAP_ENABLED": "0",
         }
         base.update(overrides)
@@ -60,21 +59,6 @@ class AuthBootstrapTests(unittest.TestCase):
             auth.seed_default_users()
             self.assertIsNotNone(auth.authenticate("admin", "a-strong-secret-value"))
             self.assertIsNone(auth.authenticate("admin", "admin123!"))
-
-    def test_login_hint_off_by_default(self) -> None:
-        with self._env(MASP_ADMIN_PASSWORD="a-strong-secret-value"):
-            self.assertIsNone(auth.dev_login_hint())
-
-    def test_login_hint_enabled_never_invents_a_password(self) -> None:
-        # Opted in but no passwords configured: nothing to show, no default leak.
-        with self._env(MASP_SHOW_DEV_LOGIN_HINTS="1"):
-            self.assertIsNone(auth.dev_login_hint())
-
-    def test_login_hint_enabled_shows_only_configured_credentials(self) -> None:
-        with self._env(MASP_SHOW_DEV_LOGIN_HINTS="1", MASP_ADMIN_PASSWORD="devpass"):
-            hint = auth.dev_login_hint()
-            self.assertEqual(hint, "admin / devpass")
-
 
 if __name__ == "__main__":
     unittest.main()

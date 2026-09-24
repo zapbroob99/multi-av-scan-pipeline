@@ -2852,6 +2852,16 @@ class BrowserApiTests(unittest.TestCase):
             self.assertEqual(self.request(f'/engines/{instance_id}/config', 'PUT', {'config': config})[0], 200)
             self.assertEqual(json.loads(db.get_engine_instance_by_id(instance_id).config_json)['api_key_encrypted'], old)
 
+    def test_new_secret_without_server_encryption_key_is_refused_and_not_stored(self):
+        config = {field.key: field.default for field in ui_api.ADAPTERS['virustotal'].config_fields}
+        config['api_key'] = 'synthetic-vendor-secret'
+        with patch.dict('os.environ', {'MASP_SECRET_ENCRYPTION_KEY': ''}):
+            status, body, _ = self.request('/engines', 'POST', {'adapter_key': 'virustotal', 'display_name': 'VT', 'config': config})
+        self.assertEqual(status, 422, body)
+        self.assertIn('MASP_SECRET_ENCRYPTION_KEY', body['detail'])
+        self.assertNotIn('synthetic-vendor-secret', json.dumps(body))
+        self.assertFalse(any(engine.adapter_key == 'virustotal' for engine in db.list_engine_instances()))
+
     def test_get_never_runs_a_vendor_connection_probe(self):
         self.create_clamav()
         with patch.object(ui_api, 'test_engine_connection') as probe:

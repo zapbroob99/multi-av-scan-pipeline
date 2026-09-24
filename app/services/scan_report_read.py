@@ -119,14 +119,14 @@ def full_technical_details(scan_id: int, result_id: int, *, automation: bool = F
         if size is None:
             raise HTTPException(404, 'Automation scan result not found.' if automation else 'Manual scan result not found.')
         if int(size['source_bytes']) > FULL_OUTPUT_LIMIT:
-            raise HTTPException(413, 'Full engine output exceeds the 2 MiB browser source limit. Use the legacy report.')
+            raise HTTPException(413, 'Full engine output exceeds the 2 MiB browser source limit. Download the raw output instead.')
         row = connection.execute(f'''SELECT j.id AS scan_id, r.id AS result_id, j.attempt_count,
             r.engine_name, r.raw_output, r.details_json, r.findings_json {source}''', (result_id, scan_id)).fetchone()
         payload = FullTechnicalDetails(scan_id=row['scan_id'], result_id=row['result_id'],
             attempt_count=row['attempt_count'], **{field: row[field] or '' for field in fields})
     # JSON control-character escaping may exceed the source size considerably.
     if len(payload.model_dump_json().encode('utf-8')) > FULL_OUTPUT_LIMIT:
-        raise HTTPException(413, 'Full engine output exceeds the 2 MiB browser response limit. Use the legacy report.')
+        raise HTTPException(413, 'Full engine output exceeds the 2 MiB browser response limit. Download the raw output instead.')
     return payload
 
 
@@ -178,7 +178,7 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
             raise HTTPException(404, 'Automation scan not found.' if automation else 'Manual scan not found.')
         scan = db.row_to_scan_record(row)
         if len(scan.profile_snapshot_json) > SNAPSHOT_LIMIT:
-            raise HTTPException(413, 'Large routing snapshot: open the legacy report.')
+            raise HTTPException(413, 'Large routing snapshot: this report exceeds the browser reader limit.')
         job_rows = connection.execute('''SELECT id, scan_job_id, engine_instance_id, engine_key, engine_name,
             status, NULL AS worker_id, claimed_at, started_at, finished_at, lease_expires_at,
             attempt_count, NULL AS last_error, created_at, updated_at
@@ -191,12 +191,12 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
             FROM engine_results WHERE scan_job_id = ? ORDER BY id LIMIT ?''',
             (POLICY_LIMIT + 1, scan_id, MAX_ENGINES + 1)).fetchall()
         if len(rows) > MAX_ENGINES or len(job_rows) > MAX_ENGINES:
-            raise HTTPException(413, 'Large report: open the legacy report for the complete engine set.')
+            raise HTTPException(413, 'Large report: the engine set exceeds the browser reader limit. Use the full export or individual engine outputs.')
         jobs = [db.row_to_scan_engine_job_record(row) for row in job_rows]
         required = required_detection_engine_names(scan, jobs=jobs)
         coverage_basis = 'routing_snapshot' if isinstance(parse_profile_snapshot(scan).get('engines'), list) else 'engine_jobs' if jobs else 'legacy_configuration'
         if len(required) > MAX_ENGINES:
-            raise HTTPException(413, 'Large routing snapshot: open the legacy report.')
+            raise HTTPException(413, 'Large routing snapshot: this report exceeds the browser reader limit.')
         results = [db.row_to_engine_result_record(row) for row in rows]
     ran, total, unavailable = required_engine_coverage(results, scan=scan, required_names=required)
     detected, _ = detection_summary(results, scan=scan, required_names=required)
@@ -208,9 +208,8 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
                 policy_complete = False
         except (ValueError, TypeError, RecursionError):
             policy_complete = False
-    # Never invent an allow/review decision from truncated policy input. The
-    # complete legacy report remains available when the compact reader cannot
-    # reproduce the existing decision faithfully.
+    # Never invent an allow/review decision from truncated policy input: show
+    # no decision rather than one the compact reader cannot reproduce faithfully.
     decision = scan_decision(scan, results, required_names=required) if policy_complete else None
     decision_payload = asdict(decision) if decision else None
     if decision_payload:
@@ -235,7 +234,7 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
         required_engines=total, completed_engines=ran, unavailable=[value[:2048] for value in unavailable],
         coverage_basis=coverage_basis,
         decision=DecisionSummary(**decision_payload) if decision_payload else None,
-        warning=None if policy_complete else 'Decision unavailable: policy details exceed the compact reader limit or are invalid. Open the legacy report.',
+        warning=None if policy_complete else 'Decision unavailable: policy details exceed the compact reader limit or are invalid. Review each engine\'s recorded details and output.',
         engines=summaries)
 
 

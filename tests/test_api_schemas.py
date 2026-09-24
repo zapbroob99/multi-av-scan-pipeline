@@ -153,7 +153,7 @@ def build_status_payload(scan: ScanRecord, results: list[EngineResultRecord]) ->
     with patch("app.main.get_queue_metrics", return_value=dict(QUEUE_METRICS)), patch(
         "app.main.get_scan_queue_position",
         return_value=0,
-    ), patch("app.main.enabled_engines", return_value=[object(), object(), object()]):
+    ):
         return build_api_scan_status_payload(
             make_request(),
             scan,
@@ -162,8 +162,7 @@ def build_status_payload(scan: ScanRecord, results: list[EngineResultRecord]) ->
 
 
 def build_result_payload(scan: ScanRecord, results: list[EngineResultRecord]) -> dict:
-    with patch("app.main.enabled_engines", return_value=[object(), object(), object()]):
-        return build_api_scan_result_payload(make_request(), scan, engine_results=results)
+    return build_api_scan_result_payload(make_request(), scan, engine_results=results)
 
 
 class ContractDriftTests(unittest.TestCase):

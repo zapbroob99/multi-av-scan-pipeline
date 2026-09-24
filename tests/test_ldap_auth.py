@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import database
-from app.models import UserRecord
 from app.services import auth, ldap_auth
 from app.services.auth_roles import ROLE_ADMIN, ROLE_ANALYST
 
@@ -236,54 +235,16 @@ class LdapShadowUserTests(unittest.TestCase):
         self.assertEqual(loaded.display_name, "Alice Example")
 
 
-class LdapUiTests(unittest.TestCase):
-    @staticmethod
-    def directory_user() -> UserRecord:
-        return UserRecord(
-            id=8,
-            username="alice",
-            password_hash="!ldap",
-            role=ROLE_ANALYST,
-            created_at="2026-08-21 10:00:00",
-            updated_at="2026-08-21 10:00:00",
-            auth_source="ldap",
-            external_id="CN=Alice,OU=People,DC=example,DC=test",
-            display_name="Alice Example",
-            last_login_at="2026-08-21 10:00:00",
-        )
+class LdapLoginOptionsTests(unittest.TestCase):
+    """The console sign-in screen announces directory sign-in, as the retired login page did."""
 
-    def test_directory_account_page_has_no_local_password_form(self) -> None:
-        from app import main
-
-        page = main.render_account_page(self.directory_user())
-        self.assertIn("Directory-managed account", page)
-        self.assertNotIn('action="/account/password"', page)
-        self.assertIn("Alice Example", page)
-
-    def test_directory_user_row_has_no_role_or_password_form(self) -> None:
-        from app import main
-
-        user = self.directory_user()
-        admin = UserRecord(
-            id=1,
-            username="admin",
-            password_hash="hash",
-            role=ROLE_ADMIN,
-            created_at="2026-08-21 09:00:00",
-            updated_at="2026-08-21 09:00:00",
-        )
-        with patch.object(main, "list_users", return_value=[user]):
-            rows = main.render_user_rows(admin)
-        self.assertIn("Directory managed", rows)
-        self.assertIn("Alice Example", rows)
-        self.assertNotIn(f'action="/users/{user.id}"', rows)
-
-    def test_login_page_announces_directory_sign_in_when_enabled(self) -> None:
-        from app import main
+    def test_login_options_follow_directory_configuration(self) -> None:
+        from app.services import ui_api
 
         with patch.dict(os.environ, enabled_env(), clear=False):
-            page = main.render_login_page()
-        self.assertIn("Directory sign-in enabled", page)
+            self.assertTrue(ui_api.login_options().directory_login_enabled)
+        with patch.dict(os.environ, {"MASP_LDAP_ENABLED": "0"}, clear=False):
+            self.assertFalse(ui_api.login_options().directory_login_enabled)
 
 
 if __name__ == "__main__":

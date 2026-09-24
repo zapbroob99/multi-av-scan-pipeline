@@ -68,7 +68,6 @@ export default function BatchOverview({ automation = false }: { automation?: boo
           <Button variant="secondary" disabled={!page.next_after_id || !page.next_after_created || batch.isFetching} onClick={() => {
             const next = new URLSearchParams(params); next.set('after_id', String(page.next_after_id)); next.set('after_created', String(page.next_after_created)); setParams(next)
           }}>Next page</Button></div></div>
-      <p className="callout"><a href={`/batches/${batchId}`}>Legacy batch fallback</a></p>
     </>}
   </section>
 }

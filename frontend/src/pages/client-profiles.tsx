@@ -27,7 +27,7 @@ function ProfileCard({ profile, engines, disabled, review, edit, defaultId }: { 
       <Button variant="secondary" disabled={disabled || profile.incomplete || profile.is_default || !profile.enabled || !profile.engine_ids.length} onClick={() => review({ kind: 'default', profile_id: profile.id, expected_revision: profile.management_revision, expected_default_profile_id: defaultId })}>Make default</Button>
       <Button variant="destructive" disabled={disabled || profile.incomplete || profile.is_default} onClick={() => review({ kind: 'delete', profile_id: profile.id, expected_revision: profile.management_revision })}>Delete profile</Button></div>
     <p className="muted client-note">API selection: <code>profile_id={profile.id}</code>{profile.is_default ? ' · Used when a request omits profile_id.' : ''}</p>
-    {(profile.incomplete || missing) && <p role="alert">Routing metadata is incomplete. Refresh or use legacy administration; saving is disabled.</p>}
+    {(profile.incomplete || missing) && <p role="alert">Routing metadata is incomplete. Refresh to try again; saving is disabled so a partial list is never saved.</p>}
     <fieldset disabled={disabled || profile.incomplete || missing}><legend>Assigned engine instances</legend>
       <p className="muted client-note">Select the engines required by this profile. Review your selection before saving.</p>
       <div className="client-engine-options">{engines.map(engine => <label className="client-engine-option" key={engine.id}><input type="checkbox" checked={selected.includes(engine.id)}
@@ -92,7 +92,7 @@ export default function ClientProfiles({ session }: { session: Session }) {
     {save.error && <p role="alert" className="error">{save.error.message} Refresh and reconcile before another save; requests are not automatically retried.</p>}
     {!needsRefresh && !profiles.error && profiles.data && <>
       {profiles.data.managed && <p>Managed compatibility routing is read-only.</p>}
-      {profiles.data.engines_incomplete && <p role="alert">More than 100 engine instances exist. Use legacy administration; this incomplete list cannot be saved.</p>}
+      {profiles.data.engines_incomplete && <p role="alert">More than 100 engine instances exist, beyond what this editor can show; this incomplete list cannot be saved.</p>}
       {editor && <form key={editor === 'create' ? 'create' : editor.id} className="submission-card" onSubmit={reviewForm}><fieldset disabled={busy}>
         <legend className="client-form-title">{editor === 'create' ? 'New scan profile' : `Edit ${editor.name}`}</legend>
         <label>Profile name<input name="name" required maxLength={100} defaultValue={editor === 'create' ? '' : editor.name} /></label>

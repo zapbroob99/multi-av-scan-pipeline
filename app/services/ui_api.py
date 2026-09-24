@@ -42,6 +42,7 @@ from app.services import intake_read
 from app.services import about_read
 from app.services import account
 from app.services.ingest import store_upload, configured_upload_max_bytes, UploadTooLargeError
+from app.services.ldap_auth import ldap_enabled
 from app.services.scan_intake import enqueue_scan_from_stored_sample, NoEligibleEnginesError, DEFAULT_ARCHIVE_MODE
 from app.services.upload_admission import bounded_upload, upload_body_limit
 from app.services.audit import set_audit_context
@@ -79,8 +80,10 @@ class BrowserRoute(APIRoute):
 
         async def checked(request: Request):
             login = self.path == PREFIX + "/session/login"
+            # The sign-in screen reads this before any session exists.
+            login_options = request.method == "GET" and self.path == PREFIX + "/session/options"
             upload = self.path == PREFIX + "/scans" and request.method == "POST"
-            if not login:
+            if not login and not login_options:
                 user = await run_in_threadpool(browser_user, request)
                 request.state.ui_user = user
                 dashboard_read_allowed = request.method == "GET" and self.path in {
@@ -958,6 +961,17 @@ def change_own_password(request: Request, body: account.PasswordChangeBody, resp
     account.change_password(user, body.current_password.get_secret_value(),
                             body.new_password.get_secret_value(), body.confirm_password.get_secret_value())
     response.delete_cookie(auth.SESSION_COOKIE, path='/')
+
+
+class LoginOptions(BaseModel):
+    directory_login_enabled: bool
+
+
+@router.get("/session/options", response_model=LoginOptions)
+def login_options():
+    # Legacy parity: the retired login page announced directory sign-in to
+    # anyone, so this unauthenticated read reveals nothing new.
+    return LoginOptions(directory_login_enabled=ldap_enabled())
 
 
 @router.post("/session/login", response_model=SessionPayload)

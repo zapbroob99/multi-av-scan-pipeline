@@ -136,23 +136,26 @@ class AuditSanitizationTests(unittest.TestCase):
         self.assertEqual(len(generated), 32)
 
     def test_audit_policy_covers_security_and_administrative_changes(self) -> None:
-        self.assertTrue(should_audit_request(request_for("/login", method="POST")))
-        self.assertTrue(should_audit_request(request_for("/account/password", method="POST")))
-        self.assertTrue(should_audit_request(request_for("/users/4/delete", method="POST")))
-        self.assertTrue(should_audit_request(request_for("/engines/clamav/config", method="POST")))
-        self.assertTrue(should_audit_request(request_for("/workers/state", method="POST")))
-        self.assertTrue(should_audit_request(request_for("/scan-policy", method="POST")))
-        self.assertTrue(should_audit_request(request_for("/scans/4/delete", method="POST")))
+        for path in ("/api/ui/v1/session/login", "/api/ui/v1/account/password", "/api/ui/v1/users/4",
+                     "/api/ui/v1/engines/3/config", "/api/ui/v1/scan-policy", "/api/ui/v1/scans",
+                     "/api/v1/worker-control/enroll"):
+            with self.subTest(path=path):
+                method = "DELETE" if path.endswith("/4") else "PUT" if "config" in path else "POST"
+                self.assertTrue(should_audit_request(request_for(path, method=method)))
 
     def test_audit_policy_excludes_navigation_scans_and_api_polling(self) -> None:
-        self.assertFalse(should_audit_request(request_for("/audit")))
-        self.assertFalse(should_audit_request(request_for("/scans/4/export.json")))
-        self.assertFalse(should_audit_request(request_for("/scans", method="POST")))
-        self.assertFalse(should_audit_request(request_for("/hash-scan", method="POST")))
-        self.assertFalse(should_audit_request(request_for("/engines/clamav/test", method="POST")))
+        self.assertFalse(should_audit_request(request_for("/api/ui/v1/audit")))
+        self.assertFalse(should_audit_request(request_for("/console/audit")))
+        self.assertFalse(should_audit_request(request_for("/api/v1/scans", method="POST")))
         self.assertFalse(should_audit_request(request_for("/api/v1/hashes/abc")))
         self.assertFalse(should_audit_request(request_for("/api/v1/scans/4")))
         self.assertFalse(should_audit_request(request_for("/health")))
+
+    def test_retired_legacy_form_paths_are_not_audited(self) -> None:
+        # The server-rendered UI is gone; its form paths now only answer 404/405.
+        for path in ("/login", "/users/4/delete", "/engines/clamav/config", "/scans/4/delete"):
+            with self.subTest(path=path):
+                self.assertFalse(should_audit_request(request_for(path, method="POST")))
 
 
 if __name__ == "__main__":

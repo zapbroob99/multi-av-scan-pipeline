@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import database
-from app.main import render_worker_node_rows
 from app.services import worker_runtime
 
 
@@ -189,36 +188,6 @@ class WorkerNodeRuntimeTests(unittest.TestCase):
         self.assertEqual(statuses[0]["lifecycle_state"], "active")
         self.assertEqual(statuses[0]["effective_state"], "offline")
         self.assertFalse(statuses[0]["schedulable"])
-
-    def test_system_row_exposes_lifecycle_control_and_metadata(self) -> None:
-        html = render_worker_node_rows(
-            {
-                "nodes": [
-                    {
-                        "node_id": "defender-pool-a",
-                        "display_name": "Defender Pool A",
-                        "hostname": "win-av-01",
-                        "platform": "windows",
-                        "agent_version": "0.2.0",
-                        "labels": {"site": "istanbul"},
-                        "capacity": 2,
-                        "engine_keys": ["microsoft_defender"],
-                        "lifecycle_state": "draining",
-                        "effective_state": "draining",
-                        "active_scan_id": 42,
-                        "last_seen_at": "2026-08-24 12:00:00",
-                        "age_seconds": 2,
-                    }
-                ]
-            }
-        )
-
-        self.assertIn("Defender Pool A", html)
-        self.assertIn("microsoft_defender", html)
-        self.assertIn("site=istanbul", html)
-        self.assertIn('action="/workers/state"', html)
-        self.assertIn('value="draining" selected', html)
-
 
 if __name__ == "__main__":
     unittest.main()

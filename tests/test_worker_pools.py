@@ -5,15 +5,7 @@ import unittest
 from pathlib import Path
 
 from app import database
-from app.main import (
-    normalize_system_tab,
-    redirect_url,
-    render_engine_placement_rows,
-    render_system_page,
-    render_worker_pool_rows,
-    system_redirect_url,
-)
-from app.models import StoredSample, UserRecord
+from app.models import StoredSample
 from app.services.worker_scheduling import (
     eligible_engine_instance_ids_for_node,
     parse_worker_pool_selector,
@@ -142,87 +134,6 @@ class WorkerPoolSchedulingTests(unittest.TestCase):
                 now=1001,
             )
         )
-
-    def test_admin_rows_expose_pool_controls_and_engine_assignment(self) -> None:
-        pool_id = database.create_worker_pool(
-            "Istanbul Primary", '{"site": "istanbul"}'
-        )
-        database.set_engine_instance_worker_pool(self.primary_engine_id, pool_id)
-        pools = database.list_worker_pools()
-        bindings = database.list_engine_instance_worker_pool_bindings()
-        engines = database.list_engine_instances()
-
-        pool_html = render_worker_pool_rows(pools, bindings, engines)
-        placement_html = render_engine_placement_rows(engines, pools, bindings)
-
-        self.assertIn("site=istanbul", pool_html)
-        self.assertIn(f'action="/worker-pools/{pool_id}/update"', pool_html)
-        self.assertIn("ClamAV Primary", pool_html)
-        self.assertIn('action="/engines/pool"', placement_html)
-        self.assertIn(f'value="{pool_id}" selected', placement_html)
-
-    def test_system_create_pool_form_preserves_rejected_input(self) -> None:
-        admin = UserRecord(
-            id=1,
-            username="admin",
-            password_hash="hash",
-            role="admin",
-            created_at="now",
-            updated_at="now",
-        )
-
-        html = render_system_page(
-            admin,
-            error="Worker pool selectors use comma-separated key=value pairs.",
-            pool_name="Windows <Pool>",
-            pool_selector="os:windows",
-        )
-
-        self.assertIn('value="Windows &lt;Pool&gt;"', html)
-        self.assertIn('value="os:windows"', html)
-        self.assertIn("Selector format", html)
-        self.assertIn("key=value", html)
-
-    def test_system_page_preserves_selected_tab_contract(self) -> None:
-        admin = UserRecord(
-            id=1,
-            username="admin",
-            password_hash="hash",
-            role="admin",
-            created_at="now",
-            updated_at="now",
-        )
-
-        html = render_system_page(admin, active_tab="worker-pools")
-
-        self.assertIn('data-active-tab="worker-pools"', html)
-        self.assertRegex(
-            html,
-            r'id="system-tab-worker-pools"[\s\S]*?aria-selected="true"',
-        )
-        self.assertIn('id="worker-pools"', html)
-        self.assertIn('name="system_tab" value="worker-pools"', html)
-        self.assertIn("masp-system-active-tab", html)
-
-    def test_system_tab_redirects_fail_closed_to_known_tabs(self) -> None:
-        self.assertEqual(normalize_system_tab(" worker-nodes "), "worker-nodes")
-        self.assertEqual(normalize_system_tab("unknown"), "overview")
-        self.assertIn("tab=engine-placement", system_redirect_url(tab="engine-placement"))
-        self.assertIn("tab=overview", system_redirect_url(tab="../../unexpected"))
-
-    def test_redirect_url_can_carry_rejected_form_values(self) -> None:
-        url = redirect_url(
-            "/system",
-            error="invalid selector",
-            params={
-                "pool_name": "Windows Pool",
-                "pool_selector": "os:windows",
-            },
-        )
-
-        self.assertIn("pool_name=Windows+Pool", url)
-        self.assertIn("pool_selector=os%3Awindows", url)
-        self.assertIn("error=invalid+selector", url)
 
     def test_disabled_node_cannot_claim_and_matching_failover_node_can(self) -> None:
         database.upsert_worker_node_heartbeat(

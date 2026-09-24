@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 
-test('manual failed report, lazy technical text and legacy escape hatch', async ({ page }) => {
+test('manual failed report, lazy technical text and no legacy escape hatch', async ({ page }) => {
   const errors: string[] = [], technical: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('request', request => { if (request.url().includes('/results/')) technical.push(request.url()) })
@@ -17,7 +17,8 @@ test('manual failed report, lazy technical text and legacy escape hatch', async 
   // so assert the inert script text is present rather than the whole string.
   await expect(page.locator('.technical-panel pre').first()).toContainText('<script>benign fixture text</script>')
   expect(technical).toHaveLength(1)
-  await expect(page.getByRole('link', { name: /Legacy report:/ })).toHaveAttribute('href', '/scans/25')
+  // The server-rendered report is retired; the console must not link to it.
+  await expect(page.getByRole('link', { name: /Legacy/i })).toHaveCount(0)
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.screenshot({ path: '../artifacts/console-e2e/report-desktop.png', fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })

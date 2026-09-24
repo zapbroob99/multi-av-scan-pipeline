@@ -159,7 +159,6 @@ export default function Engines({ session }: { session: Session }) {
           <Button variant="destructive" disabled={mutation.isPending} onClick={() => setDeleting(engine)} aria-label={`Remove ${engine.display_name}`}><Trash2 size={15} /></Button></div>
       </article>
     })}</div>
-    <p className="migration-note">New console · Existing scans and integrations are unchanged. <a href="/engines">Open legacy Engines</a></p>
     <Dialog open={adding || !!editing} onOpenChange={open => { if (!open && !mutation.isPending) { setAdding(false); setEditing(null) } }} title={editing ? `Configure ${editing.display_name}` : 'Add engine deployment'} description="Select a vendor adapter and supply its configuration. Suggested values are placeholders, not saved defaults.">
       {!editing && <div className="adapter-picker">{inventory.adapters.filter(a => a.capabilities.allows_multiple_instances || !inventory.engines.some(e => e.adapter_key === a.key)).map(adapter =>
         <button key={adapter.key} type="button" aria-label={`${adapter.label} ${adapter.support_state}`} aria-pressed={adapterKey === adapter.key} onClick={() => { setAdapterKey(adapter.key); setConfig({}); setFormError('') }}><EngineIcon adapterKey={adapter.key} size={18} /><strong>{adapter.label}</strong><small>{adapter.support_state}</small></button>)}</div>}

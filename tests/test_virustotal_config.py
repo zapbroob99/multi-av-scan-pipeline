@@ -1,12 +1,9 @@
-import os
 import unittest
-from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
-from app.main import save_virustotal_config
 from app.models import EngineInstanceRecord
-from app.services.secret_store import decrypt_secret, encrypt_secret
+from app.services.secret_store import encrypt_secret
 from app.services.virustotal import VirusTotalNotConfiguredError, load_virustotal_config
 
 
@@ -39,39 +36,6 @@ def submit(**overrides: str):
 
 
 class VirusTotalConfigUiTests(unittest.TestCase):
-    def test_admin_key_is_encrypted_and_never_persisted_as_plaintext(self) -> None:
-        encryption_key = Fernet.generate_key().decode("ascii")
-        with patch.dict(os.environ, {"MASP_SECRET_ENCRYPTION_KEY": encryption_key}), patch(
-            "app.main.require_admin"
-        ), patch("app.main.configured_engines", return_value=[engine()]), patch(
-            "app.main.update_engine_config"
-        ) as update, patch("app.main.clear_virustotal_cache"):
-            response = submit(
-                virustotal_api_key="vt-secret-value",
-                virustotal_malicious_threshold="3",
-                virustotal_allow_undetected="true",
-            )
-
-        self.assertEqual(response.status_code, 303)
-        saved = update.call_args.args[1]
-        self.assertNotIn("vt-secret-value", str(saved))
-        self.assertEqual(
-            decrypt_secret(saved["api_key_encrypted"], {"MASP_SECRET_ENCRYPTION_KEY": encryption_key}),
-            "vt-secret-value",
-        )
-        self.assertEqual(saved["malicious_threshold"], "3")
-        self.assertEqual(saved["allow_undetected"], "true")
-
-    def test_saving_new_key_requires_server_encryption_key(self) -> None:
-        with patch.dict(os.environ, {}, clear=True), patch("app.main.require_admin"), patch(
-            "app.main.configured_engines", return_value=[engine()]
-        ), patch("app.main.update_engine_config") as update:
-            response = submit(virustotal_api_key="vt-secret-value")
-
-        update.assert_not_called()
-        self.assertEqual(response.status_code, 303)
-        self.assertIn("MASP_SECRET_ENCRYPTION_KEY", response.headers["location"])
-
     def test_runtime_uses_encrypted_engine_key_and_policy_without_enabled_env(self) -> None:
         encryption_key = Fernet.generate_key().decode("ascii")
         environ = {"MASP_SECRET_ENCRYPTION_KEY": encryption_key}

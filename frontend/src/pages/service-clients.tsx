@@ -65,7 +65,7 @@ function ClientEditor({ client, session, close, updated }: { client: Client; ses
             <div className="client-section-heading"><div><h2>General settings</h2><p className="muted">Manage this integration's display name and submission access.</p></div>
               <span className="client-badge">{client.managed ? 'Deployment managed' : needsRefresh ? 'Refresh required' : client.enabled ? 'Enabled' : 'Disabled'}</span></div>
             {client.managed && <p className="callout">Managed compatibility client. Edit deployment configuration through the existing administration workflow.</p>}
-            {client.metadata_incomplete && <p role="alert" className="error">Metadata exceeds the console limit. Use legacy administration to review the complete values before editing.</p>}
+            {client.metadata_incomplete && <p role="alert" className="error">Metadata exceeds the console limit, so editing is disabled to avoid saving truncated values.</p>}
             {action.isSuccess && <p role="status" className="callout">Service client updated. Close this window and refresh clients to see the current state.</p>}
             {action.error && <p role="alert" className="error">{action.error.message} The request may have reached the server. Close this window and refresh clients before saving again; no automatic retry is performed.</p>}
             {!needsRefresh && <form onSubmit={submit} aria-label={`Edit client ${client.id}`}><fieldset disabled={blocked || client.managed || client.metadata_incomplete}>

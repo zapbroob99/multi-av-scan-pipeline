@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
     resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
     server: {
       strictPort: true,
-      // Legacy links (including /, /login and batch reports) stay same-origin.
+      // Former legacy paths (/, /login, /scans/{id}...) redirect to /console on the backend.
       // Vite and its assets live entirely under /console/.
       proxy: { '^/(?!console(?:/|$))': { target, changeOrigin: false } },
     },

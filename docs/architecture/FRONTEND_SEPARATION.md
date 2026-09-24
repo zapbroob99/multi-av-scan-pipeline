@@ -42,11 +42,10 @@ applies it before React starts, avoiding a theme flash while remaining compatibl
 with the frontend nginx `script-src 'self'` policy. Theme preference contains no
 account, scan or secret data and does not cross browser profiles.
 
-The target is **all browser UI in the independent frontend**. Legacy links are
-temporary compatibility paths, not the final migration boundary. The inventory
-below tracks remaining parity work. Oversized full output retains a legacy fallback
-until an appropriately bounded replacement exists. `/` and `/engines` remain available.
-Integration URLs, worker control, queue behavior and snapshots are unchanged.
+All browser UI now lives in the independent frontend; the server-rendered
+legacy UI has been retired (see "Legacy UI retirement" below). Its former GET
+paths redirect to console screens. Integration URLs, worker control, queue
+behavior and snapshots are unchanged.
 Node is required for building/development, not for serving static production files.
 
 ## Complete UI migration inventory
@@ -70,7 +69,7 @@ authorization/regression tests, responsive browser verification and documentatio
 | Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Automation printable reports and oversized engine-output downloads reuse the manual readers under automation scope. A batch contract larger than the inline view downloads in full, up to the same 5000 members the integration API serves. Remaining: final legacy-action parity; preserve ownership and manual-history isolation. |
 | Users and account | Bounded inventory, confirmed local creation, administrative role/password edit and deletion, and own-account password change implemented. Shared last-admin/session protections and stale revision fences; LDAP shadow deletion does not disable directory access. Final cutover/deployment acceptance remains. |
 | Audit and information | Admin `/console/audit` provides bounded descending ID-keyset audit pages, literal search, outcome filtering and bounded inert details; no total is calculated and no write verb exists. `/console/about` gives analysts and admins the product boundary and a non-sensitive runtime snapshot with admin-scoped client counts. Complete details render indented with sorted keys as legacy did; truncated or non-JSON details stay as recorded. About matches the legacy metrics. Remaining: deployment-shaped trail-volume validation. Legacy audit has no printable view. |
-| Cutover | Route/deep-link compatibility, all legacy actions and error states checked against the route inventory, feature/permission parity, static deployment/TLS and performance gates, then retire HTML rendering. |
+| Cutover | Done: the console is served by the application image, former GET paths redirect to console screens, legacy form routes and HTML rendering are removed, and console errors no longer point at legacy pages. Static deployment behind real TLS and deployment-scale performance remain acceptance gates. |
 
 Inventory covers the legacy login/logout, Dashboard, scans/batches/reports/exports,
 engines/rules, System/pools/retention, policy/hash lookup, service clients/profiles/
@@ -1785,3 +1784,46 @@ compared with its console screen.
 Parity validation (2026-09-23): full Python suite with disposable PostgreSQL
 ran 958 tests (956 passed, 2 skipped). Frontend: 150 tests, 35 Edge workflows,
 build and contract drift check.
+
+### Legacy UI retirement
+
+With parity closed and the console served from the application image, the
+server-rendered UI was removed. `app/main.py` went from about 9100 lines to about
+1000: it keeps the integration API (`/api/v1/*`), `/health`, `/metrics`, the
+audit middleware and startup, and nothing that renders HTML. `app/static` and the
+root Tailwind build are gone; the root `package.json` keeps only `cloc`.
+
+Every former GET page redirects (301) to its console screen: `/` to the Dashboard,
+`/login` to `/console/`, and `/engines`, `/system`, `/users`, `/service-clients`,
+`/audit`, `/account`, `/about`, `/hash-scan`, `/scan-policy`, `/api-ledger` and
+`/scans/new` to their counterparts. `/batches/{id}`, `/api-ledger/batches/{id}` and
+the ledger status/result views map to their console routes. Legacy `/scans/{id}`
+served every source while the console separates manual and automation reports, so
+that redirect (302) looks up the scan's source only for a signed-in operator;
+anonymous requests go to the manual route without a lookup, so an ID cannot be
+probed for its source. `/report` maps to the printable report and the old export
+paths to scan management. Legacy form POSTs answer 404/405, and the audit policy
+no longer lists their paths.
+
+The login page used to announce directory sign-in; the console now reads that
+from the unauthenticated GET `/api/ui/v1/session/options`, which returns only that
+flag. The development login hint (`MASP_SHOW_DEV_LOGIN_HINTS`) had no console
+equivalent and was removed.
+
+Console messages that once sent operators to a legacy page now name a real
+alternative or state the limit: oversized engine output points to the raw output
+download, oversized full exports to individual engine outputs, and historical
+automation scans without routing snapshots state that no full export exists
+rather than reconstructing coverage from today's configuration. Editors that
+refuse incomplete or oversized metadata say so instead of pointing elsewhere.
+
+Tests that only rendered legacy HTML were removed; tests of service logic they
+contained were kept or moved to the service they exercise, and the VirusTotal
+missing-encryption-key refusal is now covered through the console API.
+
+Cutover validation (2026-09-24): full Python suite with disposable PostgreSQL ran
+911 tests (909 passed, 2 skipped); the count fell because legacy HTML tests were
+removed. Frontend: 150 tests; 35 Edge workflows, with the report scenario now
+asserting that no legacy link remains. Build and contract drift check passed.
+The application image was rebuilt and smoke-tested: `/health` 200,
+`/console/dashboard` 200, `/` 301 to the console Dashboard.
