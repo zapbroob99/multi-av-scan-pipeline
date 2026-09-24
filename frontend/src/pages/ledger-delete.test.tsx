@@ -47,3 +47,10 @@ it.each([false, true])('sends confirmed fences once and requires fresh reads aft
   expect(await screen.findByRole('checkbox', { name: 'Select scan 42' })).not.toBeChecked()
   expect(fetcher).toHaveBeenCalledTimes(3)
 })
+
+it('selects the whole page from the header for admins', async () => {
+  mount()
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'Select all on this page' }))
+  expect(screen.getByRole('checkbox', { name: 'Select scan 42' })).toBeChecked()
+  expect(screen.getByRole('button', { name: 'Delete selected (1)' })).toBeEnabled()
+})

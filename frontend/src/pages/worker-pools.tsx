@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
 import type { components } from '../lib/api.generated'
+import { ChevronRight, Layers, Plus, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 
@@ -32,7 +33,7 @@ export default function WorkerPools({ session }: { session: Session }) {
   const after = params.get('after') || ''
   const [confirmation, setConfirmation] = useState<Action | null>(null)
   const [receipt, setReceipt] = useState('')
-  const [formVersion, setFormVersion] = useState(0)
+  const [editor, setEditor] = useState<{ pool?: Pool } | null>(null)
   const pools = useQuery({ queryKey: ['system-pools', after], queryFn: ({ signal }) => request('/api/ui/v1/system/pools', 'get', {
     query: new URLSearchParams({ limit: '20', ...(after ? { after } : {}) }), signal }),
     retry: false, gcTime: 60000, refetchOnMount: 'always', refetchOnWindowFocus: false, refetchOnReconnect: false })
@@ -49,39 +50,53 @@ export default function WorkerPools({ session }: { session: Session }) {
     await request('/api/ui/v1/system/pools/{pool_id}', 'put', { params: { pool_id: value.id }, csrf: session.csrf_token, body: value.values })
     return `Updated pool #${value.id}.`
   }, onMutate: async () => { setReceipt(''); await client.cancelQueries({ queryKey: ['system-pools'] }) },
-  onSuccess: (message, value) => { setReceipt(message); if (value.kind === 'create') setFormVersion(version => version + 1) },
-  onSettled: async () => { setConfirmation(null); await Promise.all([
+  onSuccess: message => setReceipt(message),
+  onSettled: async () => { setConfirmation(null); setEditor(null); await Promise.all([
     client.invalidateQueries({ queryKey: ['system-pools'] }), client.invalidateQueries({ queryKey: ['engines'] }),
   ]) } })
   const busy = pools.isFetching || action.isPending
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Worker pools</h1>
     <p className="muted">Route engine instances to workers with matching labels.</p></div>
-    <Button variant="secondary" disabled={busy} onClick={() => { void pools.refetch() }}>Refresh pools</Button></div>
+    <div className="heading-actions"><Button variant="secondary" disabled={busy} onClick={() => { void pools.refetch() }}><RefreshCw size={14} aria-hidden="true" />Refresh pools</Button>
+      <Button disabled={busy} onClick={() => setEditor({})}><Plus size={16} aria-hidden="true" />New pool</Button></div></div>
     <p className="callout">Every selector label must match exactly. Worker lifecycle, capacity and advertised adapters also apply.
       New pools are enabled and have no engine assignments. Disabling a pool stops new claims for its assigned engines; owned work finishes.
       Remove engine assignments before deleting a pool. A pool does not prove engine health or scan coverage.</p>
     {receipt && <p className="callout" role="status">{receipt}</p>}
     {action.error && <p className="error" role="alert">{action.error.message} The request may have reached the server. Refresh before trying again.</p>}
-    <section className="submission-card"><h2>Create worker pool</h2><p className="muted">Use comma-separated key=value labels or a JSON object.</p>
-      <PoolForm key={formVersion} busy={busy} submit={values => setConfirmation({ kind: 'create', values })} /></section>
     {pools.isPending && <p role="status">Loading worker pools…</p>}
     {pools.error && <p className="error" role="alert">{pools.error.message}</p>}
-    {!pools.error && pools.data && <><div className="report-engines">{pools.data.items.map(pool =>
-      <article className="submission-card" key={pool.id} aria-label={`Pool ${pool.id}`}><h2>{pool.name}</h2>
-        <p className="muted">Pool #{pool.id} · {pool.enabled ? 'Enabled' : 'Disabled'} · {pool.has_assignments ? 'Engine assignments present' : 'No engine assignments'}</p>
-        {pool.metadata_incomplete && <p role="alert" className="error">Pool metadata is invalid or exceeds the editor limit. Editing is unavailable to prevent saving incomplete routing settings.</p>}
-        <PoolForm key={`${pool.name}-${pool.selector}-${pool.enabled}`} pool={pool} busy={busy} submit={values => setConfirmation({ kind: 'update', id: pool.id, values })} />
-        <div className="report-actions"><Button variant="destructive" disabled={busy || pool.has_assignments}
-          onClick={() => setConfirmation({ kind: 'delete', id: pool.id, name: pool.name })}>Delete pool</Button></div>
-      </article>)}</div>
+    {!pools.error && pools.data && <>
+      {pools.data.items.length > 0 && <ul className="entity-list" aria-label="Worker pools">{pools.data.items.map(pool => <li key={pool.id}>
+        <button type="button" className="entity-row" disabled={busy} aria-label={`Manage pool ${pool.id}`} onClick={() => setEditor({ pool })}>
+          <span className={`entity-avatar ${pool.enabled ? '' : 'is-muted'}`} aria-hidden="true"><Layers size={17} /></span>
+          <span className="entity-identity"><strong>{pool.name}</strong><small>Pool #{pool.id}</small></span>
+          <span className="entity-facts"><span title={pool.selector}><code>{pool.selector.length > 60 ? `${pool.selector.slice(0, 60)}…` : pool.selector}</code></span></span>
+          <span className="entity-badges">{pool.metadata_incomplete && <span className="tag tag-danger">Metadata invalid</span>}
+            <span className="tag">{pool.has_assignments ? 'Engines assigned' : 'No engines'}</span>
+            <span className={`tag tag-dot ${pool.enabled ? 'tag-positive' : ''}`}>{pool.enabled ? 'Enabled' : 'Disabled'}</span></span>
+          <ChevronRight className="entity-chevron" size={16} aria-hidden="true" />
+        </button></li>)}</ul>}
       {!pools.data.items.length && <p className="empty">No worker pools on this page.</p>}
       <div className="history-pagination"><Button variant="secondary" disabled={!after || busy} onClick={() => setParams({})}>First pools</Button>
         <Button variant="secondary" disabled={!pools.data.next_after || busy} onClick={() => setParams({ after: String(pools.data!.next_after) })}>Next pools</Button></div></>}
-    <Dialog open={confirmation !== null} onOpenChange={open => { if (!open && !action.isPending) setConfirmation(null) }} title="Confirm pool change"
+    {editor && !confirmation && <Dialog open onOpenChange={open => { if (!open && !action.isPending) setEditor(null) }}
+      title={editor.pool ? editor.pool.name : 'New worker pool'}
+      description={editor.pool ? `Pool #${editor.pool.id} · ${editor.pool.has_assignments ? 'engine assignments present' : 'no engine assignments'}`
+        : 'Use comma-separated key=value labels or a JSON object.'}>
+      {editor.pool?.metadata_incomplete && <p role="alert" className="error">Pool metadata is invalid or exceeds the editor limit. Editing is unavailable to prevent saving incomplete routing settings.</p>}
+      <PoolForm key={editor.pool?.id ?? 'new'} pool={editor.pool} busy={busy} submit={values => setConfirmation(editor.pool
+        ? { kind: 'update', id: editor.pool.id, values } : { kind: 'create', values })} />
+      {editor.pool && <div className="entity-dialog-section"><h3>Delete</h3>
+        <p className="muted">{editor.pool.has_assignments ? 'Remove its engine assignments from Engines before deleting this pool.' : 'The server checks engine assignments again before deleting.'}</p>
+        <Button variant="destructive" disabled={busy || editor.pool.has_assignments}
+          onClick={() => setConfirmation({ kind: 'delete', id: editor.pool!.id, name: editor.pool!.name })}>Delete pool</Button></div>}
+    </Dialog>}
+    <Dialog open={confirmation !== null} onOpenChange={open => { if (!open && !action.isPending) { setConfirmation(null); setEditor(null) } }} title="Confirm pool change"
       description={confirmation?.kind === 'delete' ? `Delete ${confirmation.name} (#${confirmation.id})? The server checks engine assignments again.`
         : `${confirmation?.kind === 'create' ? 'Create enabled pool' : 'Update pool'} ${confirmation ? confirmation.values.name : ''}? Changes affect subsequent worker claims.`}>
       {confirmation && confirmation.kind !== 'delete' && <p className="pool-confirmation">Selector: {confirmation.values.selector}<br />State: {confirmation.values.enabled ? 'Enabled' : 'Disabled'}</p>}
-      <div className="report-actions"><Button variant="secondary" disabled={action.isPending} onClick={() => setConfirmation(null)}>Cancel</Button>
+      <div className="report-actions"><Button variant="secondary" disabled={action.isPending} onClick={() => { setConfirmation(null); setEditor(null) }}>Cancel</Button>
         <Button disabled={action.isPending} onClick={() => { if (confirmation) action.mutate(confirmation) }}>Confirm pool change</Button></div>
     </Dialog>
   </section>

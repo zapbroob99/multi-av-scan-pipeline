@@ -17,6 +17,7 @@ function mount(failure = false) {
 }
 
 async function prepare() {
+  await userEvent.click(screen.getByRole('button', { name: 'New local user' }))
   await userEvent.type(screen.getByLabelText('Username'), 'new-user')
   await userEvent.type(screen.getByLabelText('Initial password'), 'private-password')
   await userEvent.click(screen.getByRole('button', { name: 'Review new user' }))
@@ -29,6 +30,8 @@ it('labels directory identities and clears an unsubmitted password on cancellati
   await prepare()
   expect(within(screen.getByRole('dialog')).queryByText('private-password')).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(screen.queryByRole('dialog')).toBeNull()
+  await userEvent.click(screen.getByRole('button', { name: 'New local user' }))
   expect(screen.getByLabelText('Initial password')).toHaveValue('')
   expect(fetcher).toHaveBeenCalledTimes(1)
 })
@@ -40,8 +43,8 @@ it.each([false, true])('submits once without caching secrets and requires refres
   await userEvent.click(screen.getByRole('button', { name: 'Confirm creation' }))
   if (failure) expect(await screen.findByRole('alert')).toHaveTextContent('may have been created')
   else expect(await screen.findByRole('status')).toHaveTextContent('Local user #8 created')
-  expect(screen.getByLabelText('Initial password')).toHaveValue('')
-  expect(screen.getByRole('button', { name: 'Review new user' })).toBeDisabled()
+  expect(screen.queryByLabelText('Initial password')).toBeNull()
+  expect(screen.getByRole('button', { name: 'New local user' })).toBeDisabled()
   expect(fetcher).toHaveBeenCalledTimes(2)
   const write = fetcher.mock.calls.find(([, options]) => options?.method === 'POST')!
   expect(JSON.parse(write[1]!.body as string)).toEqual({ username: 'new-user', role: 'analyst', password: 'private-password' })
@@ -50,7 +53,7 @@ it.each([false, true])('submits once without caching secrets and requires refres
   expect(JSON.stringify(client.getQueryData(['users', '']))).not.toContain('private-password')
   await userEvent.click(screen.getByRole('button', { name: 'Refresh users' }))
   expect(await screen.findByText(/LDAP — directory managed/)).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Review new user' })).not.toBeDisabled()
+  expect(screen.getByRole('button', { name: 'New local user' })).not.toBeDisabled()
 })
 
 it.each(['update', 'delete', 'failure'])('fences managed user %s and requires explicit refresh', async action => {
@@ -73,7 +76,7 @@ it.each(['update', 'delete', 'failure'])('fences managed user %s and requires ex
   if (action === 'failure') expect(await screen.findByRole('alert')).toHaveTextContent('may have completed')
   else expect(await screen.findByRole('status')).toHaveTextContent(action === 'delete' ? 'removed' : 'updated')
   expect(screen.queryByRole('button', { name: 'Manage user #8' })).toBeNull()
-  expect(screen.getByRole('button', { name: 'Review new user' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'New local user' })).toBeDisabled()
   const write = fetcher.mock.calls.find(([, options]) => ['PUT', 'DELETE'].includes(options?.method || ''))!
   expect(JSON.parse(write[1]!.body as string)).toEqual(action === 'delete' ? { expected_revision: 7 } : { expected_revision: 7, role: 'admin', password: 'private-reset-password' })
   expect(new Headers(write[1]!.headers).get('X-CSRF-Token')).toBe('csrf')

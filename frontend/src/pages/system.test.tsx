@@ -23,9 +23,12 @@ function mount() {
 describe('System worker management', () => {
   it('renders inert worker identity and confirms an explicit lifecycle with CSRF', async () => {
     const { fetcher } = mount()
+    const row = await screen.findByRole('button', { name: 'Manage worker node-a' })
+    expect(row).toHaveTextContent('<script>worker</script>')
+    expect(row).toHaveTextContent('Offline')
+    await userEvent.click(row)
     await screen.findByRole('heading', { name: '<script>worker</script>' })
     expect(document.querySelector('script')).toBeNull()
-    expect(screen.getByText('Offline')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Apply lifecycle' })).toBeDisabled()
     await userEvent.selectOptions(screen.getByLabelText('Lifecycle for node-a'), 'draining')
     await userEvent.click(screen.getByRole('button', { name: 'Apply lifecycle' }))
@@ -40,10 +43,12 @@ describe('System worker management', () => {
   })
   it('allows cancelling credential revocation and requires a separate confirmation', async () => {
     const { fetcher } = mount()
-    await userEvent.click(await screen.findByRole('button', { name: 'Revoke agent credentials' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Manage worker node-a' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke agent credentials' }))
     expect(screen.getByRole('dialog')).toHaveTextContent('Running Control API work loses authorization')
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(fetcher.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Manage worker node-a' }))
     await userEvent.click(screen.getByRole('button', { name: 'Revoke agent credentials' }))
     await userEvent.click(screen.getByRole('button', { name: 'Confirm worker action' }))
     await screen.findByText(/Revoked 1 agent credential/)
@@ -54,7 +59,8 @@ describe('System worker management', () => {
   })
   it('does not replay uncertain writes and hides stale controls when refresh fails', async () => {
     const { fetcher } = mount()
-    await userEvent.click(await screen.findByRole('button', { name: 'Revoke agent credentials' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Manage worker node-a' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke agent credentials' }))
     fetcher.mockImplementation(async () => new Response(JSON.stringify({ detail: 'Unavailable' }), { status: 503 }))
     await userEvent.click(screen.getByRole('button', { name: 'Confirm worker action' }))
     await screen.findByText(/request may have reached the server/)

@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowDown, ArrowUpRight, RefreshCw, Search, ShieldAlert } from 'lucide-react'
 import { request, type ScanPreview, type Session } from '../lib/api'
 import { RiskBadge, isAlertRisk } from '../components/risk-badge'
+import { SelectAllCheckbox } from '../components/select-all'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 
@@ -113,7 +114,9 @@ export default function Dashboard({ session }: { session: Session }) {
     {scans.isPending ? <div role="status" className="skeleton">Loading scan history…</div> : scans.data && <>
       {scans.data.items.length === 0 ? <div className="empty"><h2>No scans found</h2><p>Change the filters or return to the latest submissions.</p></div> :
         <div className="history-table-wrap" tabIndex={0} role="region" aria-label="Scan history table"><table className="history-table">
-          <thead><tr>{session.user.role === 'admin' && <th scope="col" className="selection-column">Select</th>}<th scope="col" className="sample-column">Sample</th><th scope="col">Status</th><th scope="col">Recorded risk</th><th scope="col">Submitted</th></tr></thead>
+          <thead><tr>{session.user.role === 'admin' && <th scope="col" className="selection-column">
+            <SelectAllCheckbox selectable={scans.data.items.filter(scan => !ACTIVE.includes(scan.status)).map(scan => scan.id).slice(0, 20)}
+              selected={[...selectedIds]} disabled={deletion.isPending} onChange={ids => setSelectedIds(new Set(ids))} /></th>}<th scope="col" className="sample-column">Sample</th><th scope="col">Status</th><th scope="col">Recorded risk</th><th scope="col">Submitted</th></tr></thead>
           <tbody>{scans.data.items.map(scan => <tr key={scan.id} className={!ACTIVE.includes(scan.status) && isAlertRisk(scan.risk_level) ? 'row-alert' : ''}>
             {session.user.role === 'admin' && <td className="selection-column"><input type="checkbox" aria-label={`Select scan ${scan.id}`} checked={selectedIds.has(scan.id)}
               disabled={ACTIVE.includes(scan.status) || deletion.isPending} onChange={() => toggle(scan.id)} /></td>}

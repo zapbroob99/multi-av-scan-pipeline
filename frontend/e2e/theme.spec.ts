@@ -10,6 +10,7 @@ test('light theme covers login, forms and confirmation dialogs', async ({ page }
   await page.getByLabel('Username').fill('console-admin')
   await page.getByLabel('Password').fill('console-test-only')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await page.getByRole('button', { name: 'New pool' }).click()
   const create = page.getByRole('form', { name: 'Create worker pool' })
   await create.getByLabel('Pool name').fill('Theme preview')
   await create.getByLabel('Label selector').fill('site=lab')

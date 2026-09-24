@@ -28,7 +28,7 @@ test('admin pages the audit trail with literal search while analysts are refused
   await expect(page.getByText('audit-fixture-19')).toHaveCount(0)
 
   // Recorded details stay inert text and are never parsed as markup.
-  await page.getByText('Recorded details').first().click()
+  await page.getByText('Show details').first().click()
   await expect(page.locator('pre').first()).toContainText('<script>inert audit fixture</script>')
   expect(await page.locator('pre script').count()).toBe(0)
 

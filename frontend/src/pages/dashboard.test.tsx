@@ -82,6 +82,25 @@ describe('Dashboard', () => {
     expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ scans: [{ scan_id: 24, attempt: 3, job_revision: 9 }] })
     expect(writes[0][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
   })
+  it('selects every deletable scan on the page at once and clears them again', async () => {
+    const page = [sample, { ...sample, id: 25, status: 'running' }, { ...sample, id: 26, status: 'completed' }]
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/summary')
+      ? { total: 3, active: 1, high_risk: 0, enabled_engines: 1, generated_at: '2026-09-08T12:00:00Z', refresh_after_seconds: 30 }
+      : { items: page, next_before: null }))))
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/dashboard']}><Dashboard
+      session={{ user: { id: 1, username: 'user', role: 'admin' }, csrf_token: 'csrf' }} /></MemoryRouter></QueryClientProvider>)
+    const all = await screen.findByRole('checkbox', { name: 'Select all on this page' })
+    await userEvent.click(all)
+    // Active scans cannot be deleted, so they are never swept into the selection.
+    expect(screen.getByRole('checkbox', { name: 'Select scan 24' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Select scan 26' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Select scan 25' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Delete selected (2)' })).toBeEnabled()
+    await userEvent.click(all)
+    expect(screen.getByRole('button', { name: 'Delete selected (0)' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select scan 24' }))
+    expect((all as HTMLInputElement).indeterminate).toBe(true)
+  })
   it('keeps bulk deletion unavailable to analysts', async () => {
     mount('/dashboard', false, 'analyst')
     await screen.findByRole('link', { name: sample.filename })

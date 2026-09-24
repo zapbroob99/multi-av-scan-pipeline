@@ -5,6 +5,7 @@ import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
 
 const OUTCOMES = ['all', 'success', 'failure', 'denied'] as const
+const OUTCOME_TAG: Record<string, string> = { success: 'tag-positive', failure: 'tag-warning', denied: 'tag-danger' }
 
 function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeys)
@@ -58,17 +59,23 @@ export default function Audit() {
     {events.error && <p role="alert" className="error">{events.error.message}</p>}
     {!events.error && events.data && <>
       {!events.data.items.length && <p className="empty">No audit events match these filters.</p>}
-      {events.data.items.map(event => <article className="submission-card report-engine" key={event.id}>
-        <h2>{event.action}</h2>
-        <p className="muted">#{event.id} · {event.created_at} · {event.outcome}</p>
-        <p>Actor: {event.actor_name || event.actor_id || 'Anonymous'} ({event.actor_type}{event.actor_id ? ` #${event.actor_id}` : ''})</p>
-        <p>Target: {event.target_type}{event.target_id ? ` #${event.target_id}` : ''}</p>
-        <p className="muted">Source IP: {event.source_ip || 'Not recorded'} · Request ID: {event.request_id}</p>
-        <details><summary>Recorded details</summary>
-          <div className="technical-panel"><pre tabIndex={0} aria-label={`Audit event ${event.id} details text`}>{prettyDetails(event.details, event.details_truncated)}</pre></div>
-          {event.details_truncated && <p className="muted">Details truncated for display.</p>}
-        </details>
-      </article>)}
+      {events.data.items.length > 0 && <div className="history-table-wrap" role="region" aria-label="Audit events" tabIndex={0}>
+        <table className="history-table compact-table audit-table"><thead><tr>
+          <th scope="col">When</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Actor</th>
+          <th scope="col">Target</th><th scope="col">Source</th><th scope="col">Details</th></tr></thead><tbody>
+        {events.data.items.map(event => <tr key={event.id} className={event.outcome === 'success' ? '' : 'row-alert'}>
+          <td><small title={event.created_at}>{event.created_at.slice(0, 19)}</small><small>#{event.id}</small></td>
+          <td><code>{event.action}</code></td>
+          <td><span className={`tag ${OUTCOME_TAG[event.outcome] || ''}`}>{event.outcome}</span></td>
+          <td className="cell-name" title={event.actor_name || event.actor_id || 'Anonymous'}>{event.actor_name || event.actor_id || 'Anonymous'}
+            <small>{event.actor_type}{event.actor_id ? ` #${event.actor_id}` : ''}</small></td>
+          <td>{event.target_type}{event.target_id ? <small>#{event.target_id}</small> : null}</td>
+          <td><small>{event.source_ip || 'IP not recorded'}</small><small title={event.request_id}>{event.request_id}</small></td>
+          <td><details><summary>Show details</summary>
+            <div className="technical-panel"><pre tabIndex={0} aria-label={`Audit event ${event.id} details text`}>{prettyDetails(event.details, event.details_truncated)}</pre></div>
+            {event.details_truncated && <p className="muted">Details truncated for display.</p>}
+          </details></td>
+        </tr>)}</tbody></table></div>}
       <div className="history-pagination"><Button variant="secondary" disabled={events.isFetching || !params.get('before')} onClick={() => paginate()}>Newest events</Button>
         <Button variant="secondary" disabled={events.isFetching || !events.data.next_before} onClick={() => paginate(events.data!.next_before!)}>Older events</Button></div>
       <p className="muted">Pages are bounded and no total is calculated. Newer events can arrive while you page through older ones.</p>

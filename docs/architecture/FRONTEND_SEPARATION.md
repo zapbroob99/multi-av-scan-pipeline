@@ -1838,3 +1838,21 @@ redraws the strip at each page's heading height or hides it while a page chunk
 loads. Engines is reached only through System: the sidebar has no separate entry
 and keeps System highlighted on `/engines` screens. An Edge workflow asserts the
 strip keeps the same position on every tab.
+
+### Entity lists and page selection
+
+Lists of people and machines no longer render as stacks of large cards. Users,
+worker nodes and worker pools use one compact row pattern (`.entity-list`,
+`.entity-row`, `.tag` in `styles.css`): an avatar or icon, name and secondary
+line, a few facts such as last login or heartbeat age, and status tags. A row
+opens a dialog with the full details and every control, so creation and edit
+forms appear only when asked for ("New local user", "New pool"). Confirmation
+steps, password clearing, stale-state fences and no-replay behaviour are
+unchanged. Audit events are a compact table with expandable details.
+
+Dashboard and API ledger add a header checkbox that selects every deletable
+scan on the current page (active scans excluded, capped at the 20-row bulk
+limit), clears them when all are selected and shows a mixed state for a
+partial selection. It never reaches beyond the visible page.
+
+Validation: 152 frontend tests, 36 Edge workflows, build and contract check.

@@ -5,6 +5,7 @@ import { request, type Session } from '../lib/api'
 import { RiskBadge, isAlertRisk } from '../components/risk-badge'
 import { Dialog } from '../components/ui/dialog'
 import { Button } from '../components/ui/button'
+import { SelectAllCheckbox } from '../components/select-all'
 
 type Candidate = { scan_id: number; attempt: number; job_revision: number }
 
@@ -91,7 +92,9 @@ export default function ApiLedger({ session }: { session?: Session }) {
       {!scans.data.items.length && <p>No automation scans match these filters.</p>}
       {scans.data.items.length > 0 && <div className="history-table-wrap" role="region" aria-label="Automation history" tabIndex={0}>
         <table className="history-table compact-table"><thead><tr>
-          {admin && <th scope="col" className="selection-column">Select</th>}
+          {admin && <th scope="col" className="selection-column">
+            <SelectAllCheckbox selectable={scans.data.items.filter(scan => !ACTIVE.includes(scan.status)).map(scan => scan.id).slice(0, 20)}
+              selected={selected} disabled={locked || scans.isFetching} onChange={setSelected} /></th>}
           <th scope="col">Sample</th><th scope="col">Source</th><th scope="col">Client</th>
           <th scope="col">Status</th><th scope="col">Recorded risk</th><th scope="col">Submitted</th><th scope="col">Open</th>
         </tr></thead><tbody>
