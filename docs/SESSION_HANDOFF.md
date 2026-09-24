@@ -1,7 +1,7 @@
 # MASP session handoff
 
-Updated: 2026-09-23, after the hash list and deferred-intake visibility
-commits. This is a workspace checkpoint, not evidence of a deployment.
+Updated: 2026-09-24, after the legacy UI retirement. This is a workspace
+checkpoint, not evidence of a deployment.
 
 ## Start here
 
@@ -21,27 +21,24 @@ commits. This is a workspace checkpoint, not evidence of a deployment.
 ## Git checkpoint
 
 Checkpoint branch: `feat/frontend-separation-hardening`. The commit that adds
-this handoff sits on top of `ce94ace`. **These commits are local and NOT pushed**:
-`origin/feat/frontend-separation-hardening` was last confirmed at `8747ba7`.
-Pushing was deliberately left to the user because the repository is public.
+this handoff sits on top of `98128da`. `origin/feat/frontend-separation-hardening`
+was last confirmed at `dc841e2`; **everything after it is local and NOT pushed**.
+The user authorizes each push explicitly because the repository is public.
 Confirm with `git log -1`, `git status` and a fresh `git fetch` before assuming
 anything here is still current.
 
-Commits since the last pushed baseline `8747ba7`, oldest first:
+Commits, oldest first (pushed through `dc841e2`):
 
-- `1fdf768` Hash List engine: one institution-wide SHA-256 blocklist/allowlist,
-  managed at `/console/engines/hash-list`; also fixes `file_type` being neither
-  creatable from the Engines page nor run by any default worker
-- `ce94ace` deferred intake visibility: `/console/system/intake` shows the
-  manifest worker's last cycle, deferred backlog, manifest rejections and
-  pre-scan failures
+- `1fdf768` Hash List engine (one institution-wide SHA-256 blocklist/allowlist)
+  plus the `file_type` creation and default-worker fixes
+- `ce94ace` deferred intake visibility at `/console/system/intake`
+- `dc841e2` handoff update (last pushed commit)
+- `06aac8c` legacy parity sweep: dashboard detection filter, bounded hash
+  provider detail, engine last-result time, audit detail formatting
+- `d7ad4b2` the application image builds and serves the console at `/console/`
+- `98128da` **legacy UI retired** (breaking): `app/main.py` ~9100 -> ~1000 lines,
+  former GET pages redirect to console screens, legacy form routes gone
 - this handoff rewrite (docs only)
-
-Earlier, already pushed (`18123f7`..`8747ba7`): audit/About, printable report and
-oversized output, batch download, the mapped-source design draft, the `file_type`
-engine, sidebar icons, client readiness, named profiles plus client storage
-access, manifest intake, the console UI pass (`6d4ed61`) and the deferred-retry
-fix (`720da8e`, narrated below).
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
 `sample_45mb.bin`, `sample_5mb.bin`, `skills-lock.json`. These are intentionally
@@ -86,20 +83,30 @@ stays authoritative. Before this, renaming a profile, engine or client turned a
 byte-identical retry into a permanent `409`. Full contract in
 `SERVICE_CLIENTS_AND_SCAN_PROFILES.md` under "Retrying a deferred submission".
 
-**Next development candidates**, in the order last discussed with the user:
+**`98128da` legacy UI retirement.** The console is the only browser UI and is
+served by the application image (`d7ad4b2`), so pilot/production need no extra
+container. Former GET paths redirect (`/scans/{id}` resolves manual vs automation
+only for a signed-in operator). Console messages that pointed at legacy pages now
+name a real alternative or the limit. `MASP_SHOW_DEV_LOGIN_HINTS` was removed.
+Deployments must **rebuild the image** to get the console; the live local
+containers still run pre-`1fdf768` code. Full narrative: "Legacy UI retirement"
+in `FRONTEND_SEPARATION.md`.
 
-1. The deferred legacy parity sweep (manual filters, hash provider detail,
-   System metric detail) and then the final cutover inventory (retiring
-   `app/main.py` HTML rendering). Pure implementation, no open decisions.
-2. `MAPPED_SOURCE_INSPECTION.md` step 4 (making "deliberately narrow coverage"
+**Next development candidates**, none started:
+
+1. `MAPPED_SOURCE_INSPECTION.md` step 4 (making "deliberately narrow coverage"
    explicit in reports, exports and the integration contract) and step 5
    (in-place reading). **Both are OPEN decisions for the user**; do not start
    them without explicit direction.
+2. The deployment gates below.
 
 Possible small follow-ups noticed but not done: the Hash List engine does not
 yet serve the manual `/console/hash-scan` lookup (it has no `hash_scan_function`,
 and allowlist semantics there would need the same informational treatment);
-manifest rejections cannot be dismissed from the console by design.
+manifest rejections cannot be dismissed from the console by design; some
+database helpers (`list_users`, `update_service_client`,
+`revoke_api_client_credential`, `list_engine_results_by_scan_ids`, ...) lost
+their only callers with the legacy UI and can be removed with their tests.
 
 **Deployment gates outstanding, discussed with the user but not started**:
 capacity measurement against realistic Drive-sized files (tooling exists in
@@ -111,14 +118,14 @@ limiting.
 ## Verification and environment safety
 
 - Full backend: `python -m unittest discover -s tests`. Last full run (at
-  `ce94ace`, with disposable PostgreSQL): **956 tests, 954 passed, 2 skipped,
-  0 failures.**
+  `98128da`, with disposable PostgreSQL): **911 tests, 909 passed, 2 skipped,
+  0 failures** (fewer than before because legacy HTML tests were removed).
 - PostgreSQL tests require `MASP_TEST_POSTGRES_URL` pointing only at a disposable
   database: tests drop/recreate its public schema. Never use the live MASP DB.
-  This session used `masp-test-pg-hashlist` (port 15441) and
-  `masp-test-pg-intake` (port 15442), both started with `--rm` and stopped;
-  none should remain (`docker ps -a` to check).
-- Frontend: `npm --prefix frontend test` (149 tests passing), `run build`,
+  Disposable containers used on this branch (ports 15441-15444, names
+  `masp-test-pg-*`) were started with `--rm` and stopped; none should remain
+  (`docker ps -a` to check).
+- Frontend: `npm --prefix frontend test` (150 tests passing), `run build`,
   `run contracts:check`. Regenerate contracts with
   `npm --prefix frontend run contracts:generate` after browser API changes.
   `run test:e2e` for Playwright (35 scenarios passing).
