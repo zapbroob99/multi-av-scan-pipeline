@@ -4,7 +4,6 @@ import { Cpu, Plus, Search, RefreshCw, Settings2, Trash2, FlaskConical, FileCode
 import { request, pollInterval, type Adapter, type Engine, type Health, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { EngineIcon } from '../components/engine-icon'
-import { SectionTabs, SYSTEM_TABS } from '../components/section-tabs'
 import { Dialog } from '../components/ui/dialog'
 
 export function ConfigFields({ adapter, values, onChange, editing = false }: {
@@ -135,7 +134,6 @@ export default function Engines({ session }: { session: Session }) {
   return <section className="page">
     <div className="page-heading"><div><p className="eyebrow">SCAN INFRASTRUCTURE</p><h1>Engine deployments</h1><p className="muted">Configure your engines. Verify their health. Keep every scan accountable.</p></div>
       <Button onClick={() => { setAdding(true); setEditing(null); setAdapterKey(''); setName(''); setConfig({}); setFormError('') }}><Plus size={17} />Add engine</Button></div>
-    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
     <div className="stats-row"><div><span>Configured</span><strong>{inventory.engines.length}</strong></div><div><span>Enabled</span><strong>{inventory.engines.filter(e => e.enabled).length}</strong></div><div><span>Needs attention</span><strong>{inventory.engines.filter(e => e.enabled && ['failed', 'unavailable'].includes(e.health.state)).length}</strong></div></div>
     {notice && <div role={notice.error ? 'alert' : 'status'} className={notice.error ? 'notice error' : 'notice'}>{notice.text}</div>}
     {query.error && <div className="notice error" role="alert">Inventory refresh failed. Displayed results may be stale: {query.error.message}</div>}

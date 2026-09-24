@@ -1827,3 +1827,14 @@ removed. Frontend: 150 tests; 35 Edge workflows, with the report scenario now
 asserting that no legacy link remains. Build and contract drift check passed.
 The application image was rebuilt and smoke-tested: `/health` 200,
 `/console/dashboard` 200, `/` 301 to the console Dashboard.
+
+### System navigation
+
+Every System screen (Overview, Worker nodes, Worker pools, Runtime and queue,
+Retention, Deferred intake, Engines, Hash list) renders inside one admin-only
+layout route, `SystemLayout` in `components/section-tabs.tsx`. It draws the tab
+strip once and gives the pages their own `Suspense`, so switching tabs no longer
+redraws the strip at each page's heading height or hides it while a page chunk
+loads. Engines is reached only through System: the sidebar has no separate entry
+and keeps System highlighted on `/engines` screens. An Edge workflow asserts the
+strip keeps the same position on every tab.

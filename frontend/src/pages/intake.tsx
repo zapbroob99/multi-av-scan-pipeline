@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
-import { SectionTabs, SYSTEM_TABS } from '../components/section-tabs'
 
 export function age(seconds: number) {
   if (seconds < 90) return `${seconds} s`
@@ -18,7 +17,6 @@ export default function Intake() {
   const data = view.data, worker = data?.manifest_worker
 
   return <section className="page management-page">
-    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
     <div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Deferred intake</h1>
       <p className="muted">Storage manifests and deferred submissions before they become scans.</p></div>
       <Button variant="secondary" disabled={view.isFetching} onClick={() => { void view.refetch() }}>Refresh intake</Button></div>

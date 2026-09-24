@@ -5,7 +5,6 @@ import { request, type Session } from '../lib/api'
 import type { components } from '../lib/api.generated'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
-import { SectionTabs, SYSTEM_TABS } from '../components/section-tabs'
 
 type Entry = components['schemas']['HashListEntry']
 type Added = components['schemas']['HashesAdded']
@@ -94,7 +93,6 @@ export default function HashList({ session }: { session: Session }) {
   const counts = entries.data?.counts
 
   return <section className="page management-page">
-    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
     <div className="page-heading"><div><p className="eyebrow">ENGINES</p><h1>Hash list</h1>
       <p className="muted">One institution-wide SHA-256 blocklist and allowlist, checked by the Hash List engine.</p></div>
       <Button variant="secondary" disabled={entries.isFetching} onClick={refresh}>Refresh list</Button></div>

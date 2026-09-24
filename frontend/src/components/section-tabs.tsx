@@ -1,4 +1,5 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { Suspense } from 'react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from './ui/button'
 
@@ -18,6 +19,16 @@ export const SYSTEM_TABS: Tab[] = [
   { to: '/engines', label: 'Engines', end: true },
   { to: '/engines/hash-list', label: 'Hash list' },
 ]
+
+/** Shared frame for every System screen. The strip is rendered once, outside
+ * the page's own lazy loading, so it stays in place while tabs switch instead of
+ * being redrawn at a different height by each page or hidden while one loads. */
+export function SystemLayout() {
+  return <div className="system-layout">
+    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
+    <Suspense fallback={<p role="status">Loading section…</p>}><Outlet /></Suspense>
+  </div>
+}
 
 export function SectionTabs({ tabs, label }: { tabs: Tab[]; label: string }) {
   return <nav className="section-tabs" aria-label={label}>

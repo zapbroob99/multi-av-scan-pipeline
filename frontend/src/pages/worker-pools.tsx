@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
 import type { components } from '../lib/api.generated'
 import { Button } from '../components/ui/button'
-import { SectionTabs, SYSTEM_TABS } from '../components/section-tabs'
 import { Dialog } from '../components/ui/dialog'
 
 type Pool = components['schemas']['PoolSummary']
@@ -58,7 +57,6 @@ export default function WorkerPools({ session }: { session: Session }) {
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Worker pools</h1>
     <p className="muted">Route engine instances to workers with matching labels.</p></div>
     <Button variant="secondary" disabled={busy} onClick={() => { void pools.refetch() }}>Refresh pools</Button></div>
-    <SectionTabs tabs={SYSTEM_TABS} label="System sections" />
     <p className="callout">Every selector label must match exactly. Worker lifecycle, capacity and advertised adapters also apply.
       New pools are enabled and have no engine assignments. Disabling a pool stops new claims for its assigned engines; owned work finishes.
       Remove engine assignments before deleting a pool. A pool does not prove engine health or scan coverage.</p>

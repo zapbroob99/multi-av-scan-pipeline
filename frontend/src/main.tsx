@@ -2,10 +2,11 @@ import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { BrowserRouter, Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { Activity, CircleUser, Cpu, Hash, Info, LayoutDashboard, LogOut, Plug, ScrollText, Server, SlidersHorizontal, Upload, Users as UsersIcon } from 'lucide-react'
+import { Activity, CircleUser, Hash, Info, LayoutDashboard, LogOut, Plug, ScrollText, Server, SlidersHorizontal, Upload, Users as UsersIcon } from 'lucide-react'
 import { request } from './lib/api'
 import { Button } from './components/ui/button'
 import { ThemeToggle } from './components/theme-toggle'
+import { SystemLayout } from './components/section-tabs'
 import './styles.css'
 
 const Users = lazy(() => import('./pages/users'))
@@ -98,8 +99,8 @@ function App() {
     <NavLink className="nav-item" to="/hash-scan"><Hash size={18} />Hash lookup</NavLink>
     <NavLink className="nav-item" to="/account"><CircleUser size={18} />Account</NavLink>
     <NavLink className="nav-item" to="/about"><Info size={18} />About</NavLink>
-    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/engines"><Cpu size={18} />Engines</NavLink>}
-    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/system"><Server size={18} />System</NavLink>}
+    {session.data.user.role === 'admin' && <NavLink to="/system" className={({ isActive }) =>
+      `nav-item${isActive || location.pathname.startsWith('/engines') ? ' active' : ''}`}><Server size={18} />System</NavLink>}
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/scan-policy"><SlidersHorizontal size={18} />Scan policy</NavLink>}
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/service-clients"><Plug size={18} />Service clients</NavLink>}
     {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/users"><UsersIcon size={18} />Users</NavLink>}
@@ -136,10 +137,6 @@ function App() {
         <Route path="/api-ledger/scans/:scanId/children" element={<ArchiveChildren key={location.pathname} automation />} />
         <Route path="/scans/:scanId/children" element={<ArchiveChildren />} />
         <Route path="/batches/:batchId" element={<BatchOverview />} />
-        <Route path="/system/pools" element={session.data.user.role === 'admin' ? <WorkerPools session={session.data} /> :
-          <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route path="/system/runtime" element={session.data.user.role === 'admin' ? <Runtime /> :
-          <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients/new" element={session.data.user.role === 'admin' ? <ClientCredentials key={location.pathname} create session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients/:clientId/credentials" element={session.data.user.role === 'admin' ? <ClientCredentials key={location.pathname} session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients/:clientId/setup" element={session.data.user.role === 'admin' ? <ClientSetup key={location.pathname} /> :
@@ -152,16 +149,16 @@ function App() {
           <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/scan-policy" element={session.data.user.role === 'admin' ? <ScanPolicy session={session.data} /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route path="/system/intake" element={session.data.user.role === 'admin' ? <Intake /> : <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route path="/system/retention" element={session.data.user.role === 'admin' ? <Retention session={session.data} /> :
-          <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route path="/system/overview" element={session.data.user.role === 'admin' ? <SystemOverview /> :
-          <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route path="/system" element={session.data.user.role === 'admin' ? <System session={session.data} /> :
-          <section className="empty"><h1>Administrator access required</h1><p>Your session does not have system-management permissions.</p></section>} />
-        <Route path="/engines/hash-list" element={session.data.user.role === 'admin' ? <HashList session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route path="/engines" element={session.data.user.role === 'admin' ? <Engines session={session.data} /> :
-          <section className="empty"><h1>Administrator access required</h1><p>Your session does not have engine-management permissions.</p></section>} />
+        <Route element={session.data.user.role === 'admin' ? <SystemLayout /> : <section className="empty"><h1>Administrator access required</h1><p>Your session does not have system-management permissions.</p></section>}>
+          <Route path="/system/pools" element={<WorkerPools session={session.data} />} />
+          <Route path="/system/runtime" element={<Runtime />} />
+          <Route path="/system/intake" element={<Intake />} />
+          <Route path="/system/retention" element={<Retention session={session.data} />} />
+          <Route path="/system/overview" element={<SystemOverview />} />
+          <Route path="/system" element={<System session={session.data} />} />
+          <Route path="/engines/hash-list" element={<HashList session={session.data} />} />
+          <Route path="/engines" element={<Engines session={session.data} />} />
+        </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes></Suspense>
   </main></div>
