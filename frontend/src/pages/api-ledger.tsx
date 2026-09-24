@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
-import { RiskBadge, isAlertRisk } from '../components/risk-badge'
+import { RISK_LABELS, RiskBadge, isAlertRisk } from '../components/risk-badge'
 import { Dialog } from '../components/ui/dialog'
 import { Button } from '../components/ui/button'
 import { SelectAllCheckbox } from '../components/select-all'
@@ -81,7 +81,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
       <label>Filename, hash or case<input name="q" maxLength={200} defaultValue={params.get('q') || ''} /></label>
       <label>Source<select name="source" defaultValue={params.get('source') || 'all'}><option value="all">API and ICAP</option><option value="api">API</option><option value="icap">ICAP</option></select></label>
       <label>Status<select name="status" defaultValue={params.get('status') || 'all'}>{['all', 'active', 'queued', 'running', 'finalizing', 'completed', 'partial', 'failed', 'skipped'].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-      <label>Recorded risk<select name="risk" defaultValue={params.get('risk') || 'all'}>{['all', 'pending', 'info', 'metadata_only', 'low', 'medium', 'high', 'critical'].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+      <label>Recorded risk<select name="risk" defaultValue={params.get('risk') || 'all'}>{['all', 'pending', 'info', 'metadata_only', 'low', 'medium', 'high', 'critical'].map(value => <option key={value} value={value}>{value === 'all' ? 'All risk levels' : RISK_LABELS[value] || value}</option>)}</select></label>
       <label>Client ID<input name="client_id" type="number" min={1} max={9007199254740991} step={1} defaultValue={params.get('client_id') || ''} /></label>
       <label><input name="unassigned" type="checkbox" defaultChecked={params.get('unassigned') === 'true'} /> Unassigned only (overrides client ID)</label>
       <Button type="submit" disabled={scans.isFetching}>Apply filters</Button><Button type="button" variant="secondary" onClick={() => setParams({})}>Reset filters</Button>
@@ -110,7 +110,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
                 const next = new URLSearchParams(params); next.set('client_id', String(scan.service_client_id)); next.delete('unassigned'); next.delete('before'); setParams(next)
               }} aria-label={`Filter client #${scan.service_client_id}`} title={`Filter client #${scan.service_client_id}`}>#{scan.service_client_id} {scan.client_name || 'Name unavailable'}</Button>}</td>
           <td>{scan.status}</td>
-          <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} /></td>
+          <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} failed={scan.status === 'failed'} unavailable={scan.unavailable_engines} /></td>
           <td><small>{scan.created_at}</small></td>
           <td className="cell-actions"><Link to={`/api-ledger/scans/${scan.id}`}>Report</Link>
             {scan.batch_id !== null && <Link to={`/api-ledger/batches/${scan.batch_id}`}>Batch</Link>}</td>

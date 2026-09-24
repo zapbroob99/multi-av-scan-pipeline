@@ -1,5 +1,13 @@
 # MASP - Multi AV Scan Pipeline
 
+Two scan-outcome corrections, visible in the integration API as well as the
+console. A scan in which no engine completed (every engine failed or was
+skipped) now ends as `failed` with the reason in `last_error` and no risk score,
+instead of `completed` with zero risk. And a clean scan no longer receives 10
+risk points: it records `info` with score 0 rather than `low` with score 10. The
+allow/review decision is unchanged by either. The console shows a clean scan as
+"No detection" and a scan where some engines did not run as "Incomplete".
+
 The server-rendered legacy UI has been retired: the browser console at
 `/console/` is the only interface. Former pages such as `/`, `/scans/{id}`,
 `/engines` and `/system` redirect to their console screens, so bookmarks keep

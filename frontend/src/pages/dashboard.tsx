@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowDown, ArrowUpRight, RefreshCw, Search, ShieldAlert } from 'lucide-react'
 import { request, type ScanPreview, type Session } from '../lib/api'
-import { RiskBadge, isAlertRisk } from '../components/risk-badge'
+import { RISK_LABELS, RiskBadge, isAlertRisk } from '../components/risk-badge'
 import { SelectAllCheckbox } from '../components/select-all'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
@@ -95,7 +95,7 @@ export default function Dashboard({ session }: { session: Session }) {
       </select></label>
       <label>Recorded risk<select name="risk" defaultValue={risk}>
         {['all', 'pending', 'info', 'metadata_only', 'low', 'medium', 'high', 'critical'].map(value =>
-          <option key={value} value={value}>{value === 'all' ? 'All risk levels' : value}</option>)}
+          <option key={value} value={value}>{value === 'all' ? 'All risk levels' : RISK_LABELS[value] || value}</option>)}
       </select></label>
       <label>Engine detections<select name="detection" defaultValue={detection}>
         <option value="all">Any result</option>
@@ -124,7 +124,7 @@ export default function Dashboard({ session }: { session: Session }) {
               <small className="sample-hash" title={scan.sha256}>{scan.sha256}</small>
               <small>#{scan.id} · {(scan.size_bytes / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} KB{scan.case_name ? ` · ${scan.case_name}` : ''}</small></td>
             <td><span className={`health-pill ${scan.status === 'failed' ? 'health-failed' : ''}`}>{scan.status}</span></td>
-            <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} /></td>
+            <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} failed={scan.status === 'failed'} unavailable={scan.unavailable_engines} /></td>
             <td><time dateTime={scan.created_at}>{displayTime(scan.created_at)}</time></td>
           </tr>)}</tbody></table></div>}
       <div className="history-pagination"><p className="muted">{scans.data.items.length} shown · Newest submission ID first{before ? ' · History page (auto-refresh paused)' : ''}</p>

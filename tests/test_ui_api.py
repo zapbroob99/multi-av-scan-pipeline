@@ -2684,8 +2684,13 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual(row['risk_score'], 0)
         self.assertEqual(row['size_bytes'], 50 * 1024**3)
         self.assertEqual(set(row), {'id', 'filename', 'sha256', 'size_bytes', 'case_name', 'status',
-                                    'risk_level', 'risk_score', 'attempt_count', 'job_revision', 'created_at'})
+                                    'risk_level', 'risk_score', 'attempt_count', 'job_revision', 'created_at',
+                                    'unavailable_engines'})
         self.assertEqual((row['attempt_count'], row['job_revision']), (0, 0))
+        self.assertIsNone(row['unavailable_engines'])  # not recorded for this fixture
+        with db.connect() as connection:
+            connection.execute('UPDATE scan_jobs SET unavailable_engines = 2 WHERE id = ?', (scan,))
+        self.assertEqual(next(r for r in self.request('/dashboard/scans')[1]['items'] if r['id'] == scan)['unavailable_engines'], 2)
         summary = self.request('/dashboard/summary')[1]
         self.assertEqual((summary['total'], summary['active'], summary['high_risk']), (3, 1, 1))
         schema = self.app.openapi()['paths'][ui_api.PREFIX + '/dashboard/scans']['get']['responses']['200']

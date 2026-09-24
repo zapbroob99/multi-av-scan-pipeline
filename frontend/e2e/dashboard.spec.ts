@@ -22,8 +22,11 @@ test('analyst dashboard pagination, URL history, filters, mobile navigation and 
   await expect(page.getByRole('link', { name: 'acceptance-24.bin' })).toHaveAttribute('href', '/console/scans/25')
   const failedRow = page.getByRole('link', { name: 'acceptance-24.bin' }).locator('xpath=ancestor::tr')
   const risk = failedRow.locator('.risk-badge')
-  await expect(risk).toContainText('info')
-  await expect(risk).toContainText('0 / 100')
+  // A failed scan has no outcome: its stored zero score is not shown as clean.
+  await expect(risk).toContainText('Not scored')
+  const clean = page.getByRole('link', { name: 'acceptance-22.bin' }).locator('xpath=ancestor::tr').locator('.risk-badge')
+  await expect(clean).toContainText('No detection')
+  await expect(clean).toHaveClass(/risk-badge-clear/)
   // A zero-score failed scan must not be styled as a detection.
   await expect(risk).not.toHaveClass(/risk-badge-alert/)
   await page.screenshot({ path: '../artifacts/console-e2e/dashboard-desktop.png', fullPage: true })

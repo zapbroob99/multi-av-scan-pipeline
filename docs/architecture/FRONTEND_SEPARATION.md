@@ -1856,3 +1856,19 @@ limit), clears them when all are selected and shows a mixed state for a
 partial selection. It never reaches beyond the visible page.
 
 Validation: 152 frontend tests, 36 Edge workflows, build and contract check.
+
+### Recorded risk presentation
+
+The risk badge used by Dashboard, API ledger, batch overviews and archive
+children now reads as the operator would: "No detection" (quiet green, with a
+tooltip that it is not an allow decision) when no completed engine reported a
+detection, "Incomplete" with the number of engines that did not run when any
+failed or were skipped, and the familiar red High/Critical for detections. The
+unavailable count comes from `scan_jobs.unavailable_engines`, recorded at
+finalization, so history reads still never touch `engine_results`. Clean scans
+previously recorded `low`/10 because scoring added 10 points for a clean result;
+scoring no longer does, and the badge renders that legacy pair as "No detection"
+too. Scans in which no engine completed now finish `failed` rather than
+`completed` with zero risk, and every failed scan shows "Not scored" even when an
+older record stored a score, so "Failed" never sits beside "No detection".
+

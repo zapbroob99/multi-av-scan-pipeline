@@ -616,6 +616,7 @@ def init_sqlite_db() -> None:
         ensure_column(connection, "scan_jobs", "finalize_generation", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(connection, "scan_jobs", "finalize_lease_expires_at", "INTEGER")
         ensure_column(connection, "scan_jobs", "archive_member_ordinal", "INTEGER")
+        ensure_column(connection, "scan_jobs", "unavailable_engines", "INTEGER")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
@@ -1047,6 +1048,7 @@ def init_postgres_db() -> None:
         ensure_column(connection, "scan_jobs", "finalize_generation", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(connection, "scan_jobs", "finalize_lease_expires_at", "INTEGER")
         ensure_column(connection, "scan_jobs", "archive_member_ordinal", "INTEGER")
+        ensure_column(connection, "scan_jobs", "unavailable_engines", "INTEGER")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
@@ -5826,7 +5828,8 @@ def update_scan_status(scan_id: int, status: str, last_error: str | None = None)
 
 
 def transition_scan_to_completed(
-    scan_id: int, verdict: str, risk_score: int | None
+    scan_id: int, verdict: str, risk_score: int | None, *, failure: str | None = None,
+    unavailable_engines: int | None = None,
 ) -> bool:
     """Atomically mark a scan completed, exactly once.
 
@@ -5835,26 +5838,33 @@ def transition_scan_to_completed(
     ``completed``. Returns True for the single caller that wins the transition, so
     concurrent finalizers (worker + recovery sweep) do not both run completion
     side effects such as enqueuing archive children.
+
+    ``failure`` ends the scan as ``failed`` instead: every engine produced a
+    result but none completed, so there is no scan outcome to record.
     """
     with connect() as connection:
-        cursor = connection.execute(
-            """
-            UPDATE scan_jobs
-            SET
-                status = 'completed',
-                verdict = ?,
-                risk_score = ?,
-                last_error = NULL,
-                failed_at = NULL,
-                completed_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND status IN ('queued', 'running')
-            """,
-            (verdict, risk_score, scan_id),
-        )
+        if failure is not None:
+            cursor = connection.execute(_FAIL_FINISHED_SCAN_SQL + "WHERE id = ? AND status IN ('queued', 'running')",
+                                        (failure[:2000], unavailable_engines, scan_id))
+        else:
+            cursor = connection.execute(
+                """
+                UPDATE scan_jobs
+                SET
+                    status = 'completed',
+                    verdict = ?,
+                    risk_score = ?,
+                    unavailable_engines = ?,
+                    last_error = NULL,
+                    failed_at = NULL,
+                    completed_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status IN ('queued', 'running')
+                """,
+                (verdict, risk_score, unavailable_engines, scan_id),
+            )
         completed = int(cursor.rowcount) > 0
         if completed:
-            _settle_deferred_submission(connection, scan_id, "completed")
-            _enqueue_scan_notification_if_requested(connection, scan_id, verdict, risk_score)
+            _settle_scan_outcome(connection, scan_id, verdict, risk_score, failed=failure is not None)
         return completed
 
 
@@ -5930,35 +5940,63 @@ def renew_scan_finalization(
 
 
 def complete_finalizing_scan(
-    scan_id: int, worker_id: str, generation: int, verdict: str, risk_score: int | None
+    scan_id: int, worker_id: str, generation: int, verdict: str, risk_score: int | None,
+    *, failure: str | None = None, unavailable_engines: int | None = None,
 ) -> bool:
     """Complete a scan, fenced to the finalization owner + generation.
 
     Only the current finalizer (matching worker + generation) completes the
     scan, so a crashed finalizer that was superseded cannot complete it later.
+    ``failure`` ends it as ``failed`` under the same fence (see
+    ``transition_scan_to_completed``).
     """
+    fence = """WHERE id = ? AND status = 'finalizing'
+              AND finalize_worker_id = ? AND finalize_generation = ?"""
     with connect() as connection:
-        cursor = connection.execute(
-            """
-            UPDATE scan_jobs
-            SET
-                status = 'completed',
-                verdict = ?,
-                risk_score = ?,
-                last_error = NULL,
-                failed_at = NULL,
-                completed_at = CURRENT_TIMESTAMP,
-                finalize_lease_expires_at = NULL
-            WHERE id = ? AND status = 'finalizing'
-              AND finalize_worker_id = ? AND finalize_generation = ?
-            """,
-            (verdict, risk_score, scan_id, worker_id, generation),
-        )
+        if failure is not None:
+            cursor = connection.execute(
+                _FAIL_FINISHED_SCAN_SQL.replace("failed_at = CURRENT_TIMESTAMP",
+                                                "failed_at = CURRENT_TIMESTAMP, finalize_lease_expires_at = NULL") + fence,
+                (failure[:2000], unavailable_engines, scan_id, worker_id, generation))
+        else:
+            cursor = connection.execute(
+                """
+                UPDATE scan_jobs
+                SET
+                    status = 'completed',
+                    verdict = ?,
+                    risk_score = ?,
+                    unavailable_engines = ?,
+                    last_error = NULL,
+                    failed_at = NULL,
+                    completed_at = CURRENT_TIMESTAMP,
+                    finalize_lease_expires_at = NULL
+                """ + fence,
+                (verdict, risk_score, unavailable_engines, scan_id, worker_id, generation),
+            )
         completed = int(cursor.rowcount) > 0
         if completed:
-            _settle_deferred_submission(connection, scan_id, "completed")
-            _enqueue_scan_notification_if_requested(connection, scan_id, verdict, risk_score)
+            _settle_scan_outcome(connection, scan_id, verdict, risk_score, failed=failure is not None)
         return completed
+
+
+# A scan whose engines all failed or were skipped has no outcome to record:
+# it must not read as a finished scan with zero risk. No risk is recorded and
+# no security notification is raised; operators can retry it.
+_FAIL_FINISHED_SCAN_SQL = """
+    UPDATE scan_jobs
+    SET status = 'failed', risk_score = NULL, last_error = ?, unavailable_engines = ?,
+        completed_at = CURRENT_TIMESTAMP, failed_at = CURRENT_TIMESTAMP
+    """
+
+
+def _settle_scan_outcome(connection: Any, scan_id: int, verdict: str, risk_score: int | None,
+                         *, failed: bool) -> None:
+    if failed:
+        _settle_deferred_submission(connection, scan_id, "failed")
+        return
+    _settle_deferred_submission(connection, scan_id, "completed")
+    _enqueue_scan_notification_if_requested(connection, scan_id, verdict, risk_score)
 
 
 def _settle_deferred_submission(connection: Any, scan_id: int, status: str) -> None:

@@ -2246,6 +2246,8 @@ export interface components {
             source: string;
             /** Status */
             status: string;
+            /** Unavailable Engines */
+            unavailable_engines: number | null;
         };
         /** LoginBody */
         LoginBody: {
@@ -2740,6 +2742,8 @@ export interface components {
             size_bytes: number;
             /** Status */
             status: string;
+            /** Unavailable Engines */
+            unavailable_engines: number | null;
         };
         /** ScanReport */
         ScanReport: {

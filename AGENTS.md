@@ -141,6 +141,15 @@ control-API workers must not advertise or run it. A digest is on at most one lis
 is already listed leaves it unchanged and reports where it is. The default Linux worker keys and
 compose engine lists include `file_type` and `hash_list`.
 
+Scan outcome rules: a scan whose engine results are all failed or skipped finishes as
+`failed` (`last_error` names each engine, no risk score, no security notification, deferred
+submission settled `failed`) through the same fenced finalization as a completion; never record
+"nothing ran" as a completed zero-risk scan. Clean results add no risk points: a scan with no
+detection records `info`/0. Finalization stores `scan_jobs.unavailable_engines` (failed or
+skipped results) so history views can show incomplete coverage without reading
+`engine_results`; it is null for active and older scans. Recorded `low`/10 is the pre-change
+clean score and the console renders it as "No detection".
+
 ## Engine Identity
 
 - `adapter_key` identifies vendor behavior and is not an instance identity.

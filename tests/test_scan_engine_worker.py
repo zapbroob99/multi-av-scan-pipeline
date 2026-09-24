@@ -246,7 +246,32 @@ class ScanEngineWorkerTests(unittest.TestCase):
 
         self.assertTrue(finalized)
         claim_finalize.assert_called_once()
-        complete.assert_called_once_with(scan.id, ANY, 3, "low", 10)
+        complete.assert_called_once_with(scan.id, ANY, 3, "info", 0, unavailable_engines=0)
+
+    def test_finalize_scan_fails_when_no_engine_completed(self) -> None:
+        scan = make_scan()
+        engine = make_engine("clamav", "ClamAV")
+        job = replace(make_job(scan.id, engine), status="failed")
+        result = replace(make_engine_result(scan.id, engine.display_name), status="failed")
+
+        with patch("app.workers.scan_worker.ENGINE_JOB_QUEUE_ENABLED", True), patch(
+            "app.workers.scan_worker.list_scan_engine_jobs", return_value=[job],
+        ), patch(
+            "app.workers.scan_worker.list_engine_results", return_value=[result],
+        ), patch(
+            "app.workers.scan_worker.claim_scan_finalization", return_value=3,
+        ), patch(
+            "app.workers.scan_worker.maybe_enqueue_lazy_archive_children",
+        ) as archive, patch(
+            "app.workers.scan_worker.complete_finalizing_scan", return_value=True,
+        ) as complete:
+            self.assertTrue(finalize_scan_if_complete(scan, [engine]))
+
+        # "Nothing ran" must not be recorded as a completed scan with zero risk.
+        failure = complete.call_args.kwargs["failure"]
+        self.assertIn("No engine completed a scan", failure)
+        self.assertIn("ClamAV failed", failure)
+        archive.assert_not_called()
 
     def test_finalize_scan_enqueues_lazy_archive_children_for_detected_container(self) -> None:
         engine = make_engine("static_metadata", "Static Metadata")

@@ -8,7 +8,7 @@ import type { ScanPreview } from '../lib/api'
 
 const sample: ScanPreview = { id: 24, filename: '<img src=x onerror=alert(1)>', sha256: 'a'.repeat(64),
   size_bytes: 512, case_name: 'Case A', status: 'failed', risk_score: 0, risk_level: 'info',
-  attempt_count: 3, job_revision: 9, created_at: '2026-09-08 12:00:00' }
+  attempt_count: 3, job_revision: 9, created_at: '2026-09-08 12:00:00', unavailable_engines: null }
 
 function mount(path = '/dashboard', failHistory = false, role = 'admin') {
   const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
@@ -34,8 +34,8 @@ describe('Dashboard', () => {
     // The badge must carry the recorded level and score without reading as an
     // alert, while the separate failed status stays visible beside it.
     const risk = document.querySelector('tbody .risk-badge')
-    expect(risk).toHaveTextContent('info')
-    expect(risk).toHaveTextContent('0 / 100')
+    // A failed scan has no outcome; an older zero score must not read as clean.
+    expect(risk).toHaveTextContent('Not scored')
     expect(risk).not.toHaveClass('risk-badge-alert')
     expect(document.querySelector('tr.row-alert')).toBeNull()
     expect(screen.getByText(/Risk is not a clean verdict/)).toBeInTheDocument()

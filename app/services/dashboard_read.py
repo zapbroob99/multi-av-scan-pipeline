@@ -21,6 +21,9 @@ class ScanPreview(BaseModel):
     attempt_count: int
     job_revision: int
     created_at: str
+    # Engines that failed or were skipped, recorded when the scan finished.
+    # Null for active scans and scans finished before this was recorded.
+    unavailable_engines: int | None
 
 
 class ScanPage(BaseModel):
@@ -105,6 +108,7 @@ def scan_page(*, limit: int, before: int | None, query: str, status: str, risk: 
                 j.status, j.verdict AS risk_level, j.risk_score, j.attempt_count,
                 COALESCE((SELECT MAX(ej.id) FROM scan_engine_jobs ej
                     WHERE ej.scan_job_id = j.id), 0) AS job_revision,
+                j.unavailable_engines,
                 j.created_at
             FROM scan_jobs j JOIN samples s ON s.id = j.sample_id
             WHERE {' AND '.join(conditions)} ORDER BY j.id DESC LIMIT ?

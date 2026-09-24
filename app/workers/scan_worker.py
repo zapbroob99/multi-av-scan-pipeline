@@ -715,11 +715,33 @@ def finalize_scan_if_complete_or_timeout(
         return False
 
     assessment = calculate_risk(engine_results)
-    if not transition_scan_to_completed(scan.id, assessment.verdict, assessment.score):
+    failure = no_engine_completed(engine_results)
+    if not transition_scan_to_completed(scan.id, assessment.verdict, assessment.score, failure=failure,
+                                        unavailable_engines=unavailable_count(engine_results)):
         return False
+    if failure:
+        print(f"Failed scan job {scan.id}: {failure}", flush=True)
+        return True
     maybe_enqueue_lazy_archive_children(scan, assessment, engine_results, engines, engine_keys)
     print(f"Completed scan job {scan.id}", flush=True)
     return True
+
+
+def unavailable_count(engine_results: list[EngineResultRecord]) -> int:
+    """Engines that failed or were skipped, recorded on the scan for history views."""
+    return sum(1 for result in engine_results if result.status != "completed")
+
+
+def no_engine_completed(engine_results: list[EngineResultRecord]) -> str | None:
+    """Reason to fail a scan whose every engine failed or was skipped, else None.
+
+    Such a scan has no outcome: recording it as completed with zero risk would
+    present "nothing ran" as "nothing found".
+    """
+    if engine_results and not any(result.status == "completed" for result in engine_results):
+        states = ", ".join(sorted(f"{result.engine_name} {result.status}" for result in engine_results))[:1500]
+        return f"No engine completed a scan ({states})."
+    return None
 
 
 def backfill_missing_engine_results(
@@ -793,6 +815,15 @@ def finalize_scan_if_complete(
         return False  # another worker owns the finalization
 
     assessment = calculate_risk(engine_results)
+    failure = no_engine_completed(engine_results)
+    if failure:
+        # Nothing was scanned, so there are no archive members to register.
+        if not complete_finalizing_scan(scan.id, WORKER_ID, generation, assessment.verdict,
+                                        assessment.score, failure=failure,
+                                        unavailable_engines=unavailable_count(engine_results)):
+            return False
+        print(f"Failed scan job {scan.id}: {failure}", flush=True)
+        return True
     # Register archive children BEFORE completing, inside the finalization
     # ownership, so a crash before completion is redone by a later finalizer
     # (idempotent child registration) rather than leaving a completed container
@@ -807,7 +838,8 @@ def finalize_scan_if_complete(
         # and let the new owner redo it. Do not complete.
         return False
     if not complete_finalizing_scan(
-        scan.id, WORKER_ID, generation, assessment.verdict, assessment.score
+        scan.id, WORKER_ID, generation, assessment.verdict, assessment.score,
+        unavailable_engines=unavailable_count(engine_results),
     ):
         # Lost the finalization (lease expired and it was stolen); the new owner
         # will complete it. Do not run completion side effects again.

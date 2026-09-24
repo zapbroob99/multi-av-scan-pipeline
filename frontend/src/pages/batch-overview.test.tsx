@@ -34,7 +34,7 @@ describe('Batch overview', () => {
     expect(screen.getByRole('link', { name: '<script>child.bin</script>' })).toHaveAttribute('href', '/scans/41')
     expect(document.querySelector('script')).toBeNull()
     expect(screen.getByText(/do not prove clean coverage/)).toBeInTheDocument()
-    expect(within(screen.getByRole('region', { name: 'Batch scans' })).getByText('0 / 100 · info')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Batch scans' })).getByText('Not scored')).toBeInTheDocument()
   })
 
   it('uses both keyset cursor fields and can return to the first page', async () => {

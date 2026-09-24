@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type ArchivePage } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { RiskBadge } from '../components/risk-badge'
 
 const active = (status: string) => ['queued', 'running', 'finalizing'].includes(status)
 export function archivePollInterval(after: string, page?: ArchivePage) {
@@ -56,7 +57,7 @@ export default function ArchiveChildren({ automation = false }: { automation?: b
           <tbody>{page.items.map(child => <tr key={child.id}><td><Link className="sample-link" to={`${scope}/scans/${child.id}`}>{child.path}{child.path_truncated ? '…' : ''}</Link>
             <small>Scan #{child.id} · {child.size_bytes.toLocaleString()} bytes{child.path_truncated ? ' · Path preview truncated' : ''}</small></td>
             <td><span className={`health-pill ${['failed', 'skipped'].includes(child.status) ? 'health-failed' : ''}`}>{child.status}</span></td>
-            <td>{active(child.status) ? 'Pending' : child.risk_score === null ? 'Not scored' : `${child.risk_score}/100 · ${child.risk_level}`}</td>
+            <td><RiskBadge level={child.risk_level} score={child.risk_score} pending={active(child.status)} failed={child.status === 'failed'} /></td>
             <td>{child.has_children ? <Link to={`${scope}/scans/${child.id}/children`}>Browse children of #{child.id}</Link> : <Link to={`${scope}/scans/${child.id}`}>Open report #{child.id}</Link>}</td>
           </tr>)}</tbody></table></div>}
       <div className="history-pagination"><p className="muted">{page.items.length} shown · Registration ID order{after ? ' · Historical page: auto-refresh paused' : ''}</p>

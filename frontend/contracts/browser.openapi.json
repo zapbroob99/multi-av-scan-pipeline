@@ -2795,6 +2795,17 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "unavailable_engines": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Engines"
           }
         },
         "required": [
@@ -2812,7 +2823,8 @@
           "status",
           "risk_level",
           "risk_score",
-          "created_at"
+          "created_at",
+          "unavailable_engines"
         ],
         "title": "LedgerScan",
         "type": "object"
@@ -4278,6 +4290,17 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "unavailable_engines": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Engines"
           }
         },
         "required": [
@@ -4291,7 +4314,8 @@
           "risk_score",
           "attempt_count",
           "job_revision",
-          "created_at"
+          "created_at",
+          "unavailable_engines"
         ],
         "title": "ScanPreview",
         "type": "object"

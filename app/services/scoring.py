@@ -41,7 +41,8 @@ def calculate_risk(engine_results: list[EngineResultRecord]) -> RiskAssessment:
         reasons.append("Multiple engines reported detections.")
 
     if completed_clean and not detections:
-        score += 10
+        # Informational only. This used to add 10 points, which turned every
+        # clean scan into a "low" risk and rendered it like a finding.
         reasons.append("No completed engine reported a detection.")
 
     if not engine_results:

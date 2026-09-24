@@ -20,6 +20,7 @@ class LedgerScan(BaseModel):
     risk_level: str
     risk_score: int | None
     created_at: str
+    unavailable_engines: int | None
 
 
 class LedgerPage(BaseModel):
@@ -58,6 +59,7 @@ def page(*, limit: int, before: int | None, query: str, source: str, status: str
         rows = connection.execute(f"""
             SELECT j.id, j.attempt_count, COALESCE((SELECT MAX(ej.id) FROM scan_engine_jobs ej
                     WHERE ej.scan_job_id = j.id), 0) AS job_revision, SUBSTR(s.original_filename, 1, 512) AS filename,
+                j.unavailable_engines,
                 SUBSTR(s.sha256, 1, 64) AS sha256, s.size_bytes,
                 SUBSTR(j.case_name, 1, 128) AS case_name, j.source,
                 j.service_client_id, SUBSTR(c.display_name, 1, 100) AS client_name,

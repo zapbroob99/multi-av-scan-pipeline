@@ -2,6 +2,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type BatchPage, type BatchScan } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { RiskBadge } from '../components/risk-badge'
 
 const active = (status: string) => ['queued', 'running', 'finalizing'].includes(status)
 
@@ -16,9 +17,7 @@ function displayTime(value: string) {
 }
 
 function riskText(scan: BatchScan) {
-  if (active(scan.status)) return 'Pending'
-  if (scan.risk_score === null) return 'Not scored'
-  return `${scan.risk_score} / 100 · ${scan.risk_level}`
+  return <RiskBadge level={scan.risk_level} score={scan.risk_score} pending={active(scan.status)} failed={scan.status === 'failed'} />
 }
 
 export default function BatchOverview({ automation = false }: { automation?: boolean }) {
@@ -61,7 +60,7 @@ export default function BatchOverview({ automation = false }: { automation?: boo
           <tbody>{page.items.map(scan => <tr key={scan.id}><td><Link className="sample-link" to={`${automation ? '/api-ledger' : ''}/scans/${scan.id}`}>{scan.path}{scan.path_truncated ? '…' : ''}</Link>
             <small>Scan #{scan.id} · {scan.size_bytes.toLocaleString()} bytes{scan.parent_scan_id ? ` · Parent #${scan.parent_scan_id}` : ''}</small></td>
             <td>{scan.role}</td><td><span className={`health-pill ${['failed', 'skipped'].includes(scan.status) ? 'health-failed' : ''}`}>{scan.status}</span></td>
-            <td className={['high', 'critical'].includes(scan.risk_level) ? 'risk-high' : ''}>{riskText(scan)}</td>
+            <td>{riskText(scan)}</td>
             <td><time dateTime={scan.created_at}>{displayTime(scan.created_at)}</time></td></tr>)}</tbody></table></div>}
       <div className="history-pagination"><p className="muted">{page.items.length} shown · Registration time/ID order{afterId ? ' · Historical page: auto-refresh paused' : ''}</p>
         <div>{afterId && <Button variant="secondary" onClick={firstPage}>First page</Button>}
