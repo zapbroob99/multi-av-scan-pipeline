@@ -163,9 +163,11 @@ limiting.
 - Browser acceptance uses temporary SQLite and a fixture server, not live data.
   On Windows Playwright teardown may leave fixture processes running; identify
   the exact owned PIDs before stopping them (none were left this session).
-- Preserve live containers `masp-app-1`, `masp-worker-1`, `masp-postgres-1` and
-  `masp-clamav-1`. They were untouched this session and still run pre-`1fdf768`
-  code until rebuilt. Run heavy suites sequentially: running the full suite,
+- Preserve live containers `masp-app-1`, `masp-worker-1`, `masp-postgres-1`,
+  `masp-clamav-1` and, for the manifest test, `masp-deferred-intake-1` and
+  `masp-manifest-intake-1`. They were rebuilt from this branch on 2026-09-24
+  (before `93e77ca`, which changes only deployment files); volumes were kept.
+  Run heavy suites sequentially: running the full suite,
   e2e and a disposable PostgreSQL concurrently previously pushed the live
   containers into exit 137. Never retain real credentials in this handoff or
   test artifacts.
