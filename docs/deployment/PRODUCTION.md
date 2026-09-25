@@ -196,6 +196,15 @@ every path (`/console/`, `/api/`, `/health`) to the app.
   the proxy limit for those paths rather than globally.
 - ICAP (1344/TCP) is plain TCP and never goes through the HTTP proxy.
 
+`deploy/pilot/rehearse_tls.sh` rehearses this on a disposable project
+(`masp-tls`, local ports 18443/18097) beside any real deployment: nginx with a
+self-signed certificate in front of the app, first untrusted (login and worker
+control must be refused), then trusted (login with a Secure cookie, a CSRF
+console write, and a worker enrollment plus heartbeat must succeed). It removes
+everything it created and ends with `RESULT: PASS` or `RESULT: FAIL`. It proves
+the MASP side only; repeat the console save and a worker heartbeat through the
+real proxy after deployment.
+
 ## 2. Bring up
 
 REST only:

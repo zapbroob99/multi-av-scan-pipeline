@@ -178,7 +178,9 @@ Important settings:
   Bind a private interface and firewall it to the proxy when the proxy is
   remote. Set `MASP_FORWARDED_ALLOW_IPS` to the proxy's address as the app
   container sees it and `MASP_SESSION_SECURE=1`; see
-  [TLS reverse proxy](PRODUCTION.md#tls-reverse-proxy).
+  [TLS reverse proxy](PRODUCTION.md#tls-reverse-proxy). Run
+  `deploy/pilot/rehearse_tls.sh` on the host first; it checks the MASP side on
+  a disposable project and reports `RESULT: PASS`.
 - `MASP_ICAP_BIND=<masp-private-ip>:1344` for the storage client connection.
 - `MASP_ICAP_SERVICE_CLIENT_KEY=legacy-default` uses compatibility routing. For
   dedicated ownership/routing, first create a client in **Service Clients** and
