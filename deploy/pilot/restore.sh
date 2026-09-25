@@ -61,12 +61,16 @@ rules_dir="$(pilot_rules_dir)"
 previous_storage="${storage_dir}.pre-restore.$(date -u +%Y%m%dT%H%M%SZ)"
 previous_rules="${rules_dir}.pre-restore.$(date -u +%Y%m%dT%H%M%SZ)"
 
+# Every running writer, including deferred/manifest intake and notification
+# workers, must stop: a writer left running changes the database or storage
+# while it is dumped, or overwrites the data just restored.
+mapfile -t writers < <(pilot_running_writer_containers)
 restart_services() {
-    pilot_compose start app worker icap >/dev/null 2>&1 || true
+    pilot_resume_writers "${writers[@]}"
 }
 trap restart_services EXIT
 
-pilot_compose stop app worker icap
+pilot_pause_writers "${writers[@]}"
 pilot_compose exec -T postgres dropdb -U masp --if-exists masp
 pilot_compose exec -T postgres createdb -U masp -O masp masp
 pilot_compose exec -T postgres pg_restore -U masp -d masp --no-owner --no-privileges < "$dump"

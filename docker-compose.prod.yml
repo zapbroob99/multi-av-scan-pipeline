@@ -72,6 +72,15 @@ services:
       MASP_WORKER_ENROLLMENT_TOKEN: ${MASP_WORKER_ENROLLMENT_TOKEN:-}
       MASP_WORKER_AGENT_TOKEN_TTL_DAYS: ${MASP_WORKER_AGENT_TOKEN_TTL_DAYS:-90}
       MASP_WORKER_CONTROL_REQUIRE_HTTPS: ${MASP_WORKER_CONTROL_REQUIRE_HTTPS:-1}
+      # Behind the TLS proxy. Uvicorn trusts X-Forwarded-Proto/For only from these
+      # addresses (IPs or CIDRs, as the app container sees the proxy: a proxy
+      # container's Docker network address, or the bridge gateway for a host
+      # proxy). Left at 127.0.0.1 the app treats every request as plain HTTP, so
+      # browser writes fail the same-origin check and worker control rejects the
+      # request as non-HTTPS. Never set "*" on a reachable port.
+      FORWARDED_ALLOW_IPS: ${MASP_FORWARDED_ALLOW_IPS:-127.0.0.1}
+      # 1 always marks the session cookie Secure; empty follows the request scheme.
+      MASP_SESSION_SECURE: ${MASP_SESSION_SECURE:-}
       MASP_API_MAX_WAIT_SECONDS: ${MASP_API_MAX_WAIT_SECONDS:-30}
       MASP_API_RETRY_AFTER_SECONDS: ${MASP_API_RETRY_AFTER_SECONDS:-2}
       MASP_UPLOAD_MAX_BYTES: ${MASP_UPLOAD_MAX_BYTES:?set MASP_UPLOAD_MAX_BYTES (e.g. 52428800 for 50 MiB)}
@@ -158,6 +167,27 @@ services:
       MASP_DEFERRED_INTAKE_LEASE_SECONDS: ${MASP_DEFERRED_INTAKE_LEASE_SECONDS:-3600}
     volumes:
       - ${MASP_STORAGE_DIR:-./storage}:/app/storage
+      - ${MASP_DEFERRED_SOURCE_DIR:-./deferred-source}:/app/deferred-source:ro
+
+  # Reads upload manifests from the same read-only share and turns them into
+  # deferred submissions; deferred-intake then copies and queues them. Needs no
+  # sample storage. Start with --profile manifest (together with --profile deferred).
+  manifest-intake:
+    <<: *masp-hardening
+    build: .
+    restart: unless-stopped
+    profiles: [manifest]
+    command: python -m app.workers.manifest_intake_worker
+    environment:
+      <<: *common-env
+      MASP_MANIFEST_BACKEND_KEY: ${MASP_MANIFEST_BACKEND_KEY:-}
+      MASP_MANIFEST_CLIENT_KEY: ${MASP_MANIFEST_CLIENT_KEY:-}
+      MASP_MANIFEST_ROOT_PREFIX: ${MASP_MANIFEST_ROOT_PREFIX:-}
+      MASP_MANIFEST_DATE_LAYOUT: ${MASP_MANIFEST_DATE_LAYOUT-%Y/%m/%d}
+      MASP_MANIFEST_LOOKBACK_DAYS: ${MASP_MANIFEST_LOOKBACK_DAYS:-3}
+      MASP_MANIFEST_BATCH: ${MASP_MANIFEST_BATCH:-200}
+      MASP_MANIFEST_POLL_SECONDS: ${MASP_MANIFEST_POLL_SECONDS:-15}
+    volumes:
       - ${MASP_DEFERRED_SOURCE_DIR:-./deferred-source}:/app/deferred-source:ro
 
   notification:

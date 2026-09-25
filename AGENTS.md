@@ -483,6 +483,15 @@ so a rename alone used to make a byte-identical retry conflict permanently. A ge
 different request for an existing id stays a 409, and the frozen snapshot stays authoritative
 for the accepted work.
 
+Deployment packaging: every worker process that the development compose defines (deferred,
+manifest, notifications, icap) must also exist, hardened, in `docker-compose.prod.yml` and
+`docker-compose.pilot.yml`, with its settings in both `.env.*.example` files. The pilot
+backup/restore scripts pause every running project container that writes data, found by compose
+labels, keep only PostgreSQL and ClamAV up, and restart exactly what they stopped; never return to
+a fixed service list. Behind the TLS proxy the app trusts forwarded headers only from
+`FORWARDED_ALLOW_IPS` (compose maps `MASP_FORWARDED_ALLOW_IPS`); the same-origin CSRF check and
+HTTPS-only worker control depend on it.
+
 ## Change Rules
 
 - Maintain in-place SQLite and PostgreSQL upgrade compatibility.

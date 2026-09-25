@@ -97,3 +97,35 @@ pilot_prepare_data_dir() {
 pilot_compose() {
     "${PILOT_COMPOSE[@]}" "$@"
 }
+
+# Services that must keep running while data is dumped or restored:
+# PostgreSQL serves pg_dump/pg_restore, and ClamAV holds no MASP data.
+PILOT_KEEP_RUNNING_SERVICES="postgres clamav"
+
+# Running containers of this project that can write MASP data. Found through
+# compose labels rather than a fixed service list, so services started under
+# any profile (deferred, manifest, notifications, icap) are included, and a
+# service that was not running is never started afterwards.
+pilot_running_writer_containers() {
+    docker ps --filter "label=com.docker.compose.project=$PILOT_PROJECT" --filter status=running \
+        --format '{{.ID}} {{.Label "com.docker.compose.service"}}' |
+        while read -r id service; do
+            case " $PILOT_KEEP_RUNNING_SERVICES " in
+                *" $service "*) ;;
+                *) printf '%s\n' "$id" ;;
+            esac
+        done
+}
+
+# Stop the given containers; pilot_resume_writers starts the same set again.
+pilot_pause_writers() {
+    [[ $# -gt 0 ]] || return 0
+    printf 'Stopping %s MASP container(s) that write data\n' "$#"
+    docker stop "$@" >/dev/null
+}
+
+pilot_resume_writers() {
+    [[ $# -gt 0 ]] || return 0
+    docker start "$@" >/dev/null 2>&1 || true
+}
+

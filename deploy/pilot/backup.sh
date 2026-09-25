@@ -41,12 +41,16 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_dir="$OUTPUT_ROOT/masp-pilot-$timestamp"
 mkdir -p "$backup_dir"
 
+# Every running writer, including deferred/manifest intake and notification
+# workers, must stop: a writer left running changes the database or storage
+# while it is dumped, or overwrites the data just restored.
+mapfile -t writers < <(pilot_running_writer_containers)
 restart_services() {
-    pilot_compose start app worker icap >/dev/null 2>&1 || true
+    pilot_resume_writers "${writers[@]}"
 }
 trap restart_services EXIT
 
-pilot_compose stop app worker icap
+pilot_pause_writers "${writers[@]}"
 pilot_compose exec -T postgres pg_dump -U masp -d masp -Fc > "$backup_dir/postgres.dump"
 tar -C "$storage_dir" -czf "$backup_dir/storage.tar.gz" .
 tar -C "$rules_dir" -czf "$backup_dir/rules.tar.gz" .
