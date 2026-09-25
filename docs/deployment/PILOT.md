@@ -1,96 +1,45 @@
 # MASP Single-Host Pilot
 
-`/console/service-clients` exposes admin-only paginated identity metadata and
-confirmed name/enabled updates. Deploy matching contracts/backend/assets. Disabling
-can prevent integration submissions; it does not revoke credentials or rewrite
-accepted snapshots. `legacy-default` is protected. Profile routing is available at
-`/console/service-clients/{id}/profiles`; stale selections are rejected under the
-shared write lock. Reads cap profiles at 20/page and engine choices/assignments at
-100; incomplete lists cannot be saved. Creation and credential actions remain in
-legacy administration. Name/state edits remain last-save-wins.
+## What this release runs
 
-`/console/hash-scan` adds analyst/admin SHA-256 reputation lookup. Ship matching
-contracts, backend and assets. Options reads make no vendor calls; explicit POST
-may transmit the hash and consume provider quota. There is no automatic replay,
-file upload or scan-history entry. At most 16 enabled hash engines are supported
-per browser lookup. Provider latency/quota acceptance still requires deployment
-validation; the migration tests do not call live providers.
+- One application image serves the integration API (`/api/v1/*`), remote worker
+  control (`/api/v1/worker-control/*`), the browser API (`/api/ui/v1/*`) and the
+  browser console at `/console/`, all on port 8000. The image builds the console
+  in a Node stage; the host needs neither Node nor a separate web server.
+- The server-rendered legacy UI is retired. Former pages such as `/`,
+  `/scans/{id}`, `/engines` and `/system` redirect to their console screens, and
+  its form endpoints no longer exist. `docker-compose.frontend.yml` (nginx serving
+  the same build) remains an optional overlay for local work only.
+- Processes: `app`, `worker` (Linux engines), and the opt-in profiles `icap`,
+  `deferred` (copies referenced objects), `manifest` (reads upload manifests from
+  the same read-only share) and `notifications` (SIEM webhook).
 
-`/console/scan-policy` adds administrator editing of API wait/retry intervals and
-upload policy cap. Deploy matching backend/contracts/assets. Blank clears the DB
-override; zero upload policy cap leaves deployment/proxy HTTP limits intact. Saves
-are atomic and confirmed, without automatic retries. Reload to reconcile uncertain
-responses. Concurrent administrators use last-save-wins; environment fallbacks
-are local to the process reading the policy. ICAP tuning is configured separately.
+## Upgrade notes
 
-Admin `/console/system/overview` exposes 30-second cached totals, worker liveness,
-read-only retention policy and manually loaded historical engine metrics. Deploy
-matching browser contracts/assets and backend. Metrics use recorded engine names,
-not instance identities. Full-history aggregates need representative PostgreSQL
-load validation; output limits and statement timeouts alone do not certify scale.
-No cleanup runs on overview reads. `/console/system/retention` adds an admin-only
-preview and confirmed cleanup of at most 20 records (or the smaller server batch).
-Deploy matching contracts/assets/backend. Preview and deletion include automation
-and archive children; parents with children stay protected. Policy stays server
-configured. Each deletion commits separately; inspect blocked IDs and file-cleanup
-failures, and refresh/reconcile uncertain responses before reviewing another batch.
+- Rebuild the image and run every API, worker and intake process at the same
+  version. Storage grants, user-management locks and fenced scan finalization
+  assume no mixed old/new writers.
+- Startup migrations add columns, tables and indexes in place and not
+  concurrently. On a large existing history, take a backup and schedule a
+  maintenance window; see also the one-time `samples.size_bytes` migration in
+  the security checklist.
+- Tell integrators about two outcome changes: a scan in which no engine
+  completed now ends `failed` with no risk score instead of `completed` with zero
+  risk, and a clean scan records `info`/0 instead of `low`/10.
+  `decision.action` is unchanged.
+- `MASP_SHOW_DEV_LOGIN_HINTS` was removed; delete it from the environment file.
+- Linux workers also run the built-in `file_type` and `hash_list` engines by
+  default. An explicit `MASP_WORKER_ENGINE_KEYS` must list them to run them.
+- Set `MASP_FORWARDED_ALLOW_IPS` for the TLS proxy (see
+  [TLS reverse proxy](PRODUCTION.md#tls-reverse-proxy)). Without it the console
+  cannot save anything behind HTTPS and remote workers are refused.
 
-`/console/system/runtime` adds admin-only active-queue and worker runtime views.
-Upgrade creates `idx_scan_jobs_active_seek` for queued/running/finalizing records
-in-place; plan index-build time/locking for large deployments. Deploy matching
-backend and generated assets. Existing PostgreSQL read-time budgets still apply.
-
-Admin `/console/system` includes worker inventory, lifecycle changes and confirmed
-agent-credential revocation. Deploy backend and assets from the same revision.
-Revocation interrupts subsequent Control API operations; the node must enroll again.
-Remaining System screens retain temporary legacy links; this is not full UI parity.
-Pool CRUD is available at `/console/system/pools`. Rebuild matching assets/backend;
-admin/CSRF checks remain required and assigned pools cannot be deleted. Pool changes
-affect subsequent claims; fleet/load and remaining System acceptance gates remain.
-
-The [independent Dashboard/Engines console](../architecture/FRONTEND_SEPARATION.md) is an
-opt-in migration slice with a separate static build/proxy. Legacy screens remain.
-Review its TLS/origin requirements before pilot deployment.
-The console now submits files at `/api/ui/v1/scans`; rebuild the optional frontend
-image to include its exact nginx upload location (64 MiB request ceiling).
-Rebuild all static assets to include `/console/theme-init.js`; it applies the
-browser-local light/dark preference before React and is permitted by `script-src 'self'`.
-Other browser API bodies remain capped at 128 KiB. Align deployment limits;
-the server still checks its own file policy and HTTP ceiling before intake.
-Manual JSON report reads now use the shared assessment rules and bounded engine
-projections. Manual archive navigation uses `/api/ui/v1/scans/{id}/children` with
-20-row direct-child pages, reusing the existing parent/id index. It neither
-extracts files nor refreshes batch counters. Empty lists are not a clean verdict.
-Update backend and frontend together; legacy reports remain available.
-The `/console/scans/{id}/manage` screen adds bounded summary and full JSON/CSV
-downloads plus confirmed retry/delete. Full JSON contains raw engine output,
-details and findings; CSV contains normalized rows. Both use fixed numeric names,
-omit sample bytes/storage paths and have separate 2 MiB browser output ceilings.
-The full reader rejects over 256 results/jobs or more than 2 MiB of engine source
-fields before hydrating blobs. Invalid policy details retain evidence but suppress
-the decision. Retry is analyst/admin; delete remains admin-only.
-Mutation bodies carry attempt and engine-job revision; old browser bundles must
-be rebuilt with the matching backend. Retry acceptance is asynchronous. Deletion
-reports storage-cleanup failure separately after the database commit. Manual batch
-overviews use bounded indexed pages and persisted counters without refreshing them
-or loading engine output. Admin Dashboard bulk deletion accepts at most 20 visible
-manual non-child rows, rechecks each attempt/job revision and protection under its
-own transaction, and reports partial success or cleanup failure. It never retries
-automatically. Full engine output now opens in React from each result row. Its
-manual-source/ownership checks and 2 MiB source preflight share one snapshot with
-text hydration; a separate serialized-response limit rejects escaping overhead.
-Oversized output retains a legacy fallback; recursive batch actions remain planned. Validate PostgreSQL locking,
-full-export preflight and query budgets before promotion.
-Browser reads default to a 5-second per-statement PostgreSQL budget and retry/delete
-to a 5-second row-lock budget. Tune `MASP_UI_READ_TIMEOUT_MS` and
-`MASP_UI_WRITE_LOCK_TIMEOUT_MS` only from retained acceptance evidence; both are
-clamped to 100..60000 ms and a budget expiry returns a generic 503.
-Run `npm --prefix frontend run contracts:check` in the development/CI environment
-before bundling a release (generator setup is in the separation guide). Static
-builds use checked-in generated types; deployed nginx needs no Python/generator.
-This check does not prove compatibility with a separately deployed older backend.
-Dashboard startup adds a partial `(source, id)` history index; plan upgrade time
-for existing large histories. API/ICAP and archive children are not in Dashboard history.
+Console read paths are bounded, which is not a capacity guarantee. Before
+promotion, repeat `tools/benchmark_browser_postgres.py` against an isolated
+loopback acceptance database with deployment-shaped rows and worker writes; the
+tool destroys the target `public` schema and refuses deployed hosts. The history
+of individual console slices and their bounds is in
+[frontend separation](../architecture/FRONTEND_SEPARATION.md).
 
 This runbook deploys a single-host pilot on one Linux VM. The stack
 contains the web/admin application, REST API, ICAP gateway, one Linux worker,
@@ -227,7 +176,9 @@ Important settings:
 
 - `MASP_APP_BIND=127.0.0.1:8000` when the HTTPS proxy is on the same host.
   Bind a private interface and firewall it to the proxy when the proxy is
-  remote.
+  remote. Set `MASP_FORWARDED_ALLOW_IPS` to the proxy's address as the app
+  container sees it and `MASP_SESSION_SECURE=1`; see
+  [TLS reverse proxy](PRODUCTION.md#tls-reverse-proxy).
 - `MASP_ICAP_BIND=<masp-private-ip>:1344` for the storage client connection.
 - `MASP_ICAP_SERVICE_CLIENT_KEY=legacy-default` uses compatibility routing. For
   dedicated ownership/routing, first create a client in **Service Clients** and
@@ -241,6 +192,10 @@ Important settings:
   explicit `MASP_DEFERRED_BACKEND_CLIENTS_JSON` client mapping, then start
   `--profile deferred`. Add `--profile notifications` only after setting and
   testing an HTTPS `MASP_SIEM_WEBHOOK_URL`; the source mount is read-only.
+  Add `--profile manifest` when the producer drops a JSON manifest beside each
+  finished file instead of calling the API; `MASP_MANIFEST_CLIENT_KEY` must be
+  a client granted that backend, and **System > Deferred intake** shows the
+  worker, backlog and rejected manifests.
   After all API/intake processes are upgraded, client **Storage** settings may
   replace the environment grants with explicit whole-backend/prefix access.
   Empty custom grants deny access. Roots remain deployment-owned; see
@@ -487,8 +442,11 @@ Create a consistent pilot backup:
 ./deploy/pilot/backup.sh --env-file .env.pilot --output-dir /srv/masp/backups
 ```
 
-The script briefly stops app/worker/ICAP, dumps PostgreSQL, archives sample
-storage and mutable YARA rules, writes SHA-256 checksums, and restarts services.
+The script stops every running MASP service that writes data (app, worker,
+ICAP, deferred and manifest intake, notifications), leaving PostgreSQL and
+ClamAV up, dumps PostgreSQL, archives sample storage and mutable YARA rules,
+writes SHA-256 checksums, and then restarts exactly the services it stopped.
+Restore pauses the same set, so no worker writes over the restored data.
 Store `.env.pilot` separately in the approved secret-management system.
 
 Restore is destructive and requires explicit confirmation:
@@ -612,98 +570,3 @@ instead of shared-storage access. Use **Engines > Test
 connection** to request an immediate worker-side refresh. Confirm the version and
 last successful scan fields after the EICAR acceptance scan; heartbeat-only
 coverage is not an engine-health acceptance result.
-
-
-React integration administration also provides atomic client/default-profile/
-initial-credential creation and bounded credential add/list/revoke. Admin-supplied
-tokens are write-only; preserve HTTPS, pre-body admin/CSRF checks, no-store responses
-and no automatic write replay. Lists omit hashes and prefixes. The additive
-`idx_api_client_credentials_client_seek` index needs a deployment migration window;
-validate inventory size and concurrent administrative reads/writes before cutover.
-No vendor support promotion or remote-worker acceptance gate is implied.
-
-
-The React API ledger now provides bounded analyst/admin API/ICAP history with
-exact client/source filters and explicit unassigned ownership. It does not expose
-engine blobs or use service-client bearer authentication. Partial global/client
-ID seek indexes are additive startup migrations; retain deployment-shaped filter
-load and migration lock validation. Automation details and deletion remain legacy
-parity work. This does not change scan decisions, routing or adapter support.
-
-
-Automation report/output and batch overview now use React with the shared bounded,
-coherent readers. Batch members match source and nullable client ownership.
-Single deletion is admin/CSRF-protected with attempt/job fences, active/child/
-shared-sample/outbox checks and separate cleanup outcomes. No automatic replay or
-recursive deletion. Preserve manual-source boundaries, output ceilings and
-production load/TLS gates; payload/export and bulk-action parity remain before
-retiring legacy HTML. No adapter or worker support state is promoted.
-
-
-Automation management now provides analyst/admin summary/full report JSON/CSV
-exports with shared source-scoped snapshot reads and separate source/content
-limits. Historical full exports lacking recorded routing keep a legacy fallback.
-Exports are operator reports, not integration API status/result contract previews.
-Retain deployment export-memory/concurrency gates and remaining payload/bulk parity;
-this does not promote engine support or authorize legacy HTML removal.
-
-
-The React automation report now links to an on-demand integration result JSON
-preview for terminal scans. Session-authenticated analyst/admin reads reuse
-bounded coherent export admission and the public result projection, with no
-private engine output and a 2 MiB serialized response limit. Invalid policy,
-active scans and unavailable historical routing fail explicitly. Oversized batch
-JSON, remaining UI parity and deployment-scale acceptance are still open; this
-adds no worker transport or production support claim.
-
-Automation status JSON now has a separate React view for active/terminal scans.
-Scan, polling policy, accepted-instance eligibility and global queue counts use
-one bounded repeatable read. Global history aggregates remain subject to statement
-timeouts and deployment-scale acceptance; there is no automatic browser polling.
-Status requires an accepted engine snapshot, preserves backend coverage decisions
-and omits private engine output. Oversized batch JSON and final legacy-action parity remain pending.
-
-React automation batch status/result JSON now supports complete batches of up to
-20 members, with exact source/owner consistency and a shared repeatable snapshot.
-Result admission caps aggregate engine/snapshot bytes before hydration; response
-envelopes stay within 2 MiB. Status reads no engine blobs. Stored counters may lag;
-JSON never proves clean coverage by itself. Oversized batches use the overview
-and individual reports; complete oversized-payload parity, final legacy-action checks
-and deployment acceptance remain open before legacy removal.
-
-Automation archive navigation now stays in React, with direct-child ID-keyset
-pages and attempt guards. Parent, nested and upward navigation preserves exact
-API/ICAP source, nullable client and batch boundaries. Reads use existing indexed
-probes and PostgreSQL snapshot/time budgets, never engine blobs or counter writes.
-Empty lists do not prove complete extraction. Final legacy-action and deployment-scale
-acceptance remain open; this does not enable recursive deletion or remove legacy.
-
-Admin ledger bulk deletion now confirms at most 20 top-level API/ICAP records with
-displayed attempt/job-revision fences. Shared row-locked protections and independent
-commits remain authoritative; receipts identify deleted, blocked and cleanup-failed
-IDs. Ambiguous writes are never replayed and the UI requires explicit fresh reads
-before reselection. This does not delete batches recursively. Ledger revision-probe
-load and remaining security/deployment acceptance gates stay open.
-
-Admin React Users now lists bounded local/LDAP metadata and confirms local user
-creation with an explicit role and write-only initial password. Password hashes,
-directory identifiers and sessions are excluded from list DTOs; shared hashing and
-database uniqueness remain authoritative. No automatic creation replay occurs.
-Own-password management now uses React Account for local analysts and admins.
-Both browser UIs share validation, a password-only conditional update and atomic
-session revocation. Local login rechecks the verified hash under a row lock before
-creating a session, preventing old-password login from surviving a concurrent
-password change/reset. LDAP passwords remain directory-managed. Admin Users now
-confirms role changes, optional password resets and removal, with a displayed
-management revision checked under shared legacy/browser transaction locks. The
-writer rechecks the actor's administrator role, blocks self-management and preserves
-the last local administrator across concurrent operations. LDAP shadow removal
-revokes MASP sessions but does not disable directory access; a later directory
-sign-in may recreate it. Passwords never enter console state or caches; inputs
-clear on cancellation/send and uncertain writes are not replayed. Explicit list
-refresh is required after management writes. Startup adds the default-zero
-users.management_revision column in place; old account data is retained. Roll out
-all app processes together so old writers cannot bypass the revision/locking rules.
-Startup adds an auth-session user index in place. PostgreSQL password changes use
-the existing UI lock timeout; deployment-scale login/revocation acceptance remains
-open. No worker topology or engine support status changes.

@@ -1,127 +1,45 @@
 # MASP Production Deployment Runbook
 
-`/console/service-clients` adds bounded admin metadata reads and CSRF-protected
-name/enabled-state updates. Reads do not select credential or profile policy data;
-updates exclude `legacy-default` in SQL and use browser statement/lock budgets.
-Disabling can prevent integration submissions without revoking credentials or
-rewriting accepted scan snapshots. Client profile routing now has a separate React
-editor with client/managed checks and previous-selection fencing. The shared writer
-locks the profile on PostgreSQL and begins an immediate SQLite transaction before
-replacing assignments, serializing legacy and browser writers. Selected engines
-are required as in the legacy editor; disabled/source-ineligible engines still do
-not become eligible at intake. Oversized profile/engine lists stay read-only in the
-console. Credentials remain in legacy administration. No schema or worker-protocol change is introduced;
-representative integration counts/concurrent edits remain a deployment acceptance gate.
+## What this release runs
 
-`/console/hash-scan` uses manual-source engine selection and existing provider
-quota reservations for explicit authenticated/CSRF-protected lookups. A request
-can consume quota before a later engine fails; ambiguous errors must not be
-automatically replayed. No file bytes or scan records are created. The response
-projects only names/instance IDs, found flags and backend decisions, omitting raw
-provider payloads and errors. A 16-engine request cap bounds fan-out; it does not
-replace provider latency, inventory-scale, egress or deployment load acceptance.
+- One application image serves the integration API (`/api/v1/*`), remote worker
+  control (`/api/v1/worker-control/*`), the browser API (`/api/ui/v1/*`) and the
+  browser console at `/console/`, all on port 8000. The image builds the console
+  in a Node stage; the host needs neither Node nor a separate web server.
+- The server-rendered legacy UI is retired. Former pages such as `/`,
+  `/scans/{id}`, `/engines` and `/system` redirect to their console screens, and
+  its form endpoints no longer exist. `docker-compose.frontend.yml` (nginx serving
+  the same build) remains an optional overlay for local work only.
+- Processes: `app`, `worker` (Linux engines), and the opt-in profiles `icap`,
+  `deferred` (copies referenced objects), `manifest` (reads upload manifests from
+  the same read-only share) and `notifications` (SIEM webhook).
 
-Admin `/console/scan-policy` exposes only API wait/retry timing and upload policy
-cap. Strict CSRF-protected writes validate all fields and commit them together;
-blank clears overrides and falls back to process environment/defaults. Coordinate
-concurrent edits (last-save-wins). Zero upload policy cap does not remove proxy or
-server request-body limits. Keep environment fallback values aligned across app
-and worker processes. This adds no schema change or production acceptance waiver.
+## Upgrade notes
 
-Admin `/console/system` now includes bounded worker inventory and confirmed
-lifecycle/credential controls. Keep same-origin admin/CSRF enforcement and deploy
-matching backend/assets. Revocation requires node re-enrollment and can interrupt
-running Control API work. Worker fleet load and remaining System migration stay
-separate acceptance work; this addition does not certify production deployment.
-The matching pool screen `/console/system/pools` now supports bounded reads and
-confirmed create/edit/delete, with shared selector validation and foreign-key
-assignment protection. No migration or additional worker privileges are required.
-The runtime console adds the partial `idx_scan_jobs_active_seek` index on upgrade;
-evaluate index-build time and locking before a large production upgrade. Its
-admin-only queue read covers all sources and uses bounded ID-keyset pages, not
-scheduling positions or deferred intake. `/console/system/overview` adds cached
-all-source totals, worker liveness, read-only retention policy and on-demand
-historical engine-name metrics. Summary and one metrics page are cached per process
-for 30 seconds, with PostgreSQL statement budgets on uncached reads. Aggregation
-can scan all retained history despite bounded responses; validate representative
-history size and concurrent admin reads before acceptance. Retention cleanup
-is available through `/console/system/retention` with bounded preview, explicit
-confirmation, CSRF and per-record attempt/job-revision fences. The current server
-policy and age cutoff are rechecked on execution; age is checked under the scan
-row lock. Active scans, parents with children, shared samples and undelivered
-notifications stay protected. Each record commits separately; reconcile ambiguous
-responses and file-cleanup failures without replay. Preview uses ID pagination and
-the browser read budget; validate sparse-candidate scans and deletion/file-I/O
-latency on deployment-sized data. No schema change is added by these slices.
+- Rebuild the image and run every API, worker and intake process at the same
+  version. Storage grants, user-management locks and fenced scan finalization
+  assume no mixed old/new writers.
+- Startup migrations add columns, tables and indexes in place and not
+  concurrently. On a large existing history, take a backup and schedule a
+  maintenance window; see also the one-time `samples.size_bytes` migration in
+  the security checklist.
+- Tell integrators about two outcome changes: a scan in which no engine
+  completed now ends `failed` with no risk score instead of `completed` with zero
+  risk, and a clean scan records `info`/0 instead of `low`/10.
+  `decision.action` is unchanged.
+- `MASP_SHOW_DEV_LOGIN_HINTS` was removed; delete it from the environment file.
+- Linux workers also run the built-in `file_type` and `hash_list` engines by
+  default. An explicit `MASP_WORKER_ENGINE_KEYS` must list them to run them.
+- Set `MASP_FORWARDED_ALLOW_IPS` for the TLS proxy (see
+  [TLS reverse proxy](PRODUCTION.md#tls-reverse-proxy)). Without it the console
+  cannot save anything behind HTTPS and remote workers are refused.
 
-The light/dark preference bootstrap is `/console/theme-init.js`. Package it with
-the generated assets and keep it same-origin under the existing CSP. It stores
-only the explicit theme name in browser local storage.
-
-The [independent Dashboard/Engines console](../architecture/FRONTEND_SEPARATION.md) is an
-opt-in incremental migration. Its frontend overlay requires separate nginx/TLS,
-trusted-proxy, secure-cookie and release-image validation before production use.
-Browser contract export/type generation is a build-time gate, not a deployed
-service. Use the documented schema-tooling dependency baseline and both lockfiles
-for contract checks, then package backend and frontend from the same tested
-revision. Ordinary frontend builds remain Node-only. Generated types do not
-runtime-validate responses from an outdated server or establish engine support.
-Manual scan management now supports summary/full JSON/CSV downloads and CSRF-protected
-retry/delete with attempt plus engine-job revision checks. Retry resets and
-creates engine jobs in one transaction; shared delete rejects active scans,
-shared samples and pending notifications. Browser delete also protects parents
-with registered children. Retry/delete row-lock waits have a transaction-local
-budget. Full exports run only on click in the report snapshot, preflight at most
-256 results/jobs and 2 MiB of engine source fields before hydrating blobs, and
-then enforce a separate 2 MiB serialized-output ceiling. JSON includes raw output,
-details and findings; CSV retains normalized rows. Neither includes sample bytes,
-storage paths or integration settings. Invalid policy details suppress the decision.
-Validate sample-reference/outbox lookup plans and export concurrency at deployment
-scale. These ceilings do not guarantee bounded database work or server memory;
-JSON transport escaping adds overhead. Manual batch overviews use the existing
-`(batch_id, created_at, id)` index, paired keyset cursors and persisted counters;
-GET does not refresh counters or load engine output. Validate deep pages and stale
-counter behavior under worker writes. Dashboard bulk deletion is admin-only,
-bounded to 20 visible manual non-child rows and independently commits each fenced
-record. Monitor partial/ambiguous outcomes and cleanup-failed IDs. Recursive batch
-actions remain planned. Per-engine full output now has a React screen with manual
-source/result ownership, a coherent 2 MiB source preflight, a separate 2 MiB JSON
-response limit and plain-text rendering. It does not poll or retain an inactive
-output cache. Oversized output retains a legacy fallback. Measure concurrent
-viewers and TOAST/serialization overhead; a response ceiling is not a memory budget.
-Deletion commits before sample cleanup; failed cleanup needs administrator follow-up.
-Browser sample uploads use the exact `/api/ui/v1/scans` multipart endpoint.
-Rebuild the frontend image for its 64 MiB nginx exception; do not raise the
-128 KiB limit for all browser API requests. Align proxy/server file limits and
-budget spool storage and upload concurrency. No distributed upload admission or
-request-idempotency guarantee is added by the console; ambiguous network failures
-must be reconciled against history before a user retries.
-Manual report reads use short PostgreSQL REPEATABLE READ transactions, with no
-worker-row locks and a transaction-local statement budget. Large/invalid policy
-payloads suppress the compact decision and direct the user to the legacy report.
-SQL substring projection bounds transfer, not necessarily database TOAST/decompression
-work. No new schema migration or engine support promotion is part of this slice.
-Archive navigation similarly uses a consistent read snapshot and bounded direct
-children (20 default, 100 maximum), manual/batch scope and a parent-attempt guard
-on later pages. It reuses `idx_scan_jobs_parent`, does not count/load whole trees
-or write batch counters, and never extracts files. Child-presence checks use a
-second, page-bounded set of constant index probes in the same snapshot to avoid
-correlated sequential scans on highly skewed parents. Selective/no-match search
-can still examine many rows. Retained child records are not a fresh extraction
-inventory or a clean/full-coverage guarantee.
-The new partial Dashboard seek index is created during startup, not concurrently;
-budget a maintenance window for large existing histories. Summary caching is
-per API process, not distributed. Validate cold aggregate and substring-search
-cost under concurrent PostgreSQL traffic before scaling; page-size bounds do not
-bound the number of rows examined by those queries.
-
-A local disposable PostgreSQL 16 benchmark with 100,000 Dashboard rows, 100,000
-archive children, indexed deep batch pages and eight-way mixed reads passed the
-repository's default budgets. This establishes a regression baseline, not
-production capacity. Repeat
-`tools/benchmark_browser_postgres.py` against an isolated loopback acceptance
-database with deployment-shaped rows, worker writes and database telemetry before
-promotion; the tool destroys the target `public` schema and refuses deployed hosts.
+Console read paths are bounded, which is not a capacity guarantee. Before
+promotion, repeat `tools/benchmark_browser_postgres.py` against an isolated
+loopback acceptance database with deployment-shaped rows and worker writes; the
+tool destroys the target `public` schema and refuses deployed hosts. The history
+of individual console slices and their bounds is in
+[frontend separation](../architecture/FRONTEND_SEPARATION.md).
 
 Deploys MASP against an **external, operator-managed PostgreSQL** using
 `docker-compose.prod.yml` and an operator-managed `.env.production`. The local
@@ -258,6 +176,26 @@ Bind the gateway to a **Service Clients** identity with
 systems that need different engine profiles or ledger ownership; ICAP source IP
 is not used as an identity boundary.
 
+### TLS reverse proxy
+
+MASP serves plain HTTP on port 8000. Terminate TLS in front of it and proxy
+every path (`/console/`, `/api/`, `/health`) to the app.
+
+- Preserve `Host` and set `X-Forwarded-Proto: https` and `X-Forwarded-For`.
+- Set `MASP_FORWARDED_ALLOW_IPS` to the proxy's address as the app container
+  sees it: a proxy container's address on the compose network, or, for a proxy on
+  the host reaching the published port, that network's Docker gateway. Uvicorn
+  ignores forwarded headers from anyone else, and without them the app believes
+  it is on plain HTTP: every console save fails the same-origin check and remote
+  workers are refused because `MASP_WORKER_CONTROL_REQUIRE_HTTPS=1`. Never use
+  `*` on a reachable port.
+- Set `MASP_SESSION_SECURE=1` so the session cookie is always `Secure`.
+- Body limits: the app itself caps browser JSON at 128 KiB. Only the browser
+  upload `POST /api/ui/v1/scans` and the integration upload `POST /api/v1/scans`
+  need large bodies, up to `MASP_HTTP_UPLOAD_MAX_BYTES` (default 64 MiB); raise
+  the proxy limit for those paths rather than globally.
+- ICAP (1344/TCP) is plain TCP and never goes through the HTTP proxy.
+
 ## 2. Bring up
 
 REST only:
@@ -289,6 +227,21 @@ storage is fail-closed: map each backend to allowed service-client keys with
 shared root, scope clients to prefixes, for example
 `{"shared":{"drive":["drive/inbox"],"large-transfer":["transfer/inbox"]}}`.
 Set `MASP_DEFERRED_MAX_BYTES` to the largest deferred object MASP may copy.
+
+Manifest intake runs beside deferred intake when a producer drops a JSON
+manifest next to each finished file instead of calling the API:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production \
+  --profile deferred --profile manifest --profile notifications up -d --build
+```
+
+`MASP_MANIFEST_CLIENT_KEY` must name an existing service client that is granted
+`MASP_MANIFEST_BACKEND_KEY` (environment mapping or the client's **Storage**
+tab); otherwise every manifest is rejected. The producer gets no feedback, so
+watch **System > Deferred intake** for the worker's last cycle, the backlog and
+rejected manifests. See
+[manifest intake](../architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md#manifest-intake-a-producer-that-never-calls-masp).
 
 ### Client storage access rollout
 
@@ -390,9 +343,15 @@ healthcheck has a 120s start period. Workers wait for clamd to be healthy.
   `masp_engine_node_health_consecutive_failures`; a healthy heartbeat alone is
   not sufficient evidence that the antivirus is usable.
 - **Backups:** back up the external PostgreSQL and the `MASP_STORAGE_DIR`
-  sample directory. The `clamav-db` volume is a rebuildable cache.
-- **Deferred intake:** monitor pending/failed `deferred_scan_submissions`; source
-  outages intentionally retain work and retry instead of blocking Drive.
+  sample directory as a consistent pair: stop every MASP process that writes
+  (`app`, `worker`, `icap`, `deferred-intake`, `manifest-intake`,
+  `notification`) first, or take coordinated database and storage snapshots.
+  A writer left running changes one side while the other is copied. The
+  `clamav-db` volume is a rebuildable cache.
+- **Deferred intake:** **System > Deferred intake** shows the manifest worker's
+  last cycle, the backlog with its oldest waiting age, rejected manifests and
+  submissions that failed before becoming scans. Source outages intentionally
+  retain work and retry instead of blocking Drive.
 - **Notifications:** monitor `notification_outbox` pending age and delivery
   errors. Webhook downtime never blocks scan completion.
 
@@ -442,6 +401,9 @@ and sufficient disk space rather than assuming a zero-downtime restart.
 - [ ] `MASP_API_TOKEN` is strong and unique; rotated on a schedule.
 - [ ] MASP ports bound to localhost / private network; only the TLS proxy is
       public.
+- [ ] `MASP_FORWARDED_ALLOW_IPS` names only the TLS proxy, `MASP_SESSION_SECURE=1`
+      is set, and a console save plus a remote worker heartbeat succeed through
+      the proxy.
 - [ ] PostgreSQL transport uses the database team's required TLS mode and CA;
       the configured pool budget stays below the database connection limit.
 - [ ] Remote engine hosts use the HTTPS control transport and have no PostgreSQL
@@ -477,98 +439,3 @@ and sufficient disk space rather than assuming a zero-downtime restart.
       export/SIEM forwarding, and legal-hold ownership are documented. The local
       trail is application-level append-only and best effort, not immutable
       storage; see [Audit trail](../security/AUDIT_TRAIL.md).
-
-
-React integration administration also provides atomic client/default-profile/
-initial-credential creation and bounded credential add/list/revoke. Admin-supplied
-tokens are write-only; preserve HTTPS, pre-body admin/CSRF checks, no-store responses
-and no automatic write replay. Lists omit hashes and prefixes. The additive
-`idx_api_client_credentials_client_seek` index needs a deployment migration window;
-validate inventory size and concurrent administrative reads/writes before cutover.
-No vendor support promotion or remote-worker acceptance gate is implied.
-
-
-The React API ledger now provides bounded analyst/admin API/ICAP history with
-exact client/source filters and explicit unassigned ownership. It does not expose
-engine blobs or use service-client bearer authentication. Partial global/client
-ID seek indexes are additive startup migrations; retain deployment-shaped filter
-load and migration lock validation. Automation details and deletion remain legacy
-parity work. This does not change scan decisions, routing or adapter support.
-
-
-Automation report/output and batch overview now use React with the shared bounded,
-coherent readers. Batch members match source and nullable client ownership.
-Single deletion is admin/CSRF-protected with attempt/job fences, active/child/
-shared-sample/outbox checks and separate cleanup outcomes. No automatic replay or
-recursive deletion. Preserve manual-source boundaries, output ceilings and
-production load/TLS gates; payload/export and bulk-action parity remain before
-retiring legacy HTML. No adapter or worker support state is promoted.
-
-
-Automation management now provides analyst/admin summary/full report JSON/CSV
-exports with shared source-scoped snapshot reads and separate source/content
-limits. Historical full exports lacking recorded routing keep a legacy fallback.
-Exports are operator reports, not integration API status/result contract previews.
-Retain deployment export-memory/concurrency gates and remaining payload/bulk parity;
-this does not promote engine support or authorize legacy HTML removal.
-
-
-The React automation report now links to an on-demand integration result JSON
-preview for terminal scans. Session-authenticated analyst/admin reads reuse
-bounded coherent export admission and the public result projection, with no
-private engine output and a 2 MiB serialized response limit. Invalid policy,
-active scans and unavailable historical routing fail explicitly. Oversized batch
-JSON, remaining UI parity and deployment-scale acceptance are still open; this
-adds no worker transport or production support claim.
-
-Automation status JSON now has a separate React view for active/terminal scans.
-Scan, polling policy, accepted-instance eligibility and global queue counts use
-one bounded repeatable read. Global history aggregates remain subject to statement
-timeouts and deployment-scale acceptance; there is no automatic browser polling.
-Status requires an accepted engine snapshot, preserves backend coverage decisions
-and omits private engine output. Oversized batch JSON and final legacy-action parity remain pending.
-
-React automation batch status/result JSON now supports complete batches of up to
-20 members, with exact source/owner consistency and a shared repeatable snapshot.
-Result admission caps aggregate engine/snapshot bytes before hydration; response
-envelopes stay within 2 MiB. Status reads no engine blobs. Stored counters may lag;
-JSON never proves clean coverage by itself. Oversized batches use the overview
-and individual reports; complete oversized-payload parity, final legacy-action checks
-and deployment acceptance remain open before legacy removal.
-
-Automation archive navigation now stays in React, with direct-child ID-keyset
-pages and attempt guards. Parent, nested and upward navigation preserves exact
-API/ICAP source, nullable client and batch boundaries. Reads use existing indexed
-probes and PostgreSQL snapshot/time budgets, never engine blobs or counter writes.
-Empty lists do not prove complete extraction. Final legacy-action and deployment-scale
-acceptance remain open; this does not enable recursive deletion or remove legacy.
-
-Admin ledger bulk deletion now confirms at most 20 top-level API/ICAP records with
-displayed attempt/job-revision fences. Shared row-locked protections and independent
-commits remain authoritative; receipts identify deleted, blocked and cleanup-failed
-IDs. Ambiguous writes are never replayed and the UI requires explicit fresh reads
-before reselection. This does not delete batches recursively. Ledger revision-probe
-load and remaining security/deployment acceptance gates stay open.
-
-Admin React Users now lists bounded local/LDAP metadata and confirms local user
-creation with an explicit role and write-only initial password. Password hashes,
-directory identifiers and sessions are excluded from list DTOs; shared hashing and
-database uniqueness remain authoritative. No automatic creation replay occurs.
-Own-password management now uses React Account for local analysts and admins.
-Both browser UIs share validation, a password-only conditional update and atomic
-session revocation. Local login rechecks the verified hash under a row lock before
-creating a session, preventing old-password login from surviving a concurrent
-password change/reset. LDAP passwords remain directory-managed. Admin Users now
-confirms role changes, optional password resets and removal, with a displayed
-management revision checked under shared legacy/browser transaction locks. The
-writer rechecks the actor's administrator role, blocks self-management and preserves
-the last local administrator across concurrent operations. LDAP shadow removal
-revokes MASP sessions but does not disable directory access; a later directory
-sign-in may recreate it. Passwords never enter console state or caches; inputs
-clear on cancellation/send and uncertain writes are not replayed. Explicit list
-refresh is required after management writes. Startup adds the default-zero
-users.management_revision column in place; old account data is retained. Roll out
-all app processes together so old writers cannot bypass the revision/locking rules.
-Startup adds an auth-session user index in place. PostgreSQL password changes use
-the existing UI lock timeout; deployment-scale login/revocation acceptance remains
-open. No worker topology or engine support status changes.
