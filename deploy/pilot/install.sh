@@ -53,6 +53,8 @@ docker info >/dev/null
 db_password="$(pilot_env_value MASP_POSTGRES_PASSWORD)"
 api_token="$(pilot_env_value MASP_API_TOKEN)"
 admin_password="$(pilot_env_value MASP_ADMIN_PASSWORD)"
+enrollment_token="$(pilot_env_value MASP_WORKER_ENROLLMENT_TOKEN)"
+secret_key="$(pilot_env_value MASP_SECRET_ENCRYPTION_KEY)"
 icap_bind="$(pilot_env_value MASP_ICAP_BIND)"
 icap_allowlist="$(pilot_env_value MASP_ICAP_ALLOWED_IPS)"
 storage_dir="$(pilot_storage_dir)"
@@ -65,6 +67,18 @@ rules_dir="$(pilot_rules_dir)"
 [[ "$api_token" != CHANGE_ME* ]] || pilot_die "replace MASP_API_TOKEN"
 [[ ${#admin_password} -ge 12 ]] || pilot_die "MASP_ADMIN_PASSWORD must be at least 12 characters"
 [[ "$admin_password" != CHANGE_ME* ]] || pilot_die "replace MASP_ADMIN_PASSWORD"
+# Both are optional (empty disables remote worker enrollment and UI-saved
+# secrets), but the example's placeholders are public: a placeholder enrollment
+# token would let anyone who reaches the app enroll a worker.
+if [[ -n "$enrollment_token" ]]; then
+    [[ "$enrollment_token" != CHANGE_ME* ]] || \
+        pilot_die "replace MASP_WORKER_ENROLLMENT_TOKEN, or leave it empty to disable worker enrollment"
+    [[ ${#enrollment_token} -ge 32 ]] || pilot_die "MASP_WORKER_ENROLLMENT_TOKEN must be at least 32 characters"
+fi
+if [[ -n "$secret_key" ]]; then
+    [[ "$secret_key" =~ ^[A-Za-z0-9_-]{43}=$ ]] || \
+        pilot_die "MASP_SECRET_ENCRYPTION_KEY must be a Fernet key (see PILOT.md, Configure), or empty"
+fi
 [[ -n "$icap_bind" ]] || pilot_die "MASP_ICAP_BIND is empty"
 [[ -n "$icap_allowlist" ]] || pilot_die "MASP_ICAP_ALLOWED_IPS is empty"
 

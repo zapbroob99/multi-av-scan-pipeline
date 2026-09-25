@@ -146,7 +146,7 @@ the ICAP service with host networking.
 The release ZIP is generated from a fixed `masp-pilot` commit/tag:
 
 ```bash
-python3 tools/package_pilot_release.py --version 0.1.0-pilot.5
+python3 tools/package_pilot_release.py --version 0.1.0-pilot.6
 ```
 
 The bundle contains application source needed for the image build, the pilot
@@ -164,12 +164,16 @@ chmod 600 .env.pilot
 ```
 
 Replace every `CHANGE_ME` value — `MASP_POSTGRES_PASSWORD`, `MASP_API_TOKEN`,
-and `MASP_ADMIN_PASSWORD` (the bootstrap admin login). `install.sh` refuses to
-proceed while any placeholder remains or a secret is too short. Generate
-URL-safe values:
+`MASP_ADMIN_PASSWORD` (the bootstrap admin login) and
+`MASP_WORKER_ENROLLMENT_TOKEN` — and set `MASP_SECRET_ENCRYPTION_KEY` to a
+Fernet key. The last two may instead be left empty, which disables remote worker
+enrollment and secrets saved from the console (such as the VirusTotal key). `install.sh` refuses to proceed while any placeholder remains or a
+secret is too short. Generate URL-safe values and the Fernet key:
 
 ```bash
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+# Fernet key; standard library only, same format as tools/generate_secret_key.py
+python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 ```
 
 Important settings:
@@ -223,20 +227,20 @@ For an offline target, build and export images on an approved connected Linux
 builder using the exact release:
 
 ```bash
-docker build -t masp-pilot:0.1.0-pilot.5 .
+docker build -t masp-pilot:0.1.0-pilot.6 .
 docker pull 'postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb'
 docker pull 'clamav/clamav:stable@sha256:1b6443c4a7b456baa1abfaf9796815f8d21e2fb558dbaed5b682fd4552d8b0c3'
-docker save -o masp-pilot-0.1.0-pilot.5-images.tar \
-  masp-pilot:0.1.0-pilot.5 postgres:16-alpine clamav/clamav:stable
-sha256sum masp-pilot-0.1.0-pilot.5-images.tar > \
-  masp-pilot-0.1.0-pilot.5-images.tar.sha256
+docker save -o masp-pilot-0.1.0-pilot.6-images.tar \
+  masp-pilot:0.1.0-pilot.6 postgres:16-alpine clamav/clamav:stable
+sha256sum masp-pilot-0.1.0-pilot.6-images.tar > \
+  masp-pilot-0.1.0-pilot.6-images.tar.sha256
 ```
 
 On the target, verify and load the archive, then install without building:
 
 ```bash
-sha256sum -c masp-pilot-0.1.0-pilot.5-images.tar.sha256
-docker load -i masp-pilot-0.1.0-pilot.5-images.tar
+sha256sum -c masp-pilot-0.1.0-pilot.6-images.tar.sha256
+docker load -i masp-pilot-0.1.0-pilot.6-images.tar
 ./deploy/pilot/install.sh --env-file .env.pilot --no-build
 ```
 

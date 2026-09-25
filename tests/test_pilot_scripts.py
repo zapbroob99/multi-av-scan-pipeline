@@ -76,5 +76,61 @@ class PilotBackupScopeTests(unittest.TestCase):
         self.assertFalse(any(" start " in f" {call} " and "compose" in call for call in backup + restore))
 
 
+# Runs install.sh --dry-run on a fake Linux host with a fake docker; prints its
+# stderr. $1 and $2 are the enrollment token and secret key to validate.
+INSTALL_HARNESS = r'''
+set -uo pipefail
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/bin" "$work/storage" "$work/rules"
+printf '#!/usr/bin/env bash
+echo Linux
+' > "$work/bin/uname"
+printf '#!/usr/bin/env bash
+exit 0
+' > "$work/bin/docker"
+chmod +x "$work/bin/uname" "$work/bin/docker"
+export PATH="$work/bin:$PATH"
+cat > "$work/env" <<ENV
+MASP_POSTGRES_PASSWORD=$(printf 'p%.0s' {1..32})
+MASP_API_TOKEN=$(printf 'a%.0s' {1..32})
+MASP_ADMIN_PASSWORD=admin-password-long
+MASP_ICAP_BIND=127.0.0.1:1344
+MASP_ICAP_ALLOWED_IPS=127.0.0.1
+MASP_STORAGE_DIR=$work/storage
+MASP_RULES_DIR=$work/rules
+MASP_WORKER_ENROLLMENT_TOKEN=$1
+MASP_SECRET_ENCRYPTION_KEY=$2
+ENV
+bash "$ROOT/deploy/pilot/install.sh" --env-file "$work/env" --dry-run 2>&1 >/dev/null
+'''
+
+
+@unittest.skipUnless(POSIX_BASH, "requires a POSIX bash (Git Bash on Windows)")
+class PilotInstallSecretTests(unittest.TestCase):
+    def install_errors(self, enrollment_token: str, secret_key: str) -> str:
+        result = subprocess.run([BASH, "-c", INSTALL_HARNESS, "harness", enrollment_token, secret_key],
+                                capture_output=True, text=True,
+                                env={"ROOT": ROOT.as_posix(), "PATH": os.environ["PATH"]},
+                                timeout=60)
+        return result.stdout
+
+    def test_placeholder_enrollment_token_is_refused(self) -> None:
+        # The example's placeholder is public; accepting it lets anyone enroll a worker.
+        errors = self.install_errors("CHANGE_ME_LONG_RANDOM_WORKER_ENROLLMENT_TOKEN", "")
+        self.assertIn("replace MASP_WORKER_ENROLLMENT_TOKEN", errors)
+        self.assertIn("at least 32", self.install_errors("short-token", ""))
+
+    def test_placeholder_secret_key_is_refused(self) -> None:
+        errors = self.install_errors("", "CHANGE_ME_FERNET_KEY")
+        self.assertIn("MASP_SECRET_ENCRYPTION_KEY must be a Fernet key", errors)
+
+    def test_real_or_empty_values_pass_the_secret_checks(self) -> None:
+        for token, key in (("", ""), ("t" * 40, "A" * 43 + "=")):
+            errors = self.install_errors(token, key)
+            self.assertNotIn("MASP_WORKER_ENROLLMENT_TOKEN", errors)
+            self.assertNotIn("MASP_SECRET_ENCRYPTION_KEY", errors)
+
+
 if __name__ == "__main__":
     unittest.main()
