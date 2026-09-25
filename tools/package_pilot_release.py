@@ -30,6 +30,17 @@ ROOT_FILES = (
 # deploy/pilot/run_gated_tests.sh rather than baked into the image: the deployed
 # image handles untrusted samples, so its runtime surface stays minimal.
 TREE_DIRS = ("app", "rules", "deploy/pilot", "tests")
+# The Dockerfile builds the browser console in a Node stage, so its build inputs
+# ship too. Only what `npm ci && npm run build` reads: no e2e suite, contract
+# tooling, node_modules or a prebuilt dist.
+FRONTEND_FILES = (
+    "frontend/index.html",
+    "frontend/package-lock.json",
+    "frontend/package.json",
+    "frontend/tsconfig.json",
+    "frontend/vite.config.ts",
+)
+FRONTEND_DIRS = ("frontend/public", "frontend/src")
 EXTRA_FILES = (
     "docs/deployment/PILOT.md",
     "docs/security/LDAP_AUTHENTICATION.md",
@@ -42,11 +53,14 @@ ALLOWED_SUFFIXES = {
     ".css",
     ".example",
     ".html",
+    ".js",
     ".json",
     ".md",
     ".py",
     ".sh",
     ".svg",
+    ".ts",
+    ".tsx",
     ".txt",
     ".yar",
     ".yara",
@@ -90,8 +104,8 @@ def git_output(*args: str) -> str:
 
 
 def collect_files() -> list[Path]:
-    files = [ROOT_DIR / name for name in (*ROOT_FILES, *EXTRA_FILES)]
-    for directory_name in TREE_DIRS:
+    files = [ROOT_DIR / name for name in (*ROOT_FILES, *EXTRA_FILES, *FRONTEND_FILES)]
+    for directory_name in (*TREE_DIRS, *FRONTEND_DIRS):
         directory = ROOT_DIR / directory_name
         if not directory.is_dir():
             raise RuntimeError(f"required directory missing: {directory_name}")

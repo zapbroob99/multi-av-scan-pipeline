@@ -62,6 +62,29 @@ class PilotBundleTests(unittest.TestCase):
         self.assertFalse(any(path.startswith("sample_") for path in relative_paths))
         self.assertNotIn(".env.pilot", relative_paths)
 
+    def test_release_ships_the_console_build_inputs(self) -> None:
+        # The Dockerfile builds the console from frontend/ before the Python
+        # stage; a bundle without it fails `install.sh` at the first COPY.
+        relative_paths = {
+            str(path.relative_to(ROOT_DIR)).replace("\\", "/") for path in collect_files()
+        }
+        dockerfile = (ROOT_DIR / "Dockerfile").read_text(encoding="utf-8")
+
+        self.assertIn("COPY frontend/package.json frontend/package-lock.json", dockerfile)
+        for name in (
+            "frontend/package.json",
+            "frontend/package-lock.json",
+            "frontend/index.html",
+            "frontend/tsconfig.json",
+            "frontend/vite.config.ts",
+            "frontend/src/main.tsx",
+            "frontend/public/theme-init.js",
+        ):
+            self.assertIn(name, relative_paths)
+        self.assertFalse(any("node_modules" in path for path in relative_paths))
+        self.assertFalse(any(path.startswith("frontend/dist/") for path in relative_paths))
+        self.assertFalse(any(path.startswith("frontend/e2e/") for path in relative_paths))
+
     def test_shipped_files_have_unix_line_endings(self) -> None:
         # The release is built on Windows (git checks the tree out with CRLF) and
         # runs on Linux. A CRLF shell script fails with "/usr/bin/env: 'bash\r':
