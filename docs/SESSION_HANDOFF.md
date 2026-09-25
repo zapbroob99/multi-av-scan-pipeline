@@ -1,6 +1,6 @@
 # MASP session handoff
 
-Updated: 2026-09-24, after the legacy UI retirement. This is a workspace
+Updated: 2026-09-25, after the go-live readiness fixes. This is a workspace
 checkpoint, not evidence of a deployment.
 
 ## Start here
@@ -21,23 +21,32 @@ checkpoint, not evidence of a deployment.
 ## Git checkpoint
 
 Checkpoint branch: `feat/frontend-separation-hardening`. The commit that adds
-this handoff sits on top of `98128da`. `origin/feat/frontend-separation-hardening`
-was last confirmed at `dc841e2`; **everything after it is local and NOT pushed**.
-The user authorizes each push explicitly because the repository is public.
-Confirm with `git log -1`, `git status` and a fresh `git fetch` before assuming
-anything here is still current.
+this handoff sits on top of `3c1f42a`. `origin/feat/frontend-separation-hardening`
+was last confirmed at `dc841e2`; **everything after it is local and NOT pushed**,
+and the branch is not merged to `main`. The user authorizes each push explicitly
+because the repository is public. Confirm with `git log -1`, `git status` and a
+fresh `git fetch` before assuming anything here is still current.
 
-Commits, oldest first (pushed through `dc841e2`):
+Commits after the last pushed `dc841e2`, oldest first:
 
-- `1fdf768` Hash List engine (one institution-wide SHA-256 blocklist/allowlist)
-  plus the `file_type` creation and default-worker fixes
-- `ce94ace` deferred intake visibility at `/console/system/intake`
-- `dc841e2` handoff update (last pushed commit)
 - `06aac8c` legacy parity sweep: dashboard detection filter, bounded hash
   provider detail, engine last-result time, audit detail formatting
 - `d7ad4b2` the application image builds and serves the console at `/console/`
 - `98128da` **legacy UI retired** (breaking): `app/main.py` ~9100 -> ~1000 lines,
   former GET pages redirect to console screens, legacy form routes gone
+- `da0cea0` handoff update
+- `2c4c0df` System tab strip rendered once by a shared layout route; Engines only
+  under System
+- `db4e6be` compact entity lists (Users, worker nodes, pools), audit as a table,
+  select-all for bulk deletion on Dashboard and API ledger
+- `73f3264` scan outcomes: no engine completed -> `failed`; clean scans record
+  `info`/0 instead of `low`/10; `scan_jobs.unavailable_engines`; risk badge reads
+  "No detection" / "Incomplete" / "Not scored" (API-visible change)
+- `8d6c042` manifest worker no longer spins on a rejected manifest
+- `93e77ca` deployment: manifest-intake service in prod/pilot compose, pilot
+  backup/restore pause every running writer, proxy trust
+  (`MASP_FORWARDED_ALLOW_IPS`, `MASP_SESSION_SECURE`) mapped into the app
+- `3c1f42a` production/pilot runbooks rewritten for the retired legacy UI
 - this handoff rewrite (docs only)
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
@@ -86,27 +95,47 @@ byte-identical retry into a permanent `409`. Full contract in
 **`98128da` legacy UI retirement.** The console is the only browser UI and is
 served by the application image (`d7ad4b2`), so pilot/production need no extra
 container. Former GET paths redirect (`/scans/{id}` resolves manual vs automation
-only for a signed-in operator). Console messages that pointed at legacy pages now
-name a real alternative or the limit. `MASP_SHOW_DEV_LOGIN_HINTS` was removed.
-Deployments must **rebuild the image** to get the console; the live local
-containers still run pre-`1fdf768` code. Full narrative: "Legacy UI retirement"
-in `FRONTEND_SEPARATION.md`.
+only for a signed-in operator). `MASP_SHOW_DEV_LOGIN_HINTS` was removed.
 
-**Next development candidates**, none started:
+**`73f3264` scan outcomes.** Raised by the user: a scan whose engines all failed
+showed "completed" with zero risk, and clean scans showed an orange "low 10".
+Scoring added 10 points for a clean result; decisions never depended on it.
+Integrators see both changes through the API.
 
-1. `MAPPED_SOURCE_INSPECTION.md` step 4 (making "deliberately narrow coverage"
-   explicit in reports, exports and the integration contract) and step 5
-   (in-place reading). **Both are OPEN decisions for the user**; do not start
-   them without explicit direction.
-2. The deployment gates below.
+**`93e77ca` deployment fixes.** Found in a go-live review cross-checked with a
+second agent: the manifest service was missing from prod/pilot compose; the
+pilot backup/restore scripts stopped only `app worker icap`, leaving intake and
+notification workers writing during a dump/restore (a fake-docker test now
+drives both scripts); and Uvicorn trusted `X-Forwarded-Proto` only from
+127.0.0.1, so behind a TLS proxy every console save would fail the same-origin
+check and remote workers would be refused. The proxy setting is configured and
+documented but **not yet exercised behind a real TLS proxy**.
 
-Possible small follow-ups noticed but not done: the Hash List engine does not
-yet serve the manual `/console/hash-scan` lookup (it has no `hash_scan_function`,
-and allowlist semantics there would need the same informational treatment);
-manifest rejections cannot be dismissed from the console by design; some
-database helpers (`list_users`, `update_service_client`,
-`revoke_api_client_credential`, `list_engine_results_by_scan_ids`, ...) lost
-their only callers with the legacy UI and can be removed with their tests.
+**Next steps agreed with the user, in order:**
+
+1. Push the commits above and open a PR to `main` — **only with the user's
+   explicit approval**.
+2. Isolated rehearsals: a TLS reverse proxy (self-signed is fine) proving a
+   console save, secure cookie and a remote worker heartbeat through HTTPS; a
+   capacity run with realistic file sizes (`tools/benchmark_*.py`; the local
+   worker was killed with exit 137 under load, so memory sizing matters); and a
+   real backup/restore rehearsal on a pilot-shaped stack.
+3. Low priority, separate change: remove database helpers that lost their only
+   callers with the legacy UI (`list_users`, `update_service_client`,
+   `revoke_api_client_credential`, `list_engine_results_by_scan_ids`, ...).
+
+**Parked for user decisions:** folder-watch intake without manifests (waiting
+for the Drive team: how files are written, folder layout, daily volume, whether
+files change after upload, naming); `MAPPED_SOURCE_INSPECTION.md` steps 4
+(explicit narrow coverage) and 5 (in-place reading); a "Page N" indicator for
+the API ledger; wiring Hash List into the API hash lookup.
+
+**Local environment notes:** `.env` has `MASP_MANIFEST_CLIENT_KEY=drive` (the
+client created in the console is `drive`, id 238, granted `drive`/`uploads/`).
+Test drops live in `deferred-source/uploads/2026/09/24/` (git-ignored);
+`test-2.json` is a deliberately malformed manifest whose rejection count was
+inflated by the spin bug before `8d6c042`. `requirements.txt` shows as modified
+only because of line endings; its content is unchanged.
 
 **Deployment gates outstanding, discussed with the user but not started**:
 capacity measurement against realistic Drive-sized files (tooling exists in
@@ -117,18 +146,20 @@ limiting.
 
 ## Verification and environment safety
 
-- Full backend: `python -m unittest discover -s tests`. Last full run (at
-  `98128da`, with disposable PostgreSQL): **911 tests, 909 passed, 2 skipped,
-  0 failures** (fewer than before because legacy HTML tests were removed).
+- Full backend: `python -m unittest discover -s tests`. Last full run (on the
+  working tree committed as `3c1f42a`, with disposable PostgreSQL): **921 tests,
+  919 passed, 2 skipped, 0 failures.** The pilot script test needs Git Bash on
+  Windows and is skipped where no POSIX bash exists.
 - PostgreSQL tests require `MASP_TEST_POSTGRES_URL` pointing only at a disposable
   database: tests drop/recreate its public schema. Never use the live MASP DB.
   Disposable containers used on this branch (ports 15441-15444, names
   `masp-test-pg-*`) were started with `--rm` and stopped; none should remain
   (`docker ps -a` to check).
-- Frontend: `npm --prefix frontend test` (150 tests passing), `run build`,
+- Frontend: `npm --prefix frontend test` (157 tests passing), `run build`,
   `run contracts:check`. Regenerate contracts with
   `npm --prefix frontend run contracts:generate` after browser API changes.
-  `run test:e2e` for Playwright (35 scenarios passing).
+  `run test:e2e` for Playwright (36 scenarios passing). The application image
+  was rebuilt and smoke-tested at the same point (`/health`, `/console/`, `/`).
 - Browser acceptance uses temporary SQLite and a fixture server, not live data.
   On Windows Playwright teardown may leave fixture processes running; identify
   the exact owned PIDs before stopping them (none were left this session).
