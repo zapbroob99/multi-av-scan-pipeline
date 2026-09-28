@@ -252,11 +252,19 @@ def notifications_check(connection, now: float) -> HealthCheck:
     row = connection.execute('''SELECT COUNT(*) AS pending,
         SUM(CASE WHEN attempt_count > 0 THEN 1 ELSE 0 END) AS retrying, MIN(created_at) AS oldest
         FROM notification_outbox WHERE status IN ('pending', 'delivering')''').fetchone()
-    total = connection.execute('SELECT COUNT(*) AS n FROM notification_outbox').fetchone()
+    total = connection.execute('''SELECT COUNT(*) AS n,
+        SUM(CASE WHEN attempt_count > 0 OR status = 'delivered' THEN 1 ELSE 0 END) AS attempted
+        FROM notification_outbox''').fetchone()
     if not int(total['n'] or 0):
         return HealthCheck(key='notifications', label='SIEM notifications', state='inactive', link=link,
                            summary='No notification has been produced.')
     pending, retrying = int(row['pending'] or 0), int(row['retrying'] or 0)
+    if not int(total['attempted'] or 0):
+        # Detections queue notifications whether or not SIEM delivery is deployed;
+        # nothing has ever tried to send one, so this is "not in use", not an outage.
+        return HealthCheck(key='notifications', label='SIEM notifications', state='inactive', link=link,
+                           summary=f'{pending} notification(s) queued; no delivery has been attempted.',
+                           detail='Enable the notifications profile with a SIEM webhook, or ignore this if SIEM is not used.')
     if not pending:
         return HealthCheck(key='notifications', label='SIEM notifications', state='ok', link=link,
                            summary='Every notification was delivered.')

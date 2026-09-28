@@ -212,6 +212,18 @@ class DeliveryTests(DatabaseCase):
         with self.assertRaises(HTTPException):
             delivery_read.retry_notifications_now(now=NOW)
 
+    def test_notifications_nobody_tried_to_send_are_not_an_outage(self):
+        # Detections queue notifications even where SIEM delivery is not deployed.
+        self.outbox('never-sent', 'pending', 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE notification_outbox SET created_at = '2020-01-01 00:00:00'")
+            check = health_read.notifications_check(connection, NOW)
+        self.assertEqual(check.state, 'inactive')
+        self.assertIn('no delivery has been attempted', check.summary)
+        self.outbox('failed-once', 'pending', 1, error='refused')
+        with db.connect() as connection:
+            self.assertEqual(health_read.notifications_check(connection, NOW).state, 'critical')
+
     def test_gateway_records_are_listed_and_marked_stale(self):
         db.set_setting(activity.SETTING_PREFIX + 'storage:1344', json.dumps({
             'at': NOW - 200, 'client_key': 'storage', 'service_name': 'masp', 'port': 1344, 'fail_closed': True,

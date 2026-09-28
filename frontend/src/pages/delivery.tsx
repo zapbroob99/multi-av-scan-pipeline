@@ -88,6 +88,8 @@ export default function Delivery({ session }: { session: Session }) {
             <td><small>{formatTimestamp(row.next_attempt_at)}</small></td>
           </tr>)}</tbody></table></div>}
         {!notes.pending && !notes.delivered && <p className="muted">No notification has been produced. Detections on deferred and API scans create them.</p>}
+        {notes.pending > 0 && !notes.delivered && !notes.retrying && !notes.delivering && <p className="muted">No delivery has been attempted yet.
+          Detections queue notifications whether or not SIEM delivery is deployed; enable the notifications profile with a SIEM webhook, or ignore this if SIEM is not used.</p>}
       </article>
     </>}
     <Dialog open={confirm} onOpenChange={open => { if (!retry.isPending) setConfirm(open) }} title="Retry failed notifications now?"
