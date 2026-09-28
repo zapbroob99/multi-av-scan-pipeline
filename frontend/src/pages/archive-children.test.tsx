@@ -74,7 +74,8 @@ describe('Archive child navigation', () => {
     mount({ ...payload, items: [], next_after: null })
     await screen.findByRole('heading', { name: 'No registered children on this page' })
     expect(screen.getByText(/Lazy extraction may not have run/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled()
+    // A single page shows no pagination controls.
+    expect(screen.queryByRole('button', { name: 'Next page' })).toBeNull()
   })
   it('rejects invalid IDs without fetching', () => {
     const fetcher = mount(payload, '/scans/0/children')

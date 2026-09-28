@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
@@ -22,7 +23,7 @@ export default function AutomationResult({ status = false }: { status?: boolean 
       Embedded API links require integration authentication. No automatic refresh.
       Large or incomplete records may be unavailable here; consult the report for details.</p>
     {result.isFetching && <p role="status">Loading {kind} JSON…</p>}
-    {result.error && <p role="alert" className="error">{result.error.message}</p>}
+    {result.error && <p role="alert" className="error"><ErrorMessage message={result.error.message || ''} /></p>}
     {data && <div className="technical-panel"><pre tabIndex={0} aria-label={`Integration ${kind} JSON text`}>{data.content}</pre></div>}
   </section>
 }

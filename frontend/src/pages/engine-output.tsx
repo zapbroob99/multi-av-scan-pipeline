@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
@@ -24,7 +25,7 @@ export default function EngineOutput({ automation = false }: { automation?: bool
       the download is served directly and is never held in this page.</p>
     <p><a href={`/api/ui/v1${automation ? '/api-ledger' : ''}/scans/${scanId}/results/${resultId}/output`}>Download raw output (plain text)</a></p>
     {output.isFetching && <p role="status">Loading full engine output…</p>}
-    {output.error && <p role="alert" className="error">{output.error.message} Return to the report for current results.</p>}
+    {output.error && <p role="alert" className="error"><ErrorMessage message={output.error.message || ''} /> Return to the report for current results.</p>}
     {data && <><h2 className="report-filename">{data.engine_name}</h2><p className="muted">Attempt {data.attempt_count} · Result #{data.result_id}</p>
       <div className="technical-panel">{([
         ['raw_output', 'Raw output'], ['details_json', 'Details JSON'], ['findings_json', 'Findings JSON'],

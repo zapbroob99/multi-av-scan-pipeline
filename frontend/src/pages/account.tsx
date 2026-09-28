@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useRef, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
@@ -47,9 +48,9 @@ export default function Account({ session, onPasswordChanged }: { session: Sessi
     <Button variant="secondary" disabled={busy || review || account.isFetching} onClick={async () => {
       clearPasswords(); const result = await account.refetch(); if (!result.isError) setNeedsCheck(false)
     }}>Check session</Button></div>
-    {error && <p role="alert" className="error">{error}</p>}
+    {error && <p role="alert" className="error"><ErrorMessage message={error} /></p>}
     {account.isPending && <p role="status">Loading account...</p>}
-    {account.error && <p role="alert" className="error">{account.error.message}</p>}
+    {account.error && <p role="alert" className="error"><ErrorMessage message={account.error.message || ''} /></p>}
     {!account.error && account.data && <>
       <p>{account.data.username} · {account.data.role} · {account.data.auth_source}</p>
       {account.data.auth_source !== 'local' ? <p className="callout">Your password is managed by the directory. Contact your directory administrator to change it.</p> :

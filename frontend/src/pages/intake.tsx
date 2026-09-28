@@ -1,6 +1,9 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { HelpDetails } from '../components/help-details'
 
 export function age(seconds: number) {
   if (seconds < 90) return `${seconds} s`
@@ -9,7 +12,7 @@ export function age(seconds: number) {
   return `${Math.round(seconds / 86400)} d`
 }
 
-const when = (epoch: number) => new Date(epoch * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+const when = formatTimestamp
 
 export default function Intake() {
   const view = useQuery({ queryKey: ['intake'], queryFn: ({ signal }) => request('/api/ui/v1/system/intake', 'get', { signal }),
@@ -20,10 +23,11 @@ export default function Intake() {
     <div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Deferred intake</h1>
       <p className="muted">Storage manifests and deferred submissions before they become scans.</p></div>
       <Button variant="secondary" disabled={view.isFetching} onClick={() => { void view.refetch() }}>Refresh intake</Button></div>
-    <p className="callout">A producer that drops manifests receives no delivery or error feedback, so this page is where a stopped worker,
-      a growing backlog or a rejected drop becomes visible. It is a point-in-time read: it does not refresh itself, retry or clear anything.</p>
+    <p className="muted">Read-only snapshot. Refresh to see the latest recorded state; no retries or cleanup run here.</p>
+    <HelpDetails title="About manifest and deferred intake">A producer that drops manifests receives no delivery or error feedback, so this page is where a stopped worker,
+      a growing backlog or a rejected drop becomes visible. It is a point-in-time read: it does not refresh itself, retry or clear anything.</HelpDetails>
     {view.isPending && <p role="status">Loading intake state…</p>}
-    {view.error && <p role="alert" className="error">{view.error.message}</p>}
+    {view.error && <p role="alert" className="error"><ErrorMessage message={view.error.message || ''} /></p>}
     {!view.error && data && <>
       <article className="submission-card" aria-label="Manifest worker">
         <h2>Manifest worker</h2>
@@ -53,7 +57,7 @@ export default function Intake() {
           <dt>Being copied</dt><dd>{data.queue.claimed}</dd>
           <dt>Handed to the scan queue</dt><dd>{data.queue.queued}</dd>
           <dt>Oldest waiting</dt><dd>{data.queue.oldest_pending_age_seconds === null ? 'Nothing waiting'
-            : `${age(data.queue.oldest_pending_age_seconds)} (since ${data.queue.oldest_pending_at})`}</dd>
+            : `${age(data.queue.oldest_pending_age_seconds)} (since ${formatTimestamp(data.queue.oldest_pending_at)})`}</dd>
         </dl>
         <p className="muted">Covers every deferred submission, from manifests and from the deferred API. Waiting includes submissions in retry backoff.</p>
       </article>
@@ -86,7 +90,7 @@ export default function Intake() {
             <td className="cell-name" title={row.object_id}>#{row.id} {row.original_filename}<small>{row.backend_key}/{row.object_id} · request {row.client_request_id}</small></td>
             <td className="cell-name">{row.client_name || `#${row.service_client_id}`}</td>
             <td className="hash-value">{row.last_error || 'No error recorded'}<small>{row.attempt_count} attempt(s)</small></td>
-            <td><small>{row.updated_at}</small></td>
+            <td><small>{formatTimestamp(row.updated_at)}</small></td>
           </tr>)}</tbody></table></div>}
         {data.failures_truncated && <p className="muted">Only the newest {data.failures.length} failures are shown.</p>}
       </article>

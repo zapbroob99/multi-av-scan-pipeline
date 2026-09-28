@@ -42,7 +42,10 @@ test('analyst dashboard pagination, URL history, filters, mobile navigation and 
   await expect(page.getByLabel('Search scans')).toHaveValue('acceptance-24')
   await expect(page.locator('tbody tr')).toHaveCount(1)
   await page.setViewportSize({ width: 390, height: 844 })
+  // Phone widths collapse the grouped navigation behind the Menu button.
+  await page.getByRole('button', { name: 'Menu', exact: true }).click()
   await expect(page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Dashboard' })).toBeVisible()
+  await page.keyboard.press('Escape')
   await expect(page.getByRole('link', { name: 'Engines', exact: true })).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: '../artifacts/console-e2e/dashboard-mobile.png', fullPage: true })

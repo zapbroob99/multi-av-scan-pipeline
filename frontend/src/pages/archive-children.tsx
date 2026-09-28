@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import type { FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -46,7 +47,7 @@ export default function ArchiveChildren({ automation = false }: { automation?: b
       <Button variant="secondary">Apply filters</Button><Button variant="secondary" type="button" onClick={() => setParams({})}>Reset</Button>
     </form>
     {children.isPending && <p className="skeleton" role="status">Loading child scans…</p>}
-    {children.error ? <section className="error" role="alert"><p>{children.error.message}</p>
+    {children.error ? <section className="error" role="alert"><p><ErrorMessage message={children.error.message || ''} /></p>
       <Button variant="secondary" onClick={firstPage}>Return to first page</Button></section> : page && <>
       <p className="muted archive-context">Parent: {page.parent_status} · Attempt {page.attempt_count} · Mode: {page.archive_mode || 'Unknown'}.
         {' '}Retries may retain previously registered children; this is not a fresh-extraction guarantee.</p>
@@ -61,10 +62,10 @@ export default function ArchiveChildren({ automation = false }: { automation?: b
             <td>{child.has_children ? <Link to={`${scope}/scans/${child.id}/children`}>Browse children of #{child.id}</Link> : <Link to={`${scope}/scans/${child.id}`}>Open report #{child.id}</Link>}</td>
           </tr>)}</tbody></table></div>}
       <div className="history-pagination"><p className="muted">{page.items.length} shown · Registration ID order{after ? ' · Historical page: auto-refresh paused' : ''}</p>
-        <div>{after && <Button variant="secondary" onClick={firstPage}>First page</Button>}
+        {Boolean(after || page.next_after) && <div>{after && <Button variant="secondary" onClick={firstPage}>First page</Button>}
           <Button variant="secondary" disabled={!page.next_after || children.isFetching} onClick={() => {
             const next = new URLSearchParams(params); next.set('after', String(page.next_after)); next.set('attempt', String(page.attempt_count)); setParams(next)
-          }}>Next page</Button></div></div>
+          }}>Next page</Button></div>}</div>
       <p className="callout">{page.parent_scan_id && <><Link to={`${scope}/scans/${page.parent_scan_id}/children`}>Up one level</Link> · </>}
         {page.batch_id && <><Link to={`${scope}/batches/${page.batch_id}`}>Batch overview</Link> · </>}
         <Link to={`${scope}/scans/${scanId}`}>Report</Link></p>

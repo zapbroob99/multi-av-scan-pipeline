@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
@@ -24,7 +26,7 @@ export default function ScanPrint({ automation = false }: { automation?: boolean
     <p className="callout print-hidden">Engine output is bounded for printing; each result links to its complete text.
       Recorded risk and coverage describe what was stored, not a guarantee of complete extraction or a clean verdict.</p>
     {printable.isFetching && <p role="status">Loading printable report…</p>}
-    {printable.error && <p role="alert" className="error">{printable.error.message}</p>}
+    {printable.error && <p role="alert" className="error"><ErrorMessage message={printable.error.message || ''} /></p>}
     {data && <article className="print-sheet">
       <header className="print-header"><div><p className="eyebrow">MASP ANALYST REPORT</p>
         <h1 className="report-filename">{data.filename}</h1>
@@ -36,7 +38,7 @@ export default function ScanPrint({ automation = false }: { automation?: boolean
         <dt>SHA-256</dt><dd>{data.sha256}</dd>
         <dt>Size</dt><dd>{data.size_bytes.toLocaleString()} bytes</dd>
         <dt>Content type</dt><dd>{data.content_type || 'Unknown'}</dd>
-        <dt>Submitted</dt><dd>{data.created_at}</dd>
+        <dt>Submitted</dt><dd>{formatTimestamp(data.created_at)}</dd>
         <dt>Completed</dt><dd>{data.completed_at || 'Not completed'}</dd>
         <dt>Attempt</dt><dd>{data.attempt_count}</dd>
         {data.note && <><dt>Note</dt><dd>{data.note}</dd></>}

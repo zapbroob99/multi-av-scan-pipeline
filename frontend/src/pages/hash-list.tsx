@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -115,7 +117,7 @@ export default function HashList({ session }: { session: Session }) {
       <Button type="submit" disabled={busy}>Review addition</Button>
     </form>
 
-    {error && <p role="alert" className="error hash-value">{error}</p>}
+    {error && <p role="alert" className="error hash-value"><ErrorMessage message={error} /></p>}
     {removed && <p className="notice hash-value" role="status">{removed}</p>}
     {outcome && <div className="notice" role="status"><p>Added {outcome.added} hash{outcome.added === 1 ? '' : 'es'}.</p>
       {outcome.existing.length > 0 && <><p>{outcome.existing.length} already listed and left unchanged:</p>
@@ -130,7 +132,7 @@ export default function HashList({ session }: { session: Session }) {
     </fieldset><p className="muted">A full SHA-256 matches exactly; shorter text matches a hash prefix or appears in the note. <code>%</code> and <code>_</code> are literal.</p></form>
 
     {entries.isPending && <p role="status">Loading hash list…</p>}
-    {entries.error && <p role="alert" className="error">{entries.error.message}</p>}
+    {entries.error && <p role="alert" className="error"><ErrorMessage message={entries.error.message || ''} /></p>}
     {!entries.error && entries.data && <>
       {!entries.data.items.length && <p className="empty">No hash list entries match these filters.</p>}
       {entries.data.items.length > 0 && <div className="history-table-wrap" role="region" aria-label="Hash list entries" tabIndex={0}>
@@ -141,13 +143,13 @@ export default function HashList({ session }: { session: Session }) {
           <td><code>{entry.sha256}</code></td>
           <td>{LABELS[entry.list_kind]}</td>
           <td className="cell-name" title={entry.note}>{entry.note || <span className="muted">None</span>}</td>
-          <td><small>{new Date(entry.created_at * 1000).toISOString().replace('T', ' ').slice(0, 19)} UTC</small>
+          <td><small>{formatTimestamp(entry.created_at)}</small>
             <small>{entry.created_by || 'Unknown'}</small></td>
           <td className="cell-actions"><Button variant="destructive" disabled={busy} aria-label={`Remove ${entry.sha256}`}
             onClick={() => { setRemoved(''); setRemoval(entry) }}>Remove</Button></td>
         </tr>)}</tbody></table></div>}
-      <div className="history-pagination"><Button variant="secondary" disabled={entries.isFetching || !params.get('before')} onClick={() => paginate()}>Newest entries</Button>
-        <Button variant="secondary" disabled={entries.isFetching || !entries.data.next_before} onClick={() => paginate(entries.data!.next_before!)}>Older entries</Button></div>
+      {Boolean(params.get('before') || entries.data.next_before) && <div className="history-pagination"><Button variant="secondary" disabled={entries.isFetching || !params.get('before')} onClick={() => paginate()}>Newest entries</Button>
+        <Button variant="secondary" disabled={entries.isFetching || !entries.data.next_before} onClick={() => paginate(entries.data!.next_before!)}>Older entries</Button></div>}
     </>}
 
     <Dialog open={review !== null} locked={busy} onOpenChange={open => { if (!open && !busy) setReview(null) }}

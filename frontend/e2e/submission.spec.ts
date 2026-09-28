@@ -23,6 +23,8 @@ test('analyst sends a benign file and sees accepted scan in manual history', asy
   await expect(page.getByText(/not a completed scan or a clean verdict/)).toBeVisible()
   await expect(page).toHaveURL(/\/console\/scans\/\d+\?accepted=1$/)
   const report = new URL(page.url()).pathname
+  // Phone widths collapse the grouped navigation behind the Menu button.
+  await page.getByRole('button', { name: 'Menu', exact: true }).click()
   await page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Dashboard', exact: true }).click()
   await page.getByLabel('Search scans').fill('IR-browser-upload')
   await page.getByRole('button', { name: 'Apply filters' }).click()

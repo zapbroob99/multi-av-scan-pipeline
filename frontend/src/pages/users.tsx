@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -64,9 +65,9 @@ export default function Users({ session }: { session: Session }) {
       <Button disabled={locked || needsRefresh} onClick={() => { setMessage(''); setError(''); setCreating(true) }}>
         <Plus size={16} aria-hidden="true" />New local user</Button></div></div>
     {message && <p role="status" className="callout">{message}</p>}
-    {error && <p role="alert" className="error">{error}</p>}
+    {error && <p role="alert" className="error"><ErrorMessage message={error} /></p>}
     {users.isPending && <p role="status">Loading users…</p>}
-    {users.error && <p role="alert" className="error">{users.error.message}</p>}
+    {users.error && <p role="alert" className="error"><ErrorMessage message={users.error.message || ''} /></p>}
     {needsRefresh && !users.error && <p className="muted">Refresh users to load current accounts before another change.</p>}
     {!users.error && !needsRefresh && users.data && <>
       <div className="entity-toolbar"><h2>Accounts</h2><p className="muted">{users.data.items.length} on this page ·
@@ -90,8 +91,8 @@ export default function Users({ session }: { session: Session }) {
           <span className="entity-chevron">{!self && <ChevronRight size={16} aria-hidden="true" />}</span>
         </button></li>
       })}</ul>
-      <div className="history-pagination"><Button variant="secondary" disabled={locked || users.isFetching || !after} onClick={() => setParams({})}>First page</Button>
-        <Button variant="secondary" disabled={locked || users.isFetching || !users.data.next_after} onClick={() => setParams({ after: String(users.data!.next_after) })}>Next page</Button></div>
+      {Boolean(after || users.data.next_after) && <div className="history-pagination"><Button variant="secondary" disabled={locked || users.isFetching || !after} onClick={() => setParams({})}>First page</Button>
+        <Button variant="secondary" disabled={locked || users.isFetching || !users.data.next_after} onClick={() => setParams({ after: String(users.data!.next_after) })}>Next page</Button></div>}
     </>}
     <Dialog open={creating} locked={busy} onOpenChange={open => { if (!open) close() }}
       title={review ? 'Create local user?' : 'New local user'}

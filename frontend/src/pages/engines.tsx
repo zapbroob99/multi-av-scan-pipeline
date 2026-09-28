@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Cpu, Plus, Search, RefreshCw, Settings2, Trash2, FlaskConical, FileCode2 } from 'lucide-react'
@@ -44,7 +46,7 @@ function RuleManager({ engine, session }: { engine: Engine; session: Session }) 
   }
   return <div className="rules-panel">
     <p className="callout">Rules are managed on the MASP host. Remote workers still require the configured rules to be deployed to their own host.</p>
-    {(error || query.error) && <p className="error" role="alert">{error || query.error?.message}</p>}
+    {(error || query.error) && <p className="error" role="alert"><ErrorMessage message={error || query.error?.message || ''} /></p>}
     {query.isPending && <p role="status">Loading rules…</p>}
     <ul className="rule-list">{query.data?.rules.map(rule => <li key={rule.name}><span>{rule.name}<small>{rule.enabled ? 'Enabled' : 'Disabled'} · {rule.size_bytes} bytes</small></span>
       <Button variant="secondary" disabled={mutation.isPending} onClick={() => void act(() => request('/api/ui/v1/engines/{instance_id}/rules/{name}/toggle', 'post', { params: { ...params, name: rule.name }, csrf }))}>Toggle</Button>
@@ -64,6 +66,9 @@ function RuleManager({ engine, session }: { engine: Engine; session: Session }) 
     </form>
   </div>
 }
+
+/** Adapters that run inside MASP itself and have no external service to check. */
+const BUILT_IN_ADAPTERS = new Set(['static_metadata', 'file_type', 'hash_list'])
 
 export default function Engines({ session }: { session: Session }) {
   const client = useQueryClient()
@@ -129,14 +134,14 @@ export default function Engines({ session }: { session: Session }) {
     }
   }
   if (query.isPending) return <section className="page"><h1>Engine deployments</h1><div className="skeleton" role="status">Loading engine inventory…</div></section>
-  if (!inventory) return <section className="page"><h1>Engines unavailable</h1><p role="alert" className="error">{query.error?.message}</p><Button onClick={() => void query.refetch()}>Retry</Button></section>
+  if (!inventory) return <section className="page"><h1>Engines unavailable</h1><p role="alert" className="error"><ErrorMessage message={query.error?.message || ''} /></p><Button onClick={() => void query.refetch()}>Retry</Button></section>
   const engines = inventory.engines.filter(e => `${e.display_name} ${e.adapter_key}`.toLowerCase().includes(search.toLowerCase()))
   return <section className="page">
     <div className="page-heading"><div><p className="eyebrow">SCAN INFRASTRUCTURE</p><h1>Engine deployments</h1><p className="muted">Configure your engines. Verify their health. Keep every scan accountable.</p></div>
       <Button onClick={() => { setAdding(true); setEditing(null); setAdapterKey(''); setName(''); setConfig({}); setFormError('') }}><Plus size={17} />Add engine</Button></div>
     <div className="stats-row"><div><span>Configured</span><strong>{inventory.engines.length}</strong></div><div><span>Enabled</span><strong>{inventory.engines.filter(e => e.enabled).length}</strong></div><div><span>Needs attention</span><strong>{inventory.engines.filter(e => e.enabled && ['failed', 'unavailable'].includes(e.health.state)).length}</strong></div></div>
-    {notice && <div role={notice.error ? 'alert' : 'status'} className={notice.error ? 'notice error' : 'notice'}>{notice.text}</div>}
-    {query.error && <div className="notice error" role="alert">Inventory refresh failed. Displayed results may be stale: {query.error.message}</div>}
+    {notice && <div role={notice.error ? 'alert' : 'status'} className={notice.error ? 'notice error' : 'notice'}>{notice.error ? <ErrorMessage message={notice.text} /> : notice.text}</div>}
+    {query.error && <div className="notice error" role="alert">Inventory refresh failed. Displayed results may be stale: <ErrorMessage message={query.error.message || ''} /></div>}
     <div className="toolbar"><label className="search"><Search size={18} /><input aria-label="Search engines" placeholder="Search engine deployments…" value={search} onChange={e => setSearch(e.target.value)} /></label>
       <Button variant="secondary" disabled={query.isFetching || mutation.isPending} onClick={() => void query.refetch()}><RefreshCw size={16} />{query.isFetching ? 'Refreshing…' : 'Refresh'}</Button></div>
     {!engines.length && <div className="empty"><Cpu size={36} /><h2>{inventory.engines.length ? 'No matching deployments' : 'Your first engine starts here'}</h2><p className="muted">Add a named adapter instance and explicitly configure its runtime.</p></div>}
@@ -146,7 +151,7 @@ export default function Engines({ session }: { session: Session }) {
       return <article className="engine-card" key={engine.id}>
         <div className="card-heading"><div className="engine-icon"><EngineIcon adapterKey={engine.adapter_key} /></div><div><h2>{engine.display_name}</h2><p className="muted">{adapter.label} <span>· #{engine.id}</span></p></div><span className={`health-pill health-${health.state}`}>{health.state}</span></div>
         <div className="tags"><span>{adapter.support_state}</span><span>{adapter.capabilities.deployment}</span>{adapter.capabilities.consumes_external_quota && <span>External quota · manual only</span>}</div>
-        <p className="health-detail">{health.detail}</p><p className="checked-at">{health.checked_at ? `Last checked ${new Date(health.checked_at * 1000).toLocaleString()}` : 'No verified check timestamp'}</p>
+        <p className="health-detail">{health.detail}</p><p className="checked-at">{health.checked_at ? `Last checked ${formatTimestamp(health.checked_at)}` : BUILT_IN_ADAPTERS.has(engine.adapter_key) ? 'Built-in analyzer; no connection check required.' : 'No verified check timestamp'}</p>
         <label className="placement">Worker pool<select aria-label={`Worker pool for ${engine.display_name}`} disabled={mutation.isPending} value={engine.pool_id ?? ''} onChange={e => void perform(() => request('/api/ui/v1/engines/{instance_id}/placement', 'put', { params: { instance_id: engine.id }, csrf, body: { pool_id: e.target.value ? Number(e.target.value) : null } }), 'Worker placement saved. Health will be checked again.')}>
           <option value="">Unbound · adapter-compatible workers</option>{inventory.pools.map(pool => <option value={pool.id} key={pool.id}>{pool.name}{pool.enabled ? '' : ' (disabled)'}</option>)}
         </select></label>
@@ -163,12 +168,12 @@ export default function Engines({ session }: { session: Session }) {
       {selected && <form onSubmit={save}><p className="callout">{selected.description}</p>
         {!editing && <label>Deployment name<input value={name} onChange={e => setName(e.target.value)} maxLength={128} placeholder="e.g. Defender Windows Pool A" required /></label>}
         <ConfigFields adapter={selected} values={config} editing={!!editing?.has_secret} onChange={(key, value) => setConfig(previous => ({ ...previous, [key]: value }))} />
-        {formError && <p role="alert" className="error">{formError}</p>}
+        {formError && <p role="alert" className="error"><ErrorMessage message={formError} /></p>}
         <div className="dialog-actions"><Button variant="secondary" type="button" disabled={mutation.isPending} onClick={() => { setAdding(false); setEditing(null) }}>Cancel</Button><Button disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : editing ? 'Save settings' : 'Create deployment'}</Button></div>
       </form>}
     </Dialog>
     <Dialog open={!!deleting} onOpenChange={open => { if (!open && !mutation.isPending) setDeleting(null) }} title="Remove engine deployment?" description="Historical jobs keep their original identity. Jobs from this instance will not be rebound to another deployment.">
-      {formError && <p role="alert" className="error">{formError}</p>}
+      {formError && <p role="alert" className="error"><ErrorMessage message={formError} /></p>}
       <p>Remove <strong>{deleting?.display_name}</strong>?</p><div className="dialog-actions"><Button variant="secondary" onClick={() => setDeleting(null)}>Cancel</Button><Button variant="destructive" disabled={mutation.isPending} onClick={async () => {
         if (deleting && await perform(() => request('/api/ui/v1/engines/{instance_id}', 'delete', { params: { instance_id: deleting.id }, csrf }), 'Engine deployment removed.')) setDeleting(null)
       }}>Remove deployment</Button></div>

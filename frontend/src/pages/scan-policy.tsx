@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
@@ -32,9 +33,9 @@ export default function ScanPolicy({ session }: { session: Session }) {
       An upload size cap of 0 removes this policy cap; deployment HTTP body limits still apply. ICAP and deployment settings are configured separately.</p>
     <p className="muted">Saving replaces all three overrides. Coordinate edits with other administrators; the last successful save wins.</p>
     {policy.isPending && <p role="status">Loading scan policy…</p>}
-    {policy.error && <p role="alert" className="error">{policy.error.message}</p>}
+    {policy.error && <p role="alert" className="error"><ErrorMessage message={policy.error.message || ''} /></p>}
     {save.isSuccess && <p role="status" className="callout">Scan policy saved. Reload policy to see the effective values.</p>}
-    {save.error && <p role="alert" className="error">{save.error.message} The request may have reached the server. Reload and check the values before another save; this request will not be replayed.</p>}
+    {save.error && <p role="alert" className="error"><ErrorMessage message={save.error.message || ''} /> The request may have reached the server. Reload and check the values before another save; this request will not be replayed.</p>}
     {needsRefresh && <p>Reload policy before editing again.</p>}
     {!needsRefresh && !policy.error && policy.data && <form key={version} onSubmit={review} aria-label="Scan policy settings">
       <fieldset disabled={busy}>{policy.data.fields.map(field => <section className="submission-card" key={field.key}>

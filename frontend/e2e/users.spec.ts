@@ -24,6 +24,8 @@ test('admin creates a local analyst who can sign in without admin access', async
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Administrator access required' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Users', exact: true })).toHaveCount(0)
+  // Phone widths collapse the grouped navigation behind the Menu button.
+  await page.getByRole('button', { name: 'Menu', exact: true }).click()
   await page.getByRole('link', { name: 'Dashboard', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
 })

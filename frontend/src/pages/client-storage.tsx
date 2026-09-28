@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useContext, useState, type FormEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { Database, RefreshCw } from 'lucide-react'
@@ -87,9 +88,9 @@ export default function ClientStorage({ session }: { session: Session }) {
     <p className="callout">Choose where this client may submit deferred files. Backend locations stay deployment-managed.
       Access is checked at submission and again before the intake worker starts copying. A copy already in progress may continue.</p>
     {access.isPending && <p role="status">Loading storage access…</p>}
-    {access.error && <p role="alert" className="error">{access.error.message}</p>}
+    {access.error && <p role="alert" className="error"><ErrorMessage message={access.error.message || ''} /></p>}
     {save.isSuccess && <p role="status" className="callout">Storage access saved. Refresh before editing again.</p>}
-    {save.error && <p role="alert" className="error">{save.error.message} Refresh and reconcile before another save; requests are not automatically retried.</p>}
+    {save.error && <p role="alert" className="error"><ErrorMessage message={save.error.message || ''} /> Refresh and reconcile before another save; requests are not automatically retried.</p>}
     {needsRefresh && <p>Refresh storage access to load the current policy.</p>}
     {!needsRefresh && !access.error && access.data && <>
       <div className="client-section-heading"><h2>Current access</h2><span className="client-badge">{access.data.mode === 'custom' ? 'Custom client access' : 'Deployment settings'}</span></div>

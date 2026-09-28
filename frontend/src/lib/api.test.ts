@@ -2,6 +2,18 @@ import { describe, expect, it, vi } from 'vitest'
 import { request, ApiError } from './api'
 
 describe('Generated-contract transport', () => {
+  it('preserves a bounded server request ID on an error without replaying the request', async () => {
+    const fetcher = vi.fn(async () => new Response('{"detail":"Unavailable"}', {
+      status: 503, headers: { 'X-Request-ID': 'proxy/test-42' },
+    }))
+    vi.stubGlobal('fetch', fetcher)
+    await expect(request('/api/ui/v1/system/summary', 'get', {})).rejects.toMatchObject({
+      status: 503, requestId: 'proxy/test-42', message: 'Unavailable [Request ID: proxy/test-42]',
+    })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(new ApiError(500, 'Failed', '<script>bad</script>').requestId).toBeNull()
+    expect(new ApiError(500, 'Failed', 'x'.repeat(129)).message).toBe('Failed')
+  })
   it('encodes path/query values and preserves private GET and abort behavior', async () => {
     const fetcher = vi.fn(async (_url: string, _options: RequestInit) => new Response('{"name":"ok.yar"}'))
     vi.stubGlobal('fetch', fetcher)

@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useContext, useState, type FormEvent } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { Cpu, GitBranch, Plus, RefreshCw } from 'lucide-react'
@@ -87,9 +88,9 @@ export default function ClientProfiles({ session }: { session: Session }) {
     <p className="callout">Changes apply to future submissions. Selected engines are required; accepted scans keep their original routing.
       Disabled engines and metered reputation services remain excluded from API/ICAP scans. Engine selection alone does not prove scan coverage.</p>
     {profiles.isPending && <p role="status">Loading profiles…</p>}
-    {profiles.error && <p role="alert" className="error">{profiles.error.message}</p>}
+    {profiles.error && <p role="alert" className="error"><ErrorMessage message={profiles.error.message || ''} /></p>}
     {save.isSuccess && <p role="status" className="callout">{save.variables?.kind === 'engines' ? 'Profile routing saved. Refresh before editing again.' : 'Profile change saved. Refresh before editing again.'}</p>}
-    {save.error && <p role="alert" className="error">{save.error.message} Refresh and reconcile before another save; requests are not automatically retried.</p>}
+    {save.error && <p role="alert" className="error"><ErrorMessage message={save.error.message || ''} /> Refresh and reconcile before another save; requests are not automatically retried.</p>}
     {!needsRefresh && !profiles.error && profiles.data && <>
       {profiles.data.managed && <p>Managed compatibility routing is read-only.</p>}
       {profiles.data.engines_incomplete && <p role="alert">More than 100 engine instances exist, beyond what this editor can show; this incomplete list cannot be saved.</p>}
@@ -104,8 +105,8 @@ export default function ClientProfiles({ session }: { session: Session }) {
       {!profiles.data.items.length && <p>No profiles on this page.</p>}
       {profiles.data.items.map(profile => <ProfileCard key={`${profile.id}-${profiles.dataUpdatedAt}`} profile={profile} engines={profiles.data!.engines}
         disabled={busy || !!editor || profiles.data!.managed || profiles.data!.engines_incomplete} review={setConfirmation} edit={() => setEditor(profile)} defaultId={profiles.data!.default_profile_id} />)}
-      <div className="history-pagination"><Button variant="secondary" disabled={busy || !after} onClick={() => setAfter('')}>First profiles</Button>
-        <Button variant="secondary" disabled={busy || !profiles.data.next_after} onClick={() => setAfter(String(profiles.data!.next_after))}>Next profiles</Button></div>
+      {Boolean(after || profiles.data.next_after) && <div className="history-pagination"><Button variant="secondary" disabled={busy || !after} onClick={() => setAfter('')}>First profiles</Button>
+        <Button variant="secondary" disabled={busy || !profiles.data.next_after} onClick={() => setAfter(String(profiles.data!.next_after))}>Next profiles</Button></div>}
     </>}
     {needsRefresh && <p>Refresh profiles to load current routing.</p>}
     <Dialog open={confirmation !== null} onOpenChange={open => { if (!open && !save.isPending) setConfirmation(null) }} locked={save.isPending} title={confirmation?.kind === 'engines' ? 'Save profile routing?' : 'Confirm profile change'} description={description}>

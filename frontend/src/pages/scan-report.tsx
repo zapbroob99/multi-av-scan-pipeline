@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -15,7 +17,7 @@ function Technical({ scanId, resultId, automation }: { scanId: number; resultId:
     staleTime: 0, gcTime: 0, retry: false })
   return <div className="technical-panel">
     {details.isPending && <p role="status">Loading technical output…</p>}
-    {details.error && <p role="alert" className="error">{details.error.message}</p>}
+    {details.error && <p role="alert" className="error"><ErrorMessage message={details.error.message || ''} /></p>}
     {details.data && <><p className="muted">On-demand snapshot, not live output. Close and reopen to refresh.</p>
       {details.data.truncated.length > 0 && <p className="callout">Truncated previews: {details.data.truncated.join(', ')}. Open the full engine output to read more.</p>}
       {(['raw_output', 'details_json', 'findings_json'] as const).map(field => <section key={field}>
@@ -52,7 +54,7 @@ export default function Report({ automation = false }: { automation?: boolean })
   const scan = report.data
   if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></section>
   // Do not leave an earlier allow card visible when a refresh fails or expires.
-  if (report.error) return <section className="page"><h1>Report unavailable</h1><p role="alert" className="error">{report.error.message}</p>
+  if (report.error) return <section className="page"><h1>Report unavailable</h1><p role="alert" className="error"><ErrorMessage message={report.error.message || ''} /></p>
     <Button onClick={() => { void report.refetch() }}>Retry report</Button></section>
   if (!scan) return <section className="page"><p role="status">Loading scan report…</p></section>
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">{automation ? 'AUTOMATION' : 'MANUAL'} SCAN #{scan.id}</p>
@@ -80,7 +82,7 @@ export default function Report({ automation = false }: { automation?: boolean })
     {scan.unavailable.length > 0 && <section className="error"><h2>Required engines not completed</h2><ul>{scan.unavailable.map((name, index) => <li key={index}>{name}</li>)}</ul></section>}
     {scan.last_error && <section className="error"><h2>Last worker error</h2><p>{scan.last_error}</p></section>}
     <dl className="submission-card report-metadata"><dt>SHA-256</dt><dd>{scan.sha256}</dd><dt>Size</dt><dd>{scan.size_bytes.toLocaleString()} bytes</dd>
-      <dt>Case</dt><dd>{scan.case_name}</dd><dt>Submitted (server time)</dt><dd>{scan.created_at}</dd>
+      <dt>Case</dt><dd>{scan.case_name}</dd><dt>Submitted</dt><dd>{formatTimestamp(scan.created_at)}</dd>
       {scan.note && <><dt>Analyst note</dt><dd>{scan.note}</dd></>}</dl>
     <div className="history-heading"><h2>Engine results</h2><p className="muted">Technical output loads only when opened.</p></div>
     <div className="report-engines">{scan.engines.map(engine => <EngineRow key={`${scan.attempt_count}-${engine.result_id ?? engine.name}`} scanId={scan.id} engine={engine} automation={automation} />)}</div>

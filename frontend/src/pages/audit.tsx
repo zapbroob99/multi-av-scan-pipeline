@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -56,7 +58,7 @@ export default function Audit() {
       <Button type="button" variant="secondary" onClick={() => setParams({})}>Reset filters</Button>
     </fieldset><p className="muted">Search matches the text exactly; <code>%</code> and <code>_</code> are literal characters, not wildcards.</p></form>
     {events.isPending && <p role="status">Loading audit events…</p>}
-    {events.error && <p role="alert" className="error">{events.error.message}</p>}
+    {events.error && <p role="alert" className="error"><ErrorMessage message={events.error.message || ''} /></p>}
     {!events.error && events.data && <>
       {!events.data.items.length && <p className="empty">No audit events match these filters.</p>}
       {events.data.items.length > 0 && <div className="history-table-wrap" role="region" aria-label="Audit events" tabIndex={0}>
@@ -64,7 +66,7 @@ export default function Audit() {
           <th scope="col">When</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Actor</th>
           <th scope="col">Target</th><th scope="col">Source</th><th scope="col">Details</th></tr></thead><tbody>
         {events.data.items.map(event => <tr key={event.id} className={event.outcome === 'success' ? '' : 'row-alert'}>
-          <td><small title={event.created_at}>{event.created_at.slice(0, 19)}</small><small>#{event.id}</small></td>
+          <td><small title={event.created_at}>{formatTimestamp(event.created_at)}</small><small>#{event.id}</small></td>
           <td><code>{event.action}</code></td>
           <td><span className={`tag ${OUTCOME_TAG[event.outcome] || ''}`}>{event.outcome}</span></td>
           <td className="cell-name" title={event.actor_name || event.actor_id || 'Anonymous'}>{event.actor_name || event.actor_id || 'Anonymous'}
@@ -76,8 +78,8 @@ export default function Audit() {
             {event.details_truncated && <p className="muted">Details truncated for display.</p>}
           </details></td>
         </tr>)}</tbody></table></div>}
-      <div className="history-pagination"><Button variant="secondary" disabled={events.isFetching || !params.get('before')} onClick={() => paginate()}>Newest events</Button>
-        <Button variant="secondary" disabled={events.isFetching || !events.data.next_before} onClick={() => paginate(events.data!.next_before!)}>Older events</Button></div>
+      {Boolean(params.get('before') || events.data.next_before) && <div className="history-pagination"><Button variant="secondary" disabled={events.isFetching || !params.get('before')} onClick={() => paginate()}>Newest events</Button>
+        <Button variant="secondary" disabled={events.isFetching || !events.data.next_before} onClick={() => paginate(events.data!.next_before!)}>Older events</Button></div>}
       <p className="muted">Pages are bounded and no total is calculated. Newer events can arrive while you page through older ones.</p>
     </>}
   </section>

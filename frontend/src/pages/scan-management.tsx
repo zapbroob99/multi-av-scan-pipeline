@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -59,10 +60,10 @@ export default function ScanManagement({ session }: { session: Session }) {
     <h1>Exports and scan management</h1></div><Link className="button button-secondary" to="/dashboard">Dashboard</Link></div>
     {!deleted && <p><Link to={`/scans/${scanId}`}>Back to report</Link></p>}
     {receipt && <p role="status" className="callout">{receipt}</p>}
-    {operation.error && <p role="alert" className="error">{operation.error.message} The request may have reached the server. Check the report or Dashboard before trying again.</p>}
+    {operation.error && <p role="alert" className="error"><ErrorMessage message={operation.error.message || ''} /> The request may have reached the server. Check the report or Dashboard before trying again.</p>}
     {!receipt && <>
       {report.isPending && <p role="status">Loading scan...</p>}
-      {report.error && <p role="alert" className="error">{report.error.message}</p>}
+      {report.error && <p role="alert" className="error"><ErrorMessage message={report.error.message || ''} /></p>}
       <Button variant="secondary" disabled={busy || report.isFetching} onClick={() => { void report.refetch() }}>Refresh scan</Button>
       {scan && <><section className="submission-card"><h2 className="report-filename">{scan.filename}</h2>
         <p>Status: {scan.status} · Attempt {scan.attempt_count}</p></section>
@@ -71,7 +72,7 @@ export default function ScanManagement({ session }: { session: Session }) {
           <div className="report-actions"><Button variant="secondary" disabled={busy} onClick={() => download.mutate({ scope: 'summary', format: 'json' })}>Download summary JSON</Button>
             <Button variant="secondary" disabled={busy} onClick={() => download.mutate({ scope: 'summary', format: 'csv' })}>Download summary CSV</Button></div>
           {download.isPending && <p role="status">Preparing download...</p>}
-          {download.error && <p role="alert" className="error">{download.error.message}</p>}
+          {download.error && <p role="alert" className="error"><ErrorMessage message={download.error.message || ''} /></p>}
         </section>
         <section className="submission-card"><h2>Export full report</h2>
           <p>JSON includes complete raw engine output, structured details and normalized findings from one database snapshot. CSV contains normalized report rows and engine errors; use JSON when raw output is required. Browser exports are limited to 2 MiB and never include the stored sample path or sample bytes.</p>

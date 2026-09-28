@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -32,20 +34,20 @@ export default function Retention({ session }: { session: Session }) {
     <p className="callout">Includes all scan sources and archive children. Each run is limited to 20 displayed records or the smaller server batch limit.
       Active scans, records with children, shared samples and undelivered notifications are protected. Records can become blocked after preview.</p>
     {preview.isPending && <p role="status">Loading retention preview…</p>}
-    {preview.error && <p role="alert" className="error">{preview.error.message}</p>}
-    {action.error && <p role="alert" className="error">{action.error.message} Some records may already have been deleted. Refresh and reconcile before any new run; this request will not be replayed.</p>}
+    {preview.error && <p role="alert" className="error"><ErrorMessage message={preview.error.message || ''} /></p>}
+    {action.error && <p role="alert" className="error"><ErrorMessage message={action.error.message || ''} /> Some records may already have been deleted. Refresh and reconcile before any new run; this request will not be replayed.</p>}
     {action.data && <div role="status" className="callout"><p>Deleted IDs: {action.data.deleted_ids.join(', ') || 'None'}</p>
       <p>Blocked IDs: {action.data.blocked_ids.join(', ') || 'None'}</p><p>File cleanup failed for deleted IDs: {action.data.cleanup_failed_ids.join(', ') || 'None'}</p></div>}
     {needsRefresh && <p>Refresh the preview before reviewing another batch.</p>}
     {data && <>
-      <p className="muted">Server policy: {data.days} days; batch limit {data.batch_size}. {data.cutoff ? `Candidates created before ${data.cutoff}.` : 'Retention cleanup is disabled.'}</p>
+      <p className="muted">Server policy: {data.days} days; batch limit {data.batch_size}. {data.cutoff ? `Candidates created before ${formatTimestamp(data.cutoff)}.` : 'Retention cleanup is disabled.'}</p>
       {!!data.items.length && <div className="history-table-wrap" role="region" aria-label="Retention candidates" tabIndex={0}>
         <table className="history-table"><thead><tr><th>Scan</th><th>Filename</th><th>Source</th><th>Status</th><th>Created</th></tr></thead><tbody>
-          {data.items.map(item => <tr key={item.scan_id}><td>#{item.scan_id}</td><td>{item.filename}</td><td>{item.source}</td><td>{item.status}</td><td>{item.created_at}</td></tr>)}
+          {data.items.map(item => <tr key={item.scan_id}><td>#{item.scan_id}</td><td>{item.filename}</td><td>{item.source}</td><td>{item.status}</td><td>{formatTimestamp(item.created_at)}</td></tr>)}
         </tbody></table></div>}
       {!data.items.length && data.cutoff && <p>No expired inactive records on this page.</p>}
-      <div className="history-pagination"><Button variant="secondary" disabled={busy || !after} onClick={() => setParams({})}>First candidates</Button>
-        <Button variant="secondary" disabled={busy || !data.next_after} onClick={() => setParams({ after: String(data.next_after) })}>Next candidates</Button>
+      <div className="history-pagination">{Boolean(after || data.next_after) && <><Button variant="secondary" disabled={busy || !after} onClick={() => setParams({})}>First candidates</Button>
+        <Button variant="secondary" disabled={busy || !data.next_after} onClick={() => setParams({ after: String(data.next_after) })}>Next candidates</Button></>}
         <Button variant="destructive" disabled={busy || !data.items.length || !data.cutoff} onClick={() => setConfirmation({ days: data.days, batch_size: data.batch_size,
           scans: data.items.map(({ scan_id, attempt, job_revision }) => ({ scan_id, attempt, job_revision })) })}>Review deletion</Button></div>
     </>}

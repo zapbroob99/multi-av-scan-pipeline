@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -73,7 +75,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
         scan_id: scan.id, attempt: scan.attempt_count, job_revision: scan.job_revision,
       })))}>Delete selected ({selected.length})</Button>}
     {receipt && <p role="status" className="callout">{receipt}</p>}
-    {error && <p role="alert" className="error">{error}</p>}
+    {error && <p role="alert" className="error"><ErrorMessage message={error} /></p>}
     {requiresRefresh && <p className="callout">Refresh ledger to review the current records before selecting again.</p>}
     <p className="callout">Recorded risk is not a clean verdict or proof of complete coverage. Open a report to review the backend decision.
       Deferred intake appears only after a scan is created. Client names reflect current configuration; IDs identify recorded ownership.</p>
@@ -87,7 +89,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
       <Button type="submit" disabled={scans.isFetching}>Apply filters</Button><Button type="button" variant="secondary" onClick={() => setParams({})}>Reset filters</Button>
     </fieldset></form>
     {scans.isPending && <p role="status">Loading automation history…</p>}
-    {scans.error && <p role="alert" className="error">{scans.error.message}</p>}
+    {scans.error && <p role="alert" className="error"><ErrorMessage message={scans.error.message || ''} /></p>}
     {!requiresRefresh && !scans.error && scans.data && <>
       {!scans.data.items.length && <p>No automation scans match these filters.</p>}
       {scans.data.items.length > 0 && <div className="history-table-wrap" role="region" aria-label="Automation history" tabIndex={0}>
@@ -111,12 +113,12 @@ export default function ApiLedger({ session }: { session?: Session }) {
               }} aria-label={`Filter client #${scan.service_client_id}`} title={`Filter client #${scan.service_client_id}`}>#{scan.service_client_id} {scan.client_name || 'Name unavailable'}</Button>}</td>
           <td>{scan.status}</td>
           <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} failed={scan.status === 'failed'} unavailable={scan.unavailable_engines} /></td>
-          <td><small>{scan.created_at}</small></td>
+          <td><small>{formatTimestamp(scan.created_at)}</small></td>
           <td className="cell-actions"><Link to={`/api-ledger/scans/${scan.id}`}>Report</Link>
             {scan.batch_id !== null && <Link to={`/api-ledger/batches/${scan.batch_id}`}>Batch</Link>}</td>
         </tr>)}</tbody></table></div>}
-      <div className="history-pagination"><Button variant="secondary" disabled={locked || scans.isFetching || !params.get('before')} onClick={() => paginate()}>Newest scans</Button>
-        <Button variant="secondary" disabled={locked || scans.isFetching || !scans.data.next_before} onClick={() => paginate(scans.data!.next_before!)}>Older scans</Button></div>
+      {Boolean(params.get('before') || scans.data.next_before) && <div className="history-pagination"><Button variant="secondary" disabled={locked || scans.isFetching || !params.get('before')} onClick={() => paginate()}>Newest scans</Button>
+        <Button variant="secondary" disabled={locked || scans.isFetching || !scans.data.next_before} onClick={() => paginate(scans.data!.next_before!)}>Older scans</Button></div>}
     </>}
     <Dialog open={draft !== null} onOpenChange={open => { if (!open && !busy) setDraft(null) }} title="Delete selected automation scans?"
       description="Only these records will be checked and deleted individually. Active scans, registered parents, shared samples and pending notifications remain protected. This does not delete batches recursively.">

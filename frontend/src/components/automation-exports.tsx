@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ErrorMessage } from './error-message'
 import { request } from '../lib/api'
 import { Button } from './ui/button'
 
@@ -28,6 +29,6 @@ export function AutomationExports({ scanId, disabled = false }: { scanId: number
       <Button key={`${scope}-${format}`} variant="secondary" disabled={busy || disabled} onClick={() => { void download(scope, format) }}>
         Download {scope} {format.toUpperCase()}</Button>))}</div>
     {busy && <p role="status">Preparing export…</p>}
-    {error && <p role="alert" className="error">{error} Downloads are not automatically retried.</p>}
+    {error && <p role="alert" className="error"><ErrorMessage message={error} /> Downloads are not automatically retried.</p>}
   </section>
 }

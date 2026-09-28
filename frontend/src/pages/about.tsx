@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
@@ -13,7 +15,7 @@ function Row({ term, children, mono = false }: { term: string; children: ReactNo
 }
 
 const orDash = (value: string | null | undefined) => value || '—'
-const when = (iso: string | null) => iso ? new Date(iso).toLocaleString() : '—'
+const when = formatTimestamp
 
 export default function About({ session }: { session: Session }) {
   const about = useQuery({ queryKey: ['about'], queryFn: ({ signal }) => request('/api/ui/v1/about', 'get', { signal }),
@@ -24,7 +26,7 @@ export default function About({ session }: { session: Session }) {
     <Button variant="secondary" disabled={about.isFetching} onClick={() => { void about.refetch() }}><RefreshCw size={14} aria-hidden="true" />Refresh</Button></div>
 
     {about.isPending && <p role="status">Loading runtime snapshot…</p>}
-    {about.error && <p role="alert" className="error">{about.error.message}</p>}
+    {about.error && <p role="alert" className="error"><ErrorMessage message={about.error.message || ''} /></p>}
     {!about.error && data && <>
       <Spec title="Build">
         <Row term="Application" mono>MASP {data.app_version}</Row>
@@ -60,7 +62,7 @@ export default function About({ session }: { session: Session }) {
         {session.user.role === 'admin' && data.service_client_count !== null && <Row term="Service clients">{data.service_client_count}</Row>}
       </Spec>
 
-      <p className="spec-note">Snapshot read {new Date(data.generated_at).toLocaleString()}; it is not cached. Hosts, paths and engine
+      <p className="spec-note">Snapshot read {formatTimestamp(data.generated_at)}; it is not cached. Hosts, paths and engine
         configuration are never shown here. Enabled engines and accepting nodes are configuration state, not proof that a scan will reach complete coverage.</p>
     </>}
   </section>

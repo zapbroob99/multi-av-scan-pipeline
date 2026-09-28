@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
@@ -21,8 +22,8 @@ export default function AutomationManagement({ session }: { session: Session }) 
     <nav className="report-actions"><Link to="/api-ledger">API ledger</Link>{!deletion.isSuccess && <Link to={`/api-ledger/scans/${scanId}`}>Back to report</Link>}</nav>
     <p className="callout">Delete only this scan. Active jobs, registered children, shared samples and undelivered notifications prevent deletion.
       Database deletion commits before sample cleanup; a cleanup failure is reported separately. No automatic retry is performed.</p>
-    {scan.error && !deletion.isSuccess && <p role="alert" className="error">{scan.error.message}</p>}
-    {deletion.error && <p role="alert" className="error">{deletion.error.message} The request may have reached the server. Refresh and reconcile before continuing.</p>}
+    {scan.error && !deletion.isSuccess && <p role="alert" className="error"><ErrorMessage message={scan.error.message || ''} /></p>}
+    {deletion.error && <p role="alert" className="error"><ErrorMessage message={deletion.error.message || ''} /> The request may have reached the server. Refresh and reconcile before continuing.</p>}
     {deletion.data ? <p role="status" className="callout">Scan #{deletion.data.scan_id} deleted.
       {deletion.data.sample_removed ? ' Sample cleanup confirmed.' : ' Sample cleanup was not confirmed; ask an administrator to check storage.'}</p> : <>
       <Button variant="secondary" disabled={scan.isFetching || deletion.isPending || confirm} onClick={async () => {

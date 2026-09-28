@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { lazy, Suspense, useCallback, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Cable, ChevronRight, Database, GitBranch, KeyRound, Plus, RefreshCw, Settings2 } from 'lucide-react'
@@ -67,7 +68,7 @@ function ClientEditor({ client, session, close, updated }: { client: Client; ses
             {client.managed && <p className="callout">Managed compatibility client. Edit deployment configuration through the existing administration workflow.</p>}
             {client.metadata_incomplete && <p role="alert" className="error">Metadata exceeds the console limit, so editing is disabled to avoid saving truncated values.</p>}
             {action.isSuccess && <p role="status" className="callout">Service client updated. Close this window and refresh clients to see the current state.</p>}
-            {action.error && <p role="alert" className="error">{action.error.message} The request may have reached the server. Close this window and refresh clients before saving again; no automatic retry is performed.</p>}
+            {action.error && <p role="alert" className="error"><ErrorMessage message={action.error.message || ''} /> The request may have reached the server. Close this window and refresh clients before saving again; no automatic retry is performed.</p>}
             {!needsRefresh && <form onSubmit={submit} aria-label={`Edit client ${client.id}`}><fieldset disabled={blocked || client.managed || client.metadata_incomplete}>
               <div className="field-grid"><label>Display name<input name="display_name" required maxLength={100} defaultValue={client.display_name} /></label>
                 <label>Client state<select name="enabled" defaultValue={client.enabled ? 'enabled' : 'disabled'}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label></div>
@@ -106,7 +107,7 @@ export default function ServiceClients({ session }: { session: Session }) {
     <Button ref={refresh} variant="secondary" disabled={busy} onClick={async () => { const result = await clients.refetch(); if (!result.error) setNeedsRefresh(false) }}><RefreshCw size={14} aria-hidden="true" />Refresh clients</Button>
     <Link className="button button-primary" to="/service-clients/new"><Plus size={16} aria-hidden="true" />Create service client</Link></div></div>
     {clients.isPending && <p role="status">Loading service clients…</p>}
-    {clients.error && <p role="alert" className="error">{clients.error.message}</p>}
+    {clients.error && <p role="alert" className="error"><ErrorMessage message={clients.error.message || ''} /></p>}
     {needsRefresh && <p role="status" className="callout">Refresh clients to load current settings before editing another record.</p>}
     {!needsRefresh && !clients.error && clients.data && <>
       <div className="client-list-heading"><h2>Integration directory <span className="client-badge">{clients.data.items.length} on this page</span></h2>
@@ -119,8 +120,8 @@ export default function ServiceClients({ session }: { session: Session }) {
           <ChevronRight size={18} aria-hidden="true" />
         </button>
       </li>)}</ul>
-      <div className="history-pagination"><Button variant="secondary" disabled={busy || !after} onClick={() => setParams({})}>First clients</Button>
-        <Button variant="secondary" disabled={busy || !clients.data.next_after} onClick={() => setParams({ after: String(clients.data!.next_after) })}>Next clients</Button></div>
+      {Boolean(after || clients.data.next_after) && <div className="history-pagination"><Button variant="secondary" disabled={busy || !after} onClick={() => setParams({})}>First clients</Button>
+        <Button variant="secondary" disabled={busy || !clients.data.next_after} onClick={() => setParams({ after: String(clients.data!.next_after) })}>Next clients</Button></div>}
     </>}
     {selected && <ClientEditor key={selected.id} client={selected} session={session} updated={() => setNeedsRefresh(true)} close={() => {
       setSelected(null)

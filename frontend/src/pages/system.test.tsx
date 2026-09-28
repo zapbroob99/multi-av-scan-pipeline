@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import System from './system'
 
-function mount() {
+function mount(initialEntry = '/') {
   const worker = { node_id: 'node-a', display_name: '<script>worker</script>', hostname: 'host', platform: 'windows',
     agent_version: '1', capacity: 2, lifecycle_state: 'active', runtime_state: 'idle', active_scan_id: null,
     last_heartbeat_at: 1, age_seconds: 60, online: false, labels: {}, engine_keys: ['microsoft_defender'], metadata_incomplete: false }
@@ -14,13 +14,23 @@ function mount() {
       : { items: [worker], next_after: 'node-a', stale_after_seconds: 30 })))
   vi.stubGlobal('fetch', fetcher)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  render(<QueryClientProvider client={client}><MemoryRouter><System session={{
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[initialEntry]}><System session={{
     user: { id: 1, username: 'admin', role: 'admin' }, csrf_token: 'csrf',
   }} /></MemoryRouter></QueryClientProvider>)
   return { fetcher }
 }
 
 describe('System worker management', () => {
+  it('opens the linked worker from the bounded page and does not reopen after dismissal and refresh', async () => {
+    const { fetcher } = mount('/system?node=node-a&after=earlier')
+    await screen.findByRole('dialog')
+    expect(fetcher).toHaveBeenCalledWith('/api/ui/v1/system/workers?limit=20&after=earlier', expect.anything())
+    await userEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh workers' }))
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(fetcher.mock.calls.every(([, options]) => options?.method === 'GET')).toBe(true)
+  })
   it('renders inert worker identity and confirms an explicit lifecycle with CSRF', async () => {
     const { fetcher } = mount()
     const row = await screen.findByRole('button', { name: 'Manage worker node-a' })

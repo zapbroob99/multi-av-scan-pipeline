@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -49,14 +50,14 @@ export default function NewScan({ session }: { session: Session }) {
           <label>Priority<select name="priority" defaultValue="Normal"><option>Normal</option><option>High</option><option>Low</option></select></label></div>
         <label>Analyst note<textarea name="note" rows={4} maxLength={4000} placeholder="Source, ticket or handling notes" /></label>
         {validation && <p role="alert" className="error">{validation}</p>}
-        {upload.error && <p role="alert" className="error">{upload.error.message}{uncertain && ' Submission may have reached the server. Check Dashboard before retrying to avoid duplicate scans.'}</p>}
+        {upload.error && <p role="alert" className="error"><ErrorMessage message={upload.error.message || ''} />{uncertain && ' Submission may have reached the server. Check Dashboard before retrying to avoid duplicate scans.'}</p>}
         <div className="dialog-actions"><Button disabled={upload.isPending || !options.data || !options.data.enabled_engine_count}>
           <Upload size={16} />{upload.isPending ? 'Sending sample…' : 'Create scan'}</Button></div>
       </fieldset>
       {upload.isPending && <p role="status" className="muted">Uploading and awaiting acceptance. Keep this page open; do not submit the file again.</p>}
     </form><aside className="submission-card"><h2>Submission policy</h2>
       {options.isPending && <p role="status" className="muted">Loading limits…</p>}
-      {options.error && <><p role="alert" className="error">{options.error.message}</p><Button variant="secondary" onClick={() => { void options.refetch() }}>Retry limits</Button></>}
+      {options.error && <><p role="alert" className="error"><ErrorMessage message={options.error.message || ''} /></p><Button variant="secondary" onClick={() => { void options.refetch() }}>Retry limits</Button></>}
       {options.data && <><dl className="submission-policy"><dt>Enabled file engines</dt><dd>{options.data.enabled_engine_count}</dd>
         <dt>File size policy</dt><dd>{options.data.file_max_bytes === null ? 'No separate file limit' : `${options.data.file_max_bytes.toLocaleString()} bytes`}</dd>
         <dt>HTTP request ceiling</dt><dd>{options.data.body_max_bytes.toLocaleString()} bytes, including multipart overhead</dd></dl>

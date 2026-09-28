@@ -1,3 +1,5 @@
+import { formatTimestamp } from '../lib/utils'
+import { ErrorMessage } from '../components/error-message'
 import { useContext, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -72,10 +74,10 @@ export default function ClientCredentials({ session, create = false }: { session
     {create ? <Link className="client-back client-create-back" to="/service-clients"><ArrowLeft size={15} aria-hidden="true" />All service clients</Link> : <ClientNavigation clientId={clientId} />}
     <div className="page-heading"><div><p className="eyebrow">INTEGRATIONS{!create && ` · CLIENT #${clientId}`}</p>
     <h1>{create ? 'Create service client' : 'Client credentials'}</h1><p className="muted">{create ? 'Set up an integration identity, its scan engines and API access.' : 'Manage API access for this client. Tokens are never displayed after saving.'}</p></div></div>
-    {message && <p role={failed ? 'alert' : 'status'} className={failed ? 'error' : 'callout'}>{message}</p>}
+    {message && <p role={failed ? 'alert' : 'status'} className={failed ? 'error' : 'callout'}>{failed ? <ErrorMessage message={message} /> : message}</p>}
     {createdId && <Link to={`/service-clients/${createdId}/credentials`}>Manage created client credentials</Link>}
     {create && locked && !createdId && <Link to="/service-clients">Review clients before trying again</Link>}
-    {(options.error || credentials.error) && <p role="alert">Unable to load current configuration. Refresh before continuing.</p>}
+    {(options.error || credentials.error) && <p role="alert">Unable to load current configuration. <ErrorMessage message={options.error?.message || credentials.error?.message || ''} /> Refresh before continuing.</p>}
     {create && options.data?.incomplete && <p role="alert">More than 100 engine instances exist, beyond what this editor can show. Assign engines after creation from the client's profile routing.</p>}
     <div className={`client-credentials-layout ${create ? 'client-create-layout' : ''}`}>
     <form onSubmit={prepare} className="submission-card client-credential-form"><fieldset disabled={disabled}>
@@ -107,12 +109,12 @@ export default function ClientCredentials({ session, create = false }: { session
       {!credentials.error && credentials.data?.items.map(item => <article className="submission-card" key={item.id}>
         <div className="client-section-heading"><div className="client-identity"><KeyRound size={18} aria-hidden="true" /><h2>{item.label}</h2></div>
           <span className={`client-badge ${item.revoked_at === null ? 'client-badge-enabled' : ''}`}>{item.revoked_at === null ? 'Active' : 'Revoked'}</span></div>
-        <dl className="client-credential-metadata"><div><dt>Credential</dt><dd>#{item.id}</dd></div><div><dt>Created</dt><dd>{item.created_at}</dd></div>
-        <div><dt>Last used</dt><dd>{item.last_used_at === null ? 'Never recorded' : new Date(item.last_used_at * 1000).toLocaleString()}</dd></div></dl>
+        <dl className="client-credential-metadata"><div><dt>Credential</dt><dd>#{item.id}</dd></div><div><dt>Created</dt><dd>{formatTimestamp(item.created_at)}</dd></div>
+        <div><dt>Last used</dt><dd>{item.last_used_at === null ? 'Never recorded' : formatTimestamp(item.last_used_at)}</dd></div></dl>
         <div className="client-form-footer"><Button variant="destructive" disabled={disabled || item.revoked_at !== null} onClick={() => setRevokeId(item.id)}>Revoke credential #{item.id}</Button></div></article>)}
       {credentials.data?.items.length === 0 && <div className="empty"><KeyRound size={26} aria-hidden="true" /><h2>No credentials on this page.</h2><p>Add a credential to configure API access.</p></div>}
-      <div className="history-pagination"><Button disabled={busy || locked || review !== null || revokeId !== null || after === null} onClick={() => setAfter(null)}>First credentials</Button>
-        <Button disabled={busy || locked || review !== null || revokeId !== null || !credentials.data?.next_after} onClick={() => setAfter(credentials.data!.next_after)}>Next credentials</Button></div></section>}
+      {Boolean(after !== null || credentials.data?.next_after) && <div className="history-pagination"><Button disabled={busy || locked || review !== null || revokeId !== null || after === null} onClick={() => setAfter(null)}>First credentials</Button>
+        <Button disabled={busy || locked || review !== null || revokeId !== null || !credentials.data?.next_after} onClick={() => setAfter(credentials.data!.next_after)}>Next credentials</Button></div>}</section>}
     </div>
     <Dialog open={review !== null || revokeId !== null} onOpenChange={open => { if (!open) cancel() }} title={review ? 'Save credential?' : 'Revoke credential?'}
       description={review ? `Save ${review.credential_label} for ${create ? review.display_name : `client #${clientId}`}${create ? ` with required engine IDs ${review.engine_ids.join(', ') || '(none selected)'}` : ''}? The token will not be shown again.` : `Revoke credential #${revokeId} for client #${clientId}? Subsequent authentication with it will fail.`}>

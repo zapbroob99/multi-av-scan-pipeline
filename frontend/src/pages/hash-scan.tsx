@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ExternalLink, RefreshCw, Search, ShieldAlert, ShieldCheck, ShieldX } from 'lucide-react'
@@ -71,12 +72,12 @@ export default function HashScan({ session }: { session: Session }) {
         <Button type="button" variant="secondary" className="hash-lookup-refresh" disabled={options.isFetching || lookup.isPending}
           onClick={() => { void options.refetch() }}><RefreshCw size={14} aria-hidden="true" />Refresh engines</Button>
       </div>
-      {options.error && <p role="alert" className="error">{options.error.message}</p>}
+      {options.error && <p role="alert" className="error"><ErrorMessage message={options.error.message || ''} /></p>}
       <p className="hash-lookup-note">Submitting sends the hash to enabled reputation providers and may consume external quota. Reputation is not a file scan or proof of complete detection coverage.
         No automatic retry, polling or scan-history record is created.</p>
     </form>
 
-    {lookup.error && <p role="alert" className="error">{lookup.error.message} The request may have reached a provider and consumed quota. No complete decision is available. Retry only as an explicit new lookup.</p>}
+    {lookup.error && <p role="alert" className="error"><ErrorMessage message={lookup.error.message || ''} /> The request may have reached a provider and consumed quota. No complete decision is available. Retry only as an explicit new lookup.</p>}
 
     {result && Icon && <section className="hash-result" aria-label="Hash lookup result">
       <div className={`hash-verdict verdict-${result.action}`}>

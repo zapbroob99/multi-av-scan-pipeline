@@ -47,7 +47,15 @@ export function request<P extends Route, M extends Methods<P>>(route: P, method:
   return api(path, { method: method.toUpperCase(), body: options.body, csrf: options.csrf, signal: options.signal })
 }
 
-export class ApiError extends Error { constructor(public status: number, message: string) { super(message) } }
+export class ApiError extends Error {
+  public readonly requestId: string | null
+  constructor(public status: number, message: string, requestId?: string | null) {
+    const safeId = requestId && /^[A-Za-z0-9._:/-]{1,128}$/.test(requestId) ? requestId : null
+    // Keep the reference even where a form stores only the error message.
+    super(safeId ? `${message} [Request ID: ${safeId}]` : message)
+    this.requestId = safeId
+  }
+}
 
 async function api<T>(path: string, options: { method?: string; body?: unknown; csrf?: string; signal?: AbortSignal } = {}): Promise<T> {
   const multipart = options.body instanceof FormData
@@ -61,7 +69,7 @@ async function api<T>(path: string, options: { method?: string; body?: unknown; 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}))
     if (response.status === 401 && path !== '/session' && path !== '/session/login') window.dispatchEvent(new Event('masp-session-expired'))
-    throw new ApiError(response.status, typeof payload.detail === 'string' ? payload.detail : `Request failed (${response.status}).`)
+    throw new ApiError(response.status, typeof payload?.detail === 'string' ? payload.detail : `Request failed (${response.status}).`, response.headers.get('X-Request-ID'))
   }
   return response.status === 204 ? undefined as T : response.json()
 }

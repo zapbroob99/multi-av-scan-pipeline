@@ -1,3 +1,4 @@
+import { ErrorMessage } from '../components/error-message'
 import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -63,9 +64,9 @@ export default function WorkerPools({ session }: { session: Session }) {
       New pools are enabled and have no engine assignments. Disabling a pool stops new claims for its assigned engines; owned work finishes.
       Remove engine assignments before deleting a pool. A pool does not prove engine health or scan coverage.</p>
     {receipt && <p className="callout" role="status">{receipt}</p>}
-    {action.error && <p className="error" role="alert">{action.error.message} The request may have reached the server. Refresh before trying again.</p>}
+    {action.error && <p className="error" role="alert"><ErrorMessage message={action.error.message || ''} /> The request may have reached the server. Refresh before trying again.</p>}
     {pools.isPending && <p role="status">Loading worker pools…</p>}
-    {pools.error && <p className="error" role="alert">{pools.error.message}</p>}
+    {pools.error && <p className="error" role="alert"><ErrorMessage message={pools.error.message || ''} /></p>}
     {!pools.error && pools.data && <>
       {pools.data.items.length > 0 && <ul className="entity-list" aria-label="Worker pools">{pools.data.items.map(pool => <li key={pool.id}>
         <button type="button" className="entity-row" disabled={busy} aria-label={`Manage pool ${pool.id}`} onClick={() => setEditor({ pool })}>
@@ -78,8 +79,8 @@ export default function WorkerPools({ session }: { session: Session }) {
           <ChevronRight className="entity-chevron" size={16} aria-hidden="true" />
         </button></li>)}</ul>}
       {!pools.data.items.length && <p className="empty">No worker pools on this page.</p>}
-      <div className="history-pagination"><Button variant="secondary" disabled={!after || busy} onClick={() => setParams({})}>First pools</Button>
-        <Button variant="secondary" disabled={!pools.data.next_after || busy} onClick={() => setParams({ after: String(pools.data!.next_after) })}>Next pools</Button></div></>}
+      {Boolean(after || pools.data.next_after) && <div className="history-pagination"><Button variant="secondary" disabled={!after || busy} onClick={() => setParams({})}>First pools</Button>
+        <Button variant="secondary" disabled={!pools.data.next_after || busy} onClick={() => setParams({ after: String(pools.data!.next_after) })}>Next pools</Button></div>}</>}
     {editor && !confirmation && <Dialog open onOpenChange={open => { if (!open && !action.isPending) setEditor(null) }}
       title={editor.pool ? editor.pool.name : 'New worker pool'}
       description={editor.pool ? `Pool #${editor.pool.id} · ${editor.pool.has_assignments ? 'engine assignments present' : 'no engine assignments'}`

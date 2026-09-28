@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, CheckCircle2, CircleAlert, RefreshCw } from 'lucide-react'
@@ -24,7 +26,7 @@ export default function ClientSetup() {
     <h1>Connect a client</h1><p className="muted">Configuration readiness and the values the other system needs.</p></div>
     <Button variant="secondary" disabled={setup.isFetching} onClick={() => { void setup.refetch() }}><RefreshCw size={14} aria-hidden="true" />Refresh readiness</Button></div>
     {setup.isFetching && <p role="status">Loading client readiness…</p>}
-    {setup.error && <p role="alert" className="error">{setup.error.message}</p>}
+    {setup.error && <p role="alert" className="error"><ErrorMessage message={setup.error.message || ''} /></p>}
     {data && <>
       <div className="client-setup-grid"><section className="submission-card" aria-label="Readiness">
         <div className="client-section-heading"><div><p className="eyebrow">CONFIGURATION CHECKLIST</p><h2>{data.display_name}</h2><p className="muted client-key"><code>{data.client_key}</code></p></div>
@@ -68,7 +70,7 @@ export default function ClientSetup() {
           Assigned engines are fixed into each accepted scan, so editing routing later does not change scans already accepted.</p>
       </section>
 
-      <p className="muted client-note">Readiness read {new Date(data.generated_at).toLocaleString()}. Network reachability, TLS and firewall
+      <p className="muted client-note">Readiness read {formatTimestamp(data.generated_at)}. Network reachability, TLS and firewall
         rules are outside MASP and are not checked here.</p>
     </>}
   </section>

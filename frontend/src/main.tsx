@@ -1,13 +1,15 @@
 import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { BrowserRouter, Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { Activity, CircleUser, Hash, Info, LayoutDashboard, LogOut, Plug, ScrollText, Server, SlidersHorizontal, Upload, Users as UsersIcon } from 'lucide-react'
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { LogOut } from 'lucide-react'
 import { request } from './lib/api'
 import { Button } from './components/ui/button'
 import { ThemeToggle } from './components/theme-toggle'
 import { BrandMark } from './components/brand-mark'
 import { SystemLayout } from './components/section-tabs'
+import { WorkspaceNavigation } from './components/workspace-navigation'
+import { ErrorMessage } from './components/error-message'
 import './styles.css'
 
 const Users = lazy(() => import('./pages/users'))
@@ -88,29 +90,16 @@ function App() {
     {notice && <p role="status" className="callout">{notice}</p>}
     <label>Username<input name="username" autoComplete="username" required autoFocus /></label>
     <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
-    {(error || session.error) && <p role="alert" className="error">{error || session.error?.message}</p>}
+    {(error || session.error) && <p role="alert" className="error"><ErrorMessage message={error || session.error?.message || ''} /></p>}
     <Button disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
   </form></main>
   return <div className="app-shell"><aside className="sidebar">
     <Link className="brand" to="/dashboard"><BrandMark size={40} /><span>MASP<small>SCAN ORCHESTRATION</small></span></Link>
-    <p className="nav-label">WORKSPACE</p><nav className="console-nav" aria-label="Workspace">
-    <NavLink className="nav-item" to="/dashboard"><LayoutDashboard size={18} />Dashboard</NavLink>
-    <NavLink className="nav-item" to="/scans/new"><Upload size={18} />Submit sample</NavLink>
-    <NavLink className="nav-item" to="/api-ledger"><Activity size={18} />API ledger</NavLink>
-    <NavLink className="nav-item" to="/hash-scan"><Hash size={18} />Hash lookup</NavLink>
-    <NavLink className="nav-item" to="/account"><CircleUser size={18} />Account</NavLink>
-    <NavLink className="nav-item" to="/about"><Info size={18} />About</NavLink>
-    {session.data.user.role === 'admin' && <NavLink to="/system" className={({ isActive }) =>
-      `nav-item${isActive || location.pathname.startsWith('/engines') ? ' active' : ''}`}><Server size={18} />System</NavLink>}
-    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/scan-policy"><SlidersHorizontal size={18} />Scan policy</NavLink>}
-    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/service-clients"><Plug size={18} />Service clients</NavLink>}
-    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/users"><UsersIcon size={18} />Users</NavLink>}
-    {session.data.user.role === 'admin' && <NavLink className="nav-item" to="/audit"><ScrollText size={18} />Audit</NavLink>}
-    </nav>
+    <WorkspaceNavigation admin={session.data.user.role === 'admin'} />
     <div className="sidebar-footer"><span>{session.data.user.username}<small>{session.data.user.role}</small></span><div className="sidebar-controls">
       <ThemeToggle /><Button variant="secondary" disabled={busy} onClick={logout} aria-label="Sign out"><LogOut size={17} /></Button></div></div>
   </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname.endsWith('/print') ? 'Printable report' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines/hash-list' ? 'Hash list' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="offline-label">SELF-HOSTED</span></header>
-    {error && <p role="alert" className="error">{error}</p>}
+    {error && <p role="alert" className="error"><ErrorMessage message={error} /></p>}
       <Suspense fallback={<p role="status">Loading page…</p>}><Routes>
         <Route path="/account" element={<Account session={session.data} onPasswordChanged={() => {
           clearPrivateQueries(); client.setQueryData(['session'], null); setError(''); setNotice('Password updated. All your sessions were signed out. Sign in with your new password.')

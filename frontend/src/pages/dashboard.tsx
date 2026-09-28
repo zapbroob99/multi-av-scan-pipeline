@@ -1,3 +1,5 @@
+import { ErrorMessage } from '../components/error-message'
+import { formatTimestamp } from '../lib/utils'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -9,13 +11,6 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 
 export function historyPollInterval(before: string) { return before ? false : 20000 }
-
-function displayTime(value: string) {
-  // SQLite's CURRENT_TIMESTAMP is UTC without a suffix; PostgreSQL includes it.
-  const iso = value.replace(' ', 'T')
-  const date = new Date(/(?:Z|[+-]\d\d(?::?\d\d)?)$/.test(iso) ? iso : iso + 'Z')
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
-}
 
 const ACTIVE = ['queued', 'running', 'finalizing']
 
@@ -72,7 +67,7 @@ export default function Dashboard({ session }: { session: Session }) {
     <div className="page-heading"><div><p className="eyebrow">MANUAL SCAN ACTIVITY</p><h1>Dashboard</h1>
       <p className="muted">Recent submissions, processing state and recorded risk.</p></div>
       <Link className="button button-primary" to="/scans/new"><ArrowUpRight size={16} />Submit sample</Link></div>
-    {summary.error && <p role="alert" className="error">Summary unavailable: {summary.error.message}</p>}
+    {summary.error && <p role="alert" className="error">Summary unavailable: <ErrorMessage message={summary.error.message || ''} /></p>}
     <div className="stats-row dashboard-stats" aria-label="Manual scan summary">
       <div><span>Samples</span><strong>{summary.data?.total.toLocaleString() ?? '—'}</strong></div>
       <div><span>Active scans</span><strong>{summary.data?.active.toLocaleString() ?? '—'}</strong></div>
@@ -85,7 +80,7 @@ export default function Dashboard({ session }: { session: Session }) {
       <Button variant="secondary" disabled={isBusy} onClick={() => { void scans.refetch(); void summary.refetch() }}>
         <RefreshCw size={14} />{isBusy ? 'Refreshing…' : 'Refresh'}</Button></div></div>
     {receipt && <p role="status" className="callout">{receipt}</p>}
-    {deletion.error && <p role="alert" className="error">{deletion.error.message} The request may have partially completed. Refresh history before trying again.</p>}
+    {deletion.error && <p role="alert" className="error"><ErrorMessage message={deletion.error.message || ''} /> The request may have partially completed. Refresh history before trying again.</p>}
     <form key={params.toString()} className="history-filters" onSubmit={filter} aria-label="Scan filters">
       <label className="search"><Search size={16} /><input name="q" aria-label="Search scans" maxLength={200}
         defaultValue={q} placeholder="Filename, hash or case…" /></label>
@@ -110,7 +105,7 @@ export default function Dashboard({ session }: { session: Session }) {
       <span><strong>{scans.data.items.filter(scan => !ACTIVE.includes(scan.status) && isAlertRisk(scan.risk_level)).length} scan(s) on this page recorded high or critical risk.</strong>{' '}
         Open each report for the engine detections and the policy decision.</span></p>}
     <p className="callout">Risk is not a clean verdict. A completed scan may have missing engines. Open a report for detection coverage and the policy decision.</p>
-    {scans.error && <p role="alert" className="error">History unavailable: {scans.error.message} Use Refresh to retry.</p>}
+    {scans.error && <p role="alert" className="error">History unavailable: <ErrorMessage message={scans.error.message || ''} /> Use Refresh to retry.</p>}
     {scans.isPending ? <div role="status" className="skeleton">Loading scan history…</div> : scans.data && <>
       {scans.data.items.length === 0 ? <div className="empty"><h2>No scans found</h2><p>Change the filters or return to the latest submissions.</p></div> :
         <div className="history-table-wrap" tabIndex={0} role="region" aria-label="Scan history table"><table className="history-table">
@@ -125,13 +120,13 @@ export default function Dashboard({ session }: { session: Session }) {
               <small>#{scan.id} · {(scan.size_bytes / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} KB{scan.case_name ? ` · ${scan.case_name}` : ''}</small></td>
             <td><span className={`health-pill ${scan.status === 'failed' ? 'health-failed' : ''}`}>{scan.status}</span></td>
             <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} failed={scan.status === 'failed'} unavailable={scan.unavailable_engines} /></td>
-            <td><time dateTime={scan.created_at}>{displayTime(scan.created_at)}</time></td>
+            <td><time dateTime={scan.created_at}>{formatTimestamp(scan.created_at)}</time></td>
           </tr>)}</tbody></table></div>}
       <div className="history-pagination"><p className="muted">{scans.data.items.length} shown · Newest submission ID first{before ? ' · History page (auto-refresh paused)' : ''}</p>
-        <div>{before && <Button variant="secondary" onClick={latest}>Latest scans</Button>}
+        {Boolean(before || scans.data.next_before) && <div>{before && <Button variant="secondary" onClick={latest}>Latest scans</Button>}
           <Button variant="secondary" disabled={!scans.data.next_before || scans.isFetching} onClick={() => {
             const next = new URLSearchParams(params); next.set('before', String(scans.data!.next_before)); setParams(next)
-          }}>Older scans<ArrowDown size={14} /></Button></div></div>
+          }}>Older scans<ArrowDown size={14} /></Button></div>}</div>
     </>}
     <Dialog open={confirmDelete} onOpenChange={open => { if (!deletion.isPending) setConfirmDelete(open) }} title="Delete selected scans?"
       description={`${selected.length} visible scans will be checked again before deletion. Active, changed, shared, parent and notification-protected scans remain. This action cannot be undone.`}>
@@ -139,6 +134,6 @@ export default function Dashboard({ session }: { session: Session }) {
         <Button variant="destructive" disabled={deletion.isPending || selected.length === 0} onClick={() => deletion.mutate()}>{deletion.isPending ? 'Deleting…' : 'Confirm deletion'}</Button></div>
     </Dialog>
     <p className="muted history-footnote">Summary covers all manual history. Refresh: 30 seconds; server cache: up to 30 seconds.
-      {summary.data && <> Updated {displayTime(summary.data.generated_at)}.</>} Enabled does not mean healthy.</p>
+      {summary.data && <> Updated {formatTimestamp(summary.data.generated_at)}.</>} Enabled does not mean healthy.</p>
   </section>
 }
