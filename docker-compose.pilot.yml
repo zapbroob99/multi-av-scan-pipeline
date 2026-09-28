@@ -34,6 +34,8 @@ x-masp-service: &masp-service
       max-file: ${MASP_LOG_MAX_FILES:-5}
 
 x-common-env: &common-env
+  # Shown on the About screen (registry host stripped).
+  MASP_RELEASE: ${MASP_IMAGE:-}
   MASP_DATABASE_URL: postgresql://masp:${MASP_POSTGRES_PASSWORD:?set MASP_POSTGRES_PASSWORD}@postgres:5432/masp
   MASP_DB_POOL_ENABLED: ${MASP_DB_POOL_ENABLED:-1}
   MASP_DB_POOL_MIN: ${MASP_DB_POOL_MIN:-0}

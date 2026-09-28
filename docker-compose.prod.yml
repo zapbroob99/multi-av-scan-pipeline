@@ -37,6 +37,8 @@ x-masp-hardening: &masp-hardening
     - /tmp
 
 x-common-env: &common-env
+  # Shown on the About screen (registry host stripped).
+  MASP_RELEASE: ${MASP_RELEASE:-}
   MASP_DATABASE_URL: ${MASP_DATABASE_URL:?set MASP_DATABASE_URL to the external PostgreSQL DSN}
   MASP_DB_POOL_ENABLED: ${MASP_DB_POOL_ENABLED:-1}
   MASP_DB_POOL_MIN: ${MASP_DB_POOL_MIN:-0}

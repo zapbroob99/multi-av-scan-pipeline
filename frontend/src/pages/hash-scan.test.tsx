@@ -40,6 +40,18 @@ describe('Hash lookup', () => {
     await userEvent.clear(screen.getByLabelText('SHA-256'))
     expect(screen.queryByRole('region', { name: 'Hash lookup result' })).toBeNull()
   })
+  it('counts hexadecimal characters and flags invalid input before submitting', async () => {
+    mount()
+    await screen.findByText(/Enabled hash engines/)
+    expect(screen.getByText('0 / 64 hexadecimal characters')).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('SHA-256'), 'abc')
+    expect(screen.getByText('3 / 64 hexadecimal characters')).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('SHA-256'), 'z')
+    expect(screen.getByText(/Only hexadecimal characters/)).toBeInTheDocument()
+    await userEvent.clear(screen.getByLabelText('SHA-256'))
+    await userEvent.type(screen.getByLabelText('SHA-256'), 'b'.repeat(64))
+    expect(screen.getByText('Valid SHA-256 length.')).toBeInTheDocument()
+  })
   it('does not retry failures or display an allow decision', async () => {
     const fetcher = mount(true)
     await screen.findByText(/Enabled hash engines/)

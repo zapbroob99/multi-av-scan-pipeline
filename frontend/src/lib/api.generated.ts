@@ -1295,10 +1295,30 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AboutEngine
+         * @description Versions an enabled engine last reported from a worker health check.
+         */
+        AboutEngine: {
+            /** Engine Version */
+            engine_version: string | null;
+            /** Kind */
+            kind: string;
+            /** Last Checked At */
+            last_checked_at: string | null;
+            /** Name */
+            name: string;
+            /** Product Version */
+            product_version: string | null;
+            /** Signature Version */
+            signature_version: string | null;
+        };
         /** AboutPayload */
         AboutPayload: {
             /** App Version */
             app_version: string;
+            /** Database */
+            database: string;
             /** Directory Login Enabled */
             directory_login_enabled: boolean;
             /** Enabled Engine Count */
@@ -1307,20 +1327,30 @@ export interface components {
             enabled_engine_names: string[];
             /** Engine Names Truncated */
             engine_names_truncated: boolean;
+            /** Engines */
+            engines: components["schemas"]["AboutEngine"][];
+            /** Engines Truncated */
+            engines_truncated: boolean;
             /** Generated At */
             generated_at: string;
             /** Hash Engine Count */
             hash_engine_count: number;
+            /** Python Version */
+            python_version: string;
             /** Queue Mode */
             queue_mode: string;
             /** Registered Nodes */
             registered_nodes: number;
+            /** Release */
+            release: string | null;
             /** Schedulable Nodes */
             schedulable_nodes: number;
             /** Secret Encryption Available */
             secret_encryption_available: boolean;
             /** Service Client Count */
             service_client_count: number | null;
+            /** Worker Agent Versions */
+            worker_agent_versions: string[];
             /** Worker Transport */
             worker_transport: string;
         };

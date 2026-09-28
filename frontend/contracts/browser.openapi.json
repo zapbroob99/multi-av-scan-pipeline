@@ -1,10 +1,81 @@
 {
   "components": {
     "schemas": {
+      "AboutEngine": {
+        "description": "Versions an enabled engine last reported from a worker health check.",
+        "properties": {
+          "engine_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Version"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "product_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Version"
+          },
+          "signature_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Version"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "product_version",
+          "engine_version",
+          "signature_version",
+          "last_checked_at"
+        ],
+        "title": "AboutEngine",
+        "type": "object"
+      },
       "AboutPayload": {
         "properties": {
           "app_version": {
             "title": "App Version",
+            "type": "string"
+          },
+          "database": {
+            "title": "Database",
             "type": "string"
           },
           "directory_login_enabled": {
@@ -26,6 +97,17 @@
             "title": "Engine Names Truncated",
             "type": "boolean"
           },
+          "engines": {
+            "items": {
+              "$ref": "#/components/schemas/AboutEngine"
+            },
+            "title": "Engines",
+            "type": "array"
+          },
+          "engines_truncated": {
+            "title": "Engines Truncated",
+            "type": "boolean"
+          },
           "generated_at": {
             "title": "Generated At",
             "type": "string"
@@ -34,6 +116,10 @@
             "title": "Hash Engine Count",
             "type": "integer"
           },
+          "python_version": {
+            "title": "Python Version",
+            "type": "string"
+          },
           "queue_mode": {
             "title": "Queue Mode",
             "type": "string"
@@ -41,6 +127,17 @@
           "registered_nodes": {
             "title": "Registered Nodes",
             "type": "integer"
+          },
+          "release": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release"
           },
           "schedulable_nodes": {
             "title": "Schedulable Nodes",
@@ -61,6 +158,13 @@
             ],
             "title": "Service Client Count"
           },
+          "worker_agent_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Worker Agent Versions",
+            "type": "array"
+          },
           "worker_transport": {
             "title": "Worker Transport",
             "type": "string"
@@ -79,6 +183,12 @@
           "registered_nodes",
           "schedulable_nodes",
           "service_client_count",
+          "release",
+          "python_version",
+          "database",
+          "engines",
+          "engines_truncated",
+          "worker_agent_versions",
           "generated_at"
         ],
         "title": "AboutPayload",

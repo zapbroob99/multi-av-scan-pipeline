@@ -1298,6 +1298,30 @@ class BrowserApiTests(unittest.TestCase):
         for secret in ('config_json', 'password', 'api_key', 'adapter_key', str(db.DB_PATH)):
             self.assertNotIn(secret, serialized)
 
+    def test_about_reports_versions_without_hosts(self):
+        engine_id = db.create_engine_instance('clamav', 'Gateway ClamAV')
+        db.upsert_worker_node_heartbeat(node_id='about-node', display_name='About node', hostname='PRIVATE-HOST',
+            platform='linux', agent_version='0.1.0', labels_json='{}', capacity=1,
+            advertised_engine_keys_json='[]', runtime_state='idle', active_scan_id=None,
+            process_id=0, last_heartbeat_at=int(time.time()))
+        with db.connect() as connection:
+            connection.execute("""INSERT INTO engine_node_health (node_id, engine_instance_id, status, ok,
+                product_version, engine_version, signature_version, last_checked_at, last_success_at)
+                VALUES ('about-node', ?, 'healthy', 1, 'ClamAV 1.4.2', '1.4.2', '27771', 1790000000, 1790000000)""",
+                (engine_id,))
+        with patch.dict(os.environ, {'MASP_RELEASE': 'registry.internal:5000/masp/masp-pilot:0.1.0-pilot.7'}):
+            payload = self.request('/about')[1]
+        self.assertEqual(payload['release'], 'masp-pilot:0.1.0-pilot.7')
+        self.assertRegex(payload['python_version'], r'^3\.')
+        self.assertTrue(payload['database'].startswith(('SQLite ', 'PostgreSQL ')))
+        row = next(item for item in payload['engines'] if item['name'] == 'Gateway ClamAV')
+        self.assertEqual((row['kind'], row['product_version'], row['signature_version']), ('ClamAV', 'ClamAV 1.4.2', '27771'))
+        self.assertIsNotNone(row['last_checked_at'])
+        self.assertEqual(payload['worker_agent_versions'], ['0.1.0'])
+        serialized = json.dumps(payload)
+        for private in ('PRIVATE-HOST', 'registry.internal', 'about-node'):
+            self.assertNotIn(private, serialized)
+
     def test_user_inventory_keyset_ldap_and_secret_omission(self):
         directory = db.sync_external_user(username='directory-user', role='analyst', external_id='PRIVATE-DIRECTORY-DN', display_name='Directory user')
         for index in range(20):
@@ -3007,3 +3031,5 @@ class BrowserReadPostgresTests(unittest.TestCase):
         self.assertEqual(admin_view.registered_nodes, 1)
         self.assertEqual(admin_view.schedulable_nodes, 1)
         self.assertIsNone(about_read.snapshot(admin=False).service_client_count)
+        self.assertTrue(admin_view.database.startswith('PostgreSQL 16'), admin_view.database)
+        self.assertEqual(admin_view.worker_agent_versions, ['test'])

@@ -6,6 +6,7 @@ import { Activity, CircleUser, Hash, Info, LayoutDashboard, LogOut, Plug, Scroll
 import { request } from './lib/api'
 import { Button } from './components/ui/button'
 import { ThemeToggle } from './components/theme-toggle'
+import { BrandMark } from './components/brand-mark'
 import { SystemLayout } from './components/section-tabs'
 import './styles.css'
 
@@ -81,7 +82,7 @@ function App() {
   }
   if (session.isPending) return <main className="login-shell"><ThemeToggle className="login-theme-toggle" /><p role="status">Connecting to MASP…</p></main>
   if (!session.data) return <main className="login-shell"><ThemeToggle className="login-theme-toggle" /><form className="login-card" onSubmit={login}>
-    <img src="/console/favicon.svg" width="48" height="48" alt="MASP" /><p className="eyebrow">MASP CONSOLE</p>
+    <BrandMark size={48} label="MASP" /><p className="eyebrow">MASP CONSOLE</p>
     <h1>Welcome back.</h1><p className="muted">Sign in with your existing MASP account.</p>
     {loginOptions.data?.directory_login_enabled && <p className="muted">Directory sign-in enabled: you can also use your directory username and password.</p>}
     {notice && <p role="status" className="callout">{notice}</p>}
@@ -91,7 +92,7 @@ function App() {
     <Button disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
   </form></main>
   return <div className="app-shell"><aside className="sidebar">
-    <Link className="brand" to="/dashboard"><img src="/console/favicon.svg" width="40" height="40" alt="" /><span>MASP<small>SCAN ORCHESTRATION</small></span></Link>
+    <Link className="brand" to="/dashboard"><BrandMark size={40} /><span>MASP<small>SCAN ORCHESTRATION</small></span></Link>
     <p className="nav-label">WORKSPACE</p><nav className="console-nav" aria-label="Workspace">
     <NavLink className="nav-item" to="/dashboard"><LayoutDashboard size={18} />Dashboard</NavLink>
     <NavLink className="nav-item" to="/scans/new"><Upload size={18} />Submit sample</NavLink>
