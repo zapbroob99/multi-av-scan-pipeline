@@ -1,6 +1,6 @@
 # MASP session handoff
 
-Updated: 2026-09-25, after the go-live readiness fixes. This is a workspace
+Updated: 2026-09-28, after the operations-visibility work. This is a workspace
 checkpoint, not evidence of a deployment.
 
 ## Start here
@@ -20,34 +20,39 @@ checkpoint, not evidence of a deployment.
 
 ## Git checkpoint
 
-Checkpoint branch: `feat/frontend-separation-hardening`. The commit that adds
-this handoff sits on top of `3c1f42a`. `origin/feat/frontend-separation-hardening`
-was last confirmed at `dc841e2`; **everything after it is local and NOT pushed**,
-and the branch is not merged to `main`. The user authorizes each push explicitly
-because the repository is public. Confirm with `git log -1`, `git status` and a
-fresh `git fetch` before assuming anything here is still current.
+Checkpoint branch: `feat/frontend-separation-hardening`, not merged to `main`.
+`origin/feat/frontend-separation-hardening` was last confirmed at `94f01ed`;
+**everything below is local and NOT pushed**. The user authorizes each push
+explicitly because the repository is public. The PR to `main` has not been
+opened (no `gh` on this host; the user opens it from the compare URL). Confirm
+with `git log -1`, `git status` and a fresh `git fetch` before assuming anything
+here is still current.
 
-Commits after the last pushed `dc841e2`, oldest first:
+Commits after the last pushed `94f01ed`, oldest first:
 
-- `06aac8c` legacy parity sweep: dashboard detection filter, bounded hash
-  provider detail, engine last-result time, audit detail formatting
-- `d7ad4b2` the application image builds and serves the console at `/console/`
-- `98128da` **legacy UI retired** (breaking): `app/main.py` ~9100 -> ~1000 lines,
-  former GET pages redirect to console screens, legacy form routes gone
-- `da0cea0` handoff update
-- `2c4c0df` System tab strip rendered once by a shared layout route; Engines only
-  under System
-- `db4e6be` compact entity lists (Users, worker nodes, pools), audit as a table,
-  select-all for bulk deletion on Dashboard and API ledger
-- `73f3264` scan outcomes: no engine completed -> `failed`; clean scans record
-  `info`/0 instead of `low`/10; `scan_jobs.unavailable_engines`; risk badge reads
-  "No detection" / "Incomplete" / "Not scored" (API-visible change)
-- `8d6c042` manifest worker no longer spins on a rejected manifest
-- `93e77ca` deployment: manifest-intake service in prod/pilot compose, pilot
-  backup/restore pause every running writer, proxy trust
-  (`MASP_FORWARDED_ALLOW_IPS`, `MASP_SESSION_SECURE`) mapped into the app
-- `3c1f42a` production/pilot runbooks rewritten for the retired legacy UI
-- this handoff rewrite (docs only)
+- `315cc17` `deploy/pilot/rehearse_tls.sh`: disposable app + PostgreSQL + nginx
+  (self-signed) rehearsal of the proxy trust settings; passed locally
+- `bbab676` the pilot release bundle ships the console build inputs
+  (`frontend/`); without them `install.sh` failed at the Dockerfile's first COPY
+- `99ac1b5` `install.sh` refuses the example's placeholder
+  `MASP_WORKER_ENROLLMENT_TOKEN` (public value: anyone could enroll a worker) and
+  a non-Fernet `MASP_SECRET_ENCRYPTION_KEY`; both may be empty
+- `b8a0c1a` hash lookup redesign, technical About (release image, Python,
+  database, per-engine versions, agent versions), theme-aware logo;
+  `MASP_RELEASE` passed through the compose files
+- `33623d6` release named `0.1.0-pilot.7`
+- `63ad691` grouped navigation (Operations, Integrations, Infrastructure,
+  Administration; phone menu), one UTC timestamp format, heartbeat wording,
+  investigation links, copyable `X-Request-ID` on errors, collapsible help.
+  Started by a second agent that ran out of credit; reviewed, four tests adapted
+  to the intended behaviour, committed here
+- `634437a` operations visibility: health checks on System > Overview and in the
+  top bar, ClamAV signature version/date in engine health, ICAP gateway activity
+  record, System > ICAP and SIEM, intake retry/dismiss, client readiness per
+  connection method, name search, ledger client picker, support bundle
+- `e4126bd` notifications that nothing ever tried to deliver are "not in use",
+  not critical (found on the live local stack)
+- this handoff/documentation sync
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
 `sample_45mb.bin`, `sample_5mb.bin`, `skills-lock.json`. These are intentionally
@@ -108,19 +113,46 @@ pilot backup/restore scripts stopped only `app worker icap`, leaving intake and
 notification workers writing during a dump/restore (a fake-docker test now
 drives both scripts); and Uvicorn trusted `X-Forwarded-Proto` only from
 127.0.0.1, so behind a TLS proxy every console save would fail the same-origin
-check and remote workers would be refused. The proxy setting is configured and
-documented but **not yet exercised behind a real TLS proxy**.
+check and remote workers would be refused. `rehearse_tls.sh` (`315cc17`)
+proves the MASP side against a self-signed nginx; a real institutional proxy
+has still not been exercised.
+
+**Offline upgrade path (rehearsed 2026-09-25).** The pilot server has no
+internet except ClamAV updates, so releases travel as the bundle ZIP plus one
+`docker save` of `masp-pilot:<version>` (PostgreSQL and ClamAV digests are
+unchanged since pilot.2, and project and volume names never changed). The
+upgrade was replayed inside Docker's Linux VM with the real release scripts
+from pilot.2 and from pilot.5: old install and verify, old backup, carried env
+(`awk` appends keys missing from the new example), new `install.sh --no-build`,
+new verify, then rollback (old release on the migrated database, old restore).
+All passed. Two findings are written into the operator manual: upgrading from a
+root-container release (pilot.2) without `install.sh` leaves storage root-owned
+and every upload fails with 500; `restore.sh` restarts services without waiting
+for health, so verify after the app is healthy.
+
+**Operations visibility (`634437a`, `e4126bd`).** The health report
+(`app/services/health_read.py`, `GET /api/ui/v1/system/health`) evaluates
+workers, queue age (with why scans wait), engines (using the Engines screen's
+own verdicts), ClamAV signature age, sample storage, manifest and deferred
+intake, the ICAP gateway and SIEM notifications. On the live local stack it
+immediately surfaced a real problem: ClamAV had not updated for three days
+(Docker paused while the host slept). The ICAP gateway now writes
+`icap_gateway_status:<client key>:<port>` every 30 seconds; older gateways do
+not report, so an upgraded server shows ICAP as "not in use" until the icap
+container runs this release.
 
 **Next steps agreed with the user, in order:**
 
-1. Push the commits above and open a PR to `main` — **only with the user's
+1. Push the commits above and open the PR to `main` -- **only with the user's
    explicit approval**.
-2. Isolated rehearsals: a TLS reverse proxy (self-signed is fine) proving a
-   console save, secure cookie and a remote worker heartbeat through HTTPS; a
-   capacity run with realistic file sizes (`tools/benchmark_*.py`; the local
-   worker was killed with exit 137 under load, so memory sizing matters); and a
-   real backup/restore rehearsal on a pilot-shaped stack.
-3. Low priority, separate change: remove database helpers that lost their only
+2. Package `0.1.0-pilot.8` (bundle + `docker save` image) for the pilot server
+   once the user asks; the operator applies it with the Turkish manual.
+3. On the pilot server (operator-run; the agent has no access): real network
+   share manifest test once the firewall allows the pilot host -> file server TCP 445
+   (one direction only), a backup/restore rehearsal on the real host, a
+   capacity run with realistic file sizes (the local worker was once killed
+   with exit 137 under load).
+4. Low priority, separate change: remove database helpers that lost their only
    callers with the legacy UI (`list_users`, `update_service_client`,
    `revoke_api_client_credential`, `list_engine_results_by_scan_ids`, ...).
 
@@ -130,43 +162,59 @@ files change after upload, naming); `MAPPED_SOURCE_INSPECTION.md` steps 4
 (explicit narrow coverage) and 5 (in-place reading); a "Page N" indicator for
 the API ledger; wiring Hash List into the API hash lookup.
 
-**Local environment notes:** `.env` has `MASP_MANIFEST_CLIENT_KEY=drive` (the
+**Pilot server state (reported by the user, 2026-09-28).** An Ubuntu pilot
+host, offline except ClamAV updates, reached through a PAM client. It was
+upgraded from pilot.5 to pilot.6 in place (old install lives in `/opt/masp`, the
+new release in `/opt/masp/masp-pilot-0.1.0-pilot.6`, `/opt/masp/current` links
+to it, `/usr/local/bin/masp` wraps compose). The app binds `127.0.0.1:8000`
+without a proxy (`MASP_SESSION_SECURE` empty). A pilot.7 package was handed over;
+whether it is installed is not known. The manifest test against a real share
+is blocked: the pilot host can ping the file server but TCP 445 times out
+(`mount error(115)`), which needs a firewall rule. `cifs-utils` presence on the
+server is unconfirmed. Operator manuals in Turkish live in `kilavuz/`
+(`01-kurulum.md`, `02-offline-yukseltme.md`), excluded from git through
+`.git/info/exclude` at the user's request.
+
+**Local environment notes:** the live local stack was rebuilt from `e4126bd` on
+2026-09-28 (volumes kept) and now also runs the `icap` profile on
+`127.0.0.1:1344`. `.env` has `MASP_MANIFEST_CLIENT_KEY=drive` (the
 client created in the console is `drive`, id 238, granted `drive`/`uploads/`).
 Test drops live in `deferred-source/uploads/2026/09/24/` (git-ignored);
 `test-2.json` is a deliberately malformed manifest whose rejection count was
 inflated by the spin bug before `8d6c042`. `requirements.txt` shows as modified
 only because of line endings; its content is unchanged.
 
-**Deployment gates outstanding, discussed with the user but not started**:
-capacity measurement against realistic Drive-sized files (tooling exists in
-`tools/benchmark_*.py`; prior runs used only a 7.5 KB sample), TLS/reverse-proxy
-termination (template exists, never run against a real proxy), production-scale
-PostgreSQL load, real-client ICAP framing confirmation, and per-client rate
-limiting.
+**Deployment gates outstanding:** capacity measurement against realistic
+Drive-sized files (tooling exists in `tools/benchmark_*.py`), a real
+institutional TLS proxy, production-scale PostgreSQL load, real-client ICAP
+framing confirmation, and per-client rate limiting.
 
 ## Verification and environment safety
 
-- Full backend: `python -m unittest discover -s tests`. Last full run (on the
-  working tree committed as `3c1f42a`, with disposable PostgreSQL): **921 tests,
-  919 passed, 2 skipped, 0 failures.** The pilot script test needs Git Bash on
-  Windows and is skipped where no POSIX bash exists.
+- Full backend: `python -m unittest discover -s tests`. Last full run (working
+  tree of `634437a`, SQLite): **957 tests, OK, 121 skipped** (the skips are the
+  PostgreSQL-gated modules). New PostgreSQL coverage
+  (`tests/test_operations_health.py`, About, health and readiness queries) was
+  run against a disposable PostgreSQL 16 and passed. The pilot script tests need
+  Git Bash on Windows and are skipped where no POSIX bash exists.
 - PostgreSQL tests require `MASP_TEST_POSTGRES_URL` pointing only at a disposable
   database: tests drop/recreate its public schema. Never use the live MASP DB.
   Disposable containers used on this branch (ports 15441-15444, names
   `masp-test-pg-*`) were started with `--rm` and stopped; none should remain
   (`docker ps -a` to check).
-- Frontend: `npm --prefix frontend test` (157 tests passing), `run build`,
+- Frontend: `npm --prefix frontend test` (178 tests passing), `run build`,
   `run contracts:check`. Regenerate contracts with
   `npm --prefix frontend run contracts:generate` after browser API changes.
-  `run test:e2e` for Playwright (36 scenarios passing). The application image
-  was rebuilt and smoke-tested at the same point (`/health`, `/console/`, `/`).
+  `run test:e2e` for Playwright (38 workflows; the last full run had one
+  failure from outdated expectations in `client-setup.spec.ts`, fixed and
+  re-run on its own).
 - Browser acceptance uses temporary SQLite and a fixture server, not live data.
   On Windows Playwright teardown may leave fixture processes running; identify
   the exact owned PIDs before stopping them (none were left this session).
-- Preserve live containers `masp-app-1`, `masp-worker-1`, `masp-postgres-1`,
-  `masp-clamav-1` and, for the manifest test, `masp-deferred-intake-1` and
-  `masp-manifest-intake-1`. They were rebuilt from this branch on 2026-09-24
-  (before `93e77ca`, which changes only deployment files); volumes were kept.
+- Preserve live containers `masp-app-1`, `masp-worker-1`, `masp-icap-1`,
+  `masp-postgres-1`, `masp-clamav-1`, `masp-deferred-intake-1` and
+  `masp-manifest-intake-1`. They were rebuilt from `e4126bd` on 2026-09-28;
+  volumes were kept.
   Run heavy suites sequentially: running the full suite,
   e2e and a disposable PostgreSQL concurrently previously pushed the live
   containers into exit 137. Never retain real credentials in this handoff or
@@ -174,8 +222,8 @@ limiting.
 
 ## Open acceptance gates
 
-Production-shaped PostgreSQL load, TLS/proxy/static deployment, full legacy
-parity, large/oversized output handling, per-client rate limiting, and
+Production-shaped PostgreSQL load, a real institutional TLS proxy,
+large/oversized output handling, per-client rate limiting, and
 installed Windows SCM/failure/failover/signing acceptance remain open. Local
 tests do not promote production engine support. See "Deployment gates
 outstanding" above for what was actually discussed with the user and why each

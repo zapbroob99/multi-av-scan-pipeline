@@ -171,6 +171,9 @@ shows analyst-friendly scan results.
 - Multi-instance engine foundation: separately named and configured ClamAV and
   Defender deployments produce instance-specific queue jobs
 - Retention and bulk scan deletion with stored sample cleanup
+- Operations view: a health check of the whole scan chain (workers, queue,
+  engines, ClamAV signature age, storage, intake, ICAP, SIEM) with a top-bar
+  status, ICAP gateway activity, intake retry, and an audited support bundle
 
 ## Documentation
 

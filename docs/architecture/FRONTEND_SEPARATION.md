@@ -1831,7 +1831,7 @@ The application image was rebuilt and smoke-tested: `/health` 200,
 ### System navigation
 
 Every System screen (Overview, Worker nodes, Worker pools, Runtime and queue,
-Retention, Deferred intake, Engines, Hash list) renders inside one admin-only
+Retention, Deferred intake, ICAP and SIEM, Engines, Hash list) renders inside one admin-only
 layout route, `SystemLayout` in `components/section-tabs.tsx`. It draws the tab
 strip once and gives the pages their own `Suspense`, so switching tabs no longer
 redraws the strip at each page's heading height or hides it while a page chunk
@@ -1872,3 +1872,40 @@ too. Scans in which no engine completed now finish `failed` rather than
 `completed` with zero risk, and every failed scan shows "Not scored" even when an
 older record stored a score, so "Failed" never sits beside "No detection".
 
+### Hash lookup and About
+
+Hash lookup keeps the SHA-256 field and its button in one row with a live
+hexadecimal counter, lists providers as tags and shows the decision as a
+coloured banner with one row per provider and a proportional verdict bar.
+About is a flat specification sheet: release image (`MASP_RELEASE`, registry
+host stripped), Python and database versions, per-engine product, engine and
+signature versions from the newest worker health report, and worker agent
+versions. Hosts, paths and engine configuration stay off the screen. The
+sidebar and login mark are drawn inline with theme tokens.
+
+### Grouped navigation and investigation links
+
+The sidebar groups Operations, Integrations, Infrastructure and Administration;
+Account and About sit with the user controls, and phone widths collapse the
+menu behind a Menu button. System opens on its overview. Every operator
+timestamp uses one UTC format, a node with no heartbeat says so, and an old
+heartbeat shows its time instead of an age in days. Runtime worker names open
+the worker, reported and queued scans open their report (automation scans in
+the API ledger) and the overview links to workers, engine health and the
+queue. HTTP errors carry the server's `X-Request-ID` with a copy button.
+General operating notes are collapsible; coverage warnings stay visible.
+
+### Health, delivery and intake actions
+
+System > Overview starts with the health report (see `AGENTS.md`,
+"Operations visibility") and administrators see its overall state in the top
+bar, refreshed every 60 seconds. System > ICAP and SIEM shows each gateway's
+counters and recent events and the failed notifications, with a confirmed
+"Retry failed now". Deferred intake adds confirmed Retry and Dismiss actions.
+Client Connection shows the routing checks plus one card per connection
+method. Service clients, workers and pools have name search (`q`, literal
+substring, keyset paging kept); the API ledger filters by a named client
+from `GET /api/ui/v1/api-ledger/clients`, which analysts may read.
+System > Overview also offers the audited support bundle download.
+
+Validation: 178 frontend tests, 38 Edge workflows, build and contract check.

@@ -448,9 +448,13 @@ Direct worker database access and shared filesystem paths are compatibility mode
 not the final remote-worker architecture.
 
 Admin `/console/service-clients/{id}/setup` reports configuration readiness and the values an
-integration must be configured with. Read client, default profile, assigned engines and active
-credential count in one repeatable snapshot so a concurrent edit cannot show a state that never
-existed. Explain every ineligible engine rather than hiding it, keeping the metered-adapter
+integration must be configured with. Read client, default profile, assigned engines, active
+credential count, the newest API/ICAP scan and the ICAP and manifest activity records in one
+repeatable snapshot so a concurrent edit cannot show a state that never existed. A client is
+ready when the routing checks pass and at least one connection method is set up: an active API
+credential, an ICAP gateway reporting under its key, or a manifest worker running for it with a
+storage grant for the watched share. Never require an API credential from a client that only
+receives manifests or ICAP traffic. Explain every ineligible engine rather than hiding it, keeping the metered-adapter
 exclusion adapter-level so the engine stays usable for manual scans. Never return a credential
 value: only a hash and fingerprint are stored. State plainly that this is configuration
 readiness, not proof that the integration can reach MASP or that an engine is healthy.
@@ -465,7 +469,9 @@ and must sit in the manifest's own directory. Keep discovery bounded to recent d
 and a batch limit rather than walking a growing share. The producer receives no delivery,
 backpressure or error feedback, so record every rejection in `manifest_rejections` with a cap,
 and clear it when the same manifest is later accepted.
-Admin `/console/system/intake` is the read-only view of that path. The manifest worker records each
+Admin `/console/system/intake` is the view of that path; its only writes are a confirmed retry of
+a submission that failed before becoming a scan (back to `pending`, `attempt_count` unchanged
+because it is the worker's fencing generation) and a confirmed dismissal of one rejection. The manifest worker records each
 cycle and its own configuration in the `manifest_intake_last_cycle` setting (best effort; recording
 must never stop intake); the console never reads manifest configuration from the API environment.
 Report a missing record as "no cycle recorded", an unreadable one as invalid and an old one as stale,
@@ -491,6 +497,22 @@ labels, keep only PostgreSQL and ClamAV up, and restart exactly what they stoppe
 a fixed service list. Behind the TLS proxy the app trusts forwarded headers only from
 `FORWARDED_ALLOW_IPS` (compose maps `MASP_FORWARDED_ALLOW_IPS`); the same-origin CSRF check and
 HTTPS-only worker control depend on it.
+
+Operations visibility. `app/services/health_read.py` is the one place that judges the scan chain;
+engine states come from the Engines screen's `engine_payload` so the two screens never disagree.
+Parts that are not deployed are `inactive` and never raise the overall state; a missing signal is
+`unknown`, never `ok`. Notifications nothing has tried to deliver are `inactive`: detections queue
+them whether or not SIEM delivery is deployed. The ICAP gateway keeps counters and at most 25
+notable events in memory (allowed requests are only counted) and writes them every 30 seconds as
+`icap_gateway_status:<client key>:<port>`; that write is also its heartbeat, recording must never
+block or fail a request, and records silent for a week are treated as removed. ClamAV health reports
+the program and signature version and the signature date from clamd `VERSION`. The support bundle
+is a POST so every export is audited; it excludes secret-named settings, credentialed URLs, engine
+configuration, sample content, filenames, hashes and console users' addresses.
+
+Release packaging: the pilot bundle must contain everything the Dockerfile copies, including the
+console build inputs under `frontend/`, and `install.sh` must reject every public placeholder that
+would weaken a deployment (`CHANGE_ME*` secrets, enrollment token, encryption key).
 
 ## Change Rules
 

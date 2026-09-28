@@ -366,6 +366,13 @@ healthcheck has a 120s start period. Workers wait for clamd to be healthy.
 
 ## Monitoring and alerting
 
+In the console, **System > Overview** starts with a health check of the whole
+scan chain and administrators see its state in the top bar; **System > ICAP and
+SIEM** shows gateway activity and failed notifications; **Support bundle**
+downloads one audited JSON file for a support request (no secrets, samples,
+filenames or hashes; non-secret configuration such as host names is included).
+Use these alongside, not instead of, the alerts below.
+
 `GET /health` is an unauthenticated liveness probe for the load balancer.
 `GET /metrics` serves Prometheus text-format metrics and **requires the API
 bearer token** (Prometheus sends it via `bearer_token` / `bearer_token_file` in
