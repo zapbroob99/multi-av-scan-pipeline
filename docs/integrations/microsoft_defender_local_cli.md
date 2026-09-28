@@ -8,7 +8,7 @@
 - Product: Microsoft Defender Antivirus
 - Tested version: product `4.18.26070.9`, engine `1.1.26070.7`, signatures `1.457.331.0` on 2026-08-25
 - Integration method: local PowerShell + `MpCmdRun.exe`
-- Support state: `lab`
+- Support state: `supported` (product-owner decision, 2026-09-28; see the support matrix for what is validated and what remains open)
 
 ## Scope
 

@@ -4,11 +4,12 @@
 
 The Windows agent executes Microsoft Defender locally while all orchestration
 stays on the MASP server. It uses outbound HTTPS only and receives neither a
-PostgreSQL credential nor a shared-storage mount. The current implementation is
-`lab`: service packaging and automated lifecycle tooling exist. Direct-database
-and HTTPS control-plane clean/EICAR scans have passed on a Windows 11 development
-host, but the installed-service identity, remaining real-host matrix, and signed
-release gates must pass before production support.
+PostgreSQL credential nor a shared-storage mount. The adapter is `supported`
+(product-owner decision, 2026-09-28, based on production use): service packaging
+and automated lifecycle tooling exist, and direct-database and HTTPS control-plane
+clean/EICAR scans have passed on a Windows 11 host. The installed-service identity
+run, the remaining real-host failure/failover matrix and signed releases are open
+hardening work; run them on each new target image.
 
 ## Security model
 

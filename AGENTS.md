@@ -441,9 +441,10 @@ Real Windows 11 development-host runs have passed direct-database and HTTPS
 control-plane clean/EICAR scanning, including authenticated sample download,
 fenced result submission, full clean coverage, and Defender
 `Virus:DOS/EICAR_Test_File` detection. The HTTPS run used a temporary elevated
-agent rather than the installed SCM service. Next milestone: execute and retain
-the SCM identity plus full failure/failover/lifecycle matrix, apply organizational
-release signing, and promote support only after those gates pass.
+agent rather than the installed SCM service. The product owner promoted Defender to
+`supported` on 2026-09-28 based on production use. The SCM identity run, the full
+failure/failover/lifecycle matrix and organizational release signing remain open hardening
+work; do not describe them as done.
 Direct worker database access and shared filesystem paths are compatibility modes,
 not the final remote-worker architecture.
 
