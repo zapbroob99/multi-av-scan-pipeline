@@ -22,6 +22,7 @@ export default function ClientSetup() {
   if (!valid) return <section className="page"><h1>Invalid client ID</h1><Link to="/service-clients">Service clients</Link></section>
   const data = !setup.error && !setup.isFetching ? setup.data : undefined
   const blocking = data?.checks.filter(check => !check.passed) ?? []
+  const connected = data?.methods.filter(method => method.ready) ?? []
   return <section className="page management-page client-page"><ClientNavigation clientId={clientId} /><div className="page-heading"><div><p className="eyebrow">CLIENT CONNECTION · #{clientId}</p>
     <h1>Connect a client</h1><p className="muted">Configuration readiness and the values the other system needs.</p></div>
     <Button variant="secondary" disabled={setup.isFetching} onClick={() => { void setup.refetch() }}><RefreshCw size={14} aria-hidden="true" />Refresh readiness</Button></div>
@@ -33,14 +34,32 @@ export default function ClientSetup() {
           <span className="client-badge">{data.checks.filter(check => check.passed).length} / {data.checks.length} checks</span></div>
         <p className={data.ready ? 'callout' : 'error'} role={data.ready ? undefined : 'alert'}>
           {data.ready
-            ? 'Configuration is complete. This does not prove the integration can reach MASP or that its token is correct.'
-            : `Not ready: ${blocking.length} item(s) still need attention.`}</p>
+            ? `Ready through ${connected.map(method => method.label).join(' and ')}. This does not prove the other system can reach MASP.`
+            : blocking.length ? `Not ready: ${blocking.length} routing item(s) still need attention.`
+              : 'Routing is complete, but no connection method is set up yet. Set up at least one below.'}</p>
         <ul className="client-checklist">{data.checks.map(check => <li key={check.key} className={check.passed ? 'client-check-pass' : 'client-check-fail'}>
           {check.passed ? <CheckCircle2 size={18} aria-hidden="true" /> : <CircleAlert size={18} aria-hidden="true" />}
           <div><strong>{check.label}</strong><span className="muted">{check.detail}</span>
-            {!check.passed && <ClientPanelLink clientId={clientId} tab={check.key === 'client_enabled' ? 'settings' : check.key === 'active_credential' ? 'credentials' : 'profiles'}>
-              {check.key === 'client_enabled' ? 'Review client settings' : check.key === 'active_credential' ? 'Manage credentials' : 'Review profile routing'}<ArrowRight size={12} aria-hidden="true" /></ClientPanelLink>}</div>
+            {!check.passed && <ClientPanelLink clientId={clientId} tab={check.key === 'client_enabled' ? 'settings' : 'profiles'}>
+              {check.key === 'client_enabled' ? 'Review client settings' : 'Review profile routing'}<ArrowRight size={12} aria-hidden="true" /></ClientPanelLink>}</div>
           <span className="client-check-status">{check.passed ? 'Ready' : 'Action needed'}</span></li>)}</ul>
+        <h3 className="client-methods-title">Connection methods</h3>
+        <p className="muted client-note">A client needs at least one. Methods it does not use can stay unset.</p>
+        <ul className="client-methods">{data.methods.map(method => <li key={method.key} aria-label={`${method.label} connection`}
+          className={`client-method ${method.ready ? 'is-ready' : method.in_use ? 'is-broken' : 'is-unused'}`}>
+          <div className="client-method-heading"><strong>{method.label}</strong>
+            <span className={`tag tag-dot ${method.ready ? 'tag-positive' : method.in_use ? 'tag-danger' : ''}`}>
+              {method.ready ? 'Connected' : method.in_use ? 'Needs attention' : 'Not used'}</span></div>
+          <p className="muted">{method.summary}</p>
+          {(method.in_use || method.key === 'api') && <ul className="client-method-checks">{method.checks.map(check =>
+            <li key={check.key} className={check.passed ? 'client-check-pass' : 'client-check-fail'}>
+              {check.passed ? <CheckCircle2 size={15} aria-hidden="true" /> : <CircleAlert size={15} aria-hidden="true" />}
+              <span><strong>{check.label}</strong> <span className="muted">{check.detail}</span></span></li>)}</ul>}
+          {method.key === 'api' && !method.ready && <ClientPanelLink clientId={clientId} tab="credentials">Manage credentials<ArrowRight size={12} aria-hidden="true" /></ClientPanelLink>}
+          {method.key === 'manifest' && method.checks.some(check => check.key === 'manifest_grant' && !check.passed) &&
+            <ClientPanelLink clientId={clientId} tab="storage">Grant storage access<ArrowRight size={12} aria-hidden="true" /></ClientPanelLink>}
+          {method.key !== 'api' && !method.in_use && <p className="muted client-method-hint">{method.checks[0]?.detail}</p>}
+        </li>)}</ul>
         {data.managed && <p className="callout">Managed compatibility client. Its routing follows deployment configuration rather than this profile.</p>}
       </section>
 

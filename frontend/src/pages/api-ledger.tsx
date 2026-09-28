@@ -62,6 +62,9 @@ export default function ApiLedger({ session }: { session?: Session }) {
     if (form.get('unassigned')) { next.delete('client_id'); next.set('unassigned', 'true') }
     setParams(next)
   }
+  // Names for the client filter; the ledger itself stays readable if this fails.
+  const clientChoices = useQuery({ queryKey: ['ledger-clients'], queryFn: ({ signal }) => request('/api/ui/v1/api-ledger/clients', 'get', { signal }),
+    retry: false, staleTime: 60000, gcTime: 300000, refetchOnWindowFocus: false })
   function paginate(before?: number) {
     const next = new URLSearchParams(params)
     if (before) next.set('before', String(before)); else next.delete('before')
@@ -84,8 +87,13 @@ export default function ApiLedger({ session }: { session?: Session }) {
       <label>Source<select name="source" defaultValue={params.get('source') || 'all'}><option value="all">API and ICAP</option><option value="api">API</option><option value="icap">ICAP</option></select></label>
       <label>Status<select name="status" defaultValue={params.get('status') || 'all'}>{['all', 'active', 'queued', 'running', 'finalizing', 'completed', 'partial', 'failed', 'skipped'].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
       <label>Recorded risk<select name="risk" defaultValue={params.get('risk') || 'all'}>{['all', 'pending', 'info', 'metadata_only', 'low', 'medium', 'high', 'critical'].map(value => <option key={value} value={value}>{value === 'all' ? 'All risk levels' : RISK_LABELS[value] || value}</option>)}</select></label>
-      <label>Client ID<input name="client_id" type="number" min={1} max={9007199254740991} step={1} defaultValue={params.get('client_id') || ''} /></label>
-      <label><input name="unassigned" type="checkbox" defaultChecked={params.get('unassigned') === 'true'} /> Unassigned only (overrides client ID)</label>
+      <label>Client<select name="client_id" defaultValue={params.get('client_id') || ''} disabled={!clientChoices.data && !clientChoices.error}>
+        <option value="">All clients</option>
+        {clientChoices.data?.items.map(choice => <option key={choice.id} value={choice.id}>{choice.display_name} ({choice.client_key}) · #{choice.id}</option>)}
+        {params.get('client_id') && !clientChoices.data?.items.some(choice => String(choice.id) === params.get('client_id')) &&
+          <option value={params.get('client_id')!}>Client #{params.get('client_id')}</option>}
+      </select></label>
+      <label><input name="unassigned" type="checkbox" defaultChecked={params.get('unassigned') === 'true'} /> Unassigned only (overrides client)</label>
       <Button type="submit" disabled={scans.isFetching}>Apply filters</Button><Button type="button" variant="secondary" onClick={() => setParams({})}>Reset filters</Button>
     </fieldset></form>
     {scans.isPending && <p role="status">Loading automation history…</p>}

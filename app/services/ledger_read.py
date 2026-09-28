@@ -70,3 +70,30 @@ def page(*, limit: int, before: int | None, query: str, source: str, status: str
         """, (*values, limit + 1)).fetchall()
     items = [LedgerScan(**{**dict(row), 'created_at': str(row['created_at'])}) for row in rows[:limit]]
     return LedgerPage(items=items, next_before=items[-1].id if len(rows) > limit else None)
+
+
+CLIENT_CHOICE_LIMIT = 200
+
+
+class LedgerClient(BaseModel):
+    id: int
+    display_name: str
+    client_key: str
+
+
+class LedgerClients(BaseModel):
+    items: list[LedgerClient]
+    truncated: bool
+
+
+def clients() -> LedgerClients:
+    """Names for the ledger's client filter. Analysts read the ledger but not the
+    client administration screens, so this exposes identity only: no state,
+    credentials, routing or storage access."""
+    with db.connect() as connection:
+        apply_read_budget(connection)
+        rows = connection.execute('''SELECT id, SUBSTR(display_name, 1, 100) AS display_name,
+            SUBSTR(client_key, 1, 128) AS client_key FROM service_clients ORDER BY LOWER(display_name), id LIMIT ?''',
+            (CLIENT_CHOICE_LIMIT + 1,)).fetchall()
+    return LedgerClients(items=[LedgerClient(**dict(row)) for row in rows[:CLIENT_CHOICE_LIMIT]],
+                         truncated=len(rows) > CLIENT_CHOICE_LIMIT)

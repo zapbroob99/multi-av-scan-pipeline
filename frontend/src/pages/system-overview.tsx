@@ -6,8 +6,11 @@ import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { HelpDetails } from '../components/help-details'
+import { HealthPanel } from '../components/health-panel'
+import { SupportBundleButton } from '../components/support-bundle'
+import type { Session } from '../lib/api'
 
-export default function SystemOverview() {
+export default function SystemOverview({ session }: { session: Session }) {
   const [params, setParams] = useSearchParams()
   const after = params.get('after') || ''
   const [showMetrics, setShowMetrics] = useState(Boolean(after))
@@ -19,7 +22,10 @@ export default function SystemOverview() {
     retry: false, gcTime: 60000, refetchOnMount: 'always', refetchOnWindowFocus: false, refetchOnReconnect: false })
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>System overview</h1>
     <p className="muted">Recorded scan totals, worker liveness and historical result statistics.</p></div>
-    <Button variant="secondary" disabled={summary.isFetching} onClick={() => { void summary.refetch() }}>Refresh overview</Button></div>
+    <div className="heading-actions"><SupportBundleButton session={session} />
+      <Button variant="secondary" disabled={summary.isFetching} onClick={() => { void summary.refetch() }}>Refresh overview</Button></div></div>
+    <HealthPanel />
+    <h2 className="overview-section-title">Scan totals</h2>
     <p className="callout">Recorded outcomes do not prove complete coverage or a policy allow decision.</p>
     <HelpDetails title="About these totals">Totals include all scan sources and archive children. Counts can be cached for 30 seconds.</HelpDetails>
     {summary.isPending && <p role="status">Loading system overview…</p>}

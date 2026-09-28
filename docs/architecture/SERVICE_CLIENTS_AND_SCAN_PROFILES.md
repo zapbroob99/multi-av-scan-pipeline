@@ -92,10 +92,14 @@ client ready, and what does the other system need to be told? Everything it show
 already existed, spread across the client list, the profile routing editor and the
 credential page, and the endpoint to point an integration at was not shown at all.
 
-It reports five configuration checks, each pass or fail with its own reason: the
+It reports four routing checks, each pass or fail with its own reason: the
 client is enabled, an enabled default profile exists, that profile has assigned
-engines, at least one assigned engine is eligible for automation, and an active
-credential exists. An assigned engine that cannot run automation work says why -
+engines, and at least one assigned engine is eligible for automation. A client
+also needs at least one connection method, each checked on its own terms: the
+REST API needs an active credential; an ICAP gateway must report under this
+client's key and still be running; a manifest worker must run for this client,
+still be reading, and the client must be granted the share it watches. A client
+fed only by manifests or ICAP therefore needs no API credential. An assigned engine that cannot run automation work says why -
 a disabled instance, an unregistered adapter, an adapter that cannot accept a
 submitted file, or a metered reputation adapter that API and ICAP exclude before
 job creation. That last exclusion is adapter-level policy, so the engine can stay

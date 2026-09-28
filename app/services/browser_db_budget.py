@@ -35,3 +35,12 @@ def apply_read_budget(connection) -> None:
         # psycopg auto-prepares the statement, PostgreSQL's generic plan can
         # misestimate a dominant parent and run one full scan per visible row.
         connection.execute("SELECT set_config('plan_cache_mode', 'force_custom_plan', true)")
+
+
+def name_filter(query: str, columns: tuple[str, ...]) -> tuple[str, list[str]]:
+    """Case-insensitive literal substring match over ``columns``; empty query matches all."""
+    text = query.strip().lower()
+    if not text:
+        return '', []
+    pattern = '%' + text.replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'
+    return '(' + ' OR '.join(f"LOWER({column}) LIKE ? ESCAPE '!'" for column in columns) + ')', [pattern] * len(columns)

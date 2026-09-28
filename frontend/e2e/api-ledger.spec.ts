@@ -15,7 +15,11 @@ test('analyst browses API/ICAP history, filters ownership and uses seek paginati
   await expect(page.getByRole('link', { name: 'ledger-20.bin', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Filter client #1', exact: true }).first().click()
   await expect(page).toHaveURL(/client_id=1/)
-  await page.getByLabel('Client ID', { exact: true }).fill('999999')
+  // The client filter names clients, and keeps the chosen one selected.
+  const client = page.getByRole('combobox', { name: 'Client', exact: true })
+  await expect(client).toHaveValue('1')
+  await expect(client.getByRole('option', { name: /Acceptance integration \(console-client\) · #1/ })).toHaveCount(1)
+  await page.getByLabel('Filename, hash or case').fill('no-such-file')
   await page.getByRole('button', { name: 'Apply filters' }).click()
   await expect(page.getByText('No automation scans match these filters.')).toBeVisible()
   await page.getByRole('button', { name: 'Reset filters' }).click()

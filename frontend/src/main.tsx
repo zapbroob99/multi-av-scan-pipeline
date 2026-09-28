@@ -10,6 +10,7 @@ import { BrandMark } from './components/brand-mark'
 import { SystemLayout } from './components/section-tabs'
 import { WorkspaceNavigation } from './components/workspace-navigation'
 import { ErrorMessage } from './components/error-message'
+import { HealthIndicator } from './components/health-panel'
 import './styles.css'
 
 const Users = lazy(() => import('./pages/users'))
@@ -41,6 +42,7 @@ const ClientSetup = lazy(() => import('./pages/client-setup'))
 const Audit = lazy(() => import('./pages/audit'))
 const HashList = lazy(() => import('./pages/hash-list'))
 const Intake = lazy(() => import('./pages/intake'))
+const Delivery = lazy(() => import('./pages/delivery'))
 const About = lazy(() => import('./pages/about'))
 const ScanPrint = lazy(() => import('./pages/scan-print'))
 const client = new QueryClient({ defaultOptions: {
@@ -98,7 +100,7 @@ function App() {
     <WorkspaceNavigation admin={session.data.user.role === 'admin'} />
     <div className="sidebar-footer"><span>{session.data.user.username}<small>{session.data.user.role}</small></span><div className="sidebar-controls">
       <ThemeToggle /><Button variant="secondary" disabled={busy} onClick={logout} aria-label="Sign out"><LogOut size={17} /></Button></div></div>
-  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname.endsWith('/print') ? 'Printable report' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines/hash-list' ? 'Hash list' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="offline-label">SELF-HOSTED</span></header>
+  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname.endsWith('/print') ? 'Printable report' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines/hash-list' ? 'Hash list' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="topbar-status">{session.data.user.role === 'admin' && <HealthIndicator />}<span className="offline-label">SELF-HOSTED</span></span></header>
     {error && <p role="alert" className="error"><ErrorMessage message={error} /></p>}
       <Suspense fallback={<p role="status">Loading page…</p>}><Routes>
         <Route path="/account" element={<Account session={session.data} onPasswordChanged={() => {
@@ -142,9 +144,10 @@ function App() {
         <Route element={session.data.user.role === 'admin' ? <SystemLayout /> : <section className="empty"><h1>Administrator access required</h1><p>Your session does not have system-management permissions.</p></section>}>
           <Route path="/system/pools" element={<WorkerPools session={session.data} />} />
           <Route path="/system/runtime" element={<Runtime />} />
-          <Route path="/system/intake" element={<Intake />} />
+          <Route path="/system/intake" element={<Intake session={session.data} />} />
+          <Route path="/system/delivery" element={<Delivery session={session.data} />} />
           <Route path="/system/retention" element={<Retention session={session.data} />} />
-          <Route path="/system/overview" element={<SystemOverview />} />
+          <Route path="/system/overview" element={<SystemOverview session={session.data} />} />
           <Route path="/system" element={<System session={session.data} />} />
           <Route path="/engines/hash-list" element={<HashList session={session.data} />} />
           <Route path="/engines" element={<Engines session={session.data} />} />

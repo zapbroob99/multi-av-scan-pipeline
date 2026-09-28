@@ -5,6 +5,11 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import ApiLedger from './api-ledger'
 
+/** History reads and writes; the client filter's name list is a separate read. */
+function ledgerCalls(fetcher: { mock: { calls: unknown[][] } }) {
+  return fetcher.mock.calls.filter(([url]) => !String(url).includes('/api-ledger/clients'))
+}
+
 function mount() {
   const fetcher = vi.fn(async (_url: string) => new Response(JSON.stringify({ items: [{ id: 42, filename: '<script>API sample</script>',
     sha256: 'a'.repeat(64), size_bytes: 1024, case_name: 'Case', source: 'icap', service_client_id: 7,
@@ -41,6 +46,6 @@ describe('API ledger', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Refresh ledger' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Read budget exceeded')
     expect(screen.queryByRole('link', { name: 'Report' })).toBeNull()
-    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(ledgerCalls(fetcher)).toHaveLength(2)
   })
 })

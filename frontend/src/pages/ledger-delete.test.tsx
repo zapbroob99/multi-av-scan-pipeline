@@ -5,6 +5,11 @@ import { MemoryRouter } from 'react-router-dom'
 import { expect, it, vi } from 'vitest'
 import ApiLedger from './api-ledger'
 
+/** History reads and writes; the client filter's name list is a separate read. */
+function ledgerCalls(fetcher: { mock: { calls: unknown[][] } }) {
+  return fetcher.mock.calls.filter(([url]) => !String(url).includes('/api-ledger/clients'))
+}
+
 function mount(role = 'admin', failure = false) {
   const fetcher = vi.fn(async (_url: string, options?: RequestInit) => options?.method === 'DELETE'
     ? new Response(JSON.stringify(failure ? { detail: 'Uncertain request' } : {
@@ -32,7 +37,7 @@ it.each([false, true])('sends confirmed fences once and requires fresh reads aft
   const fetcher = mount('admin', failure)
   await userEvent.click(await screen.findByRole('checkbox', { name: 'Select scan 42' }))
   await userEvent.click(screen.getByRole('button', { name: 'Delete selected (1)' }))
-  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(ledgerCalls(fetcher)).toHaveLength(1)
   await userEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
   if (failure) expect(await screen.findByRole('alert')).toHaveTextContent('may have partially completed')
   else expect(await screen.findByRole('status')).toHaveTextContent('File cleanup unconfirmed IDs: 42')
@@ -42,10 +47,10 @@ it.each([false, true])('sends confirmed fences once and requires fresh reads aft
   expect(new Headers(write[1]!.headers).get('X-CSRF-Token')).toBe('csrf')
   expect(screen.queryByRole('checkbox', { name: 'Select scan 42' })).toBeNull()
   expect(screen.getByRole('button', { name: 'Delete selected (0)' })).toBeDisabled()
-  expect(fetcher).toHaveBeenCalledTimes(2)
+  expect(ledgerCalls(fetcher)).toHaveLength(2)
   await userEvent.click(screen.getByRole('button', { name: 'Refresh ledger' }))
   expect(await screen.findByRole('checkbox', { name: 'Select scan 42' })).not.toBeChecked()
-  expect(fetcher).toHaveBeenCalledTimes(3)
+  expect(ledgerCalls(fetcher)).toHaveLength(3)
 })
 
 it('selects the whole page from the header for admins', async () => {

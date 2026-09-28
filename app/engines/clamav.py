@@ -5,6 +5,7 @@ import shutil
 import socket
 import struct
 import subprocess
+from datetime import datetime, timezone
 from time import perf_counter, sleep
 
 from app.models import EngineResultInput, ScanRecord
@@ -207,7 +208,7 @@ def check_clamav_health(
                 "detail": f"Could not connect to clamd at {host}:{port}: {exc}",
             }
 
-        return {
+        result = {
             "ok": response == "PONG",
             "status": "reachable" if response == "PONG" else "unexpected",
             "detail": f"clamd responded with {response!r}",
@@ -215,6 +216,14 @@ def check_clamav_health(
             "engine_version": "clamd",
             "service_state": "reachable" if response == "PONG" else "unexpected",
         }
+        if response == "PONG":
+            # Signature age is what an offline host needs to see; a version
+            # read failure must not turn a reachable clamd into an unhealthy one.
+            try:
+                result.update(parse_clamav_version(version_clamd(host, port, timeout)))
+            except (OSError, TimeoutError, socket.timeout):
+                pass
+        return result
 
     command = str(config["command"])
     path = shutil.which(command)
@@ -225,7 +234,7 @@ def check_clamav_health(
             "detail": f"{command} was not found on PATH.",
         }
 
-    return {
+    result = {
         "ok": True,
         "status": "available",
         "detail": f"{command} found at {path}.",
@@ -233,6 +242,12 @@ def check_clamav_health(
         "engine_version": "clamscan",
         "service_state": "available",
     }
+    try:
+        completed = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10, check=False)
+        result.update(parse_clamav_version(completed.stdout))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return result
 
 
 def run_clamav_engine(
@@ -716,6 +731,33 @@ def ping_clamd(host: str, port: int, timeout: int) -> str:
         connection.sendall(b"zPING\0")
         response = connection.recv(4096)
     return response.decode("utf-8", errors="replace").strip("\x00\r\n ")
+
+
+def version_clamd(host: str, port: int, timeout: int) -> str:
+    with socket.create_connection((host, port), timeout=timeout) as connection:
+        connection.settimeout(timeout)
+        connection.sendall(b"zVERSION\0")
+        response = connection.recv(4096)
+    return response.decode("utf-8", errors="replace").strip("\x00\r\n ")
+
+
+def parse_clamav_version(text: str) -> dict[str, str]:
+    """Parse "ClamAV 1.4.2/27771/Mon Sep 22 08:21:03 2026" (clamd VERSION or
+    clamscan --version). Without a database the signature fields are absent."""
+    parts = text.strip().split("/")
+    product = parts[0].strip()
+    if not product.startswith("ClamAV"):
+        return {}
+    result = {"product_version": product[:64], "engine_version": product.removeprefix("ClamAV").strip()[:32] or "clamd"}
+    if len(parts) >= 2 and parts[1].strip().isdigit():
+        result["signature_version"] = parts[1].strip()[:32]
+    if len(parts) >= 3:
+        try:
+            signed = datetime.strptime(" ".join(parts[2].split()), "%a %b %d %H:%M:%S %Y")
+            result["signature_date"] = signed.replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            pass
+    return result
 
 
 def parse_signature(raw_output: str) -> str | None:

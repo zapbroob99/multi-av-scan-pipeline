@@ -12,7 +12,16 @@ const READY = {
     { key: 'default_profile', label: 'Enabled default profile', passed: true, detail: 'Routing through Default routing.' },
     { key: 'assigned_engines', label: 'Profile has assigned engines', passed: true, detail: '2 engine instance(s) assigned.' },
     { key: 'eligible_engines', label: 'An assigned engine can run automation work', passed: true, detail: '1 of 2 assigned engine(s) are eligible for API and ICAP.' },
-    { key: 'active_credential', label: 'Active API credential', passed: true, detail: '1 active credential(s).' },
+  ],
+  methods: [
+    { key: 'api', label: 'REST API', in_use: true, ready: true, summary: 'Ready for bearer-token submissions.',
+      checks: [{ key: 'active_credential', label: 'Active API credential', passed: true, detail: '1 active credential(s).' }] },
+    { key: 'icap', label: 'ICAP gateway', in_use: false, ready: false, summary: 'Not set up: no gateway uses this client key.',
+      checks: [{ key: 'icap_gateway', label: 'An ICAP gateway is bound to this client', passed: false,
+        detail: 'Set MASP_ICAP_SERVICE_CLIENT_KEY=drive-gateway on the gateway.' }] },
+    { key: 'manifest', label: 'Manifest intake', in_use: false, ready: false, summary: 'Not set up.',
+      checks: [{ key: 'manifest_worker', label: 'The manifest worker runs for this client', passed: false,
+        detail: 'No manifest worker has run. Enable the manifest profile.' }] },
   ],
   profile_id: 9, profile_name: 'Default routing',
   engines: [
@@ -46,7 +55,9 @@ describe('Connect a client', () => {
     expect(screen.getByText('POST http://masp.local/api/v1/scans')).toBeInTheDocument()
     expect(screen.getByText('MASP_ICAP_SERVICE_CLIENT_KEY=drive-gateway')).toBeInTheDocument()
     expect(screen.getByText('Authorization: Bearer <api token>')).toBeInTheDocument()
-    expect(screen.getByText(/does not prove the integration can reach MASP/)).toBeInTheDocument()
+    expect(screen.getByText(/Ready through REST API\. This does not prove the other system can reach MASP/)).toBeInTheDocument()
+    expect(screen.getByRole('listitem', { name: 'REST API connection' })).toHaveTextContent('Connected')
+    expect(screen.getByRole('listitem', { name: 'ICAP gateway connection' })).toHaveTextContent('Not used')
   })
 
   it('explains why an assigned engine cannot run automation work', async () => {
@@ -60,12 +71,34 @@ describe('Connect a client', () => {
     const blocked = {
       ...READY, ready: false,
       checks: READY.checks.map((check, index) =>
-        index > 2 ? { ...check, passed: false, detail: 'Needs attention.' } : check),
+        index > 1 ? { ...check, passed: false, detail: 'Needs attention.' } : check),
     }
     mount(blocked)
     await screen.findByRole('alert')
-    expect(screen.getByRole('alert')).toHaveTextContent('Not ready: 2 item(s)')
+    expect(screen.getByRole('alert')).toHaveTextContent('Not ready: 2 routing item(s)')
     expect(screen.getAllByText('Needs attention.')).toHaveLength(2)
+  })
+
+  it('accepts a manifest-only client and points a missing grant at the Storage tab', async () => {
+    const manifestOnly = {
+      ...READY, ready: false, active_credential_count: 0,
+      methods: [
+        { ...READY.methods[0], in_use: false, ready: false, summary: 'Not set up: no active credential.',
+          checks: [{ key: 'active_credential', label: 'Active API credential', passed: false, detail: 'Create a credential on the Credentials tab.' }] },
+        READY.methods[1],
+        { key: 'manifest', label: 'Manifest intake', in_use: true, ready: false, summary: 'Set up but not working.', checks: [
+          { key: 'manifest_worker', label: 'The manifest worker runs for this client', passed: true, detail: 'It reports this client.' },
+          { key: 'manifest_running', label: 'The worker is reading manifests', passed: true, detail: 'Last cycle 20 s ago.' },
+          { key: 'manifest_grant', label: 'The client may read the watched share', passed: false,
+            detail: 'Backend drive, prefix uploads. Grant it on the Storage tab, or every manifest is rejected.' }] },
+      ],
+    }
+    mount(manifestOnly)
+    await screen.findByRole('alert')
+    expect(screen.getByRole('alert')).toHaveTextContent('Routing is complete, but no connection method is set up yet.')
+    const manifest = screen.getByRole('listitem', { name: 'Manifest intake connection' })
+    expect(manifest).toHaveTextContent('Needs attention')
+    expect(manifest).toHaveTextContent('Grant storage access')
   })
 
   it('surfaces a read failure instead of implying the client is configured', async () => {

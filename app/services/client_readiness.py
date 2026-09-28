@@ -6,10 +6,20 @@ to visit three screens and still could not see the endpoint to point it at. This
 answers one question in one place: is this client ready, and what does the other
 side need to be told?
 
-It reads configuration only. It cannot prove the integration can reach MASP, that
-a credential value is correct, or that an assigned engine is healthy.
+A client connects in one or more ways -- the REST API with a bearer token, an
+ICAP gateway bound to its key, or a manifest worker reading a share on its
+behalf -- and each needs different things. Readiness is therefore the shared
+routing checks plus at least one connection method that is set up; a client that
+only receives manifests needs no API credential.
+
+It reads configuration and recorded activity only. It cannot prove the
+integration can reach MASP, that a credential value is correct, or that an
+assigned engine is healthy.
 """
 from datetime import datetime, timezone
+import json
+import time
+from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -17,6 +27,11 @@ from pydantic import BaseModel
 from app import database as db
 from app.services.browser_db_budget import apply_read_budget
 from app.services.engine_registry import adapter_capabilities, engine_allowed_for_source
+from app.icap.activity import SETTING_PREFIX as ICAP_SETTING_PREFIX
+from app.services.deferred_storage import backend_allowed_for_client
+from app.services.health_read import ICAP_FORGOTTEN_SECONDS, ICAP_STALE_SECONDS, age_text, icap_gateways
+from app.services.intake_read import MIN_STALE_SECONDS, STALE_POLL_INTERVALS
+from app.services.manifest_intake import LAST_CYCLE_SETTING
 
 
 AUTOMATION_SOURCE = 'api'
@@ -38,6 +53,15 @@ class AssignedEngine(BaseModel):
     excluded_reason: str | None
 
 
+class ConnectionMethod(BaseModel):
+    key: Literal['api', 'icap', 'manifest']
+    label: str
+    in_use: bool
+    ready: bool
+    summary: str
+    checks: list[ReadinessCheck]
+
+
 class ClientReadiness(BaseModel):
     client_id: int
     client_key: str
@@ -46,6 +70,7 @@ class ClientReadiness(BaseModel):
     managed: bool
     ready: bool
     checks: list[ReadinessCheck]
+    methods: list[ConnectionMethod]
     profile_id: int | None
     profile_name: str | None
     engines: list[AssignedEngine]
@@ -99,6 +124,13 @@ def readiness(client_id: int, base_url: str) -> ClientReadiness:
                 WHERE pe.scan_profile_id = ? ORDER BY e.id LIMIT 101''', (profile['id'],)).fetchall()
         credentials = connection.execute('''SELECT COUNT(*) AS active FROM api_client_credentials
             WHERE service_client_id = ? AND revoked_at IS NULL''', (client_id,)).fetchone()
+        # Newest automation scan per source, on the ledger's (client, id) index.
+        last_scans = {source: connection.execute('''SELECT id, created_at FROM scan_jobs
+            WHERE service_client_id = ? AND source = ? AND scan_role != 'child' ORDER BY id DESC LIMIT 1''',
+            (client_id, source)).fetchone() for source in ('api', 'icap')}
+        settings = {str(row['key']): str(row['value']) for row in connection.execute(
+            "SELECT key, value FROM app_settings WHERE key = ? OR key LIKE ?",
+            (LAST_CYCLE_SETTING, ICAP_SETTING_PREFIX + '%')).fetchall()}
 
     engines: list[AssignedEngine] = []
     for row in rows[:100]:
@@ -124,16 +156,20 @@ def readiness(client_id: int, base_url: str) -> ClientReadiness:
                        passed=eligible_count > 0,
                        detail=f'{eligible_count} of {len(engines)} assigned engine(s) are eligible for API and ICAP.'
                        if engines else 'No assigned engine to evaluate.'),
-        ReadinessCheck(key='active_credential', label='Active API credential', passed=active_credentials > 0,
-                       detail=f'{active_credentials} active credential(s).' if active_credentials
-                       else 'Add a credential, or bind an ICAP gateway to this client key instead.'),
+    ]
+    client_key = str(client['client_key'])
+    methods = [
+        _api_method(active_credentials, last_scans['api']),
+        _icap_method(client_key, settings, last_scans['icap']),
+        _manifest_method(client_key, settings.get(LAST_CYCLE_SETTING)),
     ]
     return ClientReadiness(
         client_id=int(client['id']), client_key=str(client['client_key']),
         display_name=str(client['display_name']), enabled=enabled_client,
         managed=bool(client['managed']),
-        ready=all(check.passed for check in checks),
+        ready=all(check.passed for check in checks) and any(method.ready for method in methods),
         checks=checks,
+        methods=methods,
         profile_id=None if profile is None else int(profile['id']),
         profile_name=None if profile is None else str(profile['name']),
         engines=engines, eligible_engine_count=eligible_count,
@@ -146,3 +182,86 @@ def readiness(client_id: int, base_url: str) -> ClientReadiness:
         icap_client_key_setting=f'MASP_ICAP_SERVICE_CLIENT_KEY={client["client_key"]}',
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def _last(row) -> str:
+    return f" Last scan #{row['id']} at {str(row['created_at'])[:19]}." if row is not None else ''
+
+
+def _api_method(active_credentials: int, last_scan) -> ConnectionMethod:
+    check = ReadinessCheck(key='active_credential', label='Active API credential', passed=active_credentials > 0,
+                           detail=f'{active_credentials} active credential(s).' if active_credentials
+                           else 'Create a credential on the Credentials tab.')
+    in_use = active_credentials > 0 or last_scan is not None
+    return ConnectionMethod(key='api', label='REST API', in_use=in_use, ready=check.passed, checks=[check],
+                            summary=('Ready for bearer-token submissions.' if check.passed
+                                     else 'Not set up: no active credential.') + _last(last_scan))
+
+
+def _icap_method(client_key: str, settings: dict[str, str], last_scan, now: float | None = None) -> ConnectionMethod:
+    current = time.time() if now is None else now
+    gateways = [g for g in icap_gateways({k: v for k, v in settings.items() if k.startswith(ICAP_SETTING_PREFIX)})
+                if str(g.get('client_key', '')).lower() == client_key.lower()
+                and current - int(g['at']) < ICAP_FORGOTTEN_SECONDS]
+    bound = ReadinessCheck(key='icap_gateway', label='An ICAP gateway is bound to this client', passed=bool(gateways),
+                           detail=', '.join(f"port {g.get('port')}" for g in gateways) if gateways
+                           else f'Set MASP_ICAP_SERVICE_CLIENT_KEY={client_key} on the gateway.')
+    reporting = [g for g in gateways if current - int(g['at']) < ICAP_STALE_SECONDS]
+    if reporting:
+        alive_detail = 'Reported within the last minute.'
+    elif gateways:
+        alive_detail = f"Last report {age_text(current - max(int(g['at']) for g in gateways))} ago."
+    else:
+        alive_detail = 'No gateway report for this client.'
+    alive = ReadinessCheck(key='icap_reporting', label='The gateway is running', passed=bool(reporting),
+                           detail=alive_detail)
+    ready = bound.passed and alive.passed
+    if ready:
+        summary = 'A gateway answers for this client.'
+    elif gateways:
+        summary = 'Gateway stopped.'
+    else:
+        summary = 'Not set up: no gateway uses this client key.'
+    return ConnectionMethod(key='icap', label='ICAP gateway', in_use=bool(gateways) or last_scan is not None,
+                            ready=ready, checks=[bound, alive], summary=summary + _last(last_scan))
+
+
+def _manifest_method(client_key: str, raw: str | None, now: float | None = None) -> ConnectionMethod:
+    current = time.time() if now is None else now
+    try:
+        record = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        record = None
+    runs_for = str(record.get('client_key') or '') if isinstance(record, dict) else ''
+    mine = bool(runs_for) and runs_for.lower() == client_key.lower()
+    if mine:
+        worker_detail = 'It reports this client.'
+    elif runs_for:
+        worker_detail = f'It runs for {runs_for}; set MASP_MANIFEST_CLIENT_KEY={client_key} to use this client.'
+    else:
+        worker_detail = 'No manifest worker has run. Enable the manifest profile.'
+    checks = [ReadinessCheck(key='manifest_worker', label='The manifest worker runs for this client', passed=mine,
+                             detail=worker_detail)]
+    ready = False
+    if mine:
+        age = max(0, current - int(record.get('at') or 0))
+        poll = float(record.get('poll_seconds') or 0)
+        running = age <= max(MIN_STALE_SECONDS, STALE_POLL_INTERVALS * poll)
+        checks.append(ReadinessCheck(key='manifest_running', label='The worker is reading manifests', passed=running,
+                                     detail=f'Last cycle {age_text(age)} ago.' + ('' if running else ' It has stopped or is stuck.')))
+        backend = str(record.get('backend_key') or '')
+        prefix = str(record.get('root_prefix') or '').strip('/')
+        probe = f'{prefix}/manifest.json' if prefix else 'manifest.json'
+        allowed = bool(backend) and backend_allowed_for_client(backend, client_key, probe)
+        checks.append(ReadinessCheck(key='manifest_grant', label='The client may read the watched share', passed=allowed,
+                                     detail=f'Backend {backend or "unset"}, prefix {prefix or "(root)"}.' + (
+                                         '' if allowed else ' Grant it on the Storage tab, or every manifest is rejected.')))
+        ready = running and allowed
+    if ready:
+        summary = 'Manifests dropped on the share are accepted.'
+    elif mine:
+        summary = 'Set up but not working.'
+    else:
+        summary = 'Not set up.'
+    return ConnectionMethod(key='manifest', label='Manifest intake', in_use=mine, ready=ready, checks=checks,
+                            summary=summary)

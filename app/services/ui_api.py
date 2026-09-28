@@ -39,6 +39,10 @@ from app.services import user_admin
 from app.services import audit_read
 from app.services import hash_list_admin
 from app.services import intake_read
+from app.services import intake_admin
+from app.services import health_read
+from app.services import delivery_read
+from app.services import support_bundle
 from app.services import about_read
 from app.services import account
 from app.services.ingest import store_upload, configured_upload_max_bytes, UploadTooLargeError
@@ -88,7 +92,7 @@ class BrowserRoute(APIRoute):
                 request.state.ui_user = user
                 dashboard_read_allowed = request.method == "GET" and self.path in {
                     PREFIX + "/dashboard/summary", PREFIX + "/dashboard/scans",
-                    PREFIX + "/api-ledger",
+                    PREFIX + "/api-ledger", PREFIX + "/api-ledger/clients",
                     PREFIX + "/api-ledger/scans/{scan_id}",
                     PREFIX + "/api-ledger/scans/{scan_id}/children",
                     PREFIX + "/api-ledger/scans/{scan_id}/summary-export",
@@ -192,6 +196,11 @@ def browser_api_ledger(limit: int = Query(default=20, ge=1, le=100),
         raise HTTPException(422, 'Choose either a client ID or unassigned records.')
     return ledger_read.page(limit=limit, before=before, query=q, source=source, status=status,
                             risk=risk, client_id=client_id, unassigned=unassigned)
+
+
+@router.get('/api-ledger/clients', response_model=ledger_read.LedgerClients)
+def browser_api_ledger_clients():
+    return ledger_read.clients()
 
 
 class SubmissionAccepted(BaseModel):
@@ -355,6 +364,57 @@ def browser_intake_overview():
     return intake_read.overview()
 
 
+@router.post('/system/intake/{submission_id}/retry', status_code=204)
+def browser_retry_intake(submission_id: int = Path(ge=1, le=9007199254740991)):
+    intake_admin.retry_failed_submission(submission_id)
+    return Response(status_code=204)
+
+
+@router.post('/system/intake/rejections/dismiss', status_code=204)
+def browser_dismiss_rejection(body: intake_admin.RejectionDismissal):
+    intake_admin.dismiss_rejection(body)
+    return Response(status_code=204)
+
+
+def engine_payloads() -> list[dict]:
+    status, records = get_worker_status(), db.list_engine_node_health()
+    bindings, pools = db.list_engine_instance_worker_pool_bindings(), db.list_worker_pools()
+    return [engine_payload(e, status, records, bindings, pools) for e in configured_engines() if e.adapter_key in ADAPTERS]
+
+
+def system_health(payloads: list[dict]) -> health_read.HealthReport:
+    # The Engines screen's verdicts, so a check never contradicts that screen.
+    return health_read.report([health_read.EngineState(name=p['display_name'], adapter_key=p['adapter_key'],
+                                                       state=p['health']['state'], detail=p['health']['detail'])
+                               for p in payloads])
+
+
+@router.get('/system/health', response_model=health_read.HealthReport)
+def browser_system_health():
+    return system_health(engine_payloads())
+
+
+@router.post('/system/support-bundle', response_model=support_bundle.SupportBundle)
+def browser_support_bundle(request: Request):
+    # A POST so the export lands in the audit trail; it changes nothing.
+    set_audit_context(request, action='system.support_bundle', target_type='system', actor=request.state.ui_user)
+    payloads = engine_payloads()
+    # Engine configuration can hold hosts and paths but never secrets in clear; it is still left out.
+    engines = [{key: payload[key] for key in ('id', 'adapter_key', 'display_name', 'enabled', 'pool_id', 'health')}
+               for payload in payloads]
+    return support_bundle.build(system_health(payloads), engines)
+
+
+@router.get('/system/delivery', response_model=delivery_read.DeliveryOverview)
+def browser_delivery_overview():
+    return delivery_read.overview()
+
+
+@router.post('/system/notifications/retry', response_model=delivery_read.RetryNow)
+def browser_retry_notifications():
+    return delivery_read.retry_notifications_now()
+
+
 @router.get('/hash-list', response_model=hash_list_admin.HashListPage)
 def browser_hash_list(limit: int = Query(default=20, ge=1, le=100),
                       before: int | None = Query(default=None, ge=1, le=9007199254740991),
@@ -502,8 +562,9 @@ def read_browser_scan_policy():
 
 @router.get('/service-clients', response_model=client_admin.ServiceClientPage)
 def read_browser_service_clients(limit: int = Query(default=20, ge=1, le=100),
-                                after: int | None = Query(default=None, ge=1, le=9007199254740991)):
-    return client_admin.page(limit, after)
+                                after: int | None = Query(default=None, ge=1, le=9007199254740991),
+                                q: str = Query(default='', max_length=100)):
+    return client_admin.page(limit, after, q)
 
 
 @router.get('/service-clients/create-options', response_model=credential_admin.ClientCreateOptions)
@@ -680,8 +741,9 @@ def browser_pool_values(body: PoolCreateBody) -> tuple[str, str]:
 
 @router.get('/system/pools', response_model=worker_admin.PoolPage)
 def read_worker_pools(limit: int = Query(default=20, ge=1, le=100),
-                      after: int | None = Query(default=None, ge=1, le=9007199254740991)):
-    return worker_admin.pool_page(limit=limit, after=after)
+                      after: int | None = Query(default=None, ge=1, le=9007199254740991),
+                      q: str = Query(default='', max_length=100)):
+    return worker_admin.pool_page(limit=limit, after=after, query=q)
 
 
 @router.post('/system/pools', response_model=PoolSaved, status_code=201)
@@ -736,8 +798,9 @@ class WorkerCredentialsRevoked(BaseModel):
 
 @router.get('/system/workers', response_model=worker_admin.WorkerPage)
 def read_system_workers(limit: int = Query(default=20, ge=1, le=100),
-                        after: str | None = Query(default=None, min_length=1, max_length=128)):
-    return worker_admin.page(limit=limit, after=after)
+                        after: str | None = Query(default=None, min_length=1, max_length=128),
+                        q: str = Query(default='', max_length=100)):
+    return worker_admin.page(limit=limit, after=after, query=q)
 
 
 @router.post('/system/workers/lifecycle', response_model=WorkerLifecycleSaved)
@@ -1033,6 +1096,9 @@ def engine_payload(instance, worker_status, records, bindings, pools=None):
         health.update(state="disabled", detail="Engine instance is disabled.")
     elif instance.adapter_key == "static_metadata":
         health.update(state="healthy", ok=True, detail="Built-in metadata analyzer.")
+    elif instance.adapter_key == "hash_list":
+        # Runs inside MASP against its own database; there is no service to check.
+        health.update(state="healthy", ok=True, detail="Built-in institution hash list.")
     elif adapter_capabilities(instance.adapter_key).deployment == "worker":
         eligible = eligible_worker_node_ids_for_engine_instance(worker_status, instance, bindings=bindings, pools=pools)
         reports = [r for r in records if r.engine_instance_id == instance.id and r.node_id in eligible]

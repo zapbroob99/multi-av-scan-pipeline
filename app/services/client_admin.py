@@ -2,7 +2,7 @@
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from app import database as db
-from app.services.browser_db_budget import apply_read_budget, write_lock_timeout_ms
+from app.services.browser_db_budget import apply_read_budget, name_filter, write_lock_timeout_ms
 
 
 class ServiceClientSummary(BaseModel):
@@ -25,15 +25,17 @@ class ServiceClientUpdate(BaseModel):
     enabled: bool
 
 
-def page(limit: int, after: int | None) -> ServiceClientPage:
+def page(limit: int, after: int | None, query: str = '') -> ServiceClientPage:
+    matched, params = name_filter(query, ('client_key', 'display_name'))
+    conditions = [c for c in (matched, 'id > ?' if after is not None else '') if c]
     with db.connect() as connection:
         apply_read_budget(connection)
         rows = connection.execute('''SELECT id, SUBSTR(client_key, 1, 128) AS client_key,
             SUBSTR(display_name, 1, 100) AS display_name, enabled,
             client_key = 'legacy-default' AS managed,
             (LENGTH(client_key) > 128 OR LENGTH(display_name) > 100) AS metadata_incomplete
-            FROM service_clients ''' + ('WHERE id > ? ' if after is not None else '') + 'ORDER BY id LIMIT ?',
-            (*((after,) if after is not None else ()), limit + 1)).fetchall()
+            FROM service_clients ''' + ('WHERE ' + ' AND '.join(conditions) + ' ' if conditions else '') + 'ORDER BY id LIMIT ?',
+            (*params, *((after,) if after is not None else ()), limit + 1)).fetchall()
     return ServiceClientPage(items=[ServiceClientSummary(**dict(row)) for row in rows[:limit]],
         next_after=rows[limit - 1]['id'] if len(rows) > limit else None)
 

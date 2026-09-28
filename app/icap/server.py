@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import asyncio
 
-from app.database import init_db
+from app.database import init_db, set_setting
+from app.icap import activity
 from app.icap import protocol
 from app.icap.config import IcapConfig, load_icap_config
 from app.services.ingest import UploadTooLargeError, store_bytes
@@ -287,6 +288,8 @@ async def scan_and_decide(
         )
     except UploadTooLargeError:
         log(f"{filename}: over size cap -> {'block' if config.fail_closed else 'allow'}")
+        activity.count("fail_actions")
+        activity.event("fail_action", f"Upload over the size cap -> {'block' if config.fail_closed else 'allow'}")
         return "block" if config.fail_closed else "allow"
 
     try:
@@ -306,9 +309,16 @@ async def scan_and_decide(
         scan = await wait_for_terminal_scan(scan.id, config.wait_seconds)
         action = resolve_icap_action(scan, config)
         log(f"{filename} (scan {stored_sample.sha256[:12]}): {action}")
+        activity.count("allowed" if action == "allow" else "blocked")
+        if action == "block":
+            finished = scan is not None and scan_is_terminal(scan)
+            activity.event("blocked", "Blocked by scan decision" if finished else
+                           "Blocked: scan did not finish within the wait window", scan_id=scan.id if scan else None)
         return action
     except Exception as exc:  # noqa: BLE001 - fail-closed on any orchestration error
         log(f"{filename}: scan error {exc!r} -> {'block' if config.fail_closed else 'allow'}")
+        activity.count("errors")
+        activity.event("error", f"Scan error {exc!r} -> {'block' if config.fail_closed else 'allow'}")
         return "block" if config.fail_closed else "allow"
 
 
@@ -326,6 +336,8 @@ async def respond_fail_action(
     """
     action = "block" if config.fail_closed else "allow"
     log(f"{reason} -> {action}")
+    activity.count("fail_actions")
+    activity.event("fail_action", f"{reason} -> {action}")
     if action == "allow" and client_accepts_204(head):
         writer.write(protocol.build_no_content())
     else:
@@ -412,6 +424,8 @@ async def handle_connection(
     peer_ip = peer[0] if isinstance(peer, tuple) else None
     if config.allowed_ips and peer_ip not in config.allowed_ips:
         log(f"rejected connection from {describe_peer(peer_ip)} (not in allowlist)")
+        activity.count("connections_rejected")
+        activity.event("rejected", "Connection refused: source is not in MASP_ICAP_ALLOWED_IPS", peer=describe_peer(peer_ip))
         if looks_like_container_gateway(peer_ip):
             log(
                 "hint: if this is a NAT/bridge gateway rather than the client's real "
@@ -426,6 +440,7 @@ async def handle_connection(
     # only way to learn what address MASP actually sees is to be rejected by it,
     # which is exactly the check the pilot acceptance has to perform.
     log(f"accepted connection from {describe_peer(peer_ip)}")
+    activity.count("connections_accepted")
 
     read_timeout = config.read_timeout_seconds
     try:
@@ -442,6 +457,7 @@ async def handle_connection(
                 head = protocol.parse_head(raw_head)
             except protocol.IcapProtocolError as exc:
                 log(f"bad request from {peer_ip}: {exc}")
+                activity.event("bad_request", f"Malformed ICAP request: {exc}", peer=describe_peer(peer_ip))
                 writer.write(protocol.build_bad_request())
                 await writer.drain()
                 break
@@ -457,6 +473,7 @@ async def handle_connection(
                 continue
 
             if head.method in {"REQMOD", "RESPMOD"}:
+                activity.request()
                 # Admission control: bound concurrent in-flight scans (the
                 # expensive part). Beyond the limit a request waits only up to the
                 # admission timeout; if no slot frees it fails closed rather than
@@ -500,6 +517,8 @@ async def serve(config: IcapConfig | None = None) -> None:
         await handle_connection(reader, writer, config, scan_slots)
 
     server = await asyncio.start_server(_client, config.host, config.port)
+    activity.ACTIVITY = activity.IcapActivity(config)
+    flusher = asyncio.create_task(_flush_activity(activity.ACTIVITY))
     log(
         f"MASP ICAP gateway listening on {config.host}:{config.port} "
         f"(service '{config.service_name}', client '{config.service_client_key}', "
@@ -519,8 +538,21 @@ async def serve(config: IcapConfig | None = None) -> None:
             "source allowlist EMPTY: every source that can reach this port is accepted; "
             "the host firewall is the only source restriction"
         )
-    async with server:
-        await server.serve_forever()
+    try:
+        async with server:
+            await server.serve_forever()
+    finally:
+        flusher.cancel()
+
+
+async def _flush_activity(recorder: activity.IcapActivity) -> None:
+    """Publish the activity record; it is also the console's gateway heartbeat."""
+    while True:
+        try:
+            await asyncio.to_thread(set_setting, recorder.key, recorder.snapshot())
+        except Exception as exc:  # noqa: BLE001 - visibility must never stop the gateway
+            log(f"activity record not written: {exc!r}")
+        await asyncio.sleep(activity.FLUSH_SECONDS)
 
 
 def main() -> None:

@@ -5,7 +5,7 @@ import time
 from pydantic import BaseModel
 
 from app import database as db
-from app.services.browser_db_budget import apply_read_budget
+from app.services.browser_db_budget import apply_read_budget, name_filter
 from app.services.worker_runtime import worker_stale_seconds
 from app.services.worker_scheduling import parse_worker_pool_selector
 
@@ -33,14 +33,16 @@ class PoolPage(BaseModel):
     next_after: int | None
 
 
-def pool_page(*, limit: int, after: int | None) -> PoolPage:
+def pool_page(*, limit: int, after: int | None, query: str = '') -> PoolPage:
+    matched, params = name_filter(query, ('p.name',))
+    conditions = [c for c in (matched, 'p.id > ?' if after is not None else '') if c]
     with db.connect() as connection:
         apply_read_budget(connection)
         rows = connection.execute('''SELECT p.id, SUBSTR(p.name, 1, 101) AS name,
             SUBSTR(p.selector_json, 1, 4097) AS selector, p.enabled,
             EXISTS (SELECT 1 FROM engine_instance_worker_pools b WHERE b.worker_pool_id = p.id) AS has_assignments
-            FROM worker_pools p ''' + ('WHERE p.id > ? ' if after is not None else '') +
-            'ORDER BY p.id LIMIT ?', (*((after,) if after is not None else ()), limit + 1)).fetchall()
+            FROM worker_pools p ''' + ('WHERE ' + ' AND '.join(conditions) + ' ' if conditions else '') +
+            'ORDER BY p.id LIMIT ?', (*params, *((after,) if after is not None else ()), limit + 1)).fetchall()
     items = []
     for row in rows[:limit]:
         incomplete = len(row['name']) > 100 or len(row['selector']) > METADATA_LIMIT
@@ -80,8 +82,10 @@ class WorkerPage(BaseModel):
     stale_after_seconds: int
 
 
-def page(*, limit: int, after: str | None) -> WorkerPage:
+def page(*, limit: int, after: str | None, query: str = '') -> WorkerPage:
     now, stale = int(time.time()), worker_stale_seconds()
+    matched, params = name_filter(query, ('node_id', 'display_name', 'hostname'))
+    conditions = [c for c in (matched, 'node_id > ?' if after is not None else '') if c]
     with db.connect() as connection:
         apply_read_budget(connection)
         rows = connection.execute('''SELECT node_id, SUBSTR(display_name, 1, 256) AS display_name,
@@ -90,9 +94,9 @@ def page(*, limit: int, after: str | None) -> WorkerPage:
             SUBSTR(runtime_state, 1, 128) AS runtime_state, active_scan_id, last_heartbeat_at,
             SUBSTR(labels_json, 1, ?) AS labels_json,
             SUBSTR(advertised_engine_keys_json, 1, ?) AS engines_json
-            FROM worker_nodes ''' + ('WHERE node_id > ? ' if after is not None else '') +
+            FROM worker_nodes ''' + ('WHERE ' + ' AND '.join(conditions) + ' ' if conditions else '') +
             'ORDER BY node_id ASC LIMIT ?',
-            (METADATA_LIMIT + 1, METADATA_LIMIT + 1, *((after,) if after is not None else ()), limit + 1)).fetchall()
+            (METADATA_LIMIT + 1, METADATA_LIMIT + 1, *params, *((after,) if after is not None else ()), limit + 1)).fetchall()
     items = []
     for row in rows[:limit]:
         labels, engines, incomplete = {}, [], False

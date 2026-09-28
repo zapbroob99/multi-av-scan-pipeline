@@ -13,13 +13,16 @@ test('an admin sees what a client still needs and where to point it', async ({ p
 
   // The endpoints an integration is configured with, in one place.
   await expect(page.getByText(/POST http:\/\/.*\/api\/v1\/scans$/)).toBeVisible()
-  await expect(page.getByText(/MASP_ICAP_SERVICE_CLIENT_KEY=/)).toBeVisible()
+  await expect(page.getByText('MASP_ICAP_SERVICE_CLIENT_KEY=console-client', { exact: true })).toBeVisible()
   await expect(page.getByText('Authorization: Bearer <api token>')).toBeVisible()
 
-  // The fixture client has routing but no credential, so readiness must say so
-  // rather than implying the integration can already connect.
-  await expect(page.getByRole('alert')).toContainText('Not ready')
-  await expect(page.getByText('Active API credential')).toBeVisible()
+  // The fixture client has routing but no working connection: no credential, no
+  // ICAP gateway, and its manifest worker stopped. Readiness says what is missing
+  // per method instead of demanding an API credential from every client.
+  await expect(page.getByRole('alert')).toContainText('no connection method is set up')
+  await expect(page.getByRole('listitem', { name: 'REST API connection' })).toContainText('Active API credential')
+  await expect(page.getByRole('listitem', { name: 'Manifest intake connection' })).toContainText('Needs attention')
+  await expect(page.getByRole('listitem', { name: 'Manifest intake connection' })).toContainText('stopped or is stuck')
 
   await expect(page.getByRole('heading', { name: 'Engines this client would run' })).toBeVisible()
   await page.setViewportSize({ width: 1440, height: 960 })

@@ -1,8 +1,10 @@
 import { ErrorMessage } from '../components/error-message'
 import { formatTimestamp } from '../lib/utils'
-import { useQuery } from '@tanstack/react-query'
-import { request } from '../lib/api'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { request, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { Dialog } from '../components/ui/dialog'
 import { HelpDetails } from '../components/help-details'
 
 export function age(seconds: number) {
@@ -14,7 +16,24 @@ export function age(seconds: number) {
 
 const when = formatTimestamp
 
-export default function Intake() {
+type Action = { kind: 'retry'; id: number; label: string } | { kind: 'dismiss'; backend_key: string; manifest_object_id: string; label: string }
+
+export default function Intake({ session }: { session: Session }) {
+  const client = useQueryClient()
+  const [action, setAction] = useState<Action | null>(null)
+  const [receipt, setReceipt] = useState('')
+  const act = useMutation({ retry: false, mutationFn: async (value: Action) => {
+    if (value.kind === 'retry') {
+      await request('/api/ui/v1/system/intake/{submission_id}/retry', 'post', { params: { submission_id: value.id }, csrf: session.csrf_token })
+      return `Submission #${value.id} is queued for another copy attempt.`
+    }
+    await request('/api/ui/v1/system/intake/rejections/dismiss', 'post', { csrf: session.csrf_token,
+      body: { backend_key: value.backend_key, manifest_object_id: value.manifest_object_id } })
+    return 'Rejection dismissed. If the manifest is still inside the lookback window and still invalid, it is recorded again.'
+  }, onMutate: () => setReceipt(''), onSuccess: message => setReceipt(message), onSettled: async () => {
+    setAction(null)
+    await Promise.all([client.invalidateQueries({ queryKey: ['intake'] }), client.invalidateQueries({ queryKey: ['system-health'] })])
+  } })
   const view = useQuery({ queryKey: ['intake'], queryFn: ({ signal }) => request('/api/ui/v1/system/intake', 'get', { signal }),
     retry: false, staleTime: 0, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: false, refetchOnReconnect: false })
   const data = view.data, worker = data?.manifest_worker
@@ -23,9 +42,11 @@ export default function Intake() {
     <div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Deferred intake</h1>
       <p className="muted">Storage manifests and deferred submissions before they become scans.</p></div>
       <Button variant="secondary" disabled={view.isFetching} onClick={() => { void view.refetch() }}>Refresh intake</Button></div>
-    <p className="muted">Read-only snapshot. Refresh to see the latest recorded state; no retries or cleanup run here.</p>
+    <p className="muted">Snapshot of the recorded state. Failed copies can be retried and rejections dismissed from the tables below.</p>
     <HelpDetails title="About manifest and deferred intake">A producer that drops manifests receives no delivery or error feedback, so this page is where a stopped worker,
-      a growing backlog or a rejected drop becomes visible. It is a point-in-time read: it does not refresh itself, retry or clear anything.</HelpDetails>
+      a growing backlog or a rejected drop becomes visible. It is a point-in-time read: it does not refresh itself.</HelpDetails>
+    {receipt && <p role="status" className="callout">{receipt}</p>}
+    {act.error && <p role="alert" className="error"><ErrorMessage message={act.error.message || ''} /> Refresh before trying again.</p>}
     {view.isPending && <p role="status">Loading intake state…</p>}
     {view.error && <p role="alert" className="error"><ErrorMessage message={view.error.message || ''} /></p>}
     {!view.error && data && <>
@@ -69,12 +90,14 @@ export default function Intake() {
         {!data.rejections.length && <p className="empty">No manifest is currently rejected.</p>}
         {data.rejections.length > 0 && <div className="history-table-wrap" role="region" aria-label="Rejected manifests table" tabIndex={0}>
           <table className="history-table compact-table"><thead><tr>
-            <th scope="col">Manifest</th><th scope="col">Reason</th><th scope="col">Seen</th>
+            <th scope="col">Manifest</th><th scope="col">Reason</th><th scope="col">Seen</th><th scope="col"><span className="sr-only">Actions</span></th>
           </tr></thead><tbody>
           {data.rejections.map(row => <tr key={`${row.backend_key}/${row.manifest_object_id}`} className="row-alert">
             <td className="cell-name" title={row.manifest_object_id}><code>{row.manifest_object_id}</code><small>{row.backend_key}</small></td>
             <td className="hash-value">{row.reason}</td>
             <td><small>{row.occurrences}× · last {when(row.last_seen_at)}</small><small>first {when(row.first_seen_at)}</small></td>
+            <td><Button variant="secondary" disabled={act.isPending} aria-label={`Dismiss rejection of ${row.manifest_object_id}`}
+              onClick={() => setAction({ kind: 'dismiss', backend_key: row.backend_key, manifest_object_id: row.manifest_object_id, label: row.manifest_object_id })}>Dismiss</Button></td>
           </tr>)}</tbody></table></div>}
       </article>
 
@@ -84,16 +107,27 @@ export default function Intake() {
         {!data.failures.length && <p className="empty">No deferred submission has failed before scanning.</p>}
         {data.failures.length > 0 && <div className="history-table-wrap" role="region" aria-label="Failed submissions table" tabIndex={0}>
           <table className="history-table compact-table"><thead><tr>
-            <th scope="col">Submission</th><th scope="col">Client</th><th scope="col">Error</th><th scope="col">Updated</th>
+            <th scope="col">Submission</th><th scope="col">Client</th><th scope="col">Error</th><th scope="col">Updated</th><th scope="col"><span className="sr-only">Actions</span></th>
           </tr></thead><tbody>
           {data.failures.map(row => <tr key={row.id}>
             <td className="cell-name" title={row.object_id}>#{row.id} {row.original_filename}<small>{row.backend_key}/{row.object_id} · request {row.client_request_id}</small></td>
             <td className="cell-name">{row.client_name || `#${row.service_client_id}`}</td>
             <td className="hash-value">{row.last_error || 'No error recorded'}<small>{row.attempt_count} attempt(s)</small></td>
             <td><small>{formatTimestamp(row.updated_at)}</small></td>
+            <td><Button variant="secondary" disabled={act.isPending} aria-label={`Retry submission ${row.id}`}
+              onClick={() => setAction({ kind: 'retry', id: row.id, label: `#${row.id} ${row.original_filename}` })}>Retry</Button></td>
           </tr>)}</tbody></table></div>}
         {data.failures_truncated && <p className="muted">Only the newest {data.failures.length} failures are shown.</p>}
       </article>
     </>}
+    <Dialog open={action !== null} onOpenChange={open => { if (!open && !act.isPending) setAction(null) }}
+      title={action?.kind === 'retry' ? 'Retry this submission?' : 'Dismiss this rejection?'}
+      description={action?.kind === 'retry'
+        ? `${action.label} goes back to the copy queue. It fails again if the source file is still missing or different.`
+        : `${action?.label ?? ''} is removed from the list. Nothing is changed on the share.`}>
+      <div className="dialog-actions"><Button variant="secondary" disabled={act.isPending} onClick={() => setAction(null)}>Cancel</Button>
+        <Button disabled={act.isPending || !action} onClick={() => { if (action) act.mutate(action) }}>
+          {act.isPending ? 'Working…' : action?.kind === 'retry' ? 'Retry submission' : 'Dismiss'}</Button></div>
+    </Dialog>
   </section>
 }

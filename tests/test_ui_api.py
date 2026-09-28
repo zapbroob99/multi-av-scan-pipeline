@@ -1298,6 +1298,100 @@ class BrowserApiTests(unittest.TestCase):
         for secret in ('config_json', 'password', 'api_key', 'adapter_key', str(db.DB_PATH)):
             self.assertNotIn(secret, serialized)
 
+    def test_inventory_lists_search_by_name_literally_and_keep_paging(self):
+        for key, name in (('drive-storage', 'Drive storage'), ('mail-gw', 'Mail gateway'), ('pct_100', '100% literal')):
+            db.create_service_client(key, name)
+        found = self.request('/service-clients?q=DRIVE')[1]['items']
+        self.assertEqual([item['client_key'] for item in found], ['drive-storage'])
+        # '%' and '_' are literal characters, not wildcards.
+        self.assertEqual([item['client_key'] for item in self.request('/service-clients?q=%25')[1]['items']], ['pct_100'])
+        self.assertEqual(self.request('/service-clients?q=' + 'x' * 101)[0], 422)
+        page = self.request('/service-clients?q=a&limit=1')[1]
+        self.assertIsNotNone(page['next_after'])
+        second = self.request(f"/service-clients?q=a&limit=1&after={page['next_after']}")[1]['items']
+        self.assertNotEqual(second[0]['id'], page['items'][0]['id'])
+        for node, name, host in (('linux-01', 'Linux scanner', 'scan-a'), ('win-01', 'Defender box', 'win-host')):
+            db.upsert_worker_node_heartbeat(node_id=node, display_name=name, hostname=host, platform='linux',
+                agent_version='1', labels_json='{}', capacity=1, advertised_engine_keys_json='[]', runtime_state='idle',
+                active_scan_id=None, process_id=0, last_heartbeat_at=int(time.time()))
+        self.assertEqual([w['node_id'] for w in self.request('/system/workers?q=win-host')[1]['items']], ['win-01'])
+        self.assertEqual([w['node_id'] for w in self.request('/system/workers?q=scanner')[1]['items']], ['linux-01'])
+        for name in ('Windows pool', 'Linux pool'):
+            db.create_worker_pool(name, '{"os": "x"}')
+        self.assertEqual([p['name'] for p in self.request('/system/pools?q=windows')[1]['items']], ['Windows pool'])
+
+    def test_ledger_client_choices_are_readable_by_analysts_and_carry_identity_only(self):
+        db.create_service_client('zeta', 'Zeta integration')
+        db.create_service_client('alpha', 'Alpha integration')
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        status, payload, _ = self.request('/api-ledger/clients')
+        self.assertEqual(status, 200, payload)
+        names = [item['display_name'] for item in payload['items']]
+        self.assertEqual(names, sorted(names, key=str.lower))
+        self.assertIn('Alpha integration', names)
+        self.assertEqual(set(payload['items'][0]), {'id', 'display_name', 'client_key'})
+        self.assertFalse(payload['truncated'])
+        self.assertEqual(self.request('/service-clients')[0], 403)
+
+    def test_support_bundle_leaves_out_secrets_samples_and_is_audited(self):
+        from app.services import support_bundle
+        sample = db.create_sample(StoredSample('quarterly-merger-plan.docx', 'stored-name',
+                                               str(Path(self.temp.name) / 'stored-name'), 'application/octet-stream',
+                                               10, 'f' * 64, 'e' * 40, 'd' * 32))
+        scan = db.create_scan_job(sample, 'Case', 'Normal', '', status='failed')
+        db.create_engine_instance('static_metadata', 'Metadata')
+        db.create_engine_result(scan, EngineResultInput('ClamAV', 'failed', False, 'info', 0, None, '', 5,
+                                                        error_message="Could not open '/srv/masp/storage/samples/x'"))
+        env = {'MASP_API_TOKEN': 'token-value-that-must-not-leak', 'MASP_ADMIN_PASSWORD': '',
+               'MASP_DATABASE_URL': 'postgresql://masp:db-password-value@postgres:5432/masp',
+               'MASP_SIEM_WEBHOOK_URL': 'https://siem.example/hook?key=webhook-secret-value',
+               'MASP_LDAP_CA_CERT_FILE': 'ldaps://binder:ldap-password-value@dc.example',
+               'MASP_UPLOAD_MAX_BYTES': '52428800', 'UNRELATED_SECRET': 'not-masp'}
+        with patch.dict(os.environ, env), patch.object(ui_api, 'set_audit_context', wraps=ui_api.set_audit_context) as audit:
+            status, payload, _ = self.request('/system/support-bundle', 'POST', {})
+        self.assertEqual(status, 200, payload)
+        # A POST so every export is recorded in the audit trail.
+        self.assertEqual(audit.call_args.kwargs['action'], 'system.support_bundle')
+        self.assertRegex(payload['filename'], r'^masp-support-\d{8}T\d{6}Z\.json$')
+        content = payload['content']
+        bundle = json.loads(content)
+        for leaked in ('token-value-that-must-not-leak', 'db-password-value', 'webhook-secret-value',
+                       'ldap-password-value', 'not-masp', 'quarterly-merger-plan', 'f' * 64, '/srv/masp'):
+            self.assertNotIn(leaked, content, leaked)
+        config = bundle['configuration']
+        self.assertEqual((config['MASP_API_TOKEN'], config['MASP_ADMIN_PASSWORD']), ('(set, redacted)', '(empty)'))
+        self.assertEqual(config['MASP_UPLOAD_MAX_BYTES'], '52428800')
+        self.assertEqual(config['MASP_LDAP_CA_CERT_FILE'], 'ldaps://<redacted>@dc.example')
+        failure = bundle['recent_engine_failures'][0]
+        self.assertEqual((failure['scan_id'], failure['engine']), (scan, 'ClamAV'))
+        self.assertIn('<path>', failure['error'])
+        self.assertEqual({'about', 'health', 'workers', 'engines', 'intake', 'delivery', 'recent_audit'} - set(bundle), set())
+        self.assertNotIn('config', bundle['engines'][0])
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/system/support-bundle', 'POST', {})[0], 403)
+
+    def test_operations_screens_are_admin_only_and_actions_are_guarded(self):
+        status, report, _ = self.request('/system/health')
+        self.assertEqual(status, 200, report)
+        self.assertIn(report['overall'], {'ok', 'warning', 'critical', 'unknown'})
+        self.assertEqual({check['key'] for check in report['checks']}, {
+            'workers', 'queue', 'engines', 'signatures', 'storage', 'manifest', 'deferred', 'icap', 'notifications'})
+        self.assertNotIn(str(db.DB_PATH.parent), json.dumps(report))
+        status, delivery, _ = self.request('/system/delivery')
+        self.assertEqual((status, delivery['gateways']), (200, []))
+        self.assertEqual(self.request('/system/notifications/retry', 'POST', {})[0], 409)
+        self.assertEqual(self.request('/system/intake/999/retry', 'POST', {})[0], 409)
+        self.assertEqual(self.request('/system/intake/1/retry', 'POST', {}, csrf=False)[0], 403)
+        self.assertEqual(self.request('/system/intake/rejections/dismiss', 'POST',
+                                      {'backend_key': 'drive', 'manifest_object_id': 'x.json'})[0], 409)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        for path in ('/system/health', '/system/delivery'):
+            self.assertEqual(self.request(path)[0], 403, path)
+        self.assertEqual(self.request('/system/intake/1/retry', 'POST', {})[0], 403)
+
     def test_about_reports_versions_without_hosts(self):
         engine_id = db.create_engine_instance('clamav', 'Gateway ClamAV')
         db.upsert_worker_node_heartbeat(node_id='about-node', display_name='About node', hostname='PRIVATE-HOST',
@@ -1470,9 +1564,59 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual(headers[b'cache-control'], b'no-store')
         self.assertFalse(payload['ready'])
         failed = {check['key'] for check in payload['checks'] if not check['passed']}
-        self.assertEqual(failed, {'default_profile', 'assigned_engines', 'eligible_engines', 'active_credential'})
+        self.assertEqual(failed, {'default_profile', 'assigned_engines', 'eligible_engines'})
+        self.assertEqual({m['key']: (m['in_use'], m['ready']) for m in payload['methods']},
+                         {'api': (False, False), 'icap': (False, False), 'manifest': (False, False)})
         self.assertIsNone(payload['profile_id'])
         self.assertEqual(payload['engines'], [])
+
+    def test_a_manifest_only_client_is_ready_without_an_api_credential(self):
+        client, _, _ = self.client_with_routing()
+        with db.connect() as connection:
+            key = connection.execute('SELECT client_key FROM service_clients WHERE id = ?', (client,)).fetchone()['client_key']
+        path = f'/service-clients/{client}/readiness'
+        record = {'at': int(time.time()), 'ok': True, 'error': None, 'accepted': 1, 'duplicates': 0, 'rejected': 0,
+                  'poll_seconds': 15, 'backend_key': 'drive', 'client_key': key, 'root_prefix': 'uploads',
+                  'date_layout': '%Y/%m/%d', 'lookback_days': 3, 'batch_limit': 200}
+        db.set_setting('manifest_intake_last_cycle', json.dumps(record))
+        share = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__('shutil').rmtree(share, ignore_errors=True))
+        env = {'MASP_DEFERRED_STORAGE_BACKENDS_JSON': json.dumps({'drive': share}),
+               'MASP_DEFERRED_BACKEND_CLIENTS_JSON': json.dumps({'drive': [key]})}
+        with patch.dict(os.environ, env):
+            payload = self.request(path)[1]
+        manifest = next(m for m in payload['methods'] if m['key'] == 'manifest')
+        self.assertTrue(manifest['ready'], manifest)
+        self.assertTrue(payload['ready'])
+        self.assertEqual(payload['active_credential_count'], 0)
+        # Without a storage grant every manifest would be rejected, so it is not ready.
+        with patch.dict(os.environ, {**env, 'MASP_DEFERRED_BACKEND_CLIENTS_JSON': json.dumps({'drive': ['other']})}):
+            manifest = next(m for m in self.request(path)[1]['methods'] if m['key'] == 'manifest')
+        self.assertEqual({c['key']: c['passed'] for c in manifest['checks']},
+                         {'manifest_worker': True, 'manifest_running': True, 'manifest_grant': False})
+        # A worker that runs for another client points at the setting to change.
+        db.set_setting('manifest_intake_last_cycle', json.dumps({**record, 'client_key': 'someone-else'}))
+        manifest = next(m for m in self.request(path)[1]['methods'] if m['key'] == 'manifest')
+        self.assertFalse(manifest['in_use'])
+        self.assertIn(f'MASP_MANIFEST_CLIENT_KEY={key}', manifest['checks'][0]['detail'])
+
+    def test_an_icap_only_client_is_ready_while_its_gateway_reports(self):
+        client, _, _ = self.client_with_routing()
+        with db.connect() as connection:
+            key = connection.execute('SELECT client_key FROM service_clients WHERE id = ?', (client,)).fetchone()['client_key']
+        path = f'/service-clients/{client}/readiness'
+        gateway = {'at': int(time.time()), 'client_key': key, 'service_name': 'masp', 'port': 1344, 'fail_closed': True,
+                   'block_on_review': True, 'allowlist_entries': 1, 'started_at': 1, 'counters': {}, 'last_request_at': None,
+                   'events': []}
+        db.set_setting(f'icap_gateway_status:{key}:1344', json.dumps(gateway))
+        payload = self.request(path)[1]
+        icap = next(m for m in payload['methods'] if m['key'] == 'icap')
+        self.assertEqual((icap['ready'], payload['ready']), (True, True))
+        db.set_setting(f'icap_gateway_status:{key}:1344', json.dumps({**gateway, 'at': int(time.time()) - 600}))
+        payload = self.request(path)[1]
+        icap = next(m for m in payload['methods'] if m['key'] == 'icap')
+        self.assertEqual((icap['in_use'], icap['ready'], icap['summary']), (True, False, 'Gateway stopped.'))
+        self.assertFalse(payload['ready'])
 
     def test_client_readiness_passes_once_routing_and_a_credential_exist(self):
         client, profile, _ = self.client_with_routing()

@@ -485,6 +485,18 @@ while the *age* of the oldest waiting scan is what separates busy from stalled.
 Watch host disk usage on the storage filesystem too. The full alert table is in
 [PRODUCTION.md](PRODUCTION.md#monitoring-and-alerting).
 
+In the console, **System > Overview** starts with a health check of the whole
+scan chain -- workers, the queue (with why scans are waiting), engines, ClamAV
+signature age, sample storage, manifest and deferred intake, the ICAP gateway
+and SIEM notifications -- and administrators see its state in the top bar.
+**System > ICAP and SIEM** shows each gateway's counters and recent refused
+connections, fail-closed answers and blocked uploads, and failed notifications.
+The gateway writes that record every 30 seconds, so a gateway that stops
+reporting is shown as stopped. **Support bundle** on the overview downloads one
+JSON file for a support request; it leaves out secrets, sample content,
+filenames and hashes, includes non-secret configuration such as host names, and
+is recorded in the audit trail.
+
 Quick manual check:
 
 ```bash

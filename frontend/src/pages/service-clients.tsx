@@ -1,3 +1,4 @@
+import { ListSearch, listQuery } from '../components/list-search'
 import { ErrorMessage } from '../components/error-message'
 import { lazy, Suspense, useCallback, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -94,18 +95,20 @@ function ClientEditor({ client, session, close, updated }: { client: Client; ses
 export default function ServiceClients({ session }: { session: Session }) {
   const [params, setParams] = useSearchParams()
   const after = params.get('after') || ''
+  const q = params.get('q') || ''
   const [selected, setSelected] = useState<Client | null>(null)
   const [needsRefresh, setNeedsRefresh] = useState(false)
   const opener = useRef<HTMLButtonElement | null>(null)
   const refresh = useRef<HTMLButtonElement | null>(null)
-  const clients = useQuery({ queryKey: ['service-clients', after], queryFn: ({ signal }) => request('/api/ui/v1/service-clients', 'get', {
-    query: new URLSearchParams({ limit: '20', ...(after ? { after } : {}) }), signal }),
+  const clients = useQuery({ queryKey: ['service-clients', after, q], queryFn: ({ signal }) => request('/api/ui/v1/service-clients', 'get', {
+    query: listQuery(after, q), signal }),
     retry: false, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: false, refetchOnReconnect: false })
   const busy = clients.isFetching || selected !== null
   return <section className="page management-page client-page"><div className="page-heading"><div><p className="eyebrow">INTEGRATIONS</p><h1>Service clients</h1>
     <p className="muted">Select a client to manage its settings and integration access.</p></div><div className="client-heading-actions">
     <Button ref={refresh} variant="secondary" disabled={busy} onClick={async () => { const result = await clients.refetch(); if (!result.error) setNeedsRefresh(false) }}><RefreshCw size={14} aria-hidden="true" />Refresh clients</Button>
     <Link className="button button-primary" to="/service-clients/new"><Plus size={16} aria-hidden="true" />Create service client</Link></div></div>
+    <ListSearch label="Search service clients" placeholder="Name or client key…" />
     {clients.isPending && <p role="status">Loading service clients…</p>}
     {clients.error && <p role="alert" className="error"><ErrorMessage message={clients.error.message || ''} /></p>}
     {needsRefresh && <p role="status" className="callout">Refresh clients to load current settings before editing another record.</p>}

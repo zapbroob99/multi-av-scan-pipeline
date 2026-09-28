@@ -574,3 +574,82 @@ button.entity-row:disabled { cursor: default; }
   .section-tabs { flex-wrap: nowrap; overflow-x: auto; }
   .section-tab { flex-shrink: 0; }
 }
+
+/* System health: one row per part of the scan chain, worst first in meaning. */
+:root { --health-ok: #83d5b2; --health-warning: #e9bd79; --health-critical: #f1abae; --health-unknown: #9fb0c6; }
+:root[data-theme=light] { --health-ok: #176746; --health-warning: #8b5a11; --health-critical: #a3222d; --health-unknown: #52637a; }
+.health-panel { margin: 0 0 26px; }
+.health-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.health-panel-heading h2 { margin: 0 0 4px; }
+.health-overall { margin: 0; font-size: 13px; font-weight: 600; }
+.health-overall-ok { color: var(--health-ok); }
+.health-overall-warning { color: var(--health-warning); }
+.health-overall-critical { color: var(--health-critical); }
+.health-overall-unknown { color: var(--health-unknown); }
+.health-checks { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--entity-soft); }
+.health-check { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 13px 18px; }
+.health-check + .health-check { border-top: 1px solid var(--border); }
+.health-check-icon { margin-top: 1px; }
+.health-check-ok .health-check-icon { color: var(--health-ok); }
+.health-check-warning .health-check-icon { color: var(--health-warning); }
+.health-check-critical .health-check-icon { color: var(--health-critical); }
+.health-check-unknown .health-check-icon { color: var(--health-unknown); }
+.health-check-critical { box-shadow: inset 3px 0 0 var(--health-critical); }
+.health-check-warning { box-shadow: inset 3px 0 0 var(--health-warning); }
+.health-check-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.health-check-title strong { font-size: 13px; }
+.health-check-state { font-size: 11px; color: var(--entity-muted); }
+.health-check-body p { margin: 3px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.health-check-body .health-check-detail { font-size: 12px; color: var(--entity-muted); }
+.health-check-link { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; white-space: nowrap; margin-top: 1px; }
+.health-inactive, .health-generated { font-size: 11px; margin: 8px 0 0; }
+.overview-section-title { margin: 8px 0 12px; }
+.topbar-status { display: flex; align-items: center; gap: 12px; }
+.health-indicator { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 20px; background: color-mix(in srgb, currentColor 10%, transparent); }
+.health-indicator:hover { filter: brightness(1.15); }
+.health-indicator-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.health-indicator.health-overall-critical .health-indicator-dot { animation: health-pulse 1.6s ease-in-out infinite; }
+@keyframes health-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .health-indicator-dot { animation: none !important; } }
+.delivery-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.delivery-card-heading h2 { margin: 0; }
+.delivery-counters { grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 16px 0; }
+.delivery-counters > div { padding: 12px 14px; flex-direction: column; align-items: flex-start; gap: 4px; }
+.delivery-counters strong { font-size: 20px; }
+.delivery-subtitle { font-size: 13px; margin: 18px 0 10px; }
+@media (max-width: 800px) {
+  .delivery-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .health-check { grid-template-columns: 22px minmax(0, 1fr); }
+  .health-check-link { grid-column: 2; }
+  .topbar-status .health-indicator { font-size: 10px; padding: 3px 8px; }
+}
+/* Visually hidden table headers are absolutely positioned; keep them inside the
+   scrolling wrapper instead of widening the page. */
+.history-table-wrap { position: relative; }
+/* The indicator is a link; its state colour must win over the theme's link colour. */
+a.health-indicator.health-overall-ok { color: var(--health-ok); }
+a.health-indicator.health-overall-warning { color: var(--health-warning); }
+a.health-indicator.health-overall-critical { color: var(--health-critical); }
+a.health-indicator.health-overall-unknown { color: var(--health-unknown); }
+
+/* Client connection methods: each shows only what that method needs. */
+.client-methods-title { font-size: 13px; margin: 22px 0 4px; }
+.client-methods { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
+.client-method { border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; }
+.client-method.is-ready { box-shadow: inset 3px 0 0 var(--health-ok); }
+.client-method.is-broken { box-shadow: inset 3px 0 0 var(--health-critical); }
+.client-method.is-unused { opacity: .85; }
+.client-method-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.client-method > p { margin: 4px 0 0; font-size: 12px; }
+.client-method-checks { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; font-size: 12px; }
+.client-method-checks li { display: flex; gap: 7px; align-items: flex-start; }
+.client-method-checks svg { flex-shrink: 0; margin-top: 1px; }
+.client-method .client-panel-link, .client-method a { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 12px; }
+.client-method-hint { font-size: 11px; }
+
+/* Inventory name search above entity lists. */
+.list-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
+.list-search .search { width: min(360px, 100%); }
+
+.bundle-contents { margin: 16px 0; padding-left: 18px; display: grid; gap: 8px; font-size: 13px; line-height: 1.6; }

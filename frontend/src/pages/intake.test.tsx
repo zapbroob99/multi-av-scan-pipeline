@@ -8,6 +8,7 @@ import Intake, { age } from './intake'
 const WORKER = { at: 1790000000, age_seconds: 20, stale: false, ok: true, error: null, accepted: 3, duplicates: 1, rejected: 1,
   poll_seconds: 15, backend_key: 'drive', client_key: 'drive-storage', root_prefix: 'uploads', date_layout: '%Y/%m/%d',
   lookback_days: 3, batch_limit: 200 }
+const SESSION = { user: { id: 1, username: 'admin', role: 'admin' }, csrf_token: 'csrf' }
 const EMPTY_QUEUE = { pending: 0, retrying: 0, claimed: 0, queued: 0, oldest_pending_at: null, oldest_pending_age_seconds: null }
 
 function mount(overrides: Record<string, unknown> = {}) {
@@ -15,7 +16,7 @@ function mount(overrides: Record<string, unknown> = {}) {
     failures: [], failures_truncated: false, ...overrides }
   const fetcher = vi.fn(async () => new Response(JSON.stringify(body)))
   vi.stubGlobal('fetch', fetcher)
-  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Intake /></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Intake session={SESSION} /></MemoryRouter></QueryClientProvider>)
   return fetcher
 }
 
@@ -80,8 +81,31 @@ describe('Deferred intake', () => {
 
   it('reports a read failure instead of an empty intake', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ detail: 'Budget exceeded' }), { status: 503 })))
-    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Intake /></MemoryRouter></QueryClientProvider>)
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Intake session={SESSION} /></MemoryRouter></QueryClientProvider>)
     expect(await screen.findByRole('alert')).toHaveTextContent('Budget exceeded')
     expect(screen.queryByText('Nothing waiting')).toBeNull()
+  })
+  it('retries a failed submission and dismisses a rejection only after confirmation', async () => {
+    const body = { manifest_worker: WORKER, manifest_record_invalid: false, queue: EMPTY_QUEUE,
+      rejections: [{ backend_key: 'drive', manifest_object_id: 'uploads/a.json', reason: 'bad', first_seen_at: 1, last_seen_at: 2, occurrences: 1 }],
+      rejections_total: 1, failures: [{ id: 7, service_client_id: 1, client_name: 'Drive', client_request_id: 'R-7', backend_key: 'drive',
+        object_id: 'uploads/a.pdf', original_filename: 'a.pdf', last_error: 'mismatch', attempt_count: 2, updated_at: '2026-09-28 07:00:00' }],
+      failures_truncated: false }
+    const fetcher = vi.fn(async (_url: string, options?: RequestInit) => options?.method === 'POST'
+      ? new Response(null, { status: 204 }) : new Response(JSON.stringify(body)))
+    vi.stubGlobal('fetch', fetcher)
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Intake session={SESSION} /></MemoryRouter></QueryClientProvider>)
+    await userEvent.click(await screen.findByRole('button', { name: 'Retry submission 7' }))
+    expect(fetcher.mock.calls.filter(([, o]) => o?.method === 'POST')).toHaveLength(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Retry submission' }))
+    expect(await screen.findByText(/Submission #7 is queued/)).toBeInTheDocument()
+    const retry = fetcher.mock.calls.find(([, o]) => o?.method === 'POST')!
+    expect(retry[0]).toBe('/api/ui/v1/system/intake/7/retry')
+    expect(retry[1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss rejection of uploads/a.json' }))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Dismiss' }))
+    await screen.findByText(/Rejection dismissed/)
+    const dismiss = fetcher.mock.calls.filter(([, o]) => o?.method === 'POST')[1]
+    expect(JSON.parse(String(dismiss[1]?.body))).toEqual({ backend_key: 'drive', manifest_object_id: 'uploads/a.json' })
   })
 })

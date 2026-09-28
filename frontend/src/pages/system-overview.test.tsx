@@ -5,8 +5,12 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import SystemOverview from './system-overview'
 
+const SESSION = { user: { id: 1, username: 'admin', role: 'admin' }, csrf_token: 'csrf' }
+
 function mount() {
-  const fetcher = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/summary')
+  const fetcher = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/system/health')
+    ? { overall: 'ok', checks: [], waiting_reason: null, generated_at: '2026-09-14T00:00:00Z' }
+    : url.includes('/summary')
     ? { total: 4, queued: 1, running: 1, finalizing: 0, completed: 2, failed: 0,
       registered_nodes: 3, online_nodes: 2, active_online_nodes: 1, retention_days: 30, retention_batch_size: 100,
       generated_at: '2026-09-14T00:00:00Z' }
@@ -14,7 +18,7 @@ function mount() {
       total: 2, completed: 1, failed: 1, skipped: 0, detections: 1, avg_duration_ms: null, max_duration_ms: null, last_result_at: "2026-09-20 10:00:00" }],
       next_after: 7, generated_at: '2026-09-14T00:00:00Z' })))
   vi.stubGlobal('fetch', fetcher)
-  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SystemOverview /></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SystemOverview session={SESSION} /></MemoryRouter></QueryClientProvider>)
   return fetcher
 }
 
@@ -22,7 +26,8 @@ describe('System overview', () => {
   it('loads metrics only on demand, renders names as text and preserves the pagination cursor', async () => {
     const fetcher = mount()
     await screen.findByText(/Enabled: 30 days/)
-    expect(fetcher).toHaveBeenCalledTimes(1)
+    // The health panel has its own read; the summary itself is fetched once and metrics not at all.
+    expect(fetcher.mock.calls.filter(([url]) => !String(url).includes('/system/health'))).toHaveLength(1)
     expect(screen.getByRole('link', { name: 'Review retention cleanup' })).toHaveAttribute('href', '/system/retention')
     await userEvent.click(screen.getByRole('button', { name: 'Load engine metrics' }))
     await screen.findByText('<script>historic</script>')

@@ -1,3 +1,4 @@
+import { ListSearch, listQuery } from '../components/list-search'
 import { ErrorMessage } from '../components/error-message'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -62,14 +63,15 @@ export default function System({ session }: { session: Session }) {
   const client = useQueryClient()
   const [params, setParams] = useSearchParams()
   const after = params.get('after') || ''
+  const q = params.get('q') || ''
   const targetNode = params.get('node') || ''
   const openedTarget = useRef<string | null>(null)
   const [confirmation, setConfirmation] = useState<Action | null>(null)
   const [selected, setSelected] = useState<Worker | null>(null)
   const [receipt, setReceipt] = useState('')
-  const workers = useQuery({ queryKey: ['system-workers', after],
+  const workers = useQuery({ queryKey: ['system-workers', after, q],
     queryFn: ({ signal }) => request('/api/ui/v1/system/workers', 'get', {
-      query: new URLSearchParams({ limit: '20', ...(after ? { after } : {}) }), signal }),
+      query: listQuery(after, q), signal }),
     retry: false, gcTime: 60000, refetchOnMount: 'always', refetchOnWindowFocus: false,
     refetchInterval: confirmation ? false : 30000, refetchIntervalInBackground: false })
   // Runtime links carry that list's cursor so the target stays in a bounded read.
@@ -107,6 +109,7 @@ export default function System({ session }: { session: Session }) {
       Draining and disabled nodes finish owned work but do not claim new jobs. Last reported runtime is not a complete list of node activity.</HelpDetails>
     {receipt && <p role="status" className="callout">{receipt}</p>}
     {action.error && <p role="alert" className="error"><ErrorMessage message={action.error.message || ''} /> The request may have reached the server. Refresh before trying again.</p>}
+    <ListSearch label="Search workers" placeholder="Node ID, name or hostname…" />
     {workers.isPending && <p role="status">Loading worker nodes…</p>}
     {workers.error && <p role="alert" className="error"><ErrorMessage message={workers.error.message || ''} /></p>}
     {!workers.error && workers.data && <>

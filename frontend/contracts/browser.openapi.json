@@ -1287,6 +1287,13 @@
             "title": "Managed",
             "type": "boolean"
           },
+          "methods": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionMethod"
+            },
+            "title": "Methods",
+            "type": "array"
+          },
           "profile_id": {
             "anyOf": [
               {
@@ -1330,6 +1337,7 @@
           "managed",
           "ready",
           "checks",
+          "methods",
           "profile_id",
           "profile_name",
           "engines",
@@ -1421,6 +1429,52 @@
           "config"
         ],
         "title": "ConfigBody",
+        "type": "object"
+      },
+      "ConnectionMethod": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ReadinessCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "in_use": {
+            "title": "In Use",
+            "type": "boolean"
+          },
+          "key": {
+            "enum": [
+              "api",
+              "icap",
+              "manifest"
+            ],
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "in_use",
+          "ready",
+          "summary",
+          "checks"
+        ],
+        "title": "ConnectionMethod",
         "type": "object"
       },
       "CreateBody": {
@@ -1679,6 +1733,31 @@
           "reasons"
         ],
         "title": "DecisionSummary",
+        "type": "object"
+      },
+      "DeliveryOverview": {
+        "properties": {
+          "gateways": {
+            "items": {
+              "$ref": "#/components/schemas/IcapGateway"
+            },
+            "title": "Gateways",
+            "type": "array"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "notifications": {
+            "$ref": "#/components/schemas/NotificationSummary"
+          }
+        },
+        "required": [
+          "gateways",
+          "notifications",
+          "generated_at"
+        ],
+        "title": "DeliveryOverview",
         "type": "object"
       },
       "EnabledBody": {
@@ -2509,6 +2588,63 @@
         "title": "HashesAdded",
         "type": "object"
       },
+      "HealthCheck": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Link"
+          },
+          "state": {
+            "enum": [
+              "ok",
+              "warning",
+              "critical",
+              "unknown",
+              "inactive"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "state",
+          "summary"
+        ],
+        "title": "HealthCheck",
+        "type": "object"
+      },
       "HealthPayload": {
         "properties": {
           "checked_at": {
@@ -2552,6 +2688,186 @@
           "checked_at"
         ],
         "title": "HealthPayload",
+        "type": "object"
+      },
+      "HealthReport": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/HealthCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "overall": {
+            "enum": [
+              "ok",
+              "warning",
+              "critical",
+              "unknown"
+            ],
+            "title": "Overall",
+            "type": "string"
+          },
+          "waiting_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Reason"
+          }
+        },
+        "required": [
+          "overall",
+          "checks",
+          "waiting_reason",
+          "generated_at"
+        ],
+        "title": "HealthReport",
+        "type": "object"
+      },
+      "IcapEvent": {
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "integer"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "peer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peer"
+          },
+          "scan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Id"
+          }
+        },
+        "required": [
+          "at",
+          "kind",
+          "detail"
+        ],
+        "title": "IcapEvent",
+        "type": "object"
+      },
+      "IcapGateway": {
+        "properties": {
+          "age_seconds": {
+            "title": "Age Seconds",
+            "type": "integer"
+          },
+          "allowlist_entries": {
+            "title": "Allowlist Entries",
+            "type": "integer"
+          },
+          "at": {
+            "title": "At",
+            "type": "integer"
+          },
+          "block_on_review": {
+            "title": "Block On Review",
+            "type": "boolean"
+          },
+          "client_key": {
+            "title": "Client Key",
+            "type": "string"
+          },
+          "counters": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counters",
+            "type": "object"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/IcapEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "fail_closed": {
+            "title": "Fail Closed",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "last_request_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Request At"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "service_name": {
+            "title": "Service Name",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "client_key",
+          "service_name",
+          "port",
+          "fail_closed",
+          "block_on_review",
+          "allowlist_entries",
+          "started_at",
+          "at",
+          "age_seconds",
+          "stale",
+          "counters",
+          "last_request_at",
+          "events"
+        ],
+        "title": "IcapGateway",
         "type": "object"
       },
       "InstanceEnabled": {
@@ -2786,6 +3102,50 @@
           "pools"
         ],
         "title": "InventoryPayload",
+        "type": "object"
+      },
+      "LedgerClient": {
+        "properties": {
+          "client_key": {
+            "title": "Client Key",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "client_key"
+        ],
+        "title": "LedgerClient",
+        "type": "object"
+      },
+      "LedgerClients": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerClient"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "truncated"
+        ],
+        "title": "LedgerClients",
         "type": "object"
       },
       "LedgerPage": {
@@ -3115,6 +3475,121 @@
           "batch_limit"
         ],
         "title": "ManifestWorker",
+        "type": "object"
+      },
+      "NotificationFailure": {
+        "properties": {
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "client_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Name"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_error": {
+            "title": "Last Error",
+            "type": "string"
+          },
+          "next_attempt_at": {
+            "title": "Next Attempt At",
+            "type": "integer"
+          },
+          "scan_job_id": {
+            "title": "Scan Job Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "scan_job_id",
+          "client_name",
+          "event_type",
+          "attempt_count",
+          "last_error",
+          "next_attempt_at",
+          "created_at"
+        ],
+        "title": "NotificationFailure",
+        "type": "object"
+      },
+      "NotificationSummary": {
+        "properties": {
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "delivering": {
+            "title": "Delivering",
+            "type": "integer"
+          },
+          "failures": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationFailure"
+            },
+            "title": "Failures",
+            "type": "array"
+          },
+          "last_delivered_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Delivered At"
+          },
+          "oldest_pending_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Pending At"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "retrying": {
+            "title": "Retrying",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending",
+          "delivering",
+          "delivered",
+          "retrying",
+          "oldest_pending_at",
+          "last_delivered_at",
+          "failures"
+        ],
+        "title": "NotificationSummary",
         "type": "object"
       },
       "PasswordChangeBody": {
@@ -3919,6 +4394,29 @@
         "title": "ReadinessCheck",
         "type": "object"
       },
+      "RejectionDismissal": {
+        "additionalProperties": false,
+        "properties": {
+          "backend_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Backend Key",
+            "type": "string"
+          },
+          "manifest_object_id": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Manifest Object Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend_key",
+          "manifest_object_id"
+        ],
+        "title": "RejectionDismissal",
+        "type": "object"
+      },
       "ResultPreview": {
         "properties": {
           "content": {
@@ -4085,6 +4583,19 @@
           "scan_id"
         ],
         "title": "RetryAccepted",
+        "type": "object"
+      },
+      "RetryNow": {
+        "properties": {
+          "rescheduled": {
+            "title": "Rescheduled",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rescheduled"
+        ],
+        "title": "RetryNow",
         "type": "object"
       },
       "RuleBody": {
@@ -4891,6 +5402,29 @@
           "content"
         ],
         "title": "SummaryExport",
+        "type": "object"
+      },
+      "SupportBundle": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "media_type",
+          "content"
+        ],
+        "title": "SupportBundle",
         "type": "object"
       },
       "SystemSummary": {
@@ -6346,6 +6880,107 @@
           }
         },
         "summary": "Automation Batch Json",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/api-ledger/clients": {
+      "get": {
+        "operationId": "browser_api_ledger_clients_api_ui_v1_api_ledger_clients_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerClients"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Api Ledger Clients",
         "tags": [
           "Browser console"
         ]
@@ -12280,6 +12915,17 @@
               ],
               "title": "After"
             }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 100,
+              "title": "Q",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -14593,6 +15239,107 @@
         ]
       }
     },
+    "/api/ui/v1/system/delivery": {
+      "get": {
+        "operationId": "browser_delivery_overview_api_ui_v1_system_delivery_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Delivery Overview",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
     "/api/ui/v1/system/engine-metrics": {
       "get": {
         "operationId": "read_engine_metrics_api_ui_v1_system_engine_metrics_get",
@@ -14726,6 +15473,107 @@
         ]
       }
     },
+    "/api/ui/v1/system/health": {
+      "get": {
+        "operationId": "browser_system_health_api_ui_v1_system_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser System Health",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
     "/api/ui/v1/system/intake": {
       "get": {
         "operationId": "browser_intake_overview_api_ui_v1_system_intake_get",
@@ -14827,6 +15675,318 @@
         ]
       }
     },
+    "/api/ui/v1/system/intake/rejections/dismiss": {
+      "post": {
+        "operationId": "browser_dismiss_rejection_api_ui_v1_system_intake_rejections_dismiss_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectionDismissal"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Dismiss Rejection",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/system/intake/{submission_id}/retry": {
+      "post": {
+        "operationId": "browser_retry_intake_api_ui_v1_system_intake__submission_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Submission Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Retry Intake",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/system/notifications/retry": {
+      "post": {
+        "operationId": "browser_retry_notifications_api_ui_v1_system_notifications_retry_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryNow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Retry Notifications",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
     "/api/ui/v1/system/pools": {
       "get": {
         "operationId": "read_worker_pools_api_ui_v1_system_pools_get",
@@ -14859,6 +16019,17 @@
                 }
               ],
               "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 100,
+              "title": "Q",
+              "type": "string"
             }
           }
         ],
@@ -15764,6 +16935,107 @@
         ]
       }
     },
+    "/api/ui/v1/system/support-bundle": {
+      "post": {
+        "operationId": "browser_support_bundle_api_ui_v1_system_support_bundle_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupportBundle"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Support Bundle",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
     "/api/ui/v1/system/workers": {
       "get": {
         "operationId": "read_system_workers_api_ui_v1_system_workers_get",
@@ -15796,6 +17068,17 @@
                 }
               ],
               "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 100,
+              "title": "Q",
+              "type": "string"
             }
           }
         ],

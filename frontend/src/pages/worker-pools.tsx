@@ -1,3 +1,4 @@
+import { ListSearch, listQuery } from '../components/list-search'
 import { ErrorMessage } from '../components/error-message'
 import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -32,11 +33,12 @@ export default function WorkerPools({ session }: { session: Session }) {
   const client = useQueryClient()
   const [params, setParams] = useSearchParams()
   const after = params.get('after') || ''
+  const q = params.get('q') || ''
   const [confirmation, setConfirmation] = useState<Action | null>(null)
   const [receipt, setReceipt] = useState('')
   const [editor, setEditor] = useState<{ pool?: Pool } | null>(null)
-  const pools = useQuery({ queryKey: ['system-pools', after], queryFn: ({ signal }) => request('/api/ui/v1/system/pools', 'get', {
-    query: new URLSearchParams({ limit: '20', ...(after ? { after } : {}) }), signal }),
+  const pools = useQuery({ queryKey: ['system-pools', after, q], queryFn: ({ signal }) => request('/api/ui/v1/system/pools', 'get', {
+    query: listQuery(after, q), signal }),
     retry: false, gcTime: 60000, refetchOnMount: 'always', refetchOnWindowFocus: false, refetchOnReconnect: false })
   const action = useMutation({ retry: false, mutationFn: async (value: Action) => {
     if (value.kind === 'delete') {
@@ -63,6 +65,7 @@ export default function WorkerPools({ session }: { session: Session }) {
     <p className="callout">Every selector label must match exactly. Worker lifecycle, capacity and advertised adapters also apply.
       New pools are enabled and have no engine assignments. Disabling a pool stops new claims for its assigned engines; owned work finishes.
       Remove engine assignments before deleting a pool. A pool does not prove engine health or scan coverage.</p>
+    <ListSearch label="Search worker pools" placeholder="Pool name…" />
     {receipt && <p className="callout" role="status">{receipt}</p>}
     {action.error && <p className="error" role="alert"><ErrorMessage message={action.error.message || ''} /> The request may have reached the server. Refresh before trying again.</p>}
     {pools.isPending && <p role="status">Loading worker pools…</p>}
