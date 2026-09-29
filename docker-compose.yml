@@ -274,6 +274,24 @@ services:
       postgres:
         condition: service_healthy
 
+  storage-protection:
+    build: .
+    profiles: [storage]
+    command: python -m app.workers.storage_protection_worker
+    environment:
+      MASP_DATABASE_URL: postgresql://masp:masp_dev_password@postgres:5432/masp
+      MASP_DEFERRED_FILESYSTEM_BACKEND_KEY: ${MASP_DEFERRED_FILESYSTEM_BACKEND_KEY:-drive}
+      MASP_DEFERRED_FILESYSTEM_ROOT: /app/deferred-source
+      MASP_DEFERRED_BACKEND_CLIENTS_JSON: ${MASP_DEFERRED_BACKEND_CLIENTS_JSON:-}
+      MASP_STORAGE_POLL_SECONDS: ${MASP_STORAGE_POLL_SECONDS:-10}
+      MASP_STORAGE_CRAWL_SECONDS: ${MASP_STORAGE_CRAWL_SECONDS:-20}
+      MASP_STORAGE_SWEEP_PAUSE_SECONDS: ${MASP_STORAGE_SWEEP_PAUSE_SECONDS:-1}
+    volumes:
+      - ./deferred-source:/app/deferred-source:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   notification:
     build: .
     profiles: [notifications]

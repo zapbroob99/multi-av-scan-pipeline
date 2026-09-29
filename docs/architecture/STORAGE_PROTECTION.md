@@ -1,9 +1,10 @@
 # Storage protection (folder scanning)
 
-Status: **design only, agreed with the product owner on 2026-09-29.** Nothing in
-this document is implemented. Sections marked **OPEN** are unresolved and are
-gated as stated. Implementation proceeds in the phases at the end, each approved
-separately.
+Status: **phase 1 implemented (2026-09-29); phases 2 to 4 are design only.** The
+architecture was agreed with the product owner on 2026-09-29. Sections marked
+**OPEN** are unresolved and are gated as stated. Each phase is approved
+separately; "Phase 1 as built" at the end records what exists and where it
+differs from this design.
 
 ## Purpose
 
@@ -304,3 +305,43 @@ PostgreSQL through `MASP_TEST_POSTGRES_URL`:
 
 Quarantine, deletion or any modification of the source; rescanning stored content
 on new signatures; watching storage the deployment has not approved as a backend.
+
+## Phase 1 as built
+
+Implemented: `storage_locations` and the inventory tables (schema in
+`ensure_storage_protection_schema`), the `storage-protection` worker
+(`app/workers/storage_protection_worker.py`, `app/services/storage_protection.py`),
+the light tier with the shared header classifier (`app/services/content_types.py`)
+and policy model (`app/services/storage_policy.py`), findings with a separate
+`storage_notification_outbox` delivered by the existing notification worker, the
+browser API under `/api/ui/v1/storage`, the Folder Scanning console screens and a
+system health check.
+
+Differences from the design above, all deliberate:
+
+- **Crawl mode only.** `manifest` and `both` are accepted by the schema but refused
+  by the API and by the worker until phase 3.
+- **Full tier waits.** An object routed to the full tier, including an archive the
+  location sends there, is recorded as `full_pending` and never read.
+- **A separate outbox.** The scan outbox requires a scan and its undelivered rows
+  protect scans from deletion, so storage findings use their own table with the
+  same webhook, signature, backoff and fencing. Only detected findings of high or
+  critical severity are queued.
+- **Second observation.** An object is due once its first observation is older than
+  the stability window; the inspection's own `fstat` against the recorded size and
+  modification time is the confirming observation, and a mismatch sends it back.
+- **Classifier limits.** MSI is not distinguished from other OLE2 files by its
+  header; the `.msi` extension adds the executable family instead. OOXML is
+  recognized when `[Content_Types].xml` appears in the header.
+- **Mismatch as detection.** An extension/content mismatch is always a finding and
+  is a detection only when the real content is an executable or script.
+- **No deletion.** Locations are disabled, not deleted, so findings keep their path.
+- **Policy changes** apply to objects inspected afterwards; nothing is re-queued
+  (the OPEN point above still stands).
+- **Invalid stored policy** stops only its own location, with the reason recorded.
+
+The per-location lease (`MASP_STORAGE_LEASE_SECONDS`, default 300) keeps two workers
+off one location; `MASP_STORAGE_CRAWL_SECONDS` bounds each crawl slice and
+`MASP_STORAGE_SWEEP_PAUSE_SECONDS` spaces working sweeps. No capacity run has been
+done; the scale items above remain OPEN.
+

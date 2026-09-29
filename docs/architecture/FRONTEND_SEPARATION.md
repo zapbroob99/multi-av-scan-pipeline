@@ -1909,3 +1909,22 @@ from `GET /api/ui/v1/api-ledger/clients`, which analysts may read.
 System > Overview also offers the audited support bundle download.
 
 Validation: 178 frontend tests, 38 Edge workflows, build and contract check.
+
+### Folder scanning
+
+`/console/storage` (Operations, analysts and admins) reads GET `/api/ui/v1/storage/overview`:
+the storage protection worker's last sweep (missing, unreadable and stale are distinct), and up to
+100 protected locations with per-state inventory counts, detected findings, the last location cycle
+and the current and last complete crawl. `/console/storage/locations/{id}` adds the stored policy
+(an unreadable policy is flagged, never replaced by defaults) and a 25-row ID-keyset file list with
+literal path search and a state filter. `/console/storage/findings` pages findings newest first with
+kind, outcome and location filters. Admins create a location at `/console/storage/locations/new`
+and edit name, profile, policy and enabled state at `.../{id}/edit`; POST and PUT require admin and
+CSRF before the body, the edit fences `management_revision`, and client, backend and prefix are
+fixed. Both writes are confirmed and never replayed. Light-tier passes are labelled "Type check
+passed (not antivirus scanned)" on every screen, and full-tier files "Awaiting full scan".
+
+Validation (2026-09-29): the Python storage suites ran on SQLite and a disposable PostgreSQL 16;
+frontend 185 tests; a new Edge workflow covers confirmed creation, a refused prefix outside the
+client's grant and analyst read-only access. Build and contract drift check passed.
+

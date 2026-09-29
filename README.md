@@ -42,6 +42,16 @@ at `/console/system/intake`: the worker's last cycle (a stopped worker is flagge
 as stale), the deferred backlog and its oldest waiting age, rejected manifests
 and submissions that failed before becoming scans.
 
+Folder scanning (storage protection, phase 1) lets MASP find files itself: an
+administrator creates a protected location under **Folder scanning**, bound to a
+service client, one of its scan profiles and a granted backend prefix, and the
+`storage-protection` worker (`--profile storage`) crawls it read-only, keeps an
+inventory and inspects each file once it stops changing. This release runs the
+light tier only (a per-location content-type policy and the institution hash
+list); files routed to the full tier wait as "Awaiting full scan", and a file
+that passed the type check is never reported as clean. See
+`docs/architecture/STORAGE_PROTECTION.md`.
+
 Each service client now has a setup view showing whether it is ready to accept
 traffic and which endpoints, authorization header and ICAP client key the other
 system needs. Ineligible engines explain themselves; credential values are never

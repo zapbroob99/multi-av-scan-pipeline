@@ -202,6 +202,10 @@ Important settings:
   finished file instead of calling the API; `MASP_MANIFEST_CLIENT_KEY` must be
   a client granted that backend, and **System > Deferred intake** shows the
   worker, backlog and rejected manifests.
+  Add `--profile storage` to run folder scanning: the `storage-protection`
+  worker crawls the protected locations an administrator creates under
+  **Folder scanning** on the same read-only mount, reads files in place and
+  never writes to the share. A location's client must be granted its prefix.
   After all API/intake processes are upgraded, client **Storage** settings may
   replace the environment grants with explicit whole-backend/prefix access.
   Empty custom grants deny access. Roots remain deployment-owned; see

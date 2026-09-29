@@ -252,6 +252,23 @@ watch **System > Deferred intake** for the worker's last cycle, the backlog and
 rejected manifests. See
 [manifest intake](../architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md#manifest-intake-a-producer-that-never-calls-masp).
 
+Folder scanning runs the `storage-protection` worker on the same read-only
+source mount:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production \
+  --profile storage up -d --build
+```
+
+Create protected locations in the console under **Folder scanning**; each binds
+a service client, one of its enabled scan profiles and a backend prefix inside
+that client's storage grant. The worker reads files in place (no sample copy),
+records an inventory in PostgreSQL and sends high-severity detections through
+the notification outbox, so add `--profile notifications` for SIEM delivery.
+This phase runs the light tier only; see
+[storage protection](../architecture/STORAGE_PROTECTION.md). System health shows
+a stopped worker or a location that is not running.
+
 ### Client storage access rollout
 
 Storage roots and mounts remain deployment-owned. The console's client **Storage**
@@ -354,7 +371,7 @@ healthcheck has a 120s start period. Workers wait for clamd to be healthy.
 - **Backups:** back up the external PostgreSQL and the `MASP_STORAGE_DIR`
   sample directory as a consistent pair: stop every MASP process that writes
   (`app`, `worker`, `icap`, `deferred-intake`, `manifest-intake`,
-  `notification`) first, or take coordinated database and storage snapshots.
+  `storage-protection`, `notification`) first, or take coordinated database and storage snapshots.
   A writer left running changes one side while the other is copied. The
   `clamav-db` volume is a rebuildable cache.
 - **Deferred intake:** **System > Deferred intake** shows the manifest worker's

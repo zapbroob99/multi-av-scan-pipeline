@@ -176,8 +176,12 @@ today's copy path, before any in-place reading. The file_type header adapter and
 hash list (steps 1 and 2) are implemented; multiple named profiles are also implemented
 independently. Deliberately narrow coverage semantics and in-place reading remain open.
 
-Storage protection (folder scanning) is a design-only initiative agreed on 2026-09-29: read
-`docs/architecture/STORAGE_PROTECTION.md` before writing code toward it. MASP discovers files
+Storage protection (folder scanning) was agreed on 2026-09-29 and phase 1 is implemented: read
+`docs/architecture/STORAGE_PROTECTION.md` (including "Phase 1 as built") before changing it.
+Phase 1 is crawl mode plus the light tier; full-tier objects stay `full_pending` and are never
+read, manifest/both modes are refused, locations are disabled rather than deleted, and storage
+findings use their own `storage_notification_outbox`. The `storage-protection` compose profile
+(`--profile storage`) exists in all three compose files with settings in both env examples. MASP discovers files
 in an approved backend itself (crawl, manifest or both, in one protection worker), keeps an
 inventory separate from scan history, and opens scan records only for full-tier content, one
 per unique SHA-256 and engine set. It is detection-only; rescanning on new signatures is out

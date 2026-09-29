@@ -198,6 +198,25 @@ services:
       postgres:
         condition: service_healthy
 
+  # Folder scanning: crawls protected locations (created in the console) on the
+  # same read-only share and inspects what stops changing. Reads files in place
+  # and needs no sample storage. Start with --profile storage.
+  storage-protection:
+    <<: *masp-service
+    profiles: [storage]
+    command: python -m app.workers.storage_protection_worker
+    environment:
+      <<: *common-env
+      MASP_STORAGE_POLL_SECONDS: ${MASP_STORAGE_POLL_SECONDS:-10}
+      MASP_STORAGE_CRAWL_SECONDS: ${MASP_STORAGE_CRAWL_SECONDS:-20}
+      MASP_STORAGE_LEASE_SECONDS: ${MASP_STORAGE_LEASE_SECONDS:-300}
+      MASP_STORAGE_SWEEP_PAUSE_SECONDS: ${MASP_STORAGE_SWEEP_PAUSE_SECONDS:-1}
+    volumes:
+      - ${MASP_DEFERRED_SOURCE_DIR:-./deferred-source}:/app/deferred-source:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   notification:
     <<: *masp-service
     profiles: [notifications]

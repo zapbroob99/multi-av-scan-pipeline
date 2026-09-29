@@ -1,6 +1,6 @@
 # MASP session handoff
 
-Updated: 2026-09-29, after the intranet preparation work. This is a workspace
+Updated: 2026-09-29, after storage protection phase 1. This is a workspace
 checkpoint, not evidence of a deployment.
 
 ## Start here
@@ -62,7 +62,16 @@ Commits after the last pushed `94f01ed`, oldest first:
   service volume; TCP `RELOAD` on a running clamd). Rehearsed in Docker's Linux VM
 - `4444196` release named `0.1.0-pilot.8`
 - `154b131` docs: the pinned ClamAV image ships an old database
-- `9af6cda` and this commit: handoff updates
+- `9af6cda`, `1da505a`: handoff updates
+- `3c97d5c` storage protection architecture (`STORAGE_PROTECTION.md`)
+- `5d7a28e` storage protection phase 1 core: protection worker, inventory,
+  light tier, shared header classifier (`content_types.py`), storage outbox
+- `830c5da` browser API under `/api/ui/v1/storage` and a folder scanning
+  health check
+- `9a1206a` an unreadable stored policy stops only its own location
+- `4204904` Folder scanning console screens
+- this commit: `storage-protection` compose profile in all three compose files,
+  env examples, README/deployment/architecture docs, this handoff
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
 `sample_45mb.bin`, `sample_5mb.bin`, `skills-lock.json`. These are intentionally
@@ -194,12 +203,15 @@ container runs this release.
   lab, signed offline update bundles.
 
 **Storage protection (2026-09-29).** Folder-watch intake without manifests is
-no longer parked: the user chose a broader "storage protection" feature and the
-architecture is agreed in `docs/architecture/STORAGE_PROTECTION.md` (design only,
-no code). The storage team will integrate to MASP's choice, so for their uploads
-the deferred API is the recommended path and the manifest the fallback. Next step
-is phase 1 (inventory, protection worker, light tier, Folder Scanning screens),
-started only on the user's go-ahead.
+no longer parked: the user chose a broader "storage protection" feature, agreed in
+`docs/architecture/STORAGE_PROTECTION.md`. **Phase 1 is implemented** (crawl mode,
+inventory, light tier, findings and SIEM events, browser API, Folder Scanning
+screens, health check, `--profile storage`); read "Phase 1 as built" there for the
+deliberate differences. Not yet exercised: a real SMB share, a real SIEM receiving
+`storage.finding` events, and any capacity run. Phase 2 (full tier: verified
+in-place reads, content deduplication, evidence copies) is next, on the user's
+go-ahead. The storage team will integrate to MASP's choice, so for their uploads
+the deferred API is the recommended path and the manifest the fallback.
 
 The intranet server request was drafted with the user: Ubuntu Server 22.04 x86_64
 (the offline kits in `dist/` are `jammy-amd64`), 8 vCPU / 16 GB, 80 GB OS plus a
