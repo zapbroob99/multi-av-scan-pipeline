@@ -15,6 +15,11 @@ from app.database import (
     mark_notification_delivered,
     retry_notification_outbox,
 )
+from app.services.storage_inventory import (
+    claim_next_storage_notification,
+    mark_storage_notification_delivered,
+    retry_storage_notification,
+)
 
 
 def webhook_url() -> str:
@@ -38,8 +43,19 @@ def deliver_next(worker_id: str) -> bool:
     validate_webhook_url(url)
     lease_seconds = max(30, int(os.getenv("MASP_NOTIFICATION_LEASE_SECONDS", "120")))
     event = claim_next_notification_outbox(worker_id, lease_seconds=lease_seconds)
-    if event is None:
+    if event is not None:
+        _deliver(url, worker_id, event, mark_notification_delivered, retry_notification_outbox)
+        return True
+    # Storage findings have their own outbox (they have no scan); the same
+    # webhook, signature, backoff and fencing apply to them.
+    storage_event = claim_next_storage_notification(worker_id, lease_seconds=lease_seconds)
+    if storage_event is None:
         return False
+    _deliver(url, worker_id, storage_event, mark_storage_notification_delivered, retry_storage_notification)
+    return True
+
+
+def _deliver(url: str, worker_id: str, event, mark_delivered, retry) -> None:
     try:
         payload = event.payload_json.encode("utf-8")
         headers = {
@@ -57,15 +73,14 @@ def deliver_next(worker_id: str) -> bool:
         with urlopen(request, timeout=timeout) as response:
             if not 200 <= int(response.status) < 300:
                 raise RuntimeError(f"SIEM webhook returned HTTP {response.status}.")
-        mark_notification_delivered(event.id, worker_id, event.attempt_count)
+        mark_delivered(event.id, worker_id, event.attempt_count)
     except Exception as exc:
         max_backoff = max(60, int(os.getenv("MASP_NOTIFICATION_MAX_BACKOFF_SECONDS", "3600")))
         backoff = min(max_backoff, 15 * (2 ** min(event.attempt_count - 1, 8)))
-        retry_notification_outbox(
+        retry(
             event.id,
             worker_id,
             event.attempt_count,
             str(exc),
             retry_at=int(time.time()) + backoff,
         )
-    return True

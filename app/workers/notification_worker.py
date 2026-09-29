@@ -6,6 +6,7 @@ import time
 
 from app.database import init_db, recover_expired_notification_deliveries
 from app.services.notification_delivery import deliver_next, webhook_url
+from app.services.storage_inventory import recover_expired_storage_notifications
 
 
 WORKER_ID = os.getenv(
@@ -20,6 +21,7 @@ def run_forever() -> None:
     if not webhook_url():
         raise SystemExit("MASP_SIEM_WEBHOOK_URL is not configured.")
     recover_expired_notification_deliveries()
+    recover_expired_storage_notifications()
     print("MASP notification worker started", flush=True)
     last_recovery = time.monotonic()
     while True:
@@ -27,6 +29,7 @@ def run_forever() -> None:
             time.sleep(POLL_SECONDS)
         if time.monotonic() - last_recovery >= 60:
             recover_expired_notification_deliveries()
+            recover_expired_storage_notifications()
             last_recovery = time.monotonic()
 
 

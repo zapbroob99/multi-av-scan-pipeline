@@ -10,6 +10,13 @@ import os
 from time import perf_counter
 
 from app.models import EngineResultInput, ScanRecord
+from app.services.content_types import (  # noqa: F401 - re-exported for callers
+    EXECUTABLE_TYPES,
+    EXTENSION_TYPES,
+    SIGNATURES,
+    declared_extension,
+    detect_type,
+)
 from app.services.findings import evidence_object, normalized_finding
 from app.services.sample_paths import resolve_sample_path, sample_path_error
 
@@ -18,77 +25,6 @@ ENGINE_NAME = "File Type"
 DEFAULT_HEADER_BYTES = 4096
 MIN_HEADER_BYTES = 512
 MAX_HEADER_BYTES = 1024 * 1024
-
-# (offset, magic, type key). Ordered most specific first: a prefix that is also
-# the prefix of another format must come after the longer one.
-SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
-    (0, b"\x89PNG\r\n\x1a\n", "png"),
-    (0, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "ole2"),
-    (0, b"7z\xbc\xaf\x27\x1c", "7z"),
-    (0, b"Rar!\x1a\x07", "rar"),
-    (0, b"GIF87a", "gif"),
-    (0, b"GIF89a", "gif"),
-    (0, b"%PDF-", "pdf"),
-    (0, b"{\\rtf", "rtf"),
-    (0, b"\x7fELF", "elf"),
-    (0, b"PK\x03\x04", "zip"),
-    (0, b"PK\x05\x06", "zip"),
-    (0, b"PK\x07\x08", "zip"),
-    (0, b"\xca\xfe\xba\xbe", "java_class"),
-    (0, b"\xff\xd8\xff", "jpeg"),
-    (0, b"MSCF", "cab"),
-    (0, b"\x1f\x8b", "gzip"),
-    (0, b"BZh", "bzip2"),
-    (0, b"\xfd7zXZ\x00", "xz"),
-    (0, b"<?xml", "xml"),
-    (0, b"#!", "script"),
-    (0, b"MZ", "pe"),
-    (0, b"BM", "bmp"),
-    (257, b"ustar", "tar"),
-)
-
-# Extensions an operator is likely to see, mapped to the content families that
-# are legitimate for them. OOXML and JAR/APK are ZIP containers; legacy Office
-# is OLE2. An extension absent here is treated as undeclared, never a mismatch.
-EXTENSION_TYPES: dict[str, frozenset[str]] = {
-    "pdf": frozenset({"pdf"}),
-    "png": frozenset({"png"}),
-    "jpg": frozenset({"jpeg"}),
-    "jpeg": frozenset({"jpeg"}),
-    "gif": frozenset({"gif"}),
-    "bmp": frozenset({"bmp"}),
-    "zip": frozenset({"zip"}),
-    "docx": frozenset({"zip"}),
-    "xlsx": frozenset({"zip"}),
-    "pptx": frozenset({"zip"}),
-    "jar": frozenset({"zip"}),
-    "apk": frozenset({"zip"}),
-    "odt": frozenset({"zip"}),
-    "ods": frozenset({"zip"}),
-    "doc": frozenset({"ole2"}),
-    "xls": frozenset({"ole2"}),
-    "ppt": frozenset({"ole2"}),
-    "msi": frozenset({"ole2"}),
-    "rtf": frozenset({"rtf"}),
-    "exe": frozenset({"pe"}),
-    "dll": frozenset({"pe"}),
-    "sys": frozenset({"pe"}),
-    "so": frozenset({"elf"}),
-    "class": frozenset({"java_class"}),
-    "gz": frozenset({"gzip"}),
-    "tgz": frozenset({"gzip"}),
-    "bz2": frozenset({"bzip2"}),
-    "xz": frozenset({"xz"}),
-    "7z": frozenset({"7z"}),
-    "rar": frozenset({"rar"}),
-    "cab": frozenset({"cab"}),
-    "tar": frozenset({"tar"}),
-    "xml": frozenset({"xml"}),
-}
-
-# Families that are executable or can carry code. A mismatch that lands here is
-# reported at a higher severity than one that does not.
-EXECUTABLE_TYPES = frozenset({"pe", "elf", "java_class", "script", "ole2"})
 
 
 def _bounded_int(value: object, default: int, low: int, high: int) -> int:
@@ -134,18 +70,6 @@ def check_file_type_health(config_override: dict[str, str] | None = None) -> dic
         "engine_version": "builtin",
         "service_state": "available",
     }
-
-
-def declared_extension(filename: str) -> str:
-    _, _, suffix = (filename or "").rpartition(".")
-    return suffix.strip().lower() if suffix and suffix != filename else ""
-
-
-def detect_type(header: bytes) -> str | None:
-    for offset, magic, type_key in SIGNATURES:
-        if header[offset:offset + len(magic)] == magic:
-            return type_key
-    return None
 
 
 def run_file_type_engine(scan: ScanRecord, config_override: dict[str, str] | None = None) -> EngineResultInput:

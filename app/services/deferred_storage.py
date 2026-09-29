@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
+from dataclasses import dataclass
 import errno
 import json
 import os
@@ -104,10 +105,27 @@ def _object_matches_prefix(object_id: str, prefix: str) -> bool:
     return normalized == bare_prefix or normalized.startswith(prefix)
 
 
-def backend_allowed_for_client(
-    backend_key: str, client_key: str, object_id: str | None = None
-) -> bool:
-    """Enforce tenant-to-storage routing without accepting paths from callers.
+@dataclass(frozen=True)
+class BackendScope:
+    """What one client may reach in one backend: everything, or prefixes."""
+
+    whole_backend: bool
+    prefixes: tuple[str, ...]
+    # "custom" (database grants) or "environment"; the two answered a
+    # prefix-less question differently before this type existed.
+    source: str
+
+    def covers_prefix(self, prefix: str) -> bool:
+        """True when every object under ``prefix`` is inside this scope."""
+        if self.whole_backend:
+            return True
+        if not prefix:
+            return False
+        return any(_object_matches_prefix(prefix, granted) for granted in self.prefixes)
+
+
+def client_backend_scope(backend_key: str, client_key: str) -> BackendScope | None:
+    """Resolve a client's access to one backend, or None when it has none.
 
     Custom database grants replace the environment policy for this client.
     Otherwise MASP_DEFERRED_BACKEND_CLIENTS_JSON is the compatibility source.
@@ -117,7 +135,7 @@ def backend_allowed_for_client(
     normalized_client = client_key.strip().lower()
     backends = configured_backend_keys()
     if normalized_backend not in backends:
-        return False
+        return None
     # Imported lazily to keep the shared policy validator dependent on this
     # module's existing relative-prefix normalization, without an import cycle.
     from app.services.client_storage_policy import custom_grants_for_client
@@ -125,37 +143,43 @@ def backend_allowed_for_client(
     if grants is not None:
         grant = next((item for item in grants if item.backend_key == normalized_backend), None)
         if grant is None:
-            return False
-        if grant.access == 'all':
-            return True
-        return bool(grant.prefixes) if object_id is None else any(
-            _object_matches_prefix(object_id, prefix) for prefix in grant.prefixes)
+            return None
+        return BackendScope(grant.access == 'all', tuple(grant.prefixes), 'custom')
     scopes = _configured_client_scopes()
     raw_clients = scopes.get(normalized_backend)
     if raw_clients is None:
-        return False
+        return None
     if isinstance(raw_clients, list):
         allowed_clients = {str(value).strip().lower() for value in raw_clients}
-        return normalized_client in allowed_clients
+        return BackendScope(True, (), 'environment') if normalized_client in allowed_clients else None
     if isinstance(raw_clients, dict):
         prefixes = raw_clients.get(normalized_client)
         if prefixes is None:
-            return False
+            return None
         if isinstance(prefixes, str):
             prefixes = [prefixes]
         if not isinstance(prefixes, list):
             raise DeferredSourceError(
                 "Deferred backend prefix mappings must be strings or arrays."
             )
-        if object_id is None:
-            return True
-        return any(
-            _object_matches_prefix(object_id, _normalize_prefix(prefix))
-            for prefix in prefixes
-        )
+        return BackendScope(False, tuple(_normalize_prefix(prefix) for prefix in prefixes), 'environment')
     raise DeferredSourceError(
         "Deferred backend client mappings must be arrays or objects."
     )
+
+
+def backend_allowed_for_client(
+    backend_key: str, client_key: str, object_id: str | None = None
+) -> bool:
+    """Enforce tenant-to-storage routing without accepting paths from callers."""
+    scope = client_backend_scope(backend_key, client_key)
+    if scope is None:
+        return False
+    if scope.whole_backend:
+        return True
+    if object_id is None:
+        return bool(scope.prefixes) if scope.source == 'custom' else True
+    return any(_object_matches_prefix(object_id, prefix) for prefix in scope.prefixes)
 
 
 def max_deferred_source_bytes() -> int:
