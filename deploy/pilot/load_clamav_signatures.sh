@@ -3,8 +3,9 @@
 #
 # For hosts without access to database.clamav.net: fetch main, daily and
 # bytecode (.cvd or .cld) on a connected machine, carry them over, and run this.
-# It works before the first start, when clamd would otherwise refuse to start
-# without a database, and on a running stack, where clamd is told to reload.
+# Before the first start it replaces the database bundled in the ClamAV image,
+# which dates from when the image was built and is usually months old; on a
+# running stack clamd is told to reload.
 #
 # Usage: deploy/pilot/load_clamav_signatures.sh [--env-file PATH] SIGNATURE_DIR
 set -euo pipefail

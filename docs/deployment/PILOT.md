@@ -272,10 +272,21 @@ compose file and keep one option; the clamav container alone reads it:
   ./deploy/pilot/load_clamav_signatures.sh --env-file .env.pilot /path/to/signatures
   ```
 
-  Run it **before the first start**: clamd does not start without a database, so
-  `install.sh --wait` would time out. On a running stack the script asks clamd to
-  reload in place. Repeat at least weekly; System > Overview warns when the
-  signatures are two days old and fails the check at seven.
+  Run it before scanning real traffic. Without it clamd still starts, but on the
+  database bundled in the ClamAV image, which dates from the image build and is
+  usually months old. On a running stack the script asks clamd to reload in
+  place. Repeat at least weekly; System > Overview warns when the signatures
+  are two days old and fails the check at seven.
+
+  To collect the files on a connected machine with Docker:
+
+  ```bash
+  docker volume create masp-signatures
+  docker run --rm -v masp-signatures:/var/lib/clamav clamav/clamav:stable freshclam --foreground --stdout
+  docker create --name masp-signatures -v masp-signatures:/var/lib/clamav clamav/clamav:stable
+  docker cp masp-signatures:/var/lib/clamav ./clamav-signatures
+  docker rm masp-signatures
+  ```
 
 The script verifies each database with `sigtool` before copying it, through the
 clamav service's own image and volume.
