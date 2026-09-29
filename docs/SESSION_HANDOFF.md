@@ -1,6 +1,6 @@
 # MASP session handoff
 
-Updated: 2026-09-28, after the operations-visibility work. This is a workspace
+Updated: 2026-09-29, after the intranet preparation work. This is a workspace
 checkpoint, not evidence of a deployment.
 
 ## Start here
@@ -52,7 +52,17 @@ Commits after the last pushed `94f01ed`, oldest first:
   connection method, name search, ledger client picker, support bundle
 - `e4126bd` notifications that nothing ever tried to deliver are "not in use",
   not critical (found on the live local stack)
-- this handoff/documentation sync
+- `f222418` handoff, AGENTS.md, architecture and deployment docs synced
+- `d257cc3` Microsoft Defender marked `supported` (product-owner decision based
+  on production use; label only). SCM-service run, failure/failover matrix and
+  release signing stay open as hardening, not as done
+- `f153ee5` ClamAV on networks without internet access: optional `clamav.env`
+  beside the compose file (internal mirror, proxy, or `CLAMAV_NO_FRESHCLAMD`)
+  and `deploy/pilot/load_clamav_signatures.sh` (sigtool-verified copy into the
+  service volume; TCP `RELOAD` on a running clamd). Rehearsed in Docker's Linux VM
+- `4444196` release named `0.1.0-pilot.8`
+- `154b131` docs: the pinned ClamAV image ships an old database
+- `9af6cda` and this commit: handoff updates
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
 `sample_45mb.bin`, `sample_5mb.bin`, `skills-lock.json`. These are intentionally
@@ -162,6 +172,26 @@ container runs this release.
 4. Low priority, separate change: remove database helpers that lost their only
    callers with the legacy UI (`list_users`, `update_service_client`,
    `revoke_api_client_credential`, `list_engine_results_by_scan_ids`, ...).
+
+**Open threads with the user (2026-09-29):**
+
+- Trellix and ESET adapters are next, after the intranet install. Blocked on the
+  user naming the exact products and licenses the institution has (ESET Server
+  Security, ESET PROTECT, Trellix Endpoint Security, Trellix ATD, an ICAP-capable
+  gateway) and on test access. Suggested first: a generic ICAP-client adapter,
+  validated locally against c-icap + ClamAV, then one response profile per
+  vendor. Never write an adapter without real product responses.
+- Offered, not started: an offline Windows worker kit (Python installer, wheels
+  including pywin32, the agent bundle) and a Turkish manual for a remote
+  Defender worker on the intranet. A remote worker needs HTTPS on MASP and
+  `MASP_WORKER_ENROLLMENT_TOKEN` set only while enrolling.
+- The user asked for server sizing; the answer (not in the repo): 8 vCPU / 16 GB
+  for the pilot, ClamAV ~1 GB idle and about double during a reload, disk sized
+  as daily files x average size x retention days plus about 20 GB, backups on a
+  separate target. No realistic capacity run has been done yet.
+- Research ideas discussed, none started: retrohunt (rescan stored samples on
+  new signatures and notify SIEM), document analysis and CDR, an engine efficacy
+  lab, signed offline update bundles.
 
 **Parked for user decisions:** folder-watch intake without manifests (waiting
 for the Drive team: how files are written, folder layout, daily volume, whether

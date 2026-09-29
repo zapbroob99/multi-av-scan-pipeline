@@ -514,6 +514,11 @@ configuration, sample content, filenames, hashes and console users' addresses.
 Release packaging: the pilot bundle must contain everything the Dockerfile copies, including the
 console build inputs under `frontend/`, and `install.sh` must reject every public placeholder that
 would weaken a deployment (`CHANGE_ME*` secrets, enrollment token, encryption key).
+Deployments without internet access are first-class: `clamav.env` (optional, git-ignored, read
+only by the clamav container) selects an internal signature mirror, a proxy or no freshclam, and
+`deploy/pilot/load_clamav_signatures.sh` loads carried-in databases. Never assume the clamav
+container can reach `database.clamav.net`, and remember the pinned image ships a months-old
+database that starts clamd but must be replaced before real traffic.
 
 ## Change Rules
 
