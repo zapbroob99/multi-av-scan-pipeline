@@ -1064,6 +1064,42 @@
         "title": "BulkDeleteResult",
         "type": "object"
       },
+      "ClientChoice": {
+        "properties": {
+          "client_key": {
+            "title": "Client Key",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileChoice"
+            },
+            "title": "Profiles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "client_key",
+          "enabled",
+          "profiles"
+        ],
+        "title": "ClientChoice",
+        "type": "object"
+      },
       "ClientCreateBody": {
         "additionalProperties": false,
         "properties": {
@@ -2201,6 +2237,34 @@
         "title": "FieldPayload",
         "type": "object"
       },
+      "FindingPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StorageFinding"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before"
+          }
+        },
+        "required": [
+          "items",
+          "next_before"
+        ],
+        "title": "FindingPage",
+        "type": "object"
+      },
       "FullTechnicalDetails": {
         "properties": {
           "attempt_count": {
@@ -2242,6 +2306,24 @@
           "findings_json"
         ],
         "title": "FullTechnicalDetails",
+        "type": "object"
+      },
+      "HashCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "max_bytes": {
+            "default": 10737418240,
+            "minimum": 0.0,
+            "title": "Max Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "HashCheck",
         "type": "object"
       },
       "HashEngineSummary": {
@@ -3299,6 +3381,436 @@
         "title": "LedgerScan",
         "type": "object"
       },
+      "LocationCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "backend_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Backend Key",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "mode": {
+            "const": "crawl",
+            "default": "crawl",
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/StoragePolicy"
+          },
+          "prefix": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Prefix",
+            "type": "string"
+          },
+          "scan_profile_id": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Scan Profile Id",
+            "type": "integer"
+          },
+          "service_client_id": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Service Client Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "service_client_id",
+          "scan_profile_id",
+          "backend_key",
+          "policy"
+        ],
+        "title": "LocationCreate",
+        "type": "object"
+      },
+      "LocationCreated": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "LocationCreated",
+        "type": "object"
+      },
+      "LocationCycle": {
+        "properties": {
+          "age_seconds": {
+            "title": "Age Seconds",
+            "type": "integer"
+          },
+          "at": {
+            "title": "At",
+            "type": "integer"
+          },
+          "changed": {
+            "title": "Changed",
+            "type": "integer"
+          },
+          "crawled": {
+            "title": "Crawled",
+            "type": "integer"
+          },
+          "directory_errors": {
+            "title": "Directory Errors",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "findings": {
+            "title": "Findings",
+            "type": "integer"
+          },
+          "inspected": {
+            "title": "Inspected",
+            "type": "integer"
+          },
+          "new": {
+            "title": "New",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "pass_completed": {
+            "title": "Pass Completed",
+            "type": "boolean"
+          },
+          "pass_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Id"
+          },
+          "removed": {
+            "title": "Removed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "at",
+          "age_seconds",
+          "ok",
+          "error",
+          "pass_id",
+          "pass_completed",
+          "crawled",
+          "new",
+          "changed",
+          "removed",
+          "inspected",
+          "findings",
+          "directory_errors",
+          "errors"
+        ],
+        "title": "LocationCycle",
+        "type": "object"
+      },
+      "LocationDetail": {
+        "properties": {
+          "backend_key": {
+            "title": "Backend Key",
+            "type": "string"
+          },
+          "client": {
+            "$ref": "#/components/schemas/NamedRef"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/StateCounts"
+          },
+          "current_pass": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PassSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "detected_findings": {
+            "title": "Detected Findings",
+            "type": "integer"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_completed_pass": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PassSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_cycle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocationCycle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_cycle_invalid": {
+            "title": "Last Cycle Invalid",
+            "type": "boolean"
+          },
+          "management_revision": {
+            "title": "Management Revision",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "crawl",
+              "manifest",
+              "both"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/StoragePolicy"
+          },
+          "policy_invalid": {
+            "title": "Policy Invalid",
+            "type": "boolean"
+          },
+          "policy_revision": {
+            "title": "Policy Revision",
+            "type": "integer"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/NamedRef"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "enabled",
+          "mode",
+          "backend_key",
+          "prefix",
+          "client",
+          "profile",
+          "policy_revision",
+          "management_revision",
+          "counts",
+          "detected_findings",
+          "last_cycle",
+          "last_cycle_invalid",
+          "last_completed_pass",
+          "current_pass",
+          "policy",
+          "policy_invalid"
+        ],
+        "title": "LocationDetail",
+        "type": "object"
+      },
+      "LocationSummary": {
+        "properties": {
+          "backend_key": {
+            "title": "Backend Key",
+            "type": "string"
+          },
+          "client": {
+            "$ref": "#/components/schemas/NamedRef"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/StateCounts"
+          },
+          "current_pass": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PassSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "detected_findings": {
+            "title": "Detected Findings",
+            "type": "integer"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_completed_pass": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PassSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_cycle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocationCycle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_cycle_invalid": {
+            "title": "Last Cycle Invalid",
+            "type": "boolean"
+          },
+          "management_revision": {
+            "title": "Management Revision",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "crawl",
+              "manifest",
+              "both"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "policy_revision": {
+            "title": "Policy Revision",
+            "type": "integer"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/NamedRef"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "enabled",
+          "mode",
+          "backend_key",
+          "prefix",
+          "client",
+          "profile",
+          "policy_revision",
+          "management_revision",
+          "counts",
+          "detected_findings",
+          "last_cycle",
+          "last_cycle_invalid",
+          "last_completed_pass",
+          "current_pass"
+        ],
+        "title": "LocationSummary",
+        "type": "object"
+      },
+      "LocationUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expected_management_revision": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Expected Management Revision",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/StoragePolicy"
+          },
+          "scan_profile_id": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Scan Profile Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_management_revision",
+          "name",
+          "scan_profile_id",
+          "enabled",
+          "policy"
+        ],
+        "title": "LocationUpdate",
+        "type": "object"
+      },
       "LoginBody": {
         "additionalProperties": false,
         "properties": {
@@ -3477,6 +3989,24 @@
         "title": "ManifestWorker",
         "type": "object"
       },
+      "NamedRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "NamedRef",
+        "type": "object"
+      },
       "NotificationFailure": {
         "properties": {
           "attempt_count": {
@@ -3590,6 +4120,94 @@
           "failures"
         ],
         "title": "NotificationSummary",
+        "type": "object"
+      },
+      "ObjectPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StorageObject"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before"
+          }
+        },
+        "required": [
+          "items",
+          "next_before"
+        ],
+        "title": "ObjectPage",
+        "type": "object"
+      },
+      "PassSummary": {
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "objects_changed": {
+            "title": "Objects Changed",
+            "type": "integer"
+          },
+          "objects_new": {
+            "title": "Objects New",
+            "type": "integer"
+          },
+          "objects_removed": {
+            "title": "Objects Removed",
+            "type": "integer"
+          },
+          "objects_seen": {
+            "title": "Objects Seen",
+            "type": "integer"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "completed",
+              "abandoned"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "started_at",
+          "finished_at",
+          "objects_seen",
+          "objects_new",
+          "objects_changed",
+          "objects_removed"
+        ],
+        "title": "PassSummary",
         "type": "object"
       },
       "PasswordChangeBody": {
@@ -4130,6 +4748,29 @@
           "engines"
         ],
         "title": "PrintableReport",
+        "type": "object"
+      },
+      "ProfileChoice": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "enabled"
+        ],
+        "title": "ProfileChoice",
         "type": "object"
       },
       "ProfileCreateBody": {
@@ -5243,6 +5884,47 @@
         "title": "SessionPayload",
         "type": "object"
       },
+      "StateCounts": {
+        "properties": {
+          "changed": {
+            "default": 0,
+            "title": "Changed",
+            "type": "integer"
+          },
+          "full_pending": {
+            "default": 0,
+            "title": "Full Pending",
+            "type": "integer"
+          },
+          "light_detected": {
+            "default": 0,
+            "title": "Light Detected",
+            "type": "integer"
+          },
+          "light_passed": {
+            "default": 0,
+            "title": "Light Passed",
+            "type": "integer"
+          },
+          "removed": {
+            "default": 0,
+            "title": "Removed",
+            "type": "integer"
+          },
+          "unreadable": {
+            "default": 0,
+            "title": "Unreadable",
+            "type": "integer"
+          },
+          "waiting": {
+            "default": 0,
+            "title": "Waiting",
+            "type": "integer"
+          }
+        },
+        "title": "StateCounts",
+        "type": "object"
+      },
       "StorageAccessUpdate": {
         "additionalProperties": false,
         "properties": {
@@ -5283,6 +5965,108 @@
         "title": "StorageAccessUpdate",
         "type": "object"
       },
+      "StorageFinding": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "integer"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "detected": {
+            "title": "Detected",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "type_policy",
+              "type_mismatch",
+              "archive_policy",
+              "hash_block"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "location": {
+            "$ref": "#/components/schemas/NamedRef"
+          },
+          "object_id": {
+            "title": "Object Id",
+            "type": "string"
+          },
+          "object_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "waiting",
+                  "changed",
+                  "light_passed",
+                  "light_detected",
+                  "full_pending",
+                  "unreadable",
+                  "removed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object State"
+          },
+          "policy_revision": {
+            "title": "Policy Revision",
+            "type": "integer"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "storage_object_id": {
+            "title": "Storage Object Id",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "location",
+          "storage_object_id",
+          "object_id",
+          "object_state",
+          "sha256",
+          "kind",
+          "severity",
+          "detected",
+          "title",
+          "detail",
+          "policy_revision",
+          "created_at"
+        ],
+        "title": "StorageFinding",
+        "type": "object"
+      },
       "StorageGrant": {
         "additionalProperties": false,
         "properties": {
@@ -5316,6 +6100,382 @@
           "access"
         ],
         "title": "StorageGrant",
+        "type": "object"
+      },
+      "StorageObject": {
+        "properties": {
+          "detected_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detected Type"
+          },
+          "families": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "finding_count": {
+            "title": "Finding Count",
+            "type": "integer"
+          },
+          "first_seen_at": {
+            "title": "First Seen At",
+            "type": "integer"
+          },
+          "hash_list_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "block",
+                  "allow"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hash List Kind"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_changed_at": {
+            "title": "Last Changed At",
+            "type": "integer"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "object_id": {
+            "title": "Object Id",
+            "type": "string"
+          },
+          "policy_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Revision"
+          },
+          "processed_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processed At"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "waiting",
+              "changed",
+              "light_passed",
+              "light_detected",
+              "full_pending",
+              "unreadable",
+              "removed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "enum": [
+                  "full",
+                  "light"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "required": [
+          "id",
+          "object_id",
+          "size_bytes",
+          "state",
+          "tier",
+          "detected_type",
+          "families",
+          "sha256",
+          "hash_list_kind",
+          "finding_count",
+          "policy_revision",
+          "first_seen_at",
+          "last_changed_at",
+          "processed_at",
+          "last_error"
+        ],
+        "title": "StorageObject",
+        "type": "object"
+      },
+      "StorageOptions": {
+        "properties": {
+          "backends": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Backends",
+            "type": "array"
+          },
+          "clients": {
+            "items": {
+              "$ref": "#/components/schemas/ClientChoice"
+            },
+            "title": "Clients",
+            "type": "array"
+          },
+          "clients_truncated": {
+            "title": "Clients Truncated",
+            "type": "boolean"
+          },
+          "default_policy": {
+            "$ref": "#/components/schemas/StoragePolicy"
+          },
+          "families": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Families",
+            "type": "array"
+          }
+        },
+        "required": [
+          "backends",
+          "clients",
+          "clients_truncated",
+          "families",
+          "default_policy"
+        ],
+        "title": "StorageOptions",
+        "type": "object"
+      },
+      "StorageOverview": {
+        "properties": {
+          "locations": {
+            "items": {
+              "$ref": "#/components/schemas/LocationSummary"
+            },
+            "title": "Locations",
+            "type": "array"
+          },
+          "locations_truncated": {
+            "title": "Locations Truncated",
+            "type": "boolean"
+          },
+          "worker": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StorageWorker"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worker_record_invalid": {
+            "title": "Worker Record Invalid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "worker",
+          "worker_record_invalid",
+          "locations",
+          "locations_truncated"
+        ],
+        "title": "StorageOverview",
+        "type": "object"
+      },
+      "StoragePolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "archive_action": {
+            "default": "full",
+            "enum": [
+              "full",
+              "allow",
+              "detect"
+            ],
+            "title": "Archive Action",
+            "type": "string"
+          },
+          "crawl_entries_per_cycle": {
+            "default": 5000,
+            "maximum": 100000.0,
+            "minimum": 100.0,
+            "title": "Crawl Entries Per Cycle",
+            "type": "integer"
+          },
+          "crawl_interval_seconds": {
+            "default": 300,
+            "maximum": 86400.0,
+            "minimum": 10.0,
+            "title": "Crawl Interval Seconds",
+            "type": "integer"
+          },
+          "default_tier": {
+            "default": "full",
+            "enum": [
+              "full",
+              "light"
+            ],
+            "title": "Default Tier",
+            "type": "string"
+          },
+          "hash_check": {
+            "$ref": "#/components/schemas/HashCheck"
+          },
+          "ignore_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Ignore Patterns",
+            "type": "array"
+          },
+          "inspections_per_cycle": {
+            "default": 500,
+            "maximum": 10000.0,
+            "minimum": 10.0,
+            "title": "Inspections Per Cycle",
+            "type": "integer"
+          },
+          "stability_seconds": {
+            "default": 60,
+            "maximum": 86400.0,
+            "minimum": 5.0,
+            "title": "Stability Seconds",
+            "type": "integer"
+          },
+          "tier_rules": {
+            "items": {
+              "$ref": "#/components/schemas/TierRule"
+            },
+            "maxItems": 50,
+            "title": "Tier Rules",
+            "type": "array"
+          },
+          "type_policy": {
+            "$ref": "#/components/schemas/TypePolicy"
+          }
+        },
+        "title": "StoragePolicy",
+        "type": "object"
+      },
+      "StorageWorker": {
+        "properties": {
+          "age_seconds": {
+            "title": "Age Seconds",
+            "type": "integer"
+          },
+          "at": {
+            "title": "At",
+            "type": "integer"
+          },
+          "backends": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Backends",
+            "type": "array"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "locations": {
+            "title": "Locations",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "poll_seconds": {
+            "title": "Poll Seconds",
+            "type": "number"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "worker_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Id"
+          }
+        },
+        "required": [
+          "at",
+          "age_seconds",
+          "stale",
+          "ok",
+          "error",
+          "poll_seconds",
+          "locations",
+          "worker_id",
+          "backends"
+        ],
+        "title": "StorageWorker",
         "type": "object"
       },
       "SubmissionAccepted": {
@@ -5529,6 +6689,77 @@
           "truncated"
         ],
         "title": "TechnicalDetails",
+        "type": "object"
+      },
+      "TierRule": {
+        "additionalProperties": false,
+        "properties": {
+          "max_bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Bytes"
+          },
+          "min_bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Bytes"
+          },
+          "pattern": {
+            "default": "*",
+            "title": "Pattern",
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "full",
+              "light"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier"
+        ],
+        "title": "TierRule",
+        "type": "object"
+      },
+      "TypePolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "families": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Families",
+            "type": "array"
+          },
+          "mode": {
+            "default": "denylist",
+            "enum": [
+              "allowlist",
+              "denylist"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "TypePolicy",
         "type": "object"
       },
       "UpdateUserBody": {
@@ -15234,6 +16465,906 @@
           }
         },
         "summary": "Login Options",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/storage/findings": {
+      "get": {
+        "operationId": "browser_storage_findings_api_ui_v1_storage_findings_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "location_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Location Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "type_policy",
+                "type_mismatch",
+                "archive_policy",
+                "hash_block"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "detected",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "detected",
+                "not_detected"
+              ],
+              "title": "Detected",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Storage Findings",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/storage/locations": {
+      "post": {
+        "operationId": "browser_create_storage_location_api_ui_v1_storage_locations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Create Storage Location",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/storage/locations/{location_id}": {
+      "get": {
+        "operationId": "browser_storage_location_api_ui_v1_storage_locations__location_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "location_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Location Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Storage Location",
+        "tags": [
+          "Browser console"
+        ]
+      },
+      "put": {
+        "operationId": "browser_update_storage_location_api_ui_v1_storage_locations__location_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "location_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Location Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocationUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Update Storage Location",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/storage/locations/{location_id}/objects": {
+      "get": {
+        "operationId": "browser_storage_objects_api_ui_v1_storage_locations__location_id__objects_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "location_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Location Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "waiting",
+                "changed",
+                "light_passed",
+                "light_detected",
+                "full_pending",
+                "unreadable",
+                "removed"
+              ],
+              "title": "State",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Storage Objects",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/storage/options": {
+      "get": {
+        "operationId": "browser_storage_options_api_ui_v1_storage_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageOptions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Storage Options",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/storage/overview": {
+      "get": {
+        "operationId": "browser_storage_overview_api_ui_v1_storage_overview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Storage Overview",
         "tags": [
           "Browser console"
         ]

@@ -24,8 +24,10 @@ from pydantic import BaseModel
 from app import database as db
 from app.icap.activity import FLUSH_SECONDS as ICAP_FLUSH_SECONDS, SETTING_PREFIX as ICAP_SETTING_PREFIX
 from app.services import intake_read
+from app.services import storage_read
 from app.services.browser_db_budget import apply_read_budget
 from app.services.sample_paths import STORAGE_DIR
+from app.services.storage_protection import LAST_CYCLE_SETTING as STORAGE_LAST_CYCLE_SETTING
 from app.services.worker_runtime import get_worker_status
 
 
@@ -255,11 +257,19 @@ def notifications_check(connection, now: float) -> HealthCheck:
     total = connection.execute('''SELECT COUNT(*) AS n,
         SUM(CASE WHEN attempt_count > 0 OR status = 'delivered' THEN 1 ELSE 0 END) AS attempted
         FROM notification_outbox''').fetchone()
-    if not int(total['n'] or 0):
+    # Storage findings use their own outbox (epoch-second timestamps) and the same webhook.
+    storage_row = connection.execute('''SELECT COUNT(*) AS pending,
+        SUM(CASE WHEN attempt_count > 0 THEN 1 ELSE 0 END) AS retrying, MIN(created_at) AS oldest
+        FROM storage_notification_outbox WHERE status IN ('pending', 'delivering')''').fetchone()
+    storage_total = connection.execute('''SELECT COUNT(*) AS n,
+        SUM(CASE WHEN attempt_count > 0 OR status = 'delivered' THEN 1 ELSE 0 END) AS attempted
+        FROM storage_notification_outbox''').fetchone()
+    if not int(total['n'] or 0) + int(storage_total['n'] or 0):
         return HealthCheck(key='notifications', label='SIEM notifications', state='inactive', link=link,
                            summary='No notification has been produced.')
-    pending, retrying = int(row['pending'] or 0), int(row['retrying'] or 0)
-    if not int(total['attempted'] or 0):
+    pending = int(row['pending'] or 0) + int(storage_row['pending'] or 0)
+    retrying = int(row['retrying'] or 0) + int(storage_row['retrying'] or 0)
+    if not int(total['attempted'] or 0) + int(storage_total['attempted'] or 0):
         # Detections queue notifications whether or not SIEM delivery is deployed;
         # nothing has ever tried to send one, so this is "not in use", not an outage.
         return HealthCheck(key='notifications', label='SIEM notifications', state='inactive', link=link,
@@ -269,11 +279,60 @@ def notifications_check(connection, now: float) -> HealthCheck:
         return HealthCheck(key='notifications', label='SIEM notifications', state='ok', link=link,
                            summary='Every notification was delivered.')
     oldest = _when(row['oldest'])
-    age = now - oldest.timestamp() if oldest else 0
+    ages = [now - oldest.timestamp()] if oldest else []
+    if storage_row['oldest'] is not None:
+        ages.append(now - int(storage_row['oldest']))
+    age = max(ages, default=0)
     state: State = 'critical' if age >= NOTIFY_CRITICAL_SECONDS else 'warning' if retrying else 'ok'
     return HealthCheck(key='notifications', label='SIEM notifications', state=state, link=link,
                        summary=f'{pending} undelivered, oldest {age_text(age)}' + (f'; {retrying} failed at least once.' if retrying else '.'),
                        detail=None if state == 'ok' else 'Check the notification service and the SIEM webhook.')
+
+
+def storage_protection_check(connection, now: float) -> HealthCheck:
+    """Protected locations: is the worker alive and is every enabled location running?"""
+    link = '/storage'
+    label = 'Folder scanning'
+    setting = connection.execute('SELECT value FROM app_settings WHERE key = ?',
+                                 (STORAGE_LAST_CYCLE_SETTING,)).fetchone()
+    rows = connection.execute("""SELECT SUBSTR(l.name, 1, 128) AS name, r.last_cycle_json
+        FROM storage_locations l LEFT JOIN storage_location_runtime r ON r.location_id = l.id
+        WHERE l.enabled = ? ORDER BY l.id LIMIT 101""", (db.db_bool(True),)).fetchall()
+    if not rows:
+        return HealthCheck(key='storage_protection', label=label, state='inactive', link=link,
+                           summary='No protected storage location is enabled.')
+    worker, invalid = storage_read.worker_status(setting['value'] if setting else None, int(now))
+    if invalid:
+        return HealthCheck(key='storage_protection', label=label, state='unknown', link=link,
+                           summary='The storage protection worker record is unreadable.')
+    if worker is None:
+        return HealthCheck(key='storage_protection', label=label, state='unknown', link=link,
+                           summary=f'{len(rows)} enabled location(s), but no storage protection worker has reported.',
+                           detail='Start the storage-protection service with the location backends mounted.')
+    if worker.stale:
+        return HealthCheck(key='storage_protection', label=label, state='critical', link=link,
+                           summary=f'Last worker sweep {age_text(worker.age_seconds)} ago; locations are not being read.',
+                           detail='Check that the storage-protection service is running.')
+    if not worker.ok:
+        return HealthCheck(key='storage_protection', label=label, state='warning', link=link,
+                           summary='The last worker sweep failed.', detail=worker.error)
+    troubled = []
+    for row in rows:
+        cycle, cycle_invalid = storage_read.location_cycle(row['last_cycle_json'], int(now))
+        if cycle_invalid:
+            troubled.append(f"{row['name']} (unreadable record)")
+        elif cycle is None:
+            troubled.append(f"{row['name']} (never ran)")
+        elif not cycle.ok:
+            troubled.append(f"{row['name']} ({cycle.error or f'{cycle.directory_errors} unreadable directories'})")
+        elif cycle.age_seconds > storage_read.LOCATION_STALE_SECONDS:
+            troubled.append(f"{row['name']} (last ran {age_text(cycle.age_seconds)} ago)")
+    if troubled:
+        return HealthCheck(key='storage_protection', label=label, state='warning', link=link,
+                           summary=f'{len(troubled)} of {len(rows)} enabled location(s) need attention.',
+                           detail=_names(troubled, 3))
+    return HealthCheck(key='storage_protection', label=label, state='ok', link=link,
+                       summary=f'{len(rows)} location(s) running; last sweep {age_text(worker.age_seconds)} ago.')
 
 
 def icap_gateways(settings: dict[str, str]) -> list[dict]:
@@ -350,6 +409,7 @@ def report(engines: list[EngineState], *, now: float | None = None) -> HealthRep
         queue = connection.execute('''SELECT COUNT(*) AS queued, MIN(created_at) AS oldest
             FROM scan_jobs WHERE status = 'queued' ''').fetchone()
         notifications = notifications_check(connection, current)
+        storage_protection = storage_protection_check(connection, current)
     queued = int(queue['queued'] or 0)
     oldest = _when(queue['oldest'])
     oldest_age = current - oldest.timestamp() if oldest else None
@@ -361,6 +421,7 @@ def report(engines: list[EngineState], *, now: float | None = None) -> HealthRep
         signatures_check(engines, records, current),
         storage_check(),
         *intake_checks(overview),
+        storage_protection,
         icap_check(gateways, current),
         notifications,
     ]

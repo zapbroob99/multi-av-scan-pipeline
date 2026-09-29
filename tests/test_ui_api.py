@@ -1377,7 +1377,8 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual(status, 200, report)
         self.assertIn(report['overall'], {'ok', 'warning', 'critical', 'unknown'})
         self.assertEqual({check['key'] for check in report['checks']}, {
-            'workers', 'queue', 'engines', 'signatures', 'storage', 'manifest', 'deferred', 'icap', 'notifications'})
+            'workers', 'queue', 'engines', 'signatures', 'storage', 'manifest', 'deferred', 'storage_protection',
+            'icap', 'notifications'})
         self.assertNotIn(str(db.DB_PATH.parent), json.dumps(report))
         status, delivery, _ = self.request('/system/delivery')
         self.assertEqual((status, delivery['gateways']), (200, []))

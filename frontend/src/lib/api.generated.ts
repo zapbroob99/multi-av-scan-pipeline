@@ -1083,6 +1083,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/storage/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Storage Findings */
+        get: operations["browser_storage_findings_api_ui_v1_storage_findings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/storage/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Browser Create Storage Location */
+        post: operations["browser_create_storage_location_api_ui_v1_storage_locations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/storage/locations/{location_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Storage Location */
+        get: operations["browser_storage_location_api_ui_v1_storage_locations__location_id__get"];
+        /** Browser Update Storage Location */
+        put: operations["browser_update_storage_location_api_ui_v1_storage_locations__location_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/storage/locations/{location_id}/objects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Storage Objects */
+        get: operations["browser_storage_objects_api_ui_v1_storage_locations__location_id__objects_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/storage/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Storage Options */
+        get: operations["browser_storage_options_api_ui_v1_storage_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/storage/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Storage Overview */
+        get: operations["browser_storage_overview_api_ui_v1_storage_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/system/delivery": {
         parameters: {
             query?: never;
@@ -1760,6 +1863,19 @@ export interface components {
             /** Requested Count */
             requested_count: number;
         };
+        /** ClientChoice */
+        ClientChoice: {
+            /** Client Key */
+            client_key: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Profiles */
+            profiles: components["schemas"]["ProfileChoice"][];
+        };
         /** ClientCreateBody */
         ClientCreateBody: {
             /**
@@ -2167,6 +2283,13 @@ export interface components {
             /** Secret */
             secret: boolean;
         };
+        /** FindingPage */
+        FindingPage: {
+            /** Items */
+            items: components["schemas"]["StorageFinding"][];
+            /** Next Before */
+            next_before: number | null;
+        };
         /** FullTechnicalDetails */
         FullTechnicalDetails: {
             /** Attempt Count */
@@ -2183,6 +2306,19 @@ export interface components {
             result_id: number;
             /** Scan Id */
             scan_id: number;
+        };
+        /** HashCheck */
+        HashCheck: {
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled?: boolean;
+            /**
+             * Max Bytes
+             * @default 10737418240
+             */
+            max_bytes?: number;
         };
         /** HashEngineSummary */
         HashEngineSummary: {
@@ -2520,6 +2656,149 @@ export interface components {
             /** Unavailable Engines */
             unavailable_engines: number | null;
         };
+        /** LocationCreate */
+        LocationCreate: {
+            /** Backend Key */
+            backend_key: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled?: boolean;
+            /**
+             * Mode
+             * @default crawl
+             * @constant
+             */
+            mode?: "crawl";
+            /** Name */
+            name: string;
+            policy: components["schemas"]["StoragePolicy"];
+            /**
+             * Prefix
+             * @default
+             */
+            prefix?: string;
+            /** Scan Profile Id */
+            scan_profile_id: number;
+            /** Service Client Id */
+            service_client_id: number;
+        };
+        /** LocationCreated */
+        LocationCreated: {
+            /** Id */
+            id: number;
+        };
+        /** LocationCycle */
+        LocationCycle: {
+            /** Age Seconds */
+            age_seconds: number;
+            /** At */
+            at: number;
+            /** Changed */
+            changed: number;
+            /** Crawled */
+            crawled: number;
+            /** Directory Errors */
+            directory_errors: number;
+            /** Error */
+            error: string | null;
+            /** Errors */
+            errors: string[];
+            /** Findings */
+            findings: number;
+            /** Inspected */
+            inspected: number;
+            /** New */
+            new: number;
+            /** Ok */
+            ok: boolean;
+            /** Pass Completed */
+            pass_completed: boolean;
+            /** Pass Id */
+            pass_id: number | null;
+            /** Removed */
+            removed: number;
+        };
+        /** LocationDetail */
+        LocationDetail: {
+            /** Backend Key */
+            backend_key: string;
+            client: components["schemas"]["NamedRef"];
+            counts: components["schemas"]["StateCounts"];
+            current_pass: components["schemas"]["PassSummary"] | null;
+            /** Detected Findings */
+            detected_findings: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Id */
+            id: number;
+            last_completed_pass: components["schemas"]["PassSummary"] | null;
+            last_cycle: components["schemas"]["LocationCycle"] | null;
+            /** Last Cycle Invalid */
+            last_cycle_invalid: boolean;
+            /** Management Revision */
+            management_revision: number;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "crawl" | "manifest" | "both";
+            /** Name */
+            name: string;
+            policy: components["schemas"]["StoragePolicy"];
+            /** Policy Invalid */
+            policy_invalid: boolean;
+            /** Policy Revision */
+            policy_revision: number;
+            /** Prefix */
+            prefix: string;
+            profile: components["schemas"]["NamedRef"];
+        };
+        /** LocationSummary */
+        LocationSummary: {
+            /** Backend Key */
+            backend_key: string;
+            client: components["schemas"]["NamedRef"];
+            counts: components["schemas"]["StateCounts"];
+            current_pass: components["schemas"]["PassSummary"] | null;
+            /** Detected Findings */
+            detected_findings: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Id */
+            id: number;
+            last_completed_pass: components["schemas"]["PassSummary"] | null;
+            last_cycle: components["schemas"]["LocationCycle"] | null;
+            /** Last Cycle Invalid */
+            last_cycle_invalid: boolean;
+            /** Management Revision */
+            management_revision: number;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "crawl" | "manifest" | "both";
+            /** Name */
+            name: string;
+            /** Policy Revision */
+            policy_revision: number;
+            /** Prefix */
+            prefix: string;
+            profile: components["schemas"]["NamedRef"];
+        };
+        /** LocationUpdate */
+        LocationUpdate: {
+            /** Enabled */
+            enabled: boolean;
+            /** Expected Management Revision */
+            expected_management_revision: number;
+            /** Name */
+            name: string;
+            policy: components["schemas"]["StoragePolicy"];
+            /** Scan Profile Id */
+            scan_profile_id: number;
+        };
         /** LoginBody */
         LoginBody: {
             /** Password */
@@ -2580,6 +2859,13 @@ export interface components {
             /** Stale */
             stale: boolean;
         };
+        /** NamedRef */
+        NamedRef: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+        };
         /** NotificationFailure */
         NotificationFailure: {
             /** Attempt Count */
@@ -2615,6 +2901,35 @@ export interface components {
             pending: number;
             /** Retrying */
             retrying: number;
+        };
+        /** ObjectPage */
+        ObjectPage: {
+            /** Items */
+            items: components["schemas"]["StorageObject"][];
+            /** Next Before */
+            next_before: number | null;
+        };
+        /** PassSummary */
+        PassSummary: {
+            /** Finished At */
+            finished_at: number | null;
+            /** Id */
+            id: number;
+            /** Objects Changed */
+            objects_changed: number;
+            /** Objects New */
+            objects_new: number;
+            /** Objects Removed */
+            objects_removed: number;
+            /** Objects Seen */
+            objects_seen: number;
+            /** Started At */
+            started_at: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "abandoned";
         };
         /** PasswordChangeBody */
         PasswordChangeBody: {
@@ -2792,6 +3107,15 @@ export interface components {
             risk_score: number | null;
             /** Verdict */
             verdict: string;
+        };
+        /** ProfileChoice */
+        ProfileChoice: {
+            /** Enabled */
+            enabled: boolean;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
         };
         /** ProfileCreateBody */
         ProfileCreateBody: {
@@ -3159,6 +3483,44 @@ export interface components {
             csrf_token: string;
             user: components["schemas"]["UserPayload"];
         };
+        /** StateCounts */
+        StateCounts: {
+            /**
+             * Changed
+             * @default 0
+             */
+            changed?: number;
+            /**
+             * Full Pending
+             * @default 0
+             */
+            full_pending?: number;
+            /**
+             * Light Detected
+             * @default 0
+             */
+            light_detected?: number;
+            /**
+             * Light Passed
+             * @default 0
+             */
+            light_passed?: number;
+            /**
+             * Removed
+             * @default 0
+             */
+            removed?: number;
+            /**
+             * Unreadable
+             * @default 0
+             */
+            unreadable?: number;
+            /**
+             * Waiting
+             * @default 0
+             */
+            waiting?: number;
+        };
         /** StorageAccessUpdate */
         StorageAccessUpdate: {
             /** Expected Environment Fingerprint */
@@ -3173,6 +3535,39 @@ export interface components {
              */
             mode: "environment" | "custom";
         };
+        /** StorageFinding */
+        StorageFinding: {
+            /** Created At */
+            created_at: number;
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Detected */
+            detected: boolean;
+            /** Id */
+            id: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "type_policy" | "type_mismatch" | "archive_policy" | "hash_block";
+            location: components["schemas"]["NamedRef"];
+            /** Object Id */
+            object_id: string;
+            /** Object State */
+            object_state: ("waiting" | "changed" | "light_passed" | "light_detected" | "full_pending" | "unreadable" | "removed") | null;
+            /** Policy Revision */
+            policy_revision: number;
+            /** Severity */
+            severity: string;
+            /** Sha256 */
+            sha256: string | null;
+            /** Storage Object Id */
+            storage_object_id: number;
+            /** Title */
+            title: string;
+        };
         /** StorageGrant */
         StorageGrant: {
             /**
@@ -3184,6 +3579,126 @@ export interface components {
             backend_key: string;
             /** Prefixes */
             prefixes?: string[];
+        };
+        /** StorageObject */
+        StorageObject: {
+            /** Detected Type */
+            detected_type: string | null;
+            /** Families */
+            families: string[];
+            /** Finding Count */
+            finding_count: number;
+            /** First Seen At */
+            first_seen_at: number;
+            /** Hash List Kind */
+            hash_list_kind: ("block" | "allow") | null;
+            /** Id */
+            id: number;
+            /** Last Changed At */
+            last_changed_at: number;
+            /** Last Error */
+            last_error: string | null;
+            /** Object Id */
+            object_id: string;
+            /** Policy Revision */
+            policy_revision: number | null;
+            /** Processed At */
+            processed_at: number | null;
+            /** Sha256 */
+            sha256: string | null;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "waiting" | "changed" | "light_passed" | "light_detected" | "full_pending" | "unreadable" | "removed";
+            /** Tier */
+            tier: ("full" | "light") | null;
+        };
+        /** StorageOptions */
+        StorageOptions: {
+            /** Backends */
+            backends: string[];
+            /** Clients */
+            clients: components["schemas"]["ClientChoice"][];
+            /** Clients Truncated */
+            clients_truncated: boolean;
+            default_policy: components["schemas"]["StoragePolicy"];
+            /** Families */
+            families: string[];
+        };
+        /** StorageOverview */
+        StorageOverview: {
+            /** Locations */
+            locations: components["schemas"]["LocationSummary"][];
+            /** Locations Truncated */
+            locations_truncated: boolean;
+            worker: components["schemas"]["StorageWorker"] | null;
+            /** Worker Record Invalid */
+            worker_record_invalid: boolean;
+        };
+        /** StoragePolicy */
+        StoragePolicy: {
+            /**
+             * Archive Action
+             * @default full
+             * @enum {string}
+             */
+            archive_action?: "full" | "allow" | "detect";
+            /**
+             * Crawl Entries Per Cycle
+             * @default 5000
+             */
+            crawl_entries_per_cycle?: number;
+            /**
+             * Crawl Interval Seconds
+             * @default 300
+             */
+            crawl_interval_seconds?: number;
+            /**
+             * Default Tier
+             * @default full
+             * @enum {string}
+             */
+            default_tier?: "full" | "light";
+            hash_check?: components["schemas"]["HashCheck"];
+            /** Ignore Patterns */
+            ignore_patterns?: string[];
+            /**
+             * Inspections Per Cycle
+             * @default 500
+             */
+            inspections_per_cycle?: number;
+            /**
+             * Stability Seconds
+             * @default 60
+             */
+            stability_seconds?: number;
+            /** Tier Rules */
+            tier_rules?: components["schemas"]["TierRule"][];
+            type_policy?: components["schemas"]["TypePolicy"];
+        };
+        /** StorageWorker */
+        StorageWorker: {
+            /** Age Seconds */
+            age_seconds: number;
+            /** At */
+            at: number;
+            /** Backends */
+            backends: string[];
+            /** Error */
+            error: string | null;
+            /** Locations */
+            locations: number;
+            /** Ok */
+            ok: boolean;
+            /** Poll Seconds */
+            poll_seconds: number;
+            /** Stale */
+            stale: boolean;
+            /** Worker Id */
+            worker_id: string | null;
         };
         /** SubmissionAccepted */
         SubmissionAccepted: {
@@ -3269,6 +3784,34 @@ export interface components {
             result_id: number;
             /** Truncated */
             truncated: string[];
+        };
+        /** TierRule */
+        TierRule: {
+            /** Max Bytes */
+            max_bytes?: number | null;
+            /** Min Bytes */
+            min_bytes?: number | null;
+            /**
+             * Pattern
+             * @default *
+             */
+            pattern?: string;
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "full" | "light";
+        };
+        /** TypePolicy */
+        TypePolicy: {
+            /** Families */
+            families?: string[];
+            /**
+             * Mode
+             * @default denylist
+             * @enum {string}
+             */
+            mode?: "allowlist" | "denylist";
         };
         /** UpdateUserBody */
         UpdateUserBody: {
@@ -10509,6 +11052,673 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LoginOptions"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_storage_findings_api_ui_v1_storage_findings_get: {
+        parameters: {
+            query?: {
+                before?: number | null;
+                detected?: "all" | "detected" | "not_detected";
+                kind?: "all" | "type_policy" | "type_mismatch" | "archive_policy" | "hash_block";
+                limit?: number;
+                location_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingPage"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_create_storage_location_api_ui_v1_storage_locations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationCreated"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_storage_location_api_ui_v1_storage_locations__location_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationDetail"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_update_storage_location_api_ui_v1_storage_locations__location_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_storage_objects_api_ui_v1_storage_locations__location_id__objects_get: {
+        parameters: {
+            query?: {
+                before?: number | null;
+                limit?: number;
+                q?: string;
+                state?: "all" | "waiting" | "changed" | "light_passed" | "light_detected" | "full_pending" | "unreadable" | "removed";
+            };
+            header?: never;
+            path: {
+                location_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectPage"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_storage_options_api_ui_v1_storage_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageOptions"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_storage_overview_api_ui_v1_storage_overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageOverview"];
                 };
             };
             /** @description Bad Request */

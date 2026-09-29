@@ -44,6 +44,8 @@ from app.services import health_read
 from app.services import delivery_read
 from app.services import support_bundle
 from app.services import about_read
+from app.services import storage_admin
+from app.services import storage_read
 from app.services import account
 from app.services.ingest import store_upload, configured_upload_max_bytes, UploadTooLargeError
 from app.services.ldap_auth import ldap_enabled
@@ -120,7 +122,12 @@ class BrowserRoute(APIRoute):
                 hash_allowed = (request.method == 'GET' and self.path == PREFIX + '/hash-scan/options') or (request.method == 'POST' and self.path == PREFIX + '/hash-scan')
                 account_allowed = (request.method == 'GET' and self.path == PREFIX + '/account') or (request.method == 'POST' and self.path == PREFIX + '/account/password')
                 about_allowed = request.method == 'GET' and self.path == PREFIX + '/about'
-                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not hash_allowed and not account_allowed and not about_allowed and user.role != "admin":
+                # Folder Scanning results are readable like the dashboards; managing locations is admin work.
+                storage_read_allowed = request.method == 'GET' and self.path in {
+                    PREFIX + '/storage/overview', PREFIX + '/storage/locations/{location_id}',
+                    PREFIX + '/storage/locations/{location_id}/objects', PREFIX + '/storage/findings',
+                }
+                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not hash_allowed and not account_allowed and not about_allowed and not storage_read_allowed and user.role != "admin":
                     raise HTTPException(403, "Admin permission is required.")
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 origin = str(request.base_url).rstrip("/")
@@ -438,6 +445,61 @@ def browser_remove_hash(request: Request, entry_id: int = Path(ge=1, le=90071992
     set_audit_context(request, action='hash_list.remove', target_type='hash_list_entry',
                       target_id=entry_id, actor=request.state.ui_user)
     hash_list_admin.remove(entry_id)
+
+
+@router.get('/storage/overview', response_model=storage_read.StorageOverview)
+def browser_storage_overview():
+    return storage_read.overview()
+
+
+@router.get('/storage/options', response_model=storage_admin.StorageOptions)
+def browser_storage_options():
+    return storage_admin.options()
+
+
+@router.post('/storage/locations', response_model=storage_admin.LocationCreated, status_code=201)
+def browser_create_storage_location(request: Request, body: storage_admin.LocationCreate):
+    user = request.state.ui_user
+    set_audit_context(request, action='storage_location.create', target_type='storage_location', actor=user,
+                      details={'backend_key': body.backend_key, 'service_client_id': body.service_client_id})
+    created = storage_admin.create(body, user.username)
+    set_audit_context(request, target_id=created.id)
+    return created
+
+
+@router.get('/storage/locations/{location_id}', response_model=storage_read.LocationDetail)
+def browser_storage_location(location_id: int = Path(ge=1, le=9007199254740991)):
+    return storage_read.location(location_id)
+
+
+@router.put('/storage/locations/{location_id}', status_code=204)
+def browser_update_storage_location(request: Request, body: storage_admin.LocationUpdate,
+                                    location_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='storage_location.update', target_type='storage_location',
+                      target_id=location_id, actor=request.state.ui_user, details={'enabled': body.enabled})
+    storage_admin.update(location_id, body)
+    return Response(status_code=204)
+
+
+@router.get('/storage/locations/{location_id}/objects', response_model=storage_read.ObjectPage)
+def browser_storage_objects(location_id: int = Path(ge=1, le=9007199254740991),
+                            limit: int = Query(default=20, ge=1, le=100),
+                            before: int | None = Query(default=None, ge=1, le=9007199254740991),
+                            state: Literal['all', 'waiting', 'changed', 'light_passed', 'light_detected',
+                                           'full_pending', 'unreadable', 'removed'] = 'all',
+                            q: str = Query(default='', max_length=200)):
+    return storage_read.objects(location_id, limit=limit, before=before, state=state, query=q)
+
+
+@router.get('/storage/findings', response_model=storage_read.FindingPage)
+def browser_storage_findings(limit: int = Query(default=20, ge=1, le=100),
+                             before: int | None = Query(default=None, ge=1, le=9007199254740991),
+                             location_id: int | None = Query(default=None, ge=1, le=9007199254740991),
+                             kind: Literal['all', 'type_policy', 'type_mismatch', 'archive_policy',
+                                           'hash_block'] = 'all',
+                             detected: Literal['all', 'detected', 'not_detected'] = 'all'):
+    return storage_read.findings(limit=limit, before=before, location_id=location_id, kind=kind,
+                                 detected=detected)
 
 
 @router.get('/about', response_model=about_read.AboutPayload)
