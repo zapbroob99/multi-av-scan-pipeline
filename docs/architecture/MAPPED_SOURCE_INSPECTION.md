@@ -5,6 +5,13 @@ adapter, the local hash list, multiple named profiles and client storage-access
 administration are implemented within today's copy path. In-place reading is not
 implemented. Sections marked **OPEN** remain unresolved.
 
+Storage protection (`STORAGE_PROTECTION.md`, design only) settles several of these
+questions for MASP-discovered storage: verified in-place reads instead of copying,
+worker placement through backend-aware claims, and narrow coverage kept in a
+separate inventory model and console area. Those answers apply to that feature;
+the OPEN items below still stand for API-submitted deferred references until the
+two paths are reconciled.
+
 ## The use case
 
 A consuming system uploads a very large file to its own storage. Scanning it
@@ -123,7 +130,9 @@ between validation and the engine open. Candidate mitigations, none yet chosen:
   result, so an operator never reads it as an atomic-source guarantee.
 
 **OPEN:** which mitigation, and whether a changed source is a failure or a
-recorded weaker outcome.
+recorded weaker outcome. Storage protection chooses a fourth option: every read an
+engine consumes is hashed and compared with the inventory digest, and path-based
+engines receive a verified worker-local copy, never the source path.
 
 **Worker placement.** Only workers that mount the source root read-only can run
 these engines. Worker pools with exact-match labels exist and engine instances can
@@ -132,7 +141,9 @@ Without it a scan can be claimed by a worker that cannot see the file and fails
 late, rather than never being routed there.
 
 **OPEN:** whether backend access becomes a first-class routing constraint or stays
-an operational convention over existing pool labels.
+an operational convention over existing pool labels. Storage protection avoids the
+constraint: a worker without the backend either receives streamed bytes through
+the control API or, on the direct database path, never claims the job.
 
 ## Result semantics
 

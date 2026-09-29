@@ -176,6 +176,17 @@ today's copy path, before any in-place reading. The file_type header adapter and
 hash list (steps 1 and 2) are implemented; multiple named profiles are also implemented
 independently. Deliberately narrow coverage semantics and in-place reading remain open.
 
+Storage protection (folder scanning) is a design-only initiative agreed on 2026-09-29: read
+`docs/architecture/STORAGE_PROTECTION.md` before writing code toward it. MASP discovers files
+in an approved backend itself (crawl, manifest or both, in one protection worker), keeps an
+inventory separate from scan history, and opens scan records only for full-tier content, one
+per unique SHA-256 and engine set. It is detection-only; rescanning on new signatures is out
+of scope. Light-tier objects (type policy plus hash list, no engine jobs) are never clean and
+live in a separate Folder Scanning console area. Engines read in place with every consumed read
+verified against the inventory digest; MASP storage receives a copy only as evidence of a
+detection. A location binds to a service client and its profile, so storage grants and routing
+snapshots stay authoritative. Multi-object engine jobs and pruning wait for a capacity run.
+
 The frontend target is all browser UI migrated incrementally, not permanent
 legacy escape links. Track every remaining screen and cutover gate in the complete
 UI inventory in `docs/architecture/FRONTEND_SEPARATION.md`. Admin `/console/system`

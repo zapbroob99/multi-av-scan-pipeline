@@ -193,9 +193,24 @@ container runs this release.
   new signatures and notify SIEM), document analysis and CDR, an engine efficacy
   lab, signed offline update bundles.
 
-**Parked for user decisions:** folder-watch intake without manifests (waiting
-for the Drive team: how files are written, folder layout, daily volume, whether
-files change after upload, naming); `MAPPED_SOURCE_INSPECTION.md` steps 4
+**Storage protection (2026-09-29).** Folder-watch intake without manifests is
+no longer parked: the user chose a broader "storage protection" feature and the
+architecture is agreed in `docs/architecture/STORAGE_PROTECTION.md` (design only,
+no code). The storage team will integrate to MASP's choice, so for their uploads
+the deferred API is the recommended path and the manifest the fallback. Next step
+is phase 1 (inventory, protection worker, light tier, Folder Scanning screens),
+started only on the user's go-ahead.
+
+The intranet server request was drafted with the user: Ubuntu Server 22.04 x86_64
+(the offline kits in `dist/` are `jammy-amd64`), 8 vCPU / 16 GB, 80 GB OS plus a
+200 GB data disk at `/srv/masp`, TLS from the internal CA (required because the
+Defender worker only talks HTTPS), plus a Windows Server 2022 Defender worker
+(4 vCPU / 8 GB / 80 GB, Defender active, cloud sample submission off, signatures
+from an internal source, outbound 443 to MASP only). Still to prepare: an offline
+Windows worker kit (Python installer and wheels including pywin32) and a Turkish
+worker manual in `kilavuz/`.
+
+**Parked for user decisions:** `MAPPED_SOURCE_INSPECTION.md` steps 4
 (explicit narrow coverage) and 5 (in-place reading); a "Page N" indicator for
 the API ledger; wiring Hash List into the API hash lookup.
 
