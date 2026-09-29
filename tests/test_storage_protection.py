@@ -318,6 +318,18 @@ class StorageCycleTests(StorageCycleCase):
         db.update_service_client(self.client_id, display_name="Storage", enabled=False)
         self.assertEqual(self.cycle(location).crawled, 0)
 
+    def test_invalid_stored_policy_stops_only_its_location(self) -> None:
+        self.write("data/tool.exe", PE)
+        location = self.location()
+        with db.connect() as connection:
+            connection.execute("UPDATE storage_locations SET policy_json = ? WHERE id = ?",
+                               ('{"default_tier": "sideways"}', location.id))
+        broken = inventory.get_location(location.id)
+        self.assertIn("invalid", broken.policy_error)
+        self.assertEqual([item.id for item in inventory.enabled_locations(["share"])], [location.id])
+        self.assertEqual(self.cycle(broken).crawled, 0)
+        self.assertEqual(self.objects(), {})
+
     def test_lease_keeps_a_second_worker_out(self) -> None:
         location = self.location()
         self.assertFalse(inventory.claim_location(location.id, "worker-b", 300, self.now + 10))

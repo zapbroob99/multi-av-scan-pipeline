@@ -38,6 +38,9 @@ class StorageLocation:
     policy: StoragePolicy
     policy_revision: int
     management_revision: int
+    # Set when the stored policy cannot be parsed; the location then refuses to
+    # run rather than falling back to defaults it was never configured with.
+    policy_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,12 +53,16 @@ class Runtime:
 
 
 def _location(row: Any) -> StorageLocation:
+    try:
+        policy, error = parse_policy(str(row["policy_json"])), None
+    except ValueError as exc:
+        policy, error = StoragePolicy(), f"The stored policy is invalid: {str(exc)[:200]}"
     return StorageLocation(
         id=int(row["id"]), name=str(row["name"]), service_client_id=int(row["service_client_id"]),
         scan_profile_id=int(row["scan_profile_id"]), backend_key=str(row["backend_key"]),
         prefix=str(row["prefix"]), mode=str(row["mode"]), enabled=bool(row["enabled"]),
-        policy=parse_policy(str(row["policy_json"])), policy_revision=int(row["policy_revision"]),
-        management_revision=int(row["management_revision"]))
+        policy=policy, policy_revision=int(row["policy_revision"]),
+        management_revision=int(row["management_revision"]), policy_error=error)
 
 
 def create_location(*, name: str, service_client_id: int, scan_profile_id: int, backend_key: str,

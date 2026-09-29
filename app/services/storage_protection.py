@@ -85,6 +85,8 @@ class CycleResult:
 
 def _authorize(location: StorageLocation) -> tuple[str, dict]:
     """Fail closed on anything that would make the location's access stale."""
+    if location.policy_error:
+        raise LocationUnavailable(location.policy_error)
     client = db.get_service_client(location.service_client_id)
     if client is None or not client.enabled:
         raise LocationUnavailable("The location's service client is missing or disabled.")
