@@ -39,6 +39,9 @@ class PilotBundleTests(unittest.TestCase):
 
         self.assertIn("docker-compose.pilot.yml", relative_paths)
         self.assertIn("deploy/pilot/install.sh", relative_paths)
+        # Networks without internet access load ClamAV signatures and settings from these.
+        self.assertIn("deploy/pilot/load_clamav_signatures.sh", relative_paths)
+        self.assertIn("clamav.env.example", relative_paths)
         self.assertIn("docs/deployment/PILOT.md", relative_paths)
         self.assertIn("docs/security/LDAP_AUTHENTICATION.md", relative_paths)
         # Apache-2.0 4(a)/4(d): every distributed copy carries these.

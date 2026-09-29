@@ -17,6 +17,7 @@ DIST_DIR = ROOT_DIR / "dist"
 ROOT_FILES = (
     ".dockerignore",
     ".env.pilot.example",
+    "clamav.env.example",
     "Dockerfile",
     # Apache-2.0 4(a)/4(d): every distributed copy must carry the License and
     # the NOTICE attribution, so both ship in the release bundle.

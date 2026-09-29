@@ -247,6 +247,11 @@ services:
       CLAMD_CONF_StreamMaxLength: ${MASP_CLAMD_STREAM_MAX_LENGTH:-64M}
       CLAMD_CONF_MaxFileSize: ${MASP_CLAMD_MAX_FILE_SIZE:-64M}
       CLAMD_CONF_MaxScanSize: ${MASP_CLAMD_MAX_SCAN_SIZE:-64M}
+    # Signature updates on networks without direct internet access: an internal
+    # mirror, a proxy, or no freshclam at all. See clamav.env.example.
+    env_file:
+      - path: ./clamav.env
+        required: false
     volumes:
       - clamav-db:/var/lib/clamav
     healthcheck:

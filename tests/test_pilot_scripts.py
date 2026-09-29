@@ -132,5 +132,62 @@ class PilotInstallSecretTests(unittest.TestCase):
             self.assertNotIn("MASP_SECRET_ENCRYPTION_KEY", errors)
 
 
+# Runs load_clamav_signatures.sh with a fake docker that records its calls.
+# $1: "full" (all three databases) or "partial"; $2: "running" or "stopped".
+SIGNATURE_HARNESS = r"""
+set -uo pipefail
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/bin" "$work/sigs"
+export FAKE_DOCKER_LOG="$work/docker.log" FAKE_RUNNING="$2"
+cat > "$work/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [[ "$*" == *" ps -q clamav"* ]]; then [[ "$FAKE_RUNNING" == running ]] && echo c-clam; exit 0; fi
+if [[ "$*" == *zPING* ]]; then printf 'PONG'; exit 0; fi
+if [[ "$*" == *zRELOAD* ]]; then printf 'RELOADING'; exit 0; fi
+exit 0
+FAKE
+chmod +x "$work/bin/docker"
+export PATH="$work/bin:$PATH"
+touch "$work/sigs/main.cvd" "$work/sigs/bytecode.cvd"
+[[ "$1" == full ]] && touch "$work/sigs/daily.cld"
+printf 'MASP_STORAGE_DIR=/tmp\n' > "$work/env"
+bash "$ROOT/deploy/pilot/load_clamav_signatures.sh" --env-file "$work/env" "$work/sigs" 2>&1
+echo "exit=$?"
+echo '--- docker'
+cat "$FAKE_DOCKER_LOG" 2>/dev/null
+"""
+
+
+@unittest.skipUnless(POSIX_BASH, "requires a POSIX bash (Git Bash on Windows)")
+class PilotSignatureLoaderTests(unittest.TestCase):
+    def run_loader(self, databases: str, state: str) -> tuple[str, list[str]]:
+        result = subprocess.run([BASH, "-c", SIGNATURE_HARNESS, "harness", databases, state],
+                                capture_output=True, text=True,
+                                env={"ROOT": ROOT.as_posix(), "PATH": os.environ["PATH"]}, timeout=60)
+        output, _, calls = result.stdout.partition("--- docker")
+        return output, calls.strip().splitlines()
+
+    def test_an_incomplete_set_is_refused_before_docker_is_touched(self):
+        output, calls = self.run_loader("partial", "stopped")
+        self.assertIn("missing daily.cvd or daily.cld", output)
+        self.assertIn("exit=1", output)
+        self.assertEqual(calls, [])
+
+    def test_databases_go_through_the_clamav_service_and_a_running_clamd_reloads(self):
+        output, calls = self.run_loader("full", "stopped")
+        self.assertIn("exit=0", output)
+        copy = next(call for call in calls if " run " in f" {call} ")
+        # The service's own image and volume, never the network or a host path guess.
+        self.assertIn("run --rm --no-deps -T --entrypoint sh", copy)
+        self.assertTrue(copy.split(" clamav -c ")[0].endswith(":/incoming:ro"), copy)
+        self.assertFalse(any("zRELOAD" in call for call in calls))
+        self.assertIn("clamd loads them when the stack starts", output)
+        output, calls = self.run_loader("full", "running")
+        self.assertIn("clamd is reloading the signatures.", output)
+        self.assertTrue(any("zRELOAD" in call for call in calls))
+
+
 if __name__ == "__main__":
     unittest.main()

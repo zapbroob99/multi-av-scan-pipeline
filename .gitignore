@@ -24,3 +24,6 @@ frontend/playwright-report/
 .claude/
 agent/
 agent.md
+
+# Operator-local ClamAV update settings (see clamav.env.example)
+clamav.env

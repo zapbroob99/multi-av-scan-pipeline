@@ -253,6 +253,33 @@ archive checksum then pins the transferred bytes.
 An image archive does not keep ClamAV signatures current. The target still
 needs an approved signature-update path before scanning production traffic.
 
+### ClamAV signatures without direct internet access
+
+freshclam in the clamav container contacts `database.clamav.net` by default.
+Where that is not allowed, copy `clamav.env.example` to `clamav.env` beside the
+compose file and keep one option; the clamav container alone reads it:
+
+- **Internal mirror** (recommended for an intranet): a host the security team
+  approves serves `main`, `daily` and `bytecode` over HTTP(S), refreshed from
+  outside (for example with Cisco Talos's `cvdupdate`). Set
+  `FRESHCLAM_CONF_PrivateMirror=http://<mirror>`.
+- **Proxy**: `FRESHCLAM_CONF_HTTPProxyServer` and `FRESHCLAM_CONF_HTTPProxyPort`.
+- **No update path**: `CLAMAV_NO_FRESHCLAMD=true`, and carry the databases in by
+  hand. On a connected machine collect `main.cvd`, `daily.cvd` or `daily.cld`,
+  `bytecode.cvd` and any `*.sign` files, then on the server run:
+
+  ```bash
+  ./deploy/pilot/load_clamav_signatures.sh --env-file .env.pilot /path/to/signatures
+  ```
+
+  Run it **before the first start**: clamd does not start without a database, so
+  `install.sh --wait` would time out. On a running stack the script asks clamd to
+  reload in place. Repeat at least weekly; System > Overview warns when the
+  signatures are two days old and fails the check at seven.
+
+The script verifies each database with `sigtool` before copying it, through the
+clamav service's own image and volume.
+
 ## Verify MASP
 
 Keep storage-client user traffic disabled during acceptance. First run the internal
