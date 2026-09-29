@@ -70,8 +70,14 @@ Commits after the last pushed `94f01ed`, oldest first:
   health check
 - `9a1206a` an unreadable stored policy stops only its own location
 - `4204904` Folder scanning console screens
-- this commit: `storage-protection` compose profile in all three compose files,
-  env examples, README/deployment/architecture docs, this handoff
+- `829b302` `storage-protection` compose profile in all three compose files,
+  env examples, README/deployment/architecture docs, handoff
+- `ef94971` release named `0.1.0-pilot.9`; bundle and MASP image in `dist/`
+  (PostgreSQL/ClamAV unchanged). The image passed a folder-scanning smoke run
+  as UID 10001 with a read-only root, no capabilities and a root-owned 755/644
+  share (3004 files crawled in 0.8 s, inspected in 9.8 s on a local volume).
+  The operator's Turkish upgrade and test steps are `kilavuz/04-pilot9-klasor-tarama.md`
+- this commit: handoff
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
 `sample_45mb.bin`, `sample_5mb.bin`, `skills-lock.json`. These are intentionally
