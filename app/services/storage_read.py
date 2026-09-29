@@ -80,13 +80,13 @@ class NamedRef(BaseModel):
 
 
 class StateCounts(BaseModel):
-    waiting: int = 0
-    changed: int = 0
-    light_passed: int = 0
-    light_detected: int = 0
-    full_pending: int = 0
-    unreadable: int = 0
-    removed: int = 0
+    waiting: int
+    changed: int
+    light_passed: int
+    light_detected: int
+    full_pending: int
+    unreadable: int
+    removed: int
 
 
 class LocationSummary(BaseModel):

@@ -3485,41 +3485,20 @@ export interface components {
         };
         /** StateCounts */
         StateCounts: {
-            /**
-             * Changed
-             * @default 0
-             */
-            changed?: number;
-            /**
-             * Full Pending
-             * @default 0
-             */
-            full_pending?: number;
-            /**
-             * Light Detected
-             * @default 0
-             */
-            light_detected?: number;
-            /**
-             * Light Passed
-             * @default 0
-             */
-            light_passed?: number;
-            /**
-             * Removed
-             * @default 0
-             */
-            removed?: number;
-            /**
-             * Unreadable
-             * @default 0
-             */
-            unreadable?: number;
-            /**
-             * Waiting
-             * @default 0
-             */
-            waiting?: number;
+            /** Changed */
+            changed: number;
+            /** Full Pending */
+            full_pending: number;
+            /** Light Detected */
+            light_detected: number;
+            /** Light Passed */
+            light_passed: number;
+            /** Removed */
+            removed: number;
+            /** Unreadable */
+            unreadable: number;
+            /** Waiting */
+            waiting: number;
         };
         /** StorageAccessUpdate */
         StorageAccessUpdate: {

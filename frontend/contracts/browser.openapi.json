@@ -5887,41 +5887,43 @@
       "StateCounts": {
         "properties": {
           "changed": {
-            "default": 0,
             "title": "Changed",
             "type": "integer"
           },
           "full_pending": {
-            "default": 0,
             "title": "Full Pending",
             "type": "integer"
           },
           "light_detected": {
-            "default": 0,
             "title": "Light Detected",
             "type": "integer"
           },
           "light_passed": {
-            "default": 0,
             "title": "Light Passed",
             "type": "integer"
           },
           "removed": {
-            "default": 0,
             "title": "Removed",
             "type": "integer"
           },
           "unreadable": {
-            "default": 0,
             "title": "Unreadable",
             "type": "integer"
           },
           "waiting": {
-            "default": 0,
             "title": "Waiting",
             "type": "integer"
           }
         },
+        "required": [
+          "waiting",
+          "changed",
+          "light_passed",
+          "light_detected",
+          "full_pending",
+          "unreadable",
+          "removed"
+        ],
         "title": "StateCounts",
         "type": "object"
       },

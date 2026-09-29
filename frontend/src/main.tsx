@@ -45,6 +45,11 @@ const Intake = lazy(() => import('./pages/intake'))
 const Delivery = lazy(() => import('./pages/delivery'))
 const About = lazy(() => import('./pages/about'))
 const ScanPrint = lazy(() => import('./pages/scan-print'))
+const Storage = lazy(() => import('./pages/storage'))
+const StorageLayout = lazy(() => import('./pages/storage').then(module => ({ default: module.StorageLayout })))
+const StorageLocation = lazy(() => import('./pages/storage-location'))
+const StorageLocationForm = lazy(() => import('./pages/storage-location-form'))
+const StorageFindings = lazy(() => import('./pages/storage-findings'))
 const client = new QueryClient({ defaultOptions: {
   queries: { staleTime: 15000, retry: false, refetchOnWindowFocus: false, refetchIntervalInBackground: false },
   mutations: { retry: false },
@@ -100,7 +105,7 @@ function App() {
     <WorkspaceNavigation admin={session.data.user.role === 'admin'} />
     <div className="sidebar-footer"><span>{session.data.user.username}<small>{session.data.user.role}</small></span><div className="sidebar-controls">
       <ThemeToggle /><Button variant="secondary" disabled={busy} onClick={logout} aria-label="Sign out"><LogOut size={17} /></Button></div></div>
-  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname.endsWith('/print') ? 'Printable report' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines/hash-list' ? 'Hash list' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="topbar-status">{session.data.user.role === 'admin' && <HealthIndicator />}<span className="offline-label">SELF-HOSTED</span></span></header>
+  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname.endsWith('/print') ? 'Printable report' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/storage') ? 'Folder scanning' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines/hash-list' ? 'Hash list' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="topbar-status">{session.data.user.role === 'admin' && <HealthIndicator />}<span className="offline-label">SELF-HOSTED</span></span></header>
     {error && <p role="alert" className="error"><ErrorMessage message={error} /></p>}
       <Suspense fallback={<p role="status">Loading page…</p>}><Routes>
         <Route path="/account" element={<Account session={session.data} onPasswordChanged={() => {
@@ -121,6 +126,13 @@ function App() {
         <Route path="/api-ledger/batches/:batchId" element={<BatchOverview key={location.pathname} automation />} />
         <Route path="/api-ledger" element={<ApiLedger session={session.data} />} />
         <Route path="/hash-scan" element={<HashScan session={session.data} />} />
+        <Route element={<StorageLayout />}>
+          <Route path="/storage" element={<Storage session={session.data} />} />
+          <Route path="/storage/findings" element={<StorageFindings />} />
+        </Route>
+        <Route path="/storage/locations/new" element={<StorageLocationForm key={location.pathname} session={session.data} />} />
+        <Route path="/storage/locations/:locationId/edit" element={<StorageLocationForm key={location.pathname} session={session.data} />} />
+        <Route path="/storage/locations/:locationId" element={<StorageLocation key={location.pathname} session={session.data} />} />
         <Route path="/scans/:scanId" element={<Report />} />
         <Route path="/scans/:scanId/results/:resultId" element={<EngineOutput />} />
         <Route path="/scans/:scanId/manage" element={<ScanManagement key={location.pathname} session={session.data} />} />

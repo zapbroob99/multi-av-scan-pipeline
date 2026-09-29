@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Activity, CircleUser, Hash, Info, LayoutDashboard, Menu, Plug, ScrollText, Server, SlidersHorizontal, Upload, Users, X } from 'lucide-react'
+import { Activity, CircleUser, FolderSearch, Hash, Info, LayoutDashboard, Menu, Plug, ScrollText, Server, SlidersHorizontal, Upload, Users, X } from 'lucide-react'
 import { Button } from './ui/button'
 
 export function WorkspaceNavigation({ admin }: { admin: boolean }) {
@@ -20,6 +20,7 @@ export function WorkspaceNavigation({ admin }: { admin: boolean }) {
         <NavLink className="nav-item" to="/dashboard"><LayoutDashboard size={18} />Dashboard</NavLink>
         <NavLink className="nav-item" to="/scans/new"><Upload size={18} />Submit sample</NavLink>
         <NavLink className="nav-item" to="/hash-scan"><Hash size={18} />Hash lookup</NavLink>
+        <NavLink className="nav-item" to="/storage"><FolderSearch size={18} />Folder scanning</NavLink>
       </div>
       <div className="nav-group"><p className="nav-label">Integrations</p>
         <NavLink className="nav-item" to="/api-ledger"><Activity size={18} />API ledger</NavLink>
