@@ -145,8 +145,15 @@ container runs this release.
 
 1. Push the commits above and open the PR to `main` -- **only with the user's
    explicit approval**.
-2. Package `0.1.0-pilot.8` (bundle + `docker save` image) for the pilot server
-   once the user asks; the operator applies it with the Turkish manual.
+2. `0.1.0-pilot.8` is packaged in `dist/` (git-ignored): the bundle, the MASP
+   image alone and a full image archive (MASP, PostgreSQL, ClamAV), current
+   ClamAV signatures, and an offline apt repository (nginx, cifs-utils, unzip)
+   for Ubuntu 22.04 beside the existing offline Docker packages. The user plans
+   a second, intranet installation with no internet access at all; ClamAV
+   signatures then come from an internal mirror, a proxy, or
+   `deploy/pilot/load_clamav_signatures.sh` (`f153ee5`). The pinned ClamAV image
+   ships a database from its build date (daily 28045, 2026-06-28), so load
+   current signatures before real traffic.
 3. On the pilot server (operator-run; the agent has no access): real network
    share manifest test once the firewall allows the pilot host -> file server TCP 445
    (one direction only), a backup/restore rehearsal on the real host, a
