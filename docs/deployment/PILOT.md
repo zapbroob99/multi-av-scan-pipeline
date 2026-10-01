@@ -146,7 +146,7 @@ the ICAP service with host networking.
 The release ZIP is generated from a fixed `masp-pilot` commit/tag:
 
 ```bash
-python3 tools/package_pilot_release.py --version 0.1.0-pilot.9
+python3 tools/package_pilot_release.py --version 0.1.0-pilot.10
 ```
 
 The bundle contains application source needed for the image build, the pilot
@@ -231,20 +231,20 @@ For an offline target, build and export images on an approved connected Linux
 builder using the exact release:
 
 ```bash
-docker build -t masp-pilot:0.1.0-pilot.9 .
+docker build -t masp-pilot:0.1.0-pilot.10 .
 docker pull 'postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb'
 docker pull 'clamav/clamav:stable@sha256:1b6443c4a7b456baa1abfaf9796815f8d21e2fb558dbaed5b682fd4552d8b0c3'
-docker save -o masp-pilot-0.1.0-pilot.9-images.tar \
-  masp-pilot:0.1.0-pilot.9 postgres:16-alpine clamav/clamav:stable
-sha256sum masp-pilot-0.1.0-pilot.9-images.tar > \
-  masp-pilot-0.1.0-pilot.9-images.tar.sha256
+docker save -o masp-pilot-0.1.0-pilot.10-images.tar \
+  masp-pilot:0.1.0-pilot.10 postgres:16-alpine clamav/clamav:stable
+sha256sum masp-pilot-0.1.0-pilot.10-images.tar > \
+  masp-pilot-0.1.0-pilot.10-images.tar.sha256
 ```
 
 On the target, verify and load the archive, then install without building:
 
 ```bash
-sha256sum -c masp-pilot-0.1.0-pilot.9-images.tar.sha256
-docker load -i masp-pilot-0.1.0-pilot.9-images.tar
+sha256sum -c masp-pilot-0.1.0-pilot.10-images.tar.sha256
+docker load -i masp-pilot-0.1.0-pilot.10-images.tar
 ./deploy/pilot/install.sh --env-file .env.pilot --no-build
 ```
 
@@ -256,6 +256,30 @@ archive checksum then pins the transferred bytes.
 
 An image archive does not keep ClamAV signatures current. The target still
 needs an approved signature-update path before scanning production traffic.
+
+#### One-command first installation without internet access
+
+For a fresh Ubuntu 22.04 x86_64 host, `deploy/pilot/offline_install.sh` performs
+the whole offline installation from a media directory holding the Docker and
+tools package archives, the `-images.tar` archive, a `clamav-signatures-<date>.tar`
+and a `.sha256` beside each:
+
+```bash
+deploy/pilot/offline_install.sh --media /tmp/masp-media \
+  --server-name masp.example.internal --server-ip 10.0.0.10 --icap-clients 10.0.0.50
+```
+
+It verifies every checksum, installs Docker, nginx, cifs-utils and unzip from the
+carried packages, loads the images, generates `.env.pilot` with fresh secrets
+(written to `/root/masp-install-credentials.txt`, root only), turns freshclam off
+unless `--clamav-mirror` is given, loads the carried signatures, runs
+`install.sh --no-build`, narrows `MASP_FORWARDED_ALLOW_IPS` to the Docker gateway,
+configures nginx with `--cert/--key` or a temporary self-signed certificate plus
+a CSR for the institution CA, restricts ICAP to the listed clients in the
+`DOCKER-USER` chain through a `masp-firewall` systemd unit, and finishes with
+`verify.sh`. Missing values are asked interactively unless `--yes` is given. It
+can be rerun: finished steps are skipped and an existing `.env.pilot` is kept.
+It does not enable UFW, so SSH access is never cut by the installer.
 
 ### ClamAV signatures without direct internet access
 
