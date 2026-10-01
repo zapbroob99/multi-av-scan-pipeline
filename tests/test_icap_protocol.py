@@ -179,5 +179,62 @@ class IcapResponseBuildTests(unittest.TestCase):
         self.assertFalse(protocol.encapsulated_well_formed("req-hdr=0, req-hdr=1, req-body=2", "REQMOD"))  # duplicate
 
 
+class IcapFileInfoTests(unittest.TestCase):
+    """The encapsulated HTTP message names the file; ICAP itself does not."""
+
+    def info(self, header: str, body: bytes = b""):
+        return protocol.encapsulated_file_info(header.encode("utf-8"), body)
+
+    def test_respmod_takes_the_download_path(self):
+        self.assertEqual(self.info(
+            "GET /indir/rapor%202026.pdf?surum=2 HTTP/1.1\r\nHost: fil\r\n\r\n"
+            "HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\n\r\n"),
+            ("rapor 2026.pdf", "application/pdf"))
+
+    def test_extended_disposition_wins_and_keeps_non_ascii(self):
+        self.assertEqual(self.info(
+            "GET /download?id=5 HTTP/1.1\r\nHost: fil\r\n\r\n"
+            "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"fallback.xlsx\"; "
+            "filename*=UTF-8''B%C3%BCt%C3%A7e%20%C5%9Eubat.xlsx\r\n"
+            "Content-Type: application/vnd.ms-excel; charset=x\r\n\r\n"),
+            ("Bütçe Şubat.xlsx", "application/vnd.ms-excel"))
+
+    def test_disposition_is_reduced_to_a_bare_name(self):
+        self.assertEqual(self.info(
+            "HTTP/1.1 200 OK\r\nContent-Disposition: inline; filename=../../etc/passwd\r\n\r\n")[0], "passwd")
+        self.assertEqual(self.info(
+            "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"..\\\\x\\\\a.exe\"\r\n\r\n")[0], "a.exe")
+        self.assertEqual(self.info(
+            "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"say \\\"hi\\\".txt\"\r\n\r\n")[0],
+            'say "hi".txt')
+
+    def test_multipart_upload_uses_the_part_file_name(self):
+        body = (b"--XX\r\nContent-Disposition: form-data; name=\"f\"; filename=\"teklif.docx\"\r\n"
+                b"Content-Type: x/y\r\n\r\nDATA\r\n--XX--\r\n")
+        self.assertEqual(self.info(
+            "POST /api/upload HTTP/1.1\r\nContent-Type: multipart/form-data; boundary=XX\r\n\r\n", body),
+            ("teklif.docx", ""))
+
+    def test_an_endpoint_path_is_not_a_file_name(self):
+        self.assertEqual(self.info(
+            "POST /api/upload HTTP/1.1\r\nContent-Type: application/octet-stream\r\n\r\n", b"x"),
+            ("", "application/octet-stream"))
+        self.assertEqual(self.info("PUT /hello.txt HTTP/1.1\r\nHost: h\r\n\r\n")[0], "hello.txt")
+
+    def test_nothing_usable_yields_empty_values(self):
+        self.assertEqual(protocol.encapsulated_file_info(b"", b""), ("", ""))
+        self.assertEqual(self.info(
+            "HTTP/1.1 200 OK\r\nContent-Type: not a type\r\nContent-Disposition: attachment\r\n\r\n"), ("", ""))
+
+    def test_control_characters_and_length_are_bounded(self):
+        self.assertEqual(self.info(
+            "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename*=UTF-8''a%0Ab%00c.pdf\r\n\r\n")[0],
+            "abc.pdf")
+        long_name = "x" * 500 + ".pdf"
+        shortened = self.info(f"GET /{long_name} HTTP/1.1\r\n\r\n")[0]
+        self.assertEqual(len(shortened), 200)
+        self.assertTrue(shortened.endswith(".pdf"))
+
+
 if __name__ == "__main__":
     unittest.main()

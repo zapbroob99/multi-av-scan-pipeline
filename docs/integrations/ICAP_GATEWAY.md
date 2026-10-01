@@ -24,6 +24,16 @@ replace the REST API.
 ICAP-submitted scans appear in the **API Ledger** (`source=icap`), alongside
 REST submissions.
 
+ICAP carries no file name of its own, so MASP takes it from the encapsulated
+HTTP message: the `Content-Disposition` file name of the response, then of the
+request (RFC 6266 `filename*` first), then the first part of a multipart upload
+body, then the last segment of the request URL when it has an extension (an
+upload endpoint such as `POST /api/upload` names the endpoint, not the file).
+Without any of these the sample is named `icap_reqmod.bin` or
+`icap_respmod.bin`. The name is client-supplied: it is reduced to a bare file
+name, bounded, and used only for display and the `file_type` extension check.
+The content type comes from the response (RESPMOD) or request (REQMOD) header.
+
 ## Decision mapping
 
 | Scan outcome | ICAP reply |

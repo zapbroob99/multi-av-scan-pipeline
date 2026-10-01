@@ -397,8 +397,11 @@ async def handle_modification(
         await respond_fail_action(writer, head, config, f"unreadable body: {exc!r}")
         return False
 
-    filename = f"icap_{head.method.lower()}.bin"
-    action = await scan_and_decide(filename, "application/octet-stream", data, config)
+    # The encapsulated HTTP message names the file (download path, disposition,
+    # multipart part); without one the method keeps naming it as before.
+    named, content_type = protocol.encapsulated_file_info(http_header, data)
+    filename = named or f"icap_{head.method.lower()}.bin"
+    action = await scan_and_decide(filename, content_type or "application/octet-stream", data, config)
 
     if action == "allow":
         if client_accepts_204(head):

@@ -249,6 +249,29 @@ class IcapServerTests(unittest.TestCase):
         self.assertTrue(out.startswith(b"ICAP/1.0 400 Bad Request\r\n"))
         self.assertIn(b"ISTag:", out)
 
+    def _stored_name(self, message: bytes) -> tuple[str, str]:
+        decide = AsyncMock(return_value="allow")
+
+        async def _run() -> None:
+            reader = await _make_reader(message)
+            await server.handle_connection(reader, FakeWriter(), self.config)
+
+        with patch.object(server, "scan_and_decide", new=decide):
+            asyncio.run(_run())
+        return decide.call_args.args[0], decide.call_args.args[1]
+
+    def test_respmod_names_the_sample_from_the_download(self) -> None:
+        request = b"GET /indir/rapor%20son.pdf HTTP/1.1\r\nHost: fil\r\n\r\n"
+        response = b"HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: 4\r\n\r\n"
+        head = (b"RESPMOD icap://s/masp ICAP/1.0\r\nHost: s\r\nAllow: 204\r\nEncapsulated: req-hdr=0, res-hdr="
+                + str(len(request)).encode() + b", res-body=" + str(len(request) + len(response)).encode()
+                + b"\r\n\r\n")
+        message = head + request + response + protocol.encode_chunked(b"%PDF")
+        self.assertEqual(self._stored_name(message), ("rapor son.pdf", "application/pdf"))
+
+    def test_upload_endpoint_without_a_file_name_keeps_the_method_name(self) -> None:
+        self.assertEqual(self._stored_name(reqmod_message(b"x"))[0], "icap_reqmod.bin")
+
     def test_allowlist_rejects_unlisted_ip(self) -> None:
         config = IcapConfig(allowed_ips=frozenset({"10.0.0.1"}))
         writer = FakeWriter(peer=("192.168.1.9", 4444))

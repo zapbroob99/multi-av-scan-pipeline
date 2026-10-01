@@ -7,6 +7,8 @@ The async read/write loop lives in ``app.icap.server``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+from urllib.parse import unquote, urlsplit
 
 ICAP_VERSION = "ICAP/1.0"
 DEFAULT_ISTAG = "MASP-ICAP-1"
@@ -341,3 +343,108 @@ def build_bad_request(istag: str = DEFAULT_ISTAG) -> bytes:
 def build_continue() -> bytes:
     """100 Continue: ask the client to send the rest of a previewed body."""
     return b"ICAP/1.0 100 Continue\r\n\r\n"
+
+
+# --- File identity from the encapsulated HTTP message ------------------------
+#
+# ICAP carries no file name of its own; the encapsulated HTTP message does. All
+# of it is client-supplied, so it only names the sample for operators and the
+# file_type extension check; it never decides anything by itself.
+
+_MAX_FILENAME = 200
+_MULTIPART_PROBE = 64 * 1024
+_REQUEST_LINE = re.compile(r"^[A-Z]+ (\S+) HTTP/\d")
+_EXTENDED_FILENAME = re.compile(r"filename\*\s*=\s*([^;]+)", re.IGNORECASE)
+_PLAIN_FILENAME = re.compile(r'filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))', re.IGNORECASE)
+_MULTIPART_DISPOSITION = re.compile(rb"(?im)^content-disposition:[^\r\n]*filename\*?\s*=[^\r\n]*")
+_MEDIA_TYPE = re.compile(r"^[A-Za-z0-9!#$&^_.+-]{1,64}/[A-Za-z0-9!#$&^_.+-]{1,64}$")
+
+
+@dataclass(frozen=True)
+class _HttpBlock:
+    request_target: str | None
+    is_response: bool
+    headers: dict[str, str]
+
+
+def _http_blocks(http_header: bytes) -> list[_HttpBlock]:
+    blocks = []
+    for raw in http_header.decode("latin-1").split("\r\n\r\n"):
+        lines = [line for line in raw.split("\r\n") if line]
+        if not lines:
+            continue
+        match = _REQUEST_LINE.match(lines[0])
+        headers: dict[str, str] = {}
+        for line in lines[1:]:
+            name, sep, value = line.partition(":")
+            if sep:
+                headers.setdefault(name.strip().lower(), value.strip())
+        blocks.append(_HttpBlock(match.group(1) if match else None,
+                                 lines[0].startswith("HTTP/"), headers))
+    return blocks
+
+
+def _clean_filename(value: str) -> str:
+    # Keep the last path component only, without control characters.
+    name = re.split(r"[\\/]", value.strip())[-1]
+    name = "".join(ch for ch in name if ch.isprintable()).strip().strip(".")
+    if name in {"", ".", ".."}:
+        return ""
+    if len(name) > _MAX_FILENAME:
+        # Shorten the stem, never the extension: the file_type check reads it.
+        stem, dot, extension = name.rpartition(".")
+        if dot and stem and len(extension) <= 16:
+            return stem[:_MAX_FILENAME - len(extension) - 1] + "." + extension
+        return name[:_MAX_FILENAME]
+    return name
+
+
+def filename_from_disposition(value: str) -> str:
+    """The file name in a Content-Disposition value; RFC 6266 filename* wins."""
+    extended = _EXTENDED_FILENAME.search(value)
+    if extended:
+        raw = extended.group(1).strip().strip('"')
+        charset, _, rest = raw.partition("'")
+        _language, _, encoded = rest.partition("'")
+        if encoded:
+            try:
+                return _clean_filename(unquote(encoded, encoding=charset or "utf-8", errors="replace"))
+            except LookupError:
+                return _clean_filename(unquote(encoded, errors="replace"))
+    plain = _PLAIN_FILENAME.search(value)
+    if plain:
+        quoted, bare = plain.group(1), plain.group(2)
+        return _clean_filename(quoted.replace('\\"', '"') if quoted is not None else (bare or "").strip())
+    return ""
+
+
+def encapsulated_file_info(http_header: bytes, body: bytes = b"") -> tuple[str, str]:
+    """Best-effort (filename, content_type) of the scanned object; either may be "".
+
+    Order: Content-Disposition of the response then the request, the first
+    part of a multipart upload body, then the last segment of the request URL
+    when it looks like a file name. An upload endpoint such as POST /api/upload
+    names the endpoint, not the file, so a URL segment without an extension is
+    not used.
+    """
+    blocks = _http_blocks(http_header)
+    response = next((block for block in blocks if block.is_response), None)
+    request = next((block for block in blocks if block.request_target is not None), None)
+    filename = ""
+    for block in (response, request):
+        if block is not None and not filename and "content-disposition" in block.headers:
+            filename = filename_from_disposition(block.headers["content-disposition"])
+    request_type = request.headers.get("content-type", "") if request else ""
+    if not filename and request_type.lower().startswith("multipart/") and body:
+        match = _MULTIPART_DISPOSITION.search(body[:_MULTIPART_PROBE])
+        if match:
+            filename = filename_from_disposition(match.group(0).decode("utf-8", "replace"))
+    if not filename and request is not None:
+        segment = _clean_filename(unquote(urlsplit(request.request_target).path, errors="replace"))
+        if "." in segment:
+            filename = segment
+    source = response if response is not None else request
+    content_type = (source.headers.get("content-type", "") if source else "").split(";", 1)[0].strip()
+    if not _MEDIA_TYPE.match(content_type) or content_type.lower().startswith("multipart/"):
+        content_type = ""
+    return filename, content_type
