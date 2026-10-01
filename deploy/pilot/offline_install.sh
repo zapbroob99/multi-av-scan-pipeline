@@ -114,6 +114,32 @@ random_token() {
     printf '%s' "${token:0:$1}"
 }
 
+package_installed() {
+    [[ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" == "install ok installed" ]]
+}
+
+install_from_local_repo() {
+    # install_from_local_repo ARCHIVE DIRECTORY PACKAGE...
+    # The archive holds a flat apt repository. apt installs only what is missing
+    # and never downgrades a package the host already has.
+    local archive="$1" directory="$2" list
+    shift 2
+    rm -rf "/opt/$directory"
+    tar -xf "$archive" -C /opt
+    [[ -f "/opt/$directory/Packages" ]] || die "$(basename "$archive") is not an apt repository"
+    list="/etc/apt/sources.list.d/masp-$directory.list"
+    echo "deb [trusted=yes] file:/opt/$directory ./" > "$list"
+    local apt_options=(-o "Dir::Etc::sourcelist=$list" -o "Dir::Etc::sourceparts=-" -o "APT::Get::List-Cleanup=0")
+    apt-get "${apt_options[@]}" update -qq || { rm -f "$list"; die "apt could not read $(basename "$archive")"; }
+    # Completes an interrupted earlier attempt; a no-op on a healthy system.
+    DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y -qq -f --no-install-recommends >/dev/null || true
+    if ! DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y -qq --no-install-recommends "$@" >/dev/null; then
+        rm -f "$list"
+        die "apt could not install $* from $(basename "$archive"); run the command again to see apt's reason"
+    fi
+    rm -f "$list"
+}
+
 wait_for_docker() {
     local i
     for i in $(seq 1 60); do
@@ -127,14 +153,16 @@ wait_for_docker() {
 step "Checking the host and the carried files"
 [[ -f "$BUNDLE_DIR/RELEASE.json" && -f "$BUNDLE_DIR/docker-compose.pilot.yml" ]] || \
     die "run this script from an extracted release bundle"
-VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$BUNDLE_DIR/RELEASE.json")"
-[[ -n "$VERSION" ]] || die "cannot read the release version from RELEASE.json"
-note "Release: $VERSION ($BUNDLE_DIR)"
+RELEASE_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$BUNDLE_DIR/RELEASE.json")"
+[[ -n "$RELEASE_VERSION" ]] || die "cannot read the release version from RELEASE.json"
+note "Release: $RELEASE_VERSION ($BUNDLE_DIR)"
 
-# shellcheck disable=SC1091
-. /etc/os-release
-if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "22.04" || "$(uname -m)" != "x86_64" ]]; then
-    die "the offline packages are for Ubuntu 22.04 x86_64; this host is ${PRETTY_NAME:-unknown} $(uname -m)"
+# Read in a subshell: os-release defines VERSION, NAME and ID of its own.
+os_id="$(. /etc/os-release && printf '%s' "${ID:-}")"
+os_version="$(. /etc/os-release && printf '%s' "${VERSION_ID:-}")"
+os_name="$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-unknown}")"
+if [[ "$os_id" != "ubuntu" || "$os_version" != "22.04" || "$(uname -m)" != "x86_64" ]]; then
+    die "the offline packages are for Ubuntu 22.04 x86_64; this host is $os_name $(uname -m)"
 fi
 for command in sha256sum tar openssl dpkg apt-get sed awk; do
     command -v "$command" >/dev/null || die "required command missing: $command"
@@ -145,7 +173,7 @@ done
 MEDIA="$(cd "$MEDIA" && pwd)"
 DOCKER_TAR="$MEDIA/masp-docker-offline-jammy-amd64.tar"
 TOOLS_TAR="$MEDIA/masp-tools-offline-jammy-amd64.tar"
-IMAGES_TAR="$MEDIA/masp-pilot-$VERSION-images.tar"
+IMAGES_TAR="$MEDIA/masp-pilot-$RELEASE_VERSION-images.tar"
 SIGNATURE_TAR="$(find "$MEDIA" -maxdepth 1 -name 'clamav-signatures-*.tar' | sort | tail -n 1)"
 for file in "$DOCKER_TAR" "$TOOLS_TAR" "$IMAGES_TAR" "$SIGNATURE_TAR"; do
     [[ -n "$file" && -f "$file" ]] || die "missing carried file: ${file:-clamav-signatures-<date>.tar} (see the guide's file list)"
@@ -177,14 +205,12 @@ note "Server: $SERVER_NAME ($SERVER_IP); ICAP clients: ${ICAP_CLIENTS:-none}"
 
 # ---------------------------------------------------------------------------
 step "Docker Engine"
-if command -v docker >/dev/null 2>&1; then
+if package_installed docker-ce && package_installed docker-compose-plugin; then
     note "Already installed: $(docker --version)"
 else
-    workdir="$(mktemp -d)"
-    tar -xf "$DOCKER_TAR" -C "$workdir"
-    # The second pass settles packages whose dependencies were unpacked later.
-    dpkg -i "$workdir"/docker-offline/*.deb >/dev/null 2>&1 || dpkg -i "$workdir"/docker-offline/*.deb
-    rm -rf "$workdir"
+    # Also repairs a half-configured earlier attempt: apt adds what was missing.
+    install_from_local_repo "$DOCKER_TAR" docker-offline docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
     note "Installed: $(docker --version)"
 fi
 restart_docker=0
@@ -214,25 +240,18 @@ note "$(docker compose version)"
 step "nginx, cifs-utils and unzip"
 missing=()
 for package in nginx cifs-utils unzip; do
-    dpkg -s "$package" >/dev/null 2>&1 || missing+=("$package")
+    package_installed "$package" || missing+=("$package")
 done
 if [[ ${#missing[@]} -eq 0 ]]; then
     note "Already installed"
 else
-    rm -rf /opt/tools-offline
-    tar -xf "$TOOLS_TAR" -C /opt
-    list=/etc/apt/sources.list.d/masp-offline.list
-    echo "deb [trusted=yes] file:/opt/tools-offline ./" > "$list"
-    apt_options=(-o "Dir::Etc::sourcelist=$list" -o "Dir::Etc::sourceparts=-" -o "APT::Get::List-Cleanup=0")
-    apt-get "${apt_options[@]}" update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y -qq "${missing[@]}" >/dev/null
-    rm -f "$list"
+    install_from_local_repo "$TOOLS_TAR" tools-offline "${missing[@]}"
     note "Installed: ${missing[*]}"
 fi
 
 # ---------------------------------------------------------------------------
 step "Container images"
-images=("masp-pilot:$VERSION" "postgres:16-alpine" "clamav/clamav:stable")
+images=("masp-pilot:$RELEASE_VERSION" "postgres:16-alpine" "clamav/clamav:stable")
 need_load=0
 for image in "${images[@]}"; do
     docker image inspect "$image" >/dev/null 2>&1 || need_load=1
@@ -271,7 +290,7 @@ else
     chmod 600 "$tmp_env"
     admin_password="$(random_token 20)"
     api_token="$(random_token 48)"
-    set_env MASP_IMAGE "masp-pilot:$VERSION" "$tmp_env"
+    set_env MASP_IMAGE "masp-pilot:$RELEASE_VERSION" "$tmp_env"
     # Loaded images carry tags, not registry digests.
     set_env MASP_POSTGRES_IMAGE postgres:16-alpine "$tmp_env"
     set_env MASP_CLAMAV_IMAGE clamav/clamav:stable "$tmp_env"
@@ -302,7 +321,7 @@ else
     fi
     mv "$tmp_env" "$ENV_FILE"
     (umask 077; {
-        printf 'MASP installation %s on %s\n\n' "$VERSION" "$(date -u +%Y-%m-%d)"
+        printf 'MASP installation %s on %s\n\n' "$RELEASE_VERSION" "$(date -u +%Y-%m-%d)"
         printf 'Console:        https://%s/console/\n' "$SERVER_NAME"
         printf 'Console user:   admin\n'
         printf 'Admin password: %s   (change it after the first sign-in)\n' "$admin_password"
@@ -471,7 +490,7 @@ fi
 step "Acceptance checks"
 ./deploy/pilot/verify.sh --env-file "$ENV_FILE"
 
-printf '\n===== MASP %s is installed =====\n' "$VERSION"
+printf '\n===== MASP %s is installed =====\n' "$RELEASE_VERSION"
 printf '  Console:      https://%s/console/  (user admin)\n' "$SERVER_NAME"
 [[ ! -f "$CREDENTIALS_FILE" ]] || printf '  Password:     cat %s\n' "$CREDENTIALS_FILE"
 [[ ${#ICAP_LIST[@]} -eq 0 ]] || printf '  ICAP:         icap://%s:1344/masp (REQMOD, preview off)\n' "$SERVER_IP"
