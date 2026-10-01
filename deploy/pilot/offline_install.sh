@@ -133,10 +133,15 @@ install_from_local_repo() {
     apt-get "${apt_options[@]}" update -qq || { rm -f "$list"; die "apt could not read $(basename "$archive")"; }
     # Completes an interrupted earlier attempt; a no-op on a healthy system.
     DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y -qq -f --no-install-recommends >/dev/null || true
-    if ! DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y -qq --no-install-recommends "$@" >/dev/null; then
+    local output
+    output="$(mktemp)"
+    if ! DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y -qq --no-install-recommends "$@" >"$output" 2>&1; then
         rm -f "$list"
-        die "apt could not install $* from $(basename "$archive"); run the command again to see apt's reason"
+        tail -n 25 "$output"
+        rm -f "$output"
+        die "apt could not install $* from $(basename "$archive"); the lines above give apt's reason"
     fi
+    rm -f "$output"
     rm -f "$list"
 }
 
@@ -248,7 +253,19 @@ done
 if [[ ${#missing[@]} -eq 0 ]]; then
     note "Already installed"
 else
+    # Do not let the package start nginx: its default site also listens on [::]:80
+    # and fails on hosts with IPv6 disabled, which fails the whole installation.
+    # Our own site (step 10) listens on IPv4 only and replaces the default.
+    created_policy=0
+    if [[ ! -e /usr/sbin/policy-rc.d ]]; then
+        printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
+        chmod 755 /usr/sbin/policy-rc.d
+        created_policy=1
+    fi
+    rm -f /etc/nginx/sites-enabled/default
     install_from_local_repo "$TOOLS_TAR" tools-offline "${missing[@]}"
+    rm -f /etc/nginx/sites-enabled/default
+    [[ $created_policy -eq 0 ]] || rm -f /usr/sbin/policy-rc.d
     note "Installed: ${missing[*]}"
 fi
 
