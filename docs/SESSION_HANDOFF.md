@@ -89,6 +89,10 @@ Commits after the last pushed `94f01ed`, oldest first:
   assumed nftables, dbus-user-session and libglib were present). Carry folders
   `dist/<carry folder>/` and `dist/deneme-client/`; operator guide
   `kilavuz/05 (operator guide)`
+- `bc2820a` handoff; then the installer gained Ubuntu 24.04 support (the intranet host runs
+  24.04.5). `dist/` now also has `masp-docker-offline-noble-amd64.tar` and
+  `masp-tools-offline-noble-amd64.tar`; the 24.04 install was rehearsed end to end
+  the same way, with the pilot.10 ZIP rebuilt (same version, not yet installed anywhere)
 - this commit: handoff
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
