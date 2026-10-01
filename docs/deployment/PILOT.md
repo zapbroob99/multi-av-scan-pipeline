@@ -259,9 +259,9 @@ needs an approved signature-update path before scanning production traffic.
 
 #### One-command first installation without internet access
 
-For a fresh Ubuntu 22.04 x86_64 host, `deploy/pilot/offline_install.sh` performs
+For a fresh Ubuntu 22.04 or 24.04 x86_64 host, `deploy/pilot/offline_install.sh` performs
 the whole offline installation from a media directory holding the Docker and
-tools package archives, the `-images.tar` archive, a `clamav-signatures-<date>.tar`
+tools package archives built for that release (`jammy` or `noble`), the `-images.tar` archive, a `clamav-signatures-<date>.tar`
 and a `.sha256` beside each:
 
 ```bash

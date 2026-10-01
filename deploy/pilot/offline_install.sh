@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# First installation of the MASP pilot on an Ubuntu 22.04 host with no internet
+# First installation of the MASP pilot on an Ubuntu 22.04 or 24.04 host with no internet
 # access. Everything comes from a media directory carried to the host:
 #
-#   masp-docker-offline-jammy-amd64.tar   Docker Engine and Compose packages
-#   masp-tools-offline-jammy-amd64.tar    nginx, cifs-utils, unzip (local apt repo)
+#   masp-docker-offline-<codename>-amd64.tar  Docker Engine and Compose packages
+#   masp-tools-offline-<codename>-amd64.tar   nginx, cifs-utils, unzip
 #   masp-pilot-<version>-images.tar       MASP, PostgreSQL and ClamAV images
 #   clamav-signatures-<date>.tar          current ClamAV databases
 #   and a .sha256 file beside each of them.
@@ -161,9 +161,12 @@ note "Release: $RELEASE_VERSION ($BUNDLE_DIR)"
 os_id="$(. /etc/os-release && printf '%s' "${ID:-}")"
 os_version="$(. /etc/os-release && printf '%s' "${VERSION_ID:-}")"
 os_name="$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-unknown}")"
-if [[ "$os_id" != "ubuntu" || "$os_version" != "22.04" || "$(uname -m)" != "x86_64" ]]; then
-    die "the offline packages are for Ubuntu 22.04 x86_64; this host is $os_name $(uname -m)"
-fi
+case "$os_id/$os_version/$(uname -m)" in
+    ubuntu/22.04/x86_64) CODENAME=jammy ;;
+    ubuntu/24.04/x86_64) CODENAME=noble ;;
+    *) die "the offline packages are for Ubuntu 22.04 or 24.04 x86_64; this host is $os_name $(uname -m)" ;;
+esac
+note "Host: $os_name (packages: $CODENAME)"
 for command in sha256sum tar openssl dpkg apt-get sed awk; do
     command -v "$command" >/dev/null || die "required command missing: $command"
 done
@@ -171,8 +174,8 @@ done
 [[ -n "$MEDIA" ]] || die "pass --media with the directory that holds the carried files"
 [[ -d "$MEDIA" ]] || die "media directory not found: $MEDIA"
 MEDIA="$(cd "$MEDIA" && pwd)"
-DOCKER_TAR="$MEDIA/masp-docker-offline-jammy-amd64.tar"
-TOOLS_TAR="$MEDIA/masp-tools-offline-jammy-amd64.tar"
+DOCKER_TAR="$MEDIA/masp-docker-offline-$CODENAME-amd64.tar"
+TOOLS_TAR="$MEDIA/masp-tools-offline-$CODENAME-amd64.tar"
 IMAGES_TAR="$MEDIA/masp-pilot-$RELEASE_VERSION-images.tar"
 SIGNATURE_TAR="$(find "$MEDIA" -maxdepth 1 -name 'clamav-signatures-*.tar' | sort | tail -n 1)"
 for file in "$DOCKER_TAR" "$TOOLS_TAR" "$IMAGES_TAR" "$SIGNATURE_TAR"; do
