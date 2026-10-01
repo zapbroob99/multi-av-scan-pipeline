@@ -74,6 +74,9 @@ done
 [[ $EUID -eq 0 ]] || { echo "Run as root (sudo -i first)." >&2; exit 1; }
 mkdir -p "$(dirname "$LOG_FILE")"
 exec > >(tee -a "$LOG_FILE") 2>&1
+# Files this script creates for nginx, docker and the containers must be
+# world-readable; secrets get their own stricter modes below.
+umask 022
 printf '\n===== MASP offline install %s =====\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 has_systemd() { [[ -d /run/systemd/system ]]; }
@@ -294,6 +297,10 @@ if [[ -z "$(ls -A "$DATA_ROOT/rules")" ]]; then
     note "Copied the bundled YARA rules to $DATA_ROOT/rules"
 fi
 chmod +x "$BUNDLE_DIR"/deploy/pilot/*.sh
+# Hardened hosts often run root with umask 027 or 077, so the extracted bundle
+# is readable by root alone. tools/ is mounted into the containers, which run
+# as an unprivileged user; .env.pilot stays root-only (install.sh sets 600).
+chmod -R go+rX "$BUNDLE_DIR/tools"
 ln -sfn "$BUNDLE_DIR" /opt/masp/current
 printf '#!/usr/bin/env bash\ncd /opt/masp/current && exec docker compose -p %s -f docker-compose.pilot.yml --env-file .env.pilot "$@"\n' \
     "$PROJECT" > /usr/local/bin/masp
