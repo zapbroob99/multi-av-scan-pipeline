@@ -77,6 +77,18 @@ Commits after the last pushed `94f01ed`, oldest first:
   as UID 10001 with a read-only root, no capabilities and a root-owned 755/644
   share (3004 files crawled in 0.8 s, inspected in 9.8 s on a local volume).
   The operator's Turkish upgrade and test steps are `kilavuz/04-pilot9-klasor-tarama.md`
+- `484ebd1` handoff for pilot.9
+- `dabb087`, `f8d248c`, and the following fix commit: `deploy/pilot/offline_install.sh`,
+  a one-command first installation for an Ubuntu 22.04 host with no internet
+  access; release named `0.1.0-pilot.10`. Rehearsed end to end on 2026-10-01 in an
+  isolated Docker network (fresh 22.04 server, allowed and unlisted ICAP clients):
+  verify.sh passed, ICAP saw the client's real address, the DOCKER-USER rule
+  dropped the unlisted host, and a rerun and an interrupted Docker install both
+  recovered. The rehearsal also replaced `dist/masp-docker-offline-jammy-amd64.tar`
+  with a flat apt repository carrying the full dependency closure (the old one
+  assumed nftables, dbus-user-session and libglib were present). Carry folders
+  `dist/<carry folder>/` and `dist/deneme-client/`; operator guide
+  `kilavuz/05 (operator guide)`
 - this commit: handoff
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
