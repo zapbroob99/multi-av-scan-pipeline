@@ -287,7 +287,8 @@ done
 
 # ---------------------------------------------------------------------------
 step "Directories and the masp command"
-mkdir -p "$DATA_ROOT/storage" "$DATA_ROOT/rules" "$DATA_ROOT/backups" /opt/masp
+# /usr/local/bin and /usr/local/sbin are absent on some hardened images.
+mkdir -p "$DATA_ROOT/storage" "$DATA_ROOT/rules" "$DATA_ROOT/backups" /opt/masp /usr/local/bin /usr/local/sbin
 if [[ -z "$(ls -A "$DATA_ROOT/rules")" ]]; then
     cp -a "$BUNDLE_DIR/rules/." "$DATA_ROOT/rules/"
     note "Copied the bundled YARA rules to $DATA_ROOT/rules"
