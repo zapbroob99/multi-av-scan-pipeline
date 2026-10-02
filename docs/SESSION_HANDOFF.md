@@ -1,6 +1,6 @@
 # MASP session handoff
 
-Updated: 2026-10-02, after the first intranet installation. This is a workspace
+Updated: 2026-10-02, after the intranet upgrade to pilot.13. This is a workspace
 checkpoint, not evidence of a deployment.
 
 ## Start here
@@ -211,108 +211,84 @@ immediately surfaced a real problem: ClamAV had not updated for three days
 not report, so an upgraded server shows ICAP as "not in use" until the icap
 container runs this release.
 
-**Intranet host (2026-10-02).** A second, fully offline installation runs
-`0.1.0-pilot.10` on Ubuntu 24.04.5 (hardened image: IPv6 off, strict root umask,
-no `/usr/local/bin`, SSH port forwarding disabled). Operator guide and carry
-folders live only in git-ignored places (`kilavuz/`, `dist/`); never name the host,
-the institution or its addresses in tracked files. State reported by the user:
+**Intranet host (state reported by the user, 2026-10-02 end of day).** A fully
+offline installation on Ubuntu 24.04.5 (hardened: IPv6 off, strict root umask, no
+`/usr/local/bin`, SSH port forwarding disabled). Never name the host, the
+institution or its addresses in tracked files; the operator guide and carry
+folders live in git-ignored `kilavuz/` and `dist/`.
 
-- Installed with `offline_install.sh` plus three manual fixes (default nginx site
-  removed, `/usr/local/bin` created, `chmod -R go+rX tools`).
-- A RESPMOD-only ICAP client (a product with built-in ICAP) is the first
-  integration; a service client was created for it. Scans still showed the
-  `legacy-default` client ("Legacy API / ICAP") because
-  `MASP_ICAP_SERVICE_CLIENT_KEY` had not reached the icap container; the user was
-  told to set it and rerun `install.sh --no-build`. Not yet confirmed.
-- The console is reachable only through an SSH tunnel to 127.0.0.1:443 until the
-  network team opens 443. The user may have prepended `DisableForwarding no`,
-  `AllowTcpForwarding local`, `PermitOpen 127.0.0.1:443` to `/etc/ssh/sshd_config`
-  (backup `/root/sshd_config.masp-yedek`); revert it once 443 is open.
+- Installed 2026-10-01 from pilot.10 with `offline_install.sh` plus three manual
+  fixes that later became `69f674e`, `3162c31`, `9c1a54e`.
+- **Upgraded by the user to `0.1.0-pilot.13` with `upgrade.sh`; reported as
+  working.** The first integration is a RESPMOD-only ICAP product bound to the
+  service client `fil` (`MASP_ICAP_SERVICE_CLIENT_KEY=fil`, set by the user).
+- What the user hit on the way, all fixed in pilot.13: scans filed under
+  `legacy-default` (the binding is now visible in the console and `verify.sh`);
+  ICAP samples named `icap_respmod.bin` (names now come from the encapsulated HTTP
+  message, but a product that sends no Content-Disposition and no file-like URL
+  still yields that name; a header-logging diagnostic was offered, not built);
+  clean docx/xlsx blocked while the ledger said allow (Office files were treated
+  as archives and hit `MASP_ICAP_BLOCK_ARCHIVES`).
+- The scan policy of `fil` may have been set by the user in the console; what
+  they chose is not known.
+- The console was reachable only through an SSH tunnel until the network team
+  opens 443 (DNS A record, firewall, certificate from the internal CA for the CSR
+  at `/etc/ssl/masp/masp.csr`; steps were given in Turkish). If the user prepended
+  `DisableForwarding no`, `AllowTcpForwarding local`, `PermitOpen 127.0.0.1:443`
+  to `/etc/ssh/sshd_config`, revert it from `/root/sshd_config.masp-yedek` once
+  443 is open.
 
-**Pilot.11 scope and decisions waiting on the user (2026-10-02):**
+**Releases in `dist/` (git-ignored), each a bundle zip plus the MASP image alone,
+both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
-- Ready in code, not yet packaged: the three installer fixes and ICAP file names.
-- **`0.1.0-pilot.13` is the release to deploy** (2026-10-02, `dist/`, commit
-  `e5a6ab8`): pilot.12 plus the Office fix. Rehearsed pilot.12 -> pilot.13: on
-  pilot.12 a clean docx and xlsx were blocked over ICAP (reproduced), on pilot.13
-  both allowed, a plain zip still blocked with an event naming the archive rule,
-  rollback passed. The intranet goes pilot.10 -> pilot.13 directly.
-- **`0.1.0-pilot.12` is packaged** (2026-10-02) in `dist/`: zip (commit
-  `a8f60de`) and the MASP image alone, both with `.sha256`. It adds per-client
-  scan policy on top of pilot.11; the user asked for independent scan settings
-  and policies for every client and chose: all four settings (size limit,
-  content-family allow/deny, masquerade, review handling), the violation action
-  selectable per profile (scan and block, or reject without scanning), and empty
-  settings inheriting today's global behaviour. Rehearsed pilot.11 -> pilot.12 on
-  the local Docker host: upgrade, then a `fil` policy (deny executable and script,
-  block masquerade, reject, review block) over ICAP: a text file allowed, an
-  executable named `invoice.pdf` and a `.ps1` rejected without a scan and counted
-  as `policy_rejected`, EICAR still blocked, verify passed, rollback passed.
-  pilot.11 was never deployed, so the intranet goes pilot.10 -> pilot.12 directly
-  (the 10 -> 11 path was rehearsed and 11 -> 12 changes no schema).
-- **`0.1.0-pilot.11` is packaged** (2026-10-02) in `dist/`:
-  `masp-pilot-0.1.0-pilot.11.zip` (commit `504b83f`) and the MASP image alone,
-  `masp-pilot-0.1.0-pilot.11-image.tar`, built from the extracted bundle; both with
-  `.sha256`. PostgreSQL and ClamAV images are unchanged. Upgrade rehearsal on the
-  local Docker host (Ubuntu 24.04 container driving the daemon, project
-  `masp-rehearse`, removed afterwards): pilot.10 installed and bound to a `fil`
-  client, `upgrade.sh --dry-run`, `upgrade.sh` (image loaded from the tar, old
-  release's backup, install, link switch, verify with the binding) and the printed
-  rollback all passed; ICAP health stayed ok after the rebind. Not rehearsed: an
-  upgrade from a release older than pilot.10 (the pilot server is on pilot.6 or
-  pilot.7), so run `--dry-run` there first. The user deploys it themselves.
-- Done on 2026-10-02 and committed (above):
-  - ICAP client binding: System > ICAP and SIEM names the client each gateway
-    files scans under (link to its Setup tab), explains `legacy-default` and an
-    unresolved key; health is critical for an unresolved fail-closed gateway; the
-    Setup tab names a gateway reporting under another key; `verify.sh` prints the
-    binding, warns on `legacy-default`, stops on an unresolved key.
-  - `deploy/pilot/upgrade.sh` (see PILOT.md "Operate and upgrade"), tested with a
-    fake docker in `tests/test_pilot_scripts.py` and rehearsed pilot.10 -> pilot.11
-    on a real Docker host (see the packaging note above).
-  - Local time: browser time zone with an explicit offset (`UTC+3`), stored UTC on
-    hover (`Timestamp` component). The user did not pick a zone; browser zone was
-    chosen because servers and users share one zone. Vitest/Playwright pin UTC.
-- Next after pilot.11: an Analytics tab with charts (requested 2026-10-02; scope
-  not yet discussed).
-- Per-profile policy: size limit, archive handling, block-on-review and a
-  `file_type` allow/deny list by content family **and extension** (reuse
-  `content_types.classify` and the Folder Scanning type policy; record the policy
-  in the routing snapshot). `scan_profiles.policy_json` exists but nothing reads it.
-  Waiting for the user's rule for the first client.
-- Institution branding: generic mechanism only in the repo (deployment-provided
-  logo and product name under `/srv/masp/branding/`, read at runtime); the
-  institution's assets never enter the repository. Waiting for logo format and name.
-- `deploy/pilot/upgrade.sh`: one-command offline upgrade (detect current install,
-  verify, backup, carry `.env.pilot` adding only new keys, install, verify, print
-  rollback), requested after the error-prone manual pilot.9 upgrade.
-- Smaller: keep non-ASCII display names (storage names are ASCII-only, so Turkish
-  letters become `_`); a RESPMOD option for `tools/icap_probe.py`.
-- The user has to choose: ship the quick fixes first, or wait for the policy work.
+- `0.1.0-pilot.13` (commit `e5a6ab8`, deployed on the intranet): pilot.12 plus
+  the Office fix. Rehearsed 12 -> 13: docx/xlsx blocked on 12 (reproduced) and
+  allowed on 13, a plain zip still blocked, rollback passed.
+- `0.1.0-pilot.12` (commit `a8f60de`): pilot.11 plus per-client scan policy.
+  Rehearsed 11 -> 12 with a `fil` policy over ICAP (text allowed; an exe named
+  `invoice.pdf` and a `.ps1` rejected without a scan, counted as
+  `policy_rejected`; EICAR blocked), rollback passed.
+- `0.1.0-pilot.11` (commit `504b83f`): installer fixes, ICAP file names, ICAP
+  client binding, `upgrade.sh`, local time. Rehearsed 10 -> 11, rollback passed.
+- Never rehearsed: `upgrade.sh` from a release older than pilot.10. The other
+  pilot server is on pilot.6 or pilot.7; run `--dry-run` there first.
+
+**Decisions and offers waiting on the user:**
+
+- **Archives over ICAP.** `MASP_ICAP_BLOCK_ARCHIVES` (default on) blocks every
+  zip/7z/tar whatever the scan says, because members are extracted only when the
+  container itself is detected (`scan_worker.py`, `lazy_extract_on_detection`),
+  most engines do not look inside, and an encrypted archive looks clean to all of
+  them. Offered as a per-profile policy setting, not started: "open and scan every
+  member" (eager extraction; block on any detection, encryption, extraction
+  failure or limit; allow only when every member is clean), alongside "block".
+  The user asked why archives are blocked and has not chosen.
+- **Analytics tab** with charts: requested, then deferred by the user ("not needed
+  now"). Proposed scope: scans over time by source and client, decisions,
+  detecting engines, blocked types and policy rejections, ICAP wait times and
+  timeouts.
+- **ICAP header diagnostic** (log encapsulated header names and the URL, never
+  content) if RESPMOD names stay `icap_respmod.bin`.
+- **Institution branding**: generic mechanism only (deployment-provided logo and
+  product name under `/srv/masp/branding/`); waiting for logo format and name.
+- Smaller: keep non-ASCII display names (storage names are ASCII-only); a RESPMOD
+  option for `tools/icap_probe.py`.
 
 **Pilot server:** the pilot.9 upgrade was paused by the user at the `.env.pilot`
-step (an empty shell variable had produced a placeholder file; nothing was
-installed). `upgrade.sh` would make resuming it safer.
+step (nothing was installed). `upgrade.sh` from pilot.13 is the way to resume,
+starting with `--dry-run`.
 
 **Next steps agreed with the user, in order:**
 
 1. Push the commits above and open the PR to `main` -- **only with the user's
-   explicit approval**.
-2. `0.1.0-pilot.8` is packaged in `dist/` (git-ignored): the bundle, the MASP
-   image alone and a full image archive (MASP, PostgreSQL, ClamAV), current
-   ClamAV signatures, and an offline apt repository (nginx, cifs-utils, unzip)
-   for Ubuntu 22.04 beside the existing offline Docker packages. The user plans
-   a second, intranet installation with no internet access at all; ClamAV
-   signatures then come from an internal mirror, a proxy, or
-   `deploy/pilot/load_clamav_signatures.sh` (`ae1b0dc`). The pinned ClamAV image
-   ships a database from its build date (daily 28045, 2026-06-28), so load
-   current signatures before real traffic.
-3. On the pilot server (operator-run; the agent has no access): real network
+   explicit approval** (the repository is public; commit messages were checked
+   for institution and host names).
+2. On the pilot server (operator-run; the agent has no access): real network
    share manifest test once the firewall allows the pilot host -> file server TCP 445
    (one direction only), a backup/restore rehearsal on the real host, a
    capacity run with realistic file sizes (the local worker was once killed
    with exit 137 under load).
-4. Low priority, separate change: remove database helpers that lost their only
+3. Low priority, separate change: remove database helpers that lost their only
    callers with the legacy UI (`list_users`, `update_service_client`,
    `revoke_api_client_credential`, `list_engine_results_by_scan_ids`, ...).
 
@@ -389,30 +365,41 @@ framing confirmation, and per-client rate limiting.
 
 ## Verification and environment safety
 
-- Full backend: `python -m unittest discover -s tests`. Last full run (working
-  tree of `e6ecf41`, SQLite): **957 tests, OK, 121 skipped** (the skips are the
-  PostgreSQL-gated modules). New PostgreSQL coverage
-  (`tests/test_operations_health.py`, About, health and readiness queries) was
-  run against a disposable PostgreSQL 16 and passed. The pilot script tests need
-  Git Bash on Windows and are skipped where no POSIX bash exists.
+- Full backend: `python -m unittest discover -s tests`. Last full run (2026-10-02,
+  tree of `33aae38`, SQLite): **1065 tests, OK, 149 skipped** (the skips are the
+  PostgreSQL-gated modules). The policy, profile, operations-health and deferred
+  concurrency modules then passed against a disposable PostgreSQL 16 (89 tests,
+  none skipped). The pilot script tests need Git Bash on Windows and are skipped
+  where no POSIX bash exists; they drive the pilot scripts with a fake docker.
 - PostgreSQL tests require `MASP_TEST_POSTGRES_URL` pointing only at a disposable
   database: tests drop/recreate its public schema. Never use the live MASP DB.
   Disposable containers used on this branch (ports 15441-15444, names
   `masp-test-pg-*`) were started with `--rm` and stopped; none should remain
   (`docker ps -a` to check).
-- Frontend: `npm --prefix frontend test` (178 tests passing), `run build`,
+- Frontend: `npm --prefix frontend test` (192 tests passing), `run build`,
   `run contracts:check`. Regenerate contracts with
   `npm --prefix frontend run contracts:generate` after browser API changes.
-  `run test:e2e` for Playwright (38 workflows; the last full run had one
-  failure from outdated expectations in `client-setup.spec.ts`, fixed and
-  re-run on its own).
+  `run test:e2e` for Playwright (39 workflows, all passing on 2026-10-02).
+- Release rehearsal (how pilot.11 to 13 were proven; repeat it for every release
+  that changes deploy scripts or ICAP): package with
+  `tools/package_pilot_release.py` (it refuses uncommitted inputs), build the
+  image from the extracted bundle, `docker save` it and write the `.sha256` as
+  `<hash>  <name>`. Run an `ubuntu:24.04` container with `/var/run/docker.sock`
+  and `-v /rehearse:/rehearse` (the same path the daemon sees, so compose bind
+  mounts resolve) plus the `docker` CLI and compose plugin copied from
+  `docker:cli`; install the old release there under project `masp-rehearse`
+  with ports 18100/11344, then `upgrade.sh --dry-run`, `upgrade.sh`, ICAP probes,
+  the printed rollback, and finally `down -v` and removal of `/rehearse`. This
+  found three defects the fake-docker tests missed (the PostgreSQL pool message
+  in `verify.sh`, the rebound-gateway false critical, Office files as archives).
+  In Git Bash set `MSYS_NO_PATHCONV=1` for docker paths.
 - Browser acceptance uses temporary SQLite and a fixture server, not live data.
   On Windows Playwright teardown may leave fixture processes running; identify
   the exact owned PIDs before stopping them (none were left this session).
 - Preserve live containers `masp-app-1`, `masp-worker-1`, `masp-icap-1`,
-  `masp-postgres-1`, `masp-clamav-1`, `masp-deferred-intake-1` and
-  `masp-manifest-intake-1`. They were rebuilt from `2369905` on 2026-09-28;
-  volumes were kept.
+  `masp-postgres-1`, `masp-clamav-1`, `masp-deferred-intake-1`,
+  `masp-manifest-intake-1` and `masp-storage-protection-1` (project `masp`).
+  They were rebuilt from `2369905` on 2026-09-28; volumes were kept.
   Run heavy suites sequentially: running the full suite,
   e2e and a disposable PostgreSQL concurrently previously pushed the live
   containers into exit 137. Never retain real credentials in this handoff or
