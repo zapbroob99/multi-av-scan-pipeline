@@ -116,6 +116,12 @@ Commits after the last pushed `94f01ed`, oldest first:
   `SERVICE_CLIENTS_AND_SCAN_PROFILES.md`); `a8f60de` joins two violations as one
   sentence (seen in the rehearsal)
 - `918ddfe` release named `0.1.0-pilot.12`
+- `8e73dd3` handoff for pilot.12
+- `33aae38` Office Open XML / OpenDocument files are not archives: intake made
+  them batches and ICAP's `MASP_ICAP_BLOCK_ARCHIVES` blocked every docx/xlsx the
+  engines had cleared (reported by the user from the intranet: "console allow,
+  ICAP block"); the ICAP event now names the archive rule
+- `e5a6ab8` release named `0.1.0-pilot.13`
 - this commit: handoff
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
@@ -226,6 +232,11 @@ the institution or its addresses in tracked files. State reported by the user:
 **Pilot.11 scope and decisions waiting on the user (2026-10-02):**
 
 - Ready in code, not yet packaged: the three installer fixes and ICAP file names.
+- **`0.1.0-pilot.13` is the release to deploy** (2026-10-02, `dist/`, commit
+  `e5a6ab8`): pilot.12 plus the Office fix. Rehearsed pilot.12 -> pilot.13: on
+  pilot.12 a clean docx and xlsx were blocked over ICAP (reproduced), on pilot.13
+  both allowed, a plain zip still blocked with an event naming the archive rule,
+  rollback passed. The intranet goes pilot.10 -> pilot.13 directly.
 - **`0.1.0-pilot.12` is packaged** (2026-10-02) in `dist/`: zip (commit
   `a8f60de`) and the MASP image alone, both with `.sha256`. It adds per-client
   scan policy on top of pilot.11; the user asked for independent scan settings
