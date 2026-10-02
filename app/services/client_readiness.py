@@ -200,7 +200,7 @@ def _api_method(active_credentials: int, last_scan) -> ConnectionMethod:
 
 def _icap_method(client_key: str, settings: dict[str, str], last_scan, now: float | None = None) -> ConnectionMethod:
     current = time.time() if now is None else now
-    reporting_gateways = [g for g in icap_gateways({k: v for k, v in settings.items() if k.startswith(ICAP_SETTING_PREFIX)})
+    reporting_gateways = [g for g in icap_gateways({k: v for k, v in settings.items() if k.startswith(ICAP_SETTING_PREFIX)}, current)
                           if current - int(g['at']) < ICAP_FORGOTTEN_SECONDS]
     gateways = [g for g in reporting_gateways if str(g.get('client_key', '')).lower() == client_key.lower()]
     # A gateway reporting under another key is the usual mistake: the setting

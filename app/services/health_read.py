@@ -336,17 +336,31 @@ def storage_protection_check(connection, now: float) -> HealthCheck:
                        summary=f'{len(rows)} location(s) running; last sweep {age_text(worker.age_seconds)} ago.')
 
 
-def icap_gateways(settings: dict[str, str]) -> list[dict]:
+def icap_gateways(settings: dict[str, str], now: float | None = None) -> list[dict]:
+    """Gateway activity records, without those a gateway under another key replaced.
+
+    Records are per client key and port, so rebinding a gateway to another
+    client leaves the old key's record behind, silent. It is not a stopped
+    gateway: the listener on that port started again under the new key after
+    the old record's last report. Only a silent record is ever replaced, so two
+    live gateways sharing a port number on different hosts both stay.
+    """
+    current = time.time() if now is None else now
     gateways = []
     for key, value in sorted(settings.items()):
         try:
             record = json.loads(value)
             int(record['at'])
-        except (TypeError, ValueError, KeyError):
+            int(record.get('started_at') or 0)
+        except (TypeError, ValueError, KeyError, AttributeError):
             continue
         record['key'] = key.removeprefix(ICAP_SETTING_PREFIX)
         gateways.append(record)
-    return gateways
+    return [g for g in gateways if not (
+        current - int(g['at']) >= ICAP_STALE_SECONDS
+        and any(other is not g and other.get('port') == g.get('port')
+                and int(other.get('started_at') or 0) >= int(g['at']) - ICAP_FLUSH_SECONDS
+                for other in gateways))]
 
 
 def icap_binding(connection, client_key: object) -> dict[str, object]:
@@ -450,7 +464,7 @@ def report(engines: list[EngineState], *, now: float | None = None) -> HealthRep
     status = get_worker_status()
     records = db.list_engine_node_health()
     overview = intake_read.overview()
-    gateways = icap_gateways(db.list_settings_by_prefix(ICAP_SETTING_PREFIX))
+    gateways = icap_gateways(db.list_settings_by_prefix(ICAP_SETTING_PREFIX), current)
     with db.connect() as connection:
         apply_read_budget(connection)
         queue = connection.execute('''SELECT COUNT(*) AS queued, MIN(created_at) AS oldest

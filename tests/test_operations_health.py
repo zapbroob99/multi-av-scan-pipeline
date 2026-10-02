@@ -131,6 +131,28 @@ class HealthRuleTests(unittest.TestCase):
         # The compatibility client is a working, if unintended, binding: not an outage.
         self.assertEqual(health_read.icap_check([gateway('legacy_default')], NOW).state, 'ok')
 
+    def test_a_gateway_rebound_to_another_client_is_not_a_stopped_gateway(self):
+        def record(key, at, started_at, port=1344):
+            return {f'{activity.SETTING_PREFIX}{key}:{port}': json.dumps({
+                'at': NOW - at, 'started_at': NOW - started_at, 'client_key': key, 'port': port,
+                'fail_closed': True, 'counters': {}, 'events': []})}
+        # Seen in an upgrade rehearsal: the legacy-default record stops when the
+        # gateway restarts under its own client, and was reported as critical.
+        rebound = {**record('legacy-default', 600, 3600), **record('fil', 5, 590)}
+        self.assertEqual([g['client_key'] for g in health_read.icap_gateways(rebound, NOW)], ['fil'])
+        self.assertEqual(health_read.icap_check(health_read.icap_gateways(rebound, NOW), NOW).state, 'ok')
+        # Nothing started after it on that port: the gateway really stopped.
+        alone = health_read.icap_gateways(record('legacy-default', 600, 3600), NOW)
+        self.assertEqual(health_read.icap_check(alone, NOW).state, 'critical')
+        # A gateway on the same port number elsewhere that was already running does not hide it,
+        others = {**record('legacy-default', 600, 3600), **record('other', 5, 7200)}
+        self.assertEqual(health_read.icap_check(health_read.icap_gateways(others, NOW), NOW).state, 'critical')
+        # nor does one on another port, and a live record is never replaced.
+        elsewhere = {**record('legacy-default', 600, 3600), **record('fil', 5, 590, port=1345)}
+        self.assertEqual(len(health_read.icap_gateways(elsewhere, NOW)), 2)
+        both_live = {**record('a', 5, 3600), **record('b', 5, 10)}
+        self.assertEqual(len(health_read.icap_gateways(both_live, NOW)), 2)
+
 
 class DatabaseCase(unittest.TestCase):
     postgres = False

@@ -93,7 +93,7 @@ def _text(value: object) -> str | None:
 
 def overview(now: float | None = None) -> DeliveryOverview:
     current = time.time() if now is None else now
-    records = [record for record in icap_gateways(db.list_settings_by_prefix(ICAP_SETTING_PREFIX))
+    records = [record for record in icap_gateways(db.list_settings_by_prefix(ICAP_SETTING_PREFIX), current)
                if current - int(record['at']) < ICAP_FORGOTTEN_SECONDS]
     gateways = []
     with db.connect() as connection:
