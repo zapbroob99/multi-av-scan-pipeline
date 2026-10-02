@@ -4931,6 +4931,79 @@
         "title": "ProfileFence",
         "type": "object"
       },
+      "ProfilePolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "block_masquerade": {
+            "default": false,
+            "title": "Block Masquerade",
+            "type": "boolean"
+          },
+          "max_file_bytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max File Bytes"
+          },
+          "review_action": {
+            "default": "inherit",
+            "enum": [
+              "inherit",
+              "block"
+            ],
+            "title": "Review Action",
+            "type": "string"
+          },
+          "type_rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TypeRule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "violation_action": {
+            "default": "scan_and_block",
+            "enum": [
+              "scan_and_block",
+              "reject"
+            ],
+            "title": "Violation Action",
+            "type": "string"
+          }
+        },
+        "title": "ProfilePolicy",
+        "type": "object"
+      },
+      "ProfilePolicyBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ProfilePolicy"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "policy"
+        ],
+        "title": "ProfilePolicyBody",
+        "type": "object"
+      },
       "ProfileRoutingBody": {
         "additionalProperties": false,
         "properties": {
@@ -5008,6 +5081,20 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfilePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_invalid": {
+            "title": "Policy Invalid",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5017,7 +5104,9 @@
           "is_default",
           "engine_ids",
           "incomplete",
-          "management_revision"
+          "management_revision",
+          "policy",
+          "policy_invalid"
         ],
         "title": "ProfileSummary",
         "type": "object"
@@ -6805,6 +6894,34 @@
           }
         },
         "title": "TypePolicy",
+        "type": "object"
+      },
+      "TypeRule": {
+        "additionalProperties": false,
+        "properties": {
+          "families": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Families",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "allowlist",
+              "denylist"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "families"
+        ],
+        "title": "TypeRule",
         "type": "object"
       },
       "UpdateUserBody": {
@@ -15760,6 +15877,134 @@
           }
         },
         "summary": "Save Browser Profile",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/service-clients/{client_id}/profiles/{profile_id}/policy": {
+      "put": {
+        "operationId": "policy_browser_profile_api_ui_v1_service_clients__client_id__profiles__profile_id__policy_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Client Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Profile Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfilePolicyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Policy Browser Profile",
         "tags": [
           "Browser console"
         ]

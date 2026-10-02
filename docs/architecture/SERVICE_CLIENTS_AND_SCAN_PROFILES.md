@@ -85,6 +85,41 @@ and preserves historical snapshots. For compatibility, a legacy/custom database
 without a flagged enabled default retains its pre-existing first-enabled-profile
 fallback; the setup screen still reports the missing explicit default.
 
+## Profile scan policy
+
+Each profile carries its own scan policy, so every client can have independent
+rules. It is edited per profile under **Service Clients > Profile routing >
+Scan policy** (`PUT /api/ui/v1/service-clients/{id}/profiles/{profile_id}/policy`,
+admin and CSRF, fenced by the profile's `management_revision`; the managed
+`legacy-default` client stays read-only).
+
+| Setting | Empty (default) | Set |
+|---|---|---|
+| `max_file_bytes` | Deployment limits only | Larger files are rejected at intake: no scan; API `413`, ICAP block, deferred submission `failed` (and `413` at submission when `expected_size_bytes` already exceeds it) |
+| `type_rule` | Every content family accepted | Allowlist or denylist of families (`executable`, `script`, `archive`, `office`, `pdf`, `image`, `markup`, `unrecognized`), judged from the header as the `file_type` engine and storage protection do |
+| `block_masquerade` | Off | An extension the header contradicts is a violation |
+| `violation_action` | `scan_and_block` | `reject`: refuse at intake without scanning (API `415`, ICAP block, deferred `failed`) |
+| `review_action` | `inherit` | `block`: a review decision (failed engine, partial coverage, elevated risk, failed scan) becomes block |
+
+Semantics:
+
+- The policy is frozen into the routing snapshot when a scan is accepted, like
+  the engine set; editing it affects new submissions only.
+- Intake judges the stored sample once, reading a 4 KiB header. A
+  scan-and-block violation is recorded in that scan's snapshot as
+  `intake_policy`; the shared decision then blocks it whatever the engines say.
+  Archive members inherit the container's snapshot but not its intake verdict.
+- A policy only makes a decision stricter. It never produces an allow, and the
+  deployment's upload/ICAP limits remain the ceiling above any profile limit.
+- An empty policy changes nothing: upgraded deployments behave as before until
+  an administrator sets a rule. With `review_action` left at `inherit`, an ICAP
+  gateway keeps following `MASP_ICAP_BLOCK_ON_REVIEW`.
+- A recorded policy that cannot be parsed never permits: the decision becomes
+  `review` (`profile_policy_invalid`) unless it is already a block. The console
+  reports an unreadable stored policy instead of editing a guessed one.
+- Rejections create no scan record. They are visible as the API error, an ICAP
+  "Rejected by policy" counter and event, or a failed deferred submission.
+
 ## Connecting a client
 
 `/console/service-clients/{id}/setup` answers one question in one place: is this
@@ -347,8 +382,9 @@ an explicitly authorized source-system integration and is not performed here.
 2. Extend global webhook delivery with per-client SIEM routes, delivery
    metrics/audit, review/policy event selection, and a dead-letter UI.
 3. Add S3-compatible deferred backends, resumable fetch and bandwidth scheduling.
-4. Add client-scoped policy overrides after precedence and snapshot semantics are
-   defined. Global safety ceilings must remain authoritative.
+4. Extend profile scan policy (implemented: size, content families, masquerade,
+   violation action, review handling) with archive handling per client and
+   policy-driven SIEM events. Global safety ceilings remain authoritative.
 
 The preferred remote-engine transport remains the authenticated HTTPS worker
 control plane. Workers download a generation-bound sample to temporary local

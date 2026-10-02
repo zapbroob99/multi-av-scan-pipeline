@@ -61,6 +61,7 @@ from app.services.deferred_storage import (
     validate_object_id,
 )
 from app.services.hash_scanning import HashEngineError, HashEngineRun, build_hash_scan_payload
+from app.services.profile_policy import PolicyRejectedError, parse_profile_policy
 from app.services import scan_policy
 from app.services.scan_intake import (
     DEFAULT_ARCHIVE_MODE,
@@ -448,6 +449,9 @@ async def enqueue_scan_from_upload(
             status_code=503,
             detail="No eligible scan engines are available for this submission source.",
         ) from exc
+    except PolicyRejectedError as exc:
+        # The client's own profile refuses the sample; no scan was created.
+        raise HTTPException(status_code=413 if exc.kind == "size" else 415, detail=exc.reason) from exc
 
 
 def build_scan_report_payload(
@@ -543,7 +547,11 @@ def execute_hash_scan(
         },
         413: {
             "model": api_schemas.ApiErrorResponse,
-            "description": "Upload exceeds the configured size limit.",
+            "description": "Upload exceeds the configured size limit or the client profile's size limit.",
+        },
+        415: {
+            "model": api_schemas.ApiErrorResponse,
+            "description": "The client profile rejects this content type without scanning it.",
         },
         404: {"model": api_schemas.ApiErrorResponse, "description": "Selected scan profile is unavailable for this client."},
         **API_ERROR_RESPONSES,
@@ -606,6 +614,7 @@ async def api_create_scan(
         400: {"model": api_schemas.ApiErrorResponse},
         404: {"model": api_schemas.ApiErrorResponse, "description": "Selected scan profile is unavailable for this client."},
         409: {"model": api_schemas.ApiErrorResponse},
+        413: {"model": api_schemas.ApiErrorResponse, "description": "The expected size exceeds the deployment or client profile limit."},
         **API_ERROR_RESPONSES,
     },
 )
@@ -689,6 +698,15 @@ def api_create_deferred_scan(
         raise HTTPException(
             status_code=503,
             detail="No eligible engines are assigned to this client's deferred scan profile.",
+        )
+    try:
+        profile_max = parse_profile_policy(identity.profile.policy_json).max_file_bytes
+    except ValueError:
+        profile_max = None  # an unreadable policy is left to the decision, which withholds allow
+    if profile_max is not None and body.expected_size_bytes is not None and body.expected_size_bytes > profile_max:
+        raise HTTPException(
+            status_code=413,
+            detail="Deferred object exceeds this client profile's size limit.",
         )
     snapshot = profile_snapshot_json(
         identity,

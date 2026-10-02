@@ -39,8 +39,10 @@ The content type comes from the response (RESPMOD) or request (REQMOD) header.
 | Scan outcome | ICAP reply |
 |---|---|
 | Completed, verdict allows (`allow`) | allow (`204`, or `200` echo without `Allow: 204`) |
-| Completed, uncertain (`review`) | allow (unless `MASP_ICAP_BLOCK_ON_REVIEW=1`) |
+| Completed, uncertain (`review`) | allow (unless `MASP_ICAP_BLOCK_ON_REVIEW=1` or the client profile blocks review) |
 | Completed, malicious (`block`) | `200` block |
+| Content the client profile does not accept, scanned | `200` block |
+| Content the client profile rejects without scanning, or over the profile's size limit | `200` block, no scan, whatever the fail mode |
 | Did not finish within the wait window | **fail-closed:** `200` block |
 | File over the size cap | **fail-closed:** `200` block |
 | Scan/orchestration error | **fail-closed:** `200` block |
@@ -84,6 +86,15 @@ key that names no client, a disabled client or one without an enabled profile
 makes every request fail; a fail-closed gateway then blocks every upload, and
 the health check reports it as critical. The client's Setup tab names any
 gateway reporting under another key.
+
+The bound client's default profile also carries that client's scan policy
+(Service Clients > Profile routing > Scan policy): a size limit, accepted
+content families, disguised files and what to do with files that could not be
+fully assessed. A profile set to block those overrides
+`MASP_ICAP_BLOCK_ON_REVIEW` for its client; left at the deployment behaviour,
+the environment setting applies. Content the profile rejects without scanning is
+answered with a block whatever the fail mode, creates no scan, and is counted as
+"Rejected by policy" with an event on System > ICAP and SIEM.
 
 ## Running it
 

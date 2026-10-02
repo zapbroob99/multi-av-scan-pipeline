@@ -16,6 +16,7 @@ from app.icap import activity
 from app.icap import protocol
 from app.icap.config import IcapConfig, load_icap_config
 from app.services.ingest import UploadTooLargeError, store_bytes
+from app.services.profile_policy import PolicyRejectedError
 from app.services.scan_intake import (
     enqueue_scan_from_stored_sample,
     scan_is_terminal,
@@ -315,6 +316,13 @@ async def scan_and_decide(
             activity.event("blocked", "Blocked by scan decision" if finished else
                            "Blocked: scan did not finish within the wait window", scan_id=scan.id if scan else None)
         return action
+    except PolicyRejectedError as exc:
+        # A decision, not a failure: the client's profile refuses this content,
+        # so it is blocked whatever the fail mode, and no scan was created.
+        log(f"{filename}: rejected by profile policy ({exc.kind}) -> block")
+        activity.count("policy_rejected")
+        activity.event("policy_rejected", f"{filename}: {exc.reason}")
+        return "block"
     except Exception as exc:  # noqa: BLE001 - fail-closed on any orchestration error
         log(f"{filename}: scan error {exc!r} -> {'block' if config.fail_closed else 'allow'}")
         activity.count("errors")

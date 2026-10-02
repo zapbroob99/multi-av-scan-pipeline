@@ -27,7 +27,7 @@ EVENT_LIMIT = 25
 DETAIL_LIMIT = 300
 
 COUNTERS = ("connections_accepted", "connections_rejected", "requests", "allowed", "blocked",
-            "fail_actions", "errors")
+            "fail_actions", "errors", "policy_rejected")
 
 
 class IcapActivity:

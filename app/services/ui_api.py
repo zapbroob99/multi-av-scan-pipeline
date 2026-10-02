@@ -717,6 +717,15 @@ def default_browser_profile(request: Request, body: profile_admin.ProfileDefault
     return Response(status_code=204)
 
 
+@router.put('/service-clients/{client_id}/profiles/{profile_id}/policy', status_code=204)
+def policy_browser_profile(request: Request, body: profile_admin.ProfilePolicyBody,
+                           client_id: int = Path(ge=1, le=9007199254740991), profile_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='scan_profile.policy_update', target_type='scan_profile', target_id=profile_id, actor=request.state.ui_user)
+    profile_admin.save_policy(client_id, profile_id, body)
+    set_audit_context(request, details={'client_id': client_id, 'policy': body.policy.model_dump(mode='json')})
+    return Response(status_code=204)
+
+
 @router.delete('/service-clients/{client_id}/profiles/{profile_id}', status_code=204)
 def delete_browser_profile(request: Request, body: profile_admin.ProfileFence,
                            client_id: int = Path(ge=1, le=9007199254740991), profile_id: int = Path(ge=1, le=9007199254740991)):

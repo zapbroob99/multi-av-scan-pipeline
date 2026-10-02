@@ -15,9 +15,10 @@ type Gateway = components['schemas']['IcapGateway']
 
 const EVENT_LABEL: Record<string, string> = {
   rejected: 'Refused source', blocked: 'Blocked upload', fail_action: 'Fail-closed answer', error: 'Scan error', bad_request: 'Malformed request',
+  policy_rejected: 'Rejected by profile policy',
 }
 const COUNTER_LABEL: [string, string][] = [['requests', 'Requests'], ['allowed', 'Allowed'], ['blocked', 'Blocked'],
-  ['fail_actions', 'Fail-closed'], ['errors', 'Errors'], ['connections_rejected', 'Refused connections']]
+  ['fail_actions', 'Fail-closed'], ['errors', 'Errors'], ['policy_rejected', 'Rejected by policy'], ['connections_rejected', 'Refused connections']]
 
 function ClientBinding({ gateway }: { gateway: Gateway }) {
   const name = gateway.client_name || gateway.client_key
@@ -57,7 +58,7 @@ function GatewayCard({ gateway }: { gateway: Gateway }) {
     {!gateway.events.length ? <p className="muted">Nothing notable since the gateway started. Allowed uploads are only counted.</p> :
       <div className="history-table-wrap" role="region" aria-label={`Recent ICAP events for ${gateway.client_key}`} tabIndex={0}><table className="history-table compact-table">
         <thead><tr><th scope="col">When</th><th scope="col">Event</th><th scope="col">Detail</th></tr></thead>
-        <tbody>{gateway.events.map((event, index) => <tr key={`${event.at}-${index}`} className={event.kind === 'blocked' ? '' : 'row-alert'}>
+        <tbody>{gateway.events.map((event, index) => <tr key={`${event.at}-${index}`} className={event.kind === 'blocked' || event.kind === 'policy_rejected' ? '' : 'row-alert'}>
           <td><small><Timestamp value={event.at} /></small></td><td>{EVENT_LABEL[event.kind] ?? event.kind}</td>
           <td className="hash-value">{event.detail}{event.peer && <small>Source {event.peer}</small>}
             {event.scan_id && <small><Link to={`/api-ledger/scans/${event.scan_id}`}>Scan #{event.scan_id}</Link></small>}</td>

@@ -3012,8 +3012,14 @@ def complete_deferred_scan_intake(
     sample: StoredSample,
     engines: list[EngineInstanceRecord],
     archive_format: str | None,
+    profile_snapshot_json: str | None = None,
 ) -> int | None:
-    """Atomically create the scan and fence-link it to its deferred request."""
+    """Atomically create the scan and fence-link it to its deferred request.
+
+    ``profile_snapshot_json`` replaces the request's snapshot on the scan only,
+    when intake recorded a policy evaluation; the request keeps what the client
+    submitted against, so retry comparison is unaffected.
+    """
     if not engines:
         raise ValueError("Deferred intake requires at least one engine.")
     with connect() as connection:
@@ -3031,6 +3037,7 @@ def complete_deferred_scan_intake(
         if row is None:
             return None
         request = row_to_deferred_scan_record(row)
+        snapshot = profile_snapshot_json if profile_snapshot_json is not None else request.profile_snapshot_json
         sample_id = _insert_sample(connection, sample)
         batch_id: int | None = None
         relative_path: str | None = None
@@ -3052,7 +3059,7 @@ def complete_deferred_scan_intake(
                 ),
                 service_client_id=request.service_client_id,
                 scan_profile_id=request.scan_profile_id,
-                profile_snapshot_json=request.profile_snapshot_json,
+                profile_snapshot_json=snapshot,
             )
             relative_path = sample.original_filename
             scan_role = "container"
@@ -3068,7 +3075,7 @@ def complete_deferred_scan_intake(
             scan_role=scan_role,
             service_client_id=request.service_client_id,
             scan_profile_id=request.scan_profile_id,
-            profile_snapshot_json=request.profile_snapshot_json,
+            profile_snapshot_json=snapshot,
         )
         _insert_engine_jobs(connection, scan_id, engines)
         cursor = connection.execute(

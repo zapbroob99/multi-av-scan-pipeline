@@ -24,6 +24,7 @@ from app.services.deferred_storage import (
     configured_backend_keys,
     copy_deferred_source,
 )
+from app.services.profile_policy import PolicyRejectedError, apply_intake_policy
 from app.services.service_clients import engines_for_snapshot_json
 
 
@@ -83,6 +84,12 @@ def process_next() -> bool:
                     "Deferred routing snapshot has no available engine instances."
                 )
             stored = copy_deferred_source(request)
+            try:
+                snapshot = apply_intake_policy(request.profile_snapshot_json, filename=stored.original_filename,
+                                               size=stored.size_bytes, storage_path=stored.storage_path)
+            except PolicyRejectedError as exc:
+                # Retrying cannot change the content, so this is final.
+                raise DeferredSourcePermanentError(f"Rejected by the client's profile policy: {exc.reason}") from exc
             archive_format = detect_archive_format(stored.storage_path)
             scan_id = complete_deferred_scan_intake(
                 submission_id=request.id,
@@ -91,6 +98,7 @@ def process_next() -> bool:
                 sample=stored,
                 engines=engines,
                 archive_format=archive_format,
+                profile_snapshot_json=snapshot,
             )
             if scan_id is None:
                 Path(stored.storage_path).unlink(missing_ok=True)

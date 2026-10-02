@@ -51,8 +51,11 @@ recommended v1 pattern is a **size-capped synchronous scan**:
 2. 200 OK  -> scan finished inside the wait window; read decision.action.
 3. 202 Accepted -> did not finish in time; poll links.status until
    result_ready=true (or treat as a timeout per your own policy).
-4. 413 Payload Too Large -> file exceeds MASP_UPLOAD_MAX_BYTES; the client
-   decides what to do with oversized files (this API does not scan them).
+4. 413 Payload Too Large -> file exceeds MASP_UPLOAD_MAX_BYTES or the client
+   profile's size limit; the client decides what to do with oversized files
+   (this API does not scan them).
+5. 415 Unsupported Media Type -> the client profile does not accept this content
+   and is set to reject it without scanning.
 ```
 
 Recommended server configuration for this pattern:
@@ -280,7 +283,10 @@ Possible responses:
 - `200 OK`: the scan completed inside the requested wait window
 - `202 Accepted`: the scan is still processing
 - `401 Unauthorized`: bearer token missing or invalid
-- `413 Payload Too Large`: upload exceeded `MASP_UPLOAD_MAX_BYTES`
+- `413 Payload Too Large`: upload exceeded `MASP_UPLOAD_MAX_BYTES` or the
+  client profile's size limit
+- `415 Unsupported Media Type`: the client profile rejects this content without
+  scanning it (the `detail` names the content family or the masquerade)
 - `503 Service Unavailable`: no API token is configured
 
 Example `202 Accepted` body:
@@ -395,6 +401,13 @@ The `decision` object is the automation-friendly outcome:
 - `allow`: no detection and required engine coverage completed
 - `block`: one or more engines detected malicious content, or risk is high
 - `review`: result is partial, metadata-only, failed, or elevated but not blocking
+
+A client's profile can make the outcome stricter, never looser. When it does,
+`decision.policy` says why: `profile_content_policy` (the profile does not accept
+this content; set to scan and block), `profile_review_block` (the profile blocks
+what could not be fully assessed) or `profile_policy_invalid` (the recorded
+policy could not be read, so an allow is withheld). The policy is frozen when
+the scan is accepted.
 
 Use `decision.action` for workflow routing and `decision.reasons` for audit text.
 

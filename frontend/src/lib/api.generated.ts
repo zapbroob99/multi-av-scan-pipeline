@@ -963,6 +963,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/service-clients/{client_id}/profiles/{profile_id}/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Policy Browser Profile */
+        put: operations["policy_browser_profile_api_ui_v1_service_clients__client_id__profiles__profile_id__policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/service-clients/{client_id}/readiness": {
         parameters: {
             query?: never;
@@ -3163,6 +3180,35 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
         };
+        /** ProfilePolicy */
+        ProfilePolicy: {
+            /**
+             * Block Masquerade
+             * @default false
+             */
+            block_masquerade?: boolean;
+            /** Max File Bytes */
+            max_file_bytes?: number | null;
+            /**
+             * Review Action
+             * @default inherit
+             * @enum {string}
+             */
+            review_action?: "inherit" | "block";
+            type_rule?: components["schemas"]["TypeRule"] | null;
+            /**
+             * Violation Action
+             * @default scan_and_block
+             * @enum {string}
+             */
+            violation_action?: "scan_and_block" | "reject";
+        };
+        /** ProfilePolicyBody */
+        ProfilePolicyBody: {
+            /** Expected Revision */
+            expected_revision: number;
+            policy: components["schemas"]["ProfilePolicy"];
+        };
         /** ProfileRoutingBody */
         ProfileRoutingBody: {
             /** Engine Ids */
@@ -3188,6 +3234,9 @@ export interface components {
             management_revision: number;
             /** Name */
             name: string;
+            policy: components["schemas"]["ProfilePolicy"] | null;
+            /** Policy Invalid */
+            policy_invalid: boolean;
         };
         /** ProfileUpdateBody */
         ProfileUpdateBody: {
@@ -3802,6 +3851,16 @@ export interface components {
              * @enum {string}
              */
             mode?: "allowlist" | "denylist";
+        };
+        /** TypeRule */
+        TypeRule: {
+            /** Families */
+            families: string[];
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "allowlist" | "denylist";
         };
         /** UpdateUserBody */
         UpdateUserBody: {
@@ -10288,6 +10347,103 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ProfileRoutingBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    policy_browser_profile_api_ui_v1_service_clients__client_id__profiles__profile_id__policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: number;
+                profile_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfilePolicyBody"];
             };
         };
         responses: {

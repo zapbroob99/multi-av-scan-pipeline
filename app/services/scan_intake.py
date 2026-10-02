@@ -15,6 +15,7 @@ from app.database import create_scan_intake, get_scan
 from app.models import EngineInstanceRecord, ScanRecord, StoredSample
 from app.services.archive_extractor import detect_archive_format
 from app.services.engine_registry import enabled_engines
+from app.services.profile_policy import apply_intake_policy
 
 
 API_TERMINAL_SCAN_STATUSES = {"completed", "failed"}
@@ -70,6 +71,14 @@ def enqueue_scan_from_stored_sample(
                 f"No eligible scan engines are available for source {source!r}; "
                 "intake rejected."
             )
+        # Raises PolicyRejectedError when the client's profile refuses the
+        # sample outright; the file is discarded below and no scan is created.
+        profile_snapshot_json = apply_intake_policy(
+            profile_snapshot_json,
+            filename=stored_sample.original_filename,
+            size=stored_sample.size_bytes,
+            storage_path=stored_sample.storage_path,
+        )
         archive_format = detect_archive_format(stored_sample.storage_path)
         scan_id = create_scan_intake(
             sample=stored_sample,

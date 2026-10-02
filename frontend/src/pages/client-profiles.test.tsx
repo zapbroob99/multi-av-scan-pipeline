@@ -5,13 +5,16 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import ClientProfiles from './client-profiles'
 
-function mount(incomplete = false, fail = false, named = false) {
+const INHERIT = { max_file_bytes: null, type_rule: null, block_masquerade: false, violation_action: 'scan_and_block', review_action: 'inherit' }
+
+function mount(incomplete = false, fail = false, named = false, policy: object | null = INHERIT) {
   const fetcher = vi.fn(async (_url: string, options?: RequestInit) => options?.method && options.method !== 'GET'
     ? fail ? new Response(JSON.stringify({ detail: 'Routing changed' }), { status: 409 })
       : options.method === 'POST' ? new Response(JSON.stringify({ profile_id: 8 }), { status: 201 }) : new Response(null, { status: 204 })
     : new Response(JSON.stringify({ client_id: 3, managed: false, next_after: null, engines_incomplete: incomplete,
       default_profile_id: named ? 6 : 7,
-      items: [{ id: 7, name: '<script>Profile</script>', enabled: true, is_default: !named, engine_ids: [1], incomplete: false, management_revision: 4 }],
+      items: [{ id: 7, name: '<script>Profile</script>', enabled: true, is_default: !named, engine_ids: [1], incomplete: false, management_revision: 4,
+        policy, policy_invalid: policy === null }],
       engines: [{ id: 1, display_name: 'One', adapter_key: 'static_metadata', enabled: true }, { id: 2, display_name: 'Two', adapter_key: 'clamav', enabled: false }] })))
   vi.stubGlobal('fetch', fetcher)
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/service-clients/3/profiles']}><Routes>
@@ -19,6 +22,54 @@ function mount(incomplete = false, fail = false, named = false) {
   </Routes></MemoryRouter></QueryClientProvider>)
   return fetcher
 }
+
+describe('Profile scan policy', () => {
+  it('shows an inheriting policy and saves an edited one behind the revision fence', async () => {
+    const fetcher = mount()
+    const section = await screen.findByRole('region', { name: 'Scan policy for <script>Profile</script>' })
+    expect(section).toHaveTextContent("No rules of its own: the deployment's limits and review handling apply.")
+    await userEvent.click(screen.getByRole('button', { name: 'Edit policy' }))
+    await userEvent.type(screen.getByLabelText(/^Largest accepted file/), '5')
+    await userEvent.selectOptions(screen.getByLabelText(/^Content rule/), 'denylist')
+    await userEvent.click(screen.getByRole('checkbox', { name: /extension contradicts their content/ }))
+    await userEvent.selectOptions(screen.getByLabelText('When content is not accepted'), 'reject')
+    await userEvent.selectOptions(screen.getByLabelText(/^Files that could not be fully assessed/), 'block')
+    await userEvent.click(screen.getByRole('button', { name: 'Review policy' }))
+    expect(fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(0)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('Files larger than 5.0 MiB are rejected.')
+    expect(dialog).toHaveTextContent('Not accepted: executable, script.')
+    expect(dialog).toHaveTextContent('Files that could not be fully assessed are blocked.')
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm scan policy' }))
+    await screen.findByText('Scan policy saved. Refresh before editing again.')
+    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')
+    expect(writes).toHaveLength(1)
+    expect(writes[0][0]).toBe('/api/ui/v1/service-clients/3/profiles/7/policy')
+    expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ expected_revision: 4, policy: {
+      max_file_bytes: 5242880, type_rule: { mode: 'denylist', families: ['executable', 'script'] },
+      block_masquerade: true, violation_action: 'reject', review_action: 'block' } })
+    expect(writes[0][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
+  })
+  it('says when a stored policy cannot be read instead of guessing one', async () => {
+    mount(false, false, false, null)
+    expect(await screen.findByText(/The stored policy cannot be read/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Edit policy' }))
+    expect(screen.getByText('The stored policy cannot be read. Saving replaces it with the policy below.')).toBeInTheDocument()
+  })
+  it('refuses a rule that would accept nothing or everything, without a request', async () => {
+    const fetcher = mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit policy' }))
+    await userEvent.selectOptions(screen.getByLabelText(/^Content rule/), 'allowlist')
+    for (const box of screen.getAllByRole('checkbox', { checked: true })) await userEvent.click(box)
+    await userEvent.click(screen.getByRole('button', { name: 'Review policy' }))
+    expect(screen.getByText('Choose at least one content family, or turn the content rule off.')).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText(/^Largest accepted file/), '0')
+    await userEvent.click(screen.getByRole('button', { name: 'Review policy' }))
+    expect(screen.getByText('Enter a size in MiB greater than zero, or leave it blank.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('Profile routing', () => {
   it('confirms explicit instance IDs and sends the previous selection as a fence', async () => {

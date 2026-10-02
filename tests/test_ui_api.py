@@ -2065,6 +2065,29 @@ class BrowserApiTests(unittest.TestCase):
         for fields in ({'engine_ids': []}, {'engine_ids': [True]}, {'engine_ids': [engine, engine]}, {'engine_ids': [engine] * 101}, {'source': 'manual'}):
             self.assertEqual(self.request(path, 'PUT', body | fields)[0], 422)
 
+    def test_profile_policy_requires_admin_csrf_a_whole_valid_policy_and_the_current_revision(self):
+        client, profile, _ = self.profile_fixture()
+        path = f'/service-clients/{client}/profiles/{profile}/policy'
+        policy = {'max_file_bytes': 1048576, 'type_rule': {'mode': 'denylist', 'families': ['executable', 'script']},
+                  'block_masquerade': True, 'violation_action': 'reject', 'review_action': 'block'}
+        self.assertEqual(self.request(path, 'PUT', {'expected_revision': 0, 'policy': policy}, csrf=False)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(path, 'PUT', {'expected_revision': 0, 'policy': policy})[0], 403)
+        self.assertEqual(self.reads, 0)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        for invalid in ({'max_file_bytes': '1048576'}, {'max_file_bytes': 0}, {'review_action': 'allow'},
+                        {'type_rule': {'mode': 'allowlist', 'families': ['documents']}}, {'unknown': True}):
+            self.assertEqual(self.request(path, 'PUT', {'expected_revision': 0, 'policy': policy | invalid})[0], 422)
+        revision = next(p for p in self.request(f'/service-clients/{client}/profiles')[1]['items'] if p['id'] == profile)['management_revision']
+        self.assertEqual(self.request(path, 'PUT', {'expected_revision': revision, 'policy': policy})[0], 204)
+        saved = next(p for p in self.request(f'/service-clients/{client}/profiles')[1]['items'] if p['id'] == profile)
+        self.assertEqual((saved['policy'], saved['policy_invalid'], saved['management_revision']), (policy, False, revision + 1))
+        # The same revision again is stale: no silent last-save-wins.
+        self.assertEqual(self.request(path, 'PUT', {'expected_revision': revision, 'policy': {}})[0], 409)
+
     def test_profile_routing_is_client_scoped_fenced_and_preserves_snapshots(self):
         client, profile, engine = self.profile_fixture()
         managed, managed_profile, managed_engine = self.profile_fixture('legacy-default')

@@ -12,8 +12,9 @@ from app.database import list_engine_results
 from app.models import EngineResultRecord, ScanRecord
 from app.services.decisions import ScanDecision, decide_scan_action
 from app.services.engine_registry import detection_engine_names
+from app.services.profile_policy import apply_profile_policy
 from app.services.scoring import calculate_risk
-from app.services.service_clients import required_detection_engine_names
+from app.services.service_clients import parse_profile_snapshot, required_detection_engine_names
 
 
 def detection_engine_results(
@@ -188,7 +189,7 @@ def scan_decision(
     policy_review_reasons = engine_policy_review_reasons(
         engine_results, source=scan.source
     )
-    return decide_scan_action(
+    decision = decide_scan_action(
         scan_status=scan.status,
         verdict=effective_verdict,
         risk_score=effective_score,
@@ -197,6 +198,8 @@ def scan_decision(
         unavailable_engines=coverage_unavailable,
         policy_review_reasons=policy_review_reasons,
     )
+    # The client's frozen profile policy can only make this stricter.
+    return apply_profile_policy(decision, parse_profile_snapshot(scan), scan_role=scan.scan_role)
 
 
 def resolve_scan_decision(scan: ScanRecord) -> ScanDecision:

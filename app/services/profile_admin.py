@@ -1,10 +1,14 @@
-"""Client-scoped routing without profile policies or engine configuration."""
+"""Client-scoped routing and scan policy, without engine configuration."""
 from typing import Annotated
 import time
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from app import database as db
 from app.services.browser_db_budget import apply_read_budget, write_lock_timeout_ms
+from app.services.profile_policy import ProfilePolicy, parse_profile_policy, profile_policy_json
+
+# A valid policy serializes to well under 1 KiB; anything this large is not one.
+POLICY_READ_LIMIT = 16384
 
 SafeId = Annotated[int, Field(ge=1, le=9007199254740991)]
 
@@ -40,6 +44,10 @@ class ProfileDefaultBody(ProfileFence):
     expected_default_profile_id: SafeId | None
 
 
+class ProfilePolicyBody(ProfileFence):
+    policy: ProfilePolicy
+
+
 class ProfileEngineChoice(BaseModel):
     id: int
     display_name: str
@@ -55,6 +63,10 @@ class ProfileSummary(BaseModel):
     engine_ids: list[int]
     incomplete: bool
     management_revision: int
+    # None with policy_invalid when the stored policy cannot be read; the editor
+    # then refuses to save over it from a guessed starting point.
+    policy: ProfilePolicy | None
+    policy_invalid: bool
 
 
 class ClientProfiles(BaseModel):
@@ -78,8 +90,10 @@ def page(client_id: int, after: int | None) -> ClientProfiles:
             (client_id, db.db_bool(True))).fetchone()
         choices = connection.execute('''SELECT id, SUBSTR(display_name, 1, 128) AS display_name,
             SUBSTR(adapter_key, 1, 64) AS adapter_key, enabled FROM engine_instances ORDER BY id LIMIT 101''').fetchall()
-        rows = connection.execute('''SELECT id, SUBSTR(name, 1, 100) AS name, LENGTH(name) > 100 AS incomplete,
-            enabled, is_default, management_revision FROM scan_profiles WHERE service_client_id = ? AND deleted_at IS NULL ''' +
+        rows = connection.execute(f'''SELECT id, SUBSTR(name, 1, 100) AS name, LENGTH(name) > 100 AS incomplete,
+            enabled, is_default, management_revision, SUBSTR(policy_json, 1, {POLICY_READ_LIMIT}) AS policy_json,
+            LENGTH(policy_json) > {POLICY_READ_LIMIT} AS policy_oversized
+            FROM scan_profiles WHERE service_client_id = ? AND deleted_at IS NULL ''' +
             ('AND id > ? ' if after is not None else '') + 'ORDER BY id LIMIT 21',
             (client_id, *((after,) if after is not None else ()))).fetchall()
         items = []
@@ -87,6 +101,12 @@ def page(client_id: int, after: int | None) -> ClientProfiles:
             assigned = connection.execute('SELECT engine_instance_id FROM scan_profile_engines WHERE scan_profile_id = ? ORDER BY engine_instance_id LIMIT 101', (row['id'],)).fetchall()
             values = dict(row)
             values['incomplete'] = bool(values['incomplete']) or len(assigned) > 100
+            raw_policy, oversized = values.pop('policy_json'), bool(values.pop('policy_oversized'))
+            try:
+                values['policy'] = None if oversized else parse_profile_policy(raw_policy)
+            except (ValueError, TypeError):
+                values['policy'] = None
+            values['policy_invalid'] = values['policy'] is None
             items.append(ProfileSummary(**values, engine_ids=[item['engine_instance_id'] for item in assigned[:100]]))
     return ClientProfiles(client_id=client_id, managed=client['managed'], items=items,
         engines=[ProfileEngineChoice(**dict(row)) for row in choices[:100]], engines_incomplete=len(choices) > 100,
@@ -163,5 +183,23 @@ def manage(client_id: int, profile_id: int, body: ProfileFence, operation: str) 
                 raise ValueError('Unsupported profile operation.')
     except db.IntegrityViolation as exc:
         raise HTTPException(409, 'That profile name is already reserved for this client, including deleted profiles.') from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+def save_policy(client_id: int, profile_id: int, body: ProfilePolicyBody) -> None:
+    """Replace one profile's policy. Accepted scans keep the policy they were frozen with."""
+    try:
+        with db.profile_write_transaction(client_id, write_lock_timeout_ms()) as (connection, client):
+            if client['client_key'] == 'legacy-default':
+                raise ValueError('Profiles for the compatibility client are deployment-managed.')
+            profile = connection.execute('''SELECT id, management_revision FROM scan_profiles
+                WHERE id = ? AND service_client_id = ? AND deleted_at IS NULL''' +
+                (' FOR UPDATE' if db.using_postgres() else ''), (profile_id, client_id)).fetchone()
+            if profile is None or profile['management_revision'] != body.expected_revision:
+                raise ValueError('Profile is missing or changed. Refresh before continuing.')
+            connection.execute('''UPDATE scan_profiles SET policy_json = ?,
+                management_revision = management_revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?''',
+                (profile_policy_json(body.policy), profile_id))
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc

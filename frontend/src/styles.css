@@ -351,6 +351,10 @@ tr.row-alert > td:first-child { box-shadow: inset 3px 0 0 #ef4444; }
 .client-engine-table th:first-child { width: 25%; }
 .client-engine-table td:last-child { white-space: normal; min-width: 180px; }
 .client-profile legend { font-weight: 550; font-size: 13px; }
+.profile-policy { border-top: 1px solid var(--border); margin: 4px 0 16px; padding-top: 14px; }
+.profile-policy .client-section-heading { margin-bottom: 8px; }
+.profile-policy h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.profile-policy-summary { margin: 0; padding-left: 18px; line-height: 1.6; font-size: 13px; }
 /* A checkbox beside its text, overriding the stacked label layout. */
 label.check-row { flex-direction: row; align-items: center; gap: 10px; }
 .check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; border: 0; padding: 0; margin: 0 0 8px; }

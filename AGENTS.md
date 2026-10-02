@@ -496,6 +496,20 @@ pending age; pre-scan failures are `failed` rows without a scan, read newest-fir
 `idx_deferred_scan_status_seek`. Bound rejections to 50 and failures to 20. Store and show error
 text through `redact_paths`: absolute paths never reach the browser.
 
+Profile scan policy (`app/services/profile_policy.py`) gives every client independent rules: size
+limit, content-family allowlist/denylist, masquerade, violation action (scan and block, or reject
+at intake) and review handling. Every field defaults to inherit, so an empty policy must change
+nothing. It is frozen into the routing snapshot; intake judges the stored sample once from a 4 KiB
+header (shared `content_types.classify`) in `enqueue_scan_from_stored_sample` and the deferred
+worker, recording scan-and-block violations as the scan snapshot's `intake_policy`; the shared
+`scan_decision` applies it. A policy may only make a decision stricter and never produces an
+allow; archive members do not inherit the container's intake verdict; an unreadable recorded
+policy withholds allow (`profile_policy_invalid`). Rejections create no scan: API 413/415, ICAP
+block whatever the fail mode (`policy_rejected` counter and event), deferred submission failed
+permanently. Deployment upload/ICAP limits stay the ceiling. Browser writes are admin/CSRF, fenced
+by `management_revision`; `legacy-default` stays read-only; the console never edits a guessed
+policy over an unreadable one.
+
 Deferred retry safety must not depend on server-side configuration staying still. Answer a
 repeat `client_request_id` from the accepted record before resolving live routing, and compare
 only what the client asserted: backend key, object id, expected size/SHA-256, archive mode and
