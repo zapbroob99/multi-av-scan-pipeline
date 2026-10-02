@@ -186,6 +186,40 @@ def archive_extraction_enabled() -> bool:
     }
 
 
+# Office Open XML (docx, xlsx, pptx and their macro variants) and OpenDocument
+# files are ZIP containers by format but documents by intent. Treated as
+# archives, they became batches, and an ICAP gateway's archive block refused
+# every modern Office file the engines had just cleared. They are scanned as
+# one file instead; ClamAV unpacks Office documents and their macros itself.
+# A document-shaped container that also carries a program or script is not an
+# Office document, so it stays an archive.
+_DOCUMENT_MAX_ENTRIES = 10000
+_ODF_MIMETYPE_PREFIX = b"application/vnd.oasis.opendocument"
+_PROGRAM_SUFFIXES = (
+    ".exe", ".dll", ".scr", ".com", ".cpl", ".sys", ".msi", ".msp", ".lnk", ".jar", ".class",
+    ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".sh",
+)
+
+
+def is_office_document(path: str | Path) -> bool:
+    """Whether a ZIP file is an Office Open XML or OpenDocument document."""
+    try:
+        with zipfile.ZipFile(path) as container:
+            names = container.namelist()
+            if len(names) > _DOCUMENT_MAX_ENTRIES:
+                return False
+            if any(name.lower().endswith(_PROGRAM_SUFFIXES) for name in names):
+                return False
+            if "[Content_Types].xml" in names:
+                return True
+            if "mimetype" in names:
+                with container.open("mimetype") as member:
+                    return member.read(len(_ODF_MIMETYPE_PREFIX)) == _ODF_MIMETYPE_PREFIX
+    except (OSError, zipfile.BadZipFile, KeyError, RuntimeError, NotImplementedError):
+        return False
+    return False
+
+
 def detect_archive_format(path: str | Path) -> str | None:
     # 7z and ZIP checks are magic-byte based and cheap. TAR detection is
     # checksum-based and can false-positive on unlucky binaries, so it runs last.
@@ -193,7 +227,7 @@ def detect_archive_format(path: str | Path) -> str | None:
         if py7zr.is_7zfile(path):
             return ARCHIVE_FORMAT_SEVEN_ZIP
         if zipfile.is_zipfile(path):
-            return ARCHIVE_FORMAT_ZIP
+            return None if is_office_document(path) else ARCHIVE_FORMAT_ZIP
         if tarfile.is_tarfile(path):
             return ARCHIVE_FORMAT_TAR
     except OSError:

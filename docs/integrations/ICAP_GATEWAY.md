@@ -43,6 +43,7 @@ The content type comes from the response (RESPMOD) or request (REQMOD) header.
 | Completed, malicious (`block`) | `200` block |
 | Content the client profile does not accept, scanned | `200` block |
 | Content the client profile rejects without scanning, or over the profile's size limit | `200` block, no scan, whatever the fail mode |
+| Archive (zip, 7z, tar; not an Office document), even when the scan allows it | `200` block while `MASP_ICAP_BLOCK_ARCHIVES=1`; the console shows the scan's own decision |
 | Did not finish within the wait window | **fail-closed:** `200` block |
 | File over the size cap | **fail-closed:** `200` block |
 | Scan/orchestration error | **fail-closed:** `200` block |
@@ -63,6 +64,7 @@ instead — the scan still completes in the background and is visible in MASP.
 | `MASP_ICAP_MAX_BYTES` | falls back to `MASP_UPLOAD_MAX_BYTES` | Size cap; over-cap is fail-closed |
 | `MASP_ICAP_FAIL_MODE_CLOSED` | `1` | `1` = block on timeout/error, `0` = allow |
 | `MASP_ICAP_BLOCK_ON_REVIEW` | `0` | `1` = also block uncertain verdicts |
+| `MASP_ICAP_BLOCK_ARCHIVES` | `1` | `1` = block archive uploads, whose members are not scanned one by one on this path |
 | `MASP_ICAP_ALLOWED_IPS` | (empty) | Comma-separated client IP allowlist; empty = allow all |
 | `MASP_ICAP_PREVIEW_BYTES` | `0` | Preview size advertised in OPTIONS |
 
@@ -139,6 +141,11 @@ is a fail-closed `200` block within `MASP_ICAP_WAIT_SECONDS`.
   `400 Bad Request`. All responses (including these) carry an `ISTag`.
 - ICAP archive uploads create a batch like REST archive uploads, but the
   `/api/v1/batches` endpoints are REST-scoped; inspect ICAP archives via the
-  API Ledger.
+  API Ledger. With `MASP_ICAP_BLOCK_ARCHIVES=1` (the default) an archive is
+  blocked whatever its scan says. Office Open XML (docx, xlsx, pptx and macro
+  variants) and OpenDocument files are ZIP containers but are scanned as one
+  document, not as archives, so they are judged by the scan; ClamAV unpacks them
+  and their macros itself. A document-shaped ZIP that also carries a program or
+  script (exe, dll, jar, js, ps1 and similar) stays an archive.
 - The ICAP concurrency ceiling has not been load-tested yet; size it with a
   ramp like the REST synchronous profile before quoting figures.

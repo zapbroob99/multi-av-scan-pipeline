@@ -575,6 +575,11 @@ values or URL credentials.
 ICAP samples are named from the encapsulated HTTP message (Content-Disposition with `filename*`
 first, the first multipart part, or a URL segment that has an extension); the name is
 client-supplied, reduced to a bounded bare name that keeps its extension, and decides nothing.
+Office Open XML and OpenDocument files are ZIP containers but never archives
+(`archive_extractor.is_office_document`): an archive becomes a batch, and an ICAP gateway's
+`MASP_ICAP_BLOCK_ARCHIVES` blocks every batch, so treating them as archives refused every modern
+Office file the engines had cleared (found on the intranet pilot). A document-shaped ZIP carrying a
+program or script entry stays an archive.
 A gateway bound to the wrong client (`MASP_ICAP_SERVICE_CLIENT_KEY` not reaching the icap
 container) silently files scans under `legacy-default`. `health_read.icap_binding` resolves each
 gateway's key the way `identity_for_service_client_key` does (a test keeps the two in agreement):

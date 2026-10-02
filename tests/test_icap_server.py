@@ -359,6 +359,17 @@ class IcapArchiveGateTests(unittest.TestCase):
         self.assertTrue(out.startswith(b"ICAP/1.0 200 OK\r\n"))
         self.assertIn(b"403 Forbidden", out)
 
+    def test_the_event_names_the_archive_rule_not_the_scan(self) -> None:
+        # The console shows the scan's own allow; the event must say why ICAP blocked.
+        from app.icap import activity
+        recorder = activity.IcapActivity(IcapConfig())
+        with patch.object(activity, "ACTIVITY", recorder):
+            run_handler(reqmod_message(b"PK-archive"), IcapConfig(), decision_action="allow", batch_id=7)
+            run_handler(reqmod_message(b"plain"), IcapConfig(), decision_action="block", batch_id=None)
+        details = [event["detail"] for event in recorder.events]
+        self.assertEqual(details, ["Blocked by scan decision",
+                                   "Blocked: archive upload (MASP_ICAP_BLOCK_ARCHIVES), whatever the scan decided"])
+
     def test_non_archive_upload_still_allowed(self) -> None:
         out, _ = run_handler(
             reqmod_message(b"plain"),

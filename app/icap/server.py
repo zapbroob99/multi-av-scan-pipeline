@@ -313,8 +313,14 @@ async def scan_and_decide(
         activity.count("allowed" if action == "allow" else "blocked")
         if action == "block":
             finished = scan is not None and scan_is_terminal(scan)
-            activity.event("blocked", "Blocked by scan decision" if finished else
-                           "Blocked: scan did not finish within the wait window", scan_id=scan.id if scan else None)
+            if not finished:
+                reason = "Blocked: scan did not finish within the wait window"
+            elif config.block_archives and scan.batch_id is not None:
+                # The scan itself may allow it; say so, or the console's allow looks wrong.
+                reason = "Blocked: archive upload (MASP_ICAP_BLOCK_ARCHIVES), whatever the scan decided"
+            else:
+                reason = "Blocked by scan decision"
+            activity.event("blocked", reason, scan_id=scan.id if scan else None)
         return action
     except PolicyRejectedError as exc:
         # A decision, not a failure: the client's profile refuses this content,

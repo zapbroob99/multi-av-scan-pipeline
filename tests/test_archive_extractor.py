@@ -15,6 +15,7 @@ from app.services.archive_extractor import (
     UnsafeArchivePathError,
     detect_archive_format,
     extract_archive,
+    is_office_document,
     is_supported_archive,
     safe_member_relative_path,
 )
@@ -69,6 +70,62 @@ class ArchiveExtractorZipTests(unittest.TestCase):
 
             with self.assertRaises(ArchiveExtractionLimitError):
                 extract_archive(archive_path, limits=limits, destination_dir=root / "samples")
+
+
+def write_zip(path: Path, entries: dict[str, bytes]) -> Path:
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    return path
+
+
+OOXML = {"[Content_Types].xml": b"<Types/>", "_rels/.rels": b"<Relationships/>"}
+
+
+class OfficeDocumentTests(unittest.TestCase):
+    """Office files are ZIP containers but documents, not archives (found in a pilot)."""
+
+    def test_office_documents_are_scanned_as_one_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            documents = {
+                "report.docx": {**OOXML, "word/document.xml": b"<w:document/>"},
+                "budget.xlsx": {**OOXML, "xl/workbook.xml": b"<workbook/>"},
+                "macro.xlsm": {**OOXML, "xl/workbook.xml": b"<workbook/>", "xl/vbaProject.bin": b"OLE"},
+                "deck.pptx": {**OOXML, "ppt/presentation.xml": b"<p/>", "ppt/embeddings/oleObject1.bin": b"x"},
+            }
+            for name, entries in documents.items():
+                path = write_zip(root / name, entries)
+                self.assertTrue(is_office_document(path), name)
+                self.assertIsNone(detect_archive_format(path), name)
+            odt = root / "letter.odt"
+            with zipfile.ZipFile(odt, "w") as archive:
+                archive.writestr("mimetype", b"application/vnd.oasis.opendocument.text")
+                archive.writestr("content.xml", b"<office:document-content/>")
+            self.assertIsNone(detect_archive_format(odt))
+
+    def test_containers_that_are_not_office_documents_stay_archives(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cases = {
+                "bundle.zip": {"readme.txt": b"hi", "tool.exe": b"MZ"},
+                "app.jar": {"META-INF/MANIFEST.MF": b"Main-Class: x", "x.class": b"CAFE"},
+                # Shaped like a document to slip past an archive block, but carrying a program.
+                "invoice.docx": {**OOXML, "word/document.xml": b"<w:document/>", "payload/run.exe": b"MZ"},
+                "script.docx": {**OOXML, "drop.ps1": b"Write-Host"},
+                "fake.odt": {"mimetype": b"text/plain", "content.xml": b"x"},
+            }
+            for name, entries in cases.items():
+                path = write_zip(root / name, entries)
+                self.assertFalse(is_office_document(path), name)
+                self.assertEqual(detect_archive_format(path), "zip", name)
+
+    def test_unreadable_input_is_not_a_document(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "broken.docx"
+            path.write_bytes(b"PK not really a zip")
+            self.assertFalse(is_office_document(path))
+            self.assertFalse(is_office_document(Path(temp_dir) / "missing.docx"))
 
 
 class ArchiveExtractorTarTests(unittest.TestCase):

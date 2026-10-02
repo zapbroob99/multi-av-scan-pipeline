@@ -117,6 +117,18 @@ class EnqueueFromStoredSampleTests(unittest.TestCase):
         assert batch is not None
         self.assertEqual(batch.source, "icap")
 
+    def test_an_office_document_is_a_standalone_scan_not_an_archive_batch(self) -> None:
+        # An ICAP gateway blocks archive batches outright, so a .docx treated as
+        # an archive was refused although every engine cleared it.
+        import zipfile
+        stored = self._stored("report.docx")
+        with zipfile.ZipFile(stored.storage_path, "w") as document:
+            document.writestr("[Content_Types].xml", b"<Types/>")
+            document.writestr("word/document.xml", b"<w:document/>")
+        scan = enqueue_scan_from_stored_sample(stored, case_name="ICAP", priority="Normal", note="", source="icap")
+        self.assertEqual(scan.scan_role, "standalone")
+        self.assertIsNone(scan.batch_id)
+
     def test_zero_enabled_engines_rejects_intake_and_removes_file(self) -> None:
         stored = self._stored()
         self.assertTrue(Path(stored.storage_path).is_file())
