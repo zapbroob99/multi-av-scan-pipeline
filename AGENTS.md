@@ -521,7 +521,9 @@ Parts that are not deployed are `inactive` and never raise the overall state; a 
 them whether or not SIEM delivery is deployed. The ICAP gateway keeps counters and at most 25
 notable events in memory (allowed requests are only counted) and writes them every 30 seconds as
 `icap_gateway_status:<client key>:<port>`; that write is also its heartbeat, recording must never
-block or fail a request, and records silent for a week are treated as removed. ClamAV health reports
+block or fail a request, and records silent for a week are treated as removed. A silent record is
+also dropped when a gateway on the same port started after its last report (the gateway was rebound
+to another client key, not stopped); without that, rebinding raised a week of false critical health. ClamAV health reports
 the program and signature version and the signature date from clamd `VERSION`. The support bundle
 is a POST so every export is audited; it excludes secret-named settings, credentialed URLs, engine
 configuration, sample content, filenames, hashes and console users' addresses.
@@ -546,11 +548,30 @@ extracted bundle is root-only, so `tools/` is opened for the containers), absent
 `/usr/local/bin`, and SSH port forwarding disabled. Rehearse installer changes in an isolated
 Docker network, and treat each real-host failure as a new rule here.
 
+Offline upgrades are `deploy/pilot/upgrade.sh`, run from the new bundle. Everything that can
+fail without touching the running stack comes first (bundle and image checksums, image load,
+carrying `.env.pilot`, `install.sh --dry-run`, every image named by the carried compose
+configuration present locally); only then the old release's own `backup.sh`, install, link switch
+and `verify.sh`. Carry every existing value and append only missing keys; change only what the
+script names (image, relative rules directory, placeholders, worker engine list, newly added proxy
+settings). Never modify the old release directory or its image, never restore automatically, and
+print the exact rollback after any failure past the backup. `--dry-run` must never print secret
+values or URL credentials.
+
 ICAP samples are named from the encapsulated HTTP message (Content-Disposition with `filename*`
 first, the first multipart part, or a URL segment that has an extension); the name is
 client-supplied, reduced to a bounded bare name that keeps its extension, and decides nothing.
 A gateway bound to the wrong client (`MASP_ICAP_SERVICE_CLIENT_KEY` not reaching the icap
-container) silently files scans under `legacy-default`.
+container) silently files scans under `legacy-default`. `health_read.icap_binding` resolves each
+gateway's key the way `identity_for_service_client_key` does (a test keeps the two in agreement):
+`client`, `legacy_default` or `unresolved`. Unresolved means every request fails, so it is
+critical for a fail-closed gateway and a warning for a fail-open one; `legacy_default` is a notice,
+never a health state, because a deployment may use it on purpose. `verify.sh` resolves the key
+inside the icap container, warns on `legacy-default` and stops on an unresolved key.
+
+Console timestamps render in the browser's time zone with an explicit offset label (`UTC` at zero)
+and the stored UTC value on hover (`Timestamp`); never print an unlabelled local time. Vitest and
+Playwright pin the zone to UTC.
 
 The repository is public. Never commit an institution's name, logo, host names, addresses or
 operator material, including in commit messages and the handoff; operator guides live in the

@@ -100,6 +100,17 @@ Commits after the last pushed `94f01ed`, oldest first:
   (Content-Disposition, multipart part, or a URL segment with an extension) instead
   of always `icap_reqmod.bin`/`icap_respmod.bin`; the content type comes from the
   same message. Needed for the ledger and for the `file_type` extension check
+- `4ca9392`, `e905d67`: handoff
+- `e06779f` console times in the browser's time zone with an offset label, UTC on
+  hover (`Timestamp`); Vitest/Playwright pin UTC
+- `62a0f38` ICAP client binding shown on System > ICAP and SIEM, the client's
+  Setup tab, health (unresolved key) and `verify.sh`
+- `9c7082a` `deploy/pilot/upgrade.sh`, one-command offline upgrade
+- `700f013` release named `0.1.0-pilot.11`
+- `f26a72b`, `504b83f`: two defects found by the upgrade rehearsal (below):
+  `verify.sh` read the PostgreSQL pool message instead of the binding, and a
+  gateway rebound from `legacy-default` to its own client left a silent record
+  that health reported as a stopped gateway (critical) for a week
 - this commit: handoff
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
@@ -210,11 +221,31 @@ the institution or its addresses in tracked files. State reported by the user:
 **Pilot.11 scope and decisions waiting on the user (2026-10-02):**
 
 - Ready in code, not yet packaged: the three installer fixes and ICAP file names.
-- Show which service client each ICAP gateway is bound to (System > ICAP and SIEM
-  and the client's Setup tab), so the legacy-default mistake is visible.
-- Console timestamps are hard-coded UTC (`formatTimestamp` in
-  `frontend/src/lib/utils.ts`); the user wants local time. Decide browser time
-  zone versus a fixed institution zone; keep UTC on hover.
+- **`0.1.0-pilot.11` is packaged** (2026-10-02) in `dist/`:
+  `masp-pilot-0.1.0-pilot.11.zip` (commit `504b83f`) and the MASP image alone,
+  `masp-pilot-0.1.0-pilot.11-image.tar`, built from the extracted bundle; both with
+  `.sha256`. PostgreSQL and ClamAV images are unchanged. Upgrade rehearsal on the
+  local Docker host (Ubuntu 24.04 container driving the daemon, project
+  `masp-rehearse`, removed afterwards): pilot.10 installed and bound to a `fil`
+  client, `upgrade.sh --dry-run`, `upgrade.sh` (image loaded from the tar, old
+  release's backup, install, link switch, verify with the binding) and the printed
+  rollback all passed; ICAP health stayed ok after the rebind. Not rehearsed: an
+  upgrade from a release older than pilot.10 (the pilot server is on pilot.6 or
+  pilot.7), so run `--dry-run` there first. The user deploys it themselves.
+- Done on 2026-10-02 and committed (above):
+  - ICAP client binding: System > ICAP and SIEM names the client each gateway
+    files scans under (link to its Setup tab), explains `legacy-default` and an
+    unresolved key; health is critical for an unresolved fail-closed gateway; the
+    Setup tab names a gateway reporting under another key; `verify.sh` prints the
+    binding, warns on `legacy-default`, stops on an unresolved key.
+  - `deploy/pilot/upgrade.sh` (see PILOT.md "Operate and upgrade"), tested with a
+    fake docker in `tests/test_pilot_scripts.py` and rehearsed pilot.10 -> pilot.11
+    on a real Docker host (see the packaging note above).
+  - Local time: browser time zone with an explicit offset (`UTC+3`), stored UTC on
+    hover (`Timestamp` component). The user did not pick a zone; browser zone was
+    chosen because servers and users share one zone. Vitest/Playwright pin UTC.
+- Next after pilot.11: an Analytics tab with charts (requested 2026-10-02; scope
+  not yet discussed).
 - Per-profile policy: size limit, archive handling, block-on-review and a
   `file_type` allow/deny list by content family **and extension** (reuse
   `content_types.classify` and the Folder Scanning type policy; record the policy
