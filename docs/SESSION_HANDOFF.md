@@ -111,6 +111,11 @@ Commits after the last pushed `94f01ed`, oldest first:
   `verify.sh` read the PostgreSQL pool message instead of the binding, and a
   gateway rebound from `legacy-default` to its own client left a silent record
   that health reported as a stopped gateway (critical) for a week
+- `ba7c944` handoff for pilot.11
+- `3c44e55` per-client scan policy (see "Profile scan policy" in
+  `SERVICE_CLIENTS_AND_SCAN_PROFILES.md`); `a8f60de` joins two violations as one
+  sentence (seen in the rehearsal)
+- `918ddfe` release named `0.1.0-pilot.12`
 - this commit: handoff
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
@@ -221,6 +226,19 @@ the institution or its addresses in tracked files. State reported by the user:
 **Pilot.11 scope and decisions waiting on the user (2026-10-02):**
 
 - Ready in code, not yet packaged: the three installer fixes and ICAP file names.
+- **`0.1.0-pilot.12` is packaged** (2026-10-02) in `dist/`: zip (commit
+  `a8f60de`) and the MASP image alone, both with `.sha256`. It adds per-client
+  scan policy on top of pilot.11; the user asked for independent scan settings
+  and policies for every client and chose: all four settings (size limit,
+  content-family allow/deny, masquerade, review handling), the violation action
+  selectable per profile (scan and block, or reject without scanning), and empty
+  settings inheriting today's global behaviour. Rehearsed pilot.11 -> pilot.12 on
+  the local Docker host: upgrade, then a `fil` policy (deny executable and script,
+  block masquerade, reject, review block) over ICAP: a text file allowed, an
+  executable named `invoice.pdf` and a `.ps1` rejected without a scan and counted
+  as `policy_rejected`, EICAR still blocked, verify passed, rollback passed.
+  pilot.11 was never deployed, so the intranet goes pilot.10 -> pilot.12 directly
+  (the 10 -> 11 path was rehearsed and 11 -> 12 changes no schema).
 - **`0.1.0-pilot.11` is packaged** (2026-10-02) in `dist/`:
   `masp-pilot-0.1.0-pilot.11.zip` (commit `504b83f`) and the MASP image alone,
   `masp-pilot-0.1.0-pilot.11-image.tar`, built from the extracted bundle; both with
