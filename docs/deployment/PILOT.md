@@ -188,7 +188,11 @@ Important settings:
 - `MASP_ICAP_BIND=<masp-private-ip>:1344` for the storage client connection.
 - `MASP_ICAP_SERVICE_CLIENT_KEY=legacy-default` uses compatibility routing. For
   dedicated ownership/routing, first create a client in **Service Clients** and
-  set its stable key here. One gateway process maps to one client.
+  set its stable key here, then run `install.sh --no-build` so the icap container
+  picks it up. One gateway process maps to one client. `verify.sh` prints the
+  client the running gateway resolves to, warns on `legacy-default` and stops on a
+  key that names no enabled client with an enabled profile (every ICAP request
+  would fail); **System > ICAP and SIEM** shows the same binding.
 - `MASP_ICAP_ALLOWED_IPS=127.0.0.1,<client-ip-1>,<client-ip-2>`. The current
   allowlist accepts exact IP addresses, not CIDR ranges. Keep loopback for the
   local acceptance probe. **This allowlist is a secondary control — see below.**
@@ -582,6 +586,35 @@ docker compose -p masp-pilot -f docker-compose.pilot.yml \
 Deploy upgrades only from another fixed pilot release. Back up first, load or
 build the new images, update `MASP_IMAGE`, run `up -d --wait`, and repeat all
 acceptance checks.
+
+`deploy/pilot/upgrade.sh` does all of that offline in one command. Extract the
+new bundle beside the old one (for example `/opt/masp/masp-pilot-<version>`),
+carry `masp-pilot-<version>-image.tar` and its `.sha256` next to it or in `/tmp`,
+and run as root from the new bundle:
+
+```bash
+bash deploy/pilot/upgrade.sh --dry-run    # shows the carried settings; changes nothing running
+bash deploy/pilot/upgrade.sh
+```
+
+It finds the running release through `/opt/masp/current` (`--from DIR`
+otherwise) and runs its `verify.sh` first (`--skip-current-verify` to upgrade a
+release that already fails). Before stopping anything it checks the bundle and
+image checksums, loads the image, and carries `.env.pilot`: every existing value
+is kept, settings the old file lacks are appended from the example, and only
+these are changed: `MASP_IMAGE`; a relative `MASP_RULES_DIR=./rules` is copied to
+`/srv/masp/rules`; a placeholder enrollment token is emptied and a placeholder
+encryption key generated; `file_type,hash_list` join an explicit worker engine
+list; and newly added proxy settings follow whether nginx runs on the host. The
+result must pass `install.sh --dry-run` and every image it names must already be
+on the host. Only then does it back up with the **old** release's `backup.sh`,
+run `install.sh --no-build`, switch `/opt/masp/current` and the `masp` command
+and run `verify.sh`. The old directory and image are left untouched. It never
+restores by itself: if a step after the backup fails, it prints the exact
+rollback command (old `install.sh`, old `restore.sh` with that backup, link
+back), which is also shown after a successful upgrade. Rerunning after a failure
+keeps the `.env.pilot` already prepared in the new bundle; delete it to carry the
+old file again.
 
 **Upgrading from a release whose containers ran as root:** the services now run
 as the unprivileged id `10001`, so the existing storage and rules contents must

@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -191,3 +192,216 @@ class PilotSignatureLoaderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# Runs verify.sh with a fake docker; the icap container's binding lookup prints $1.
+VERIFY_HARNESS = r"""
+set -uo pipefail
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/bin"
+export FAKE_BINDING="$1" FAKE_DOCKER_LOG="$work/docker.log"
+cat > "$work/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [[ "$*" == *"exec -T icap python -c"* ]]; then printf '%s\r\n' "$FAKE_BINDING"; fi
+exit 0
+FAKE
+chmod +x "$work/bin/docker"
+export PATH="$work/bin:$PATH"
+touch "$work/env"
+bash "$ROOT/deploy/pilot/verify.sh" --env-file "$work/env" 2>&1
+echo "EXIT=$?"
+grep -c icap_probe "$FAKE_DOCKER_LOG"
+"""
+
+
+@unittest.skipUnless(POSIX_BASH, "requires a POSIX bash (Git Bash on Windows)")
+class PilotVerifyBindingTests(unittest.TestCase):
+    def verify(self, binding: str) -> tuple[str, int, int]:
+        result = subprocess.run([BASH, "-c", VERIFY_HARNESS, "harness", binding], capture_output=True, text=True,
+                                env={"ROOT": ROOT.as_posix(), "PATH": os.environ["PATH"]}, timeout=60)
+        output, exit_line, probes = result.stdout.rsplit("\n", 3)[0], *result.stdout.strip().splitlines()[-2:]
+        return output, int(exit_line.removeprefix("EXIT=")), int(probes)
+
+    def test_a_bound_client_is_named_and_the_probes_run(self) -> None:
+        output, code, probes = self.verify("client|fil||File gateway | east")
+        self.assertEqual((code, probes), (0, 3))
+        self.assertIn("filed under service client File gateway | east (fil).", output)
+
+    def test_the_compatibility_client_is_a_warning_not_a_failure(self) -> None:
+        output, code, probes = self.verify("legacy_default|legacy-default|Scans are filed under the compatibility client.|Legacy API / ICAP")
+        self.assertEqual((code, probes), (0, 3))
+        self.assertIn("WARNING: ICAP scans are filed under the compatibility client", output)
+
+    def test_an_unresolved_key_stops_before_the_probes_with_the_reason(self) -> None:
+        # No display name: an empty field must not shift the reason into another one.
+        output, code, probes = self.verify("unresolved|typo|No service client has the key typo.|")
+        self.assertEqual((code, probes), (1, 0))
+        self.assertIn("ICAP client key 'typo' does not resolve: No service client has the key typo.", output)
+
+
+# Runs upgrade.sh from a scratch copy of the new bundle against a fake old
+# release and a fake docker. $1: extra upgrade.sh arguments; $2: binding line the
+# new verify.sh reads; $3: "images missing" to leave PostgreSQL's image unloaded;
+# $4: "rules taken" to pre-fill the data rules directory.
+UPGRADE_HARNESS = r"""
+set -uo pipefail
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+new="$work/opt/masp-pilot-0.1.0-pilot.11"
+old="$work/opt/masp-pilot-0.1.0-pilot.6"
+mkdir -p "$work/bin" "$new/deploy/pilot" "$new/tools" "$old/deploy/pilot" "$old/rules" "$work/srv/storage" "$work/srv/backups"
+cp "$ROOT"/deploy/pilot/*.sh "$new/deploy/pilot/"
+cp "$ROOT/docker-compose.pilot.yml" "$ROOT/.env.pilot.example" "$new/"
+printf '{"version": "0.1.0-pilot.11"}\n' > "$new/RELEASE.json"
+printf '{"version": "0.1.0-pilot.6"}\n' > "$old/RELEASE.json"
+echo 'rule custom { condition: false }' > "$old/rules/custom.yar"
+password="$(printf 'p%.0s' {1..32})"
+token="OLD-SECRET-API-TOKEN-$(printf 'a%.0s' {1..32})"
+{
+  echo "MASP_IMAGE=masp-pilot:0.1.0-pilot.6"
+  echo "MASP_POSTGRES_IMAGE=postgres:16-alpine"
+  echo "MASP_POSTGRES_PASSWORD=$password"
+  echo "MASP_API_TOKEN=$token"
+  echo "MASP_ADMIN_PASSWORD=old-admin-password-long"
+  echo "MASP_ICAP_BIND=127.0.0.1:1344"
+  echo "MASP_ICAP_ALLOWED_IPS=127.0.0.1"
+  echo "MASP_ICAP_SERVICE_CLIENT_KEY=fil"
+  echo "MASP_STORAGE_DIR=$work/srv/storage"
+  echo "MASP_RULES_DIR=./rules"
+  echo "MASP_WORKER_ENGINE_KEYS=static_metadata,clamav,yara"
+  echo "MASP_WORKER_ENROLLMENT_TOKEN=CHANGE_ME_LONG_RANDOM_WORKER_ENROLLMENT_TOKEN"
+  echo "MASP_SIEM_WEBHOOK_URL=https://user:WEBHOOK-PASS@siem.example/hook"
+} > "$old/.env.pilot"
+cp "$old/.env.pilot" "$work/old-env-before"
+{
+  echo '#!/usr/bin/env bash'
+  echo 'echo "old-backup $*" >> "$FAKE_DOCKER_LOG"'
+  echo 'out="${@: -1}"; dir="$out/masp-pilot-20261002T000000Z"; mkdir -p "$dir"; echo dump > "$dir/db.dump"'
+  echo '(cd "$dir" && sha256sum db.dump > SHA256SUMS)'
+} > "$old/deploy/pilot/backup.sh"
+printf '#!/usr/bin/env bash\necho "old-verify" >> "$FAKE_DOCKER_LOG"\n' > "$old/deploy/pilot/verify.sh"
+printf 'masp-pilot:0.1.0-pilot.6\nclamav/clamav:stable\n' > "$work/images"
+[[ "$3" == "images missing" ]] || echo postgres:16-alpine >> "$work/images"
+if [[ "$4" == "rules taken" ]]; then mkdir -p "$work/srv/rules"; echo x > "$work/srv/rules/other.yar"; fi
+echo fake-image > "$work/opt/masp-pilot-0.1.0-pilot.11-image.tar"
+(cd "$work/opt" && sha256sum masp-pilot-0.1.0-pilot.11-image.tar > masp-pilot-0.1.0-pilot.11-image.tar.sha256)
+export FAKE_DOCKER_LOG="$work/docker.log" FAKE_IMAGES="$work/images" FAKE_BINDING="$2"
+cp "$FAKE_DOCKER" "$work/bin/docker"
+printf '#!/usr/bin/env bash\necho Linux\n' > "$work/bin/uname"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$work/bin/systemctl"
+chmod +x "$work/bin/"*
+export PATH="$work/bin:$PATH"
+ln -s "$old" "$work/opt/current"
+MASP_UPGRADE_REQUIRE_ROOT=0 MASP_INSTALL_ROOT="$work/opt" MASP_DATA_ROOT="$work/srv" MASP_WRAPPER="$work/bin/masp" \
+  MASP_UPGRADE_LOG="$work/upgrade.log" bash "$new/deploy/pilot/upgrade.sh" $1 2>&1
+echo "EXIT=$?"
+echo "--- docker"; cat "$FAKE_DOCKER_LOG"
+echo "--- new env"; cat "$new/.env.pilot" 2>/dev/null
+echo "--- rules"; ls "$work/srv/rules" 2>/dev/null
+echo "--- old env unchanged"; cmp -s "$old/.env.pilot" "$work/old-env-before" && echo yes
+"""
+
+# Records every call; knows which images are loaded and answers the few
+# questions upgrade.sh, install.sh and verify.sh ask.
+UPGRADE_FAKE_DOCKER = r"""#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+case "$*" in
+  "image inspect "*) grep -qxF "$3" "$FAKE_IMAGES"; exit ;;
+  "load -i "*) echo masp-pilot:0.1.0-pilot.11 >> "$FAKE_IMAGES" ;;
+  "ps "*) echo c1; echo c2 ;;
+  "network inspect "*) echo 172.18.0.1 ;;
+  *" config --images"*) env_file="${*##*--env-file }"; env_file="${env_file%% *}"
+     sed -n 's/^MASP_IMAGE=//p' "$env_file"; echo postgres:16-alpine; echo clamav/clamav:stable ;;
+  *"exec -T icap python -c"*) printf '%s\n' "$FAKE_BINDING" ;;
+esac
+exit 0
+"""
+
+BOUND = "client|fil||File gateway"
+
+
+@unittest.skipUnless(POSIX_BASH, "requires a POSIX bash (Git Bash on Windows)")
+class PilotUpgradeTests(unittest.TestCase):
+    def upgrade(self, args: str, binding: str = BOUND, images: str = "", rules: str = "") -> dict[str, str]:
+        with tempfile.TemporaryDirectory() as scratch:
+            fake = Path(scratch) / "docker"
+            fake.write_bytes(UPGRADE_FAKE_DOCKER.encode())
+            result = subprocess.run([BASH, "-c", UPGRADE_HARNESS, "harness", args, binding, images, rules],
+                                    capture_output=True, text=True, timeout=180,
+                                    env={"ROOT": ROOT.as_posix(), "PATH": os.environ["PATH"],
+                                         "FAKE_DOCKER": fake.as_posix()})
+        sections = {"output": ""}
+        name = "output"
+        for line in result.stdout.splitlines():
+            if line.startswith("--- "):
+                name = line[4:]
+                sections[name] = ""
+            else:
+                sections[name] += line + "\n"
+        return sections
+
+    def test_dry_run_shows_the_carried_settings_and_changes_nothing(self) -> None:
+        out = self.upgrade("--dry-run")
+        self.assertIn("EXIT=0", out["output"])
+        self.assertIn("Dry run: nothing was changed", out["output"])
+        self.assertIn("> MASP_IMAGE=masp-pilot:0.1.0-pilot.11", out["output"])
+        self.assertIn("> MASP_WORKER_ENGINE_KEYS=static_metadata,clamav,yara,file_type,hash_list", out["output"])
+        self.assertIn("Would copy the rules", out["output"])
+        # Secrets and URL credentials never reach the screen or the log.
+        for secret in ("OLD-SECRET-API-TOKEN", "WEBHOOK-PASS", "old-admin-password-long"):
+            self.assertNotIn(secret, out["output"])
+        self.assertEqual(out["new env"], "")
+        self.assertNotIn("old-backup", out["docker"])
+        self.assertFalse(any(" up -d" in line for line in out["docker"].splitlines()))
+        self.assertNotIn("current ->", out["output"])
+
+    def test_upgrade_backs_up_first_carries_settings_and_switches(self) -> None:
+        out = self.upgrade("--yes --skip-current-verify")
+        self.assertIn("EXIT=0", out["output"])
+        calls = out["docker"].splitlines()
+        backup = next(i for i, call in enumerate(calls) if call.startswith("old-backup"))
+        up = next(i for i, call in enumerate(calls) if " up -d --wait" in call)
+        self.assertLess(backup, up)
+        self.assertIn("masp-pilot-0.1.0-pilot.11/docker-compose.pilot.yml", calls[up])
+        self.assertTrue(any(call.startswith("load -i") for call in calls[:backup]))
+        env = out["new env"]
+        for kept in ("MASP_ICAP_SERVICE_CLIENT_KEY=fil", "OLD-SECRET-API-TOKEN", "WEBHOOK-PASS"):
+            self.assertIn(kept, env)
+        self.assertIn("MASP_IMAGE=masp-pilot:0.1.0-pilot.11\n", env)
+        self.assertIn("MASP_WORKER_ENROLLMENT_TOKEN=\n", env)
+        self.assertNotIn("MASP_RULES_DIR=./rules", env)
+        self.assertNotIn("CHANGE_ME", env)
+        # Settings the old file lacked arrive once, from the example; no proxy here.
+        self.assertEqual(env.count("MASP_SESSION_SECURE="), 1)
+        self.assertIn("MASP_SESSION_SECURE=\n", env)
+        self.assertIn("MASP_FORWARDED_ALLOW_IPS=127.0.0.1\n", env)
+        self.assertEqual(out["rules"].split(), ["custom.yar"])
+        # Git Bash copies instead of linking, so the switch is read from the script's own report.
+        self.assertRegex(out["output"], r"opt/current -> \S*/masp-pilot-0\.1\.0-pilot\.11\n")
+        self.assertIn("yes", out["old env unchanged"])
+        self.assertIn("ICAP scans are filed under service client File gateway (fil).", out["output"])
+        self.assertIn("restore.sh --env-file .env.pilot --backup-dir", out["output"])
+
+    def test_a_failure_after_the_backup_prints_the_rollback(self) -> None:
+        out = self.upgrade("--yes --skip-current-verify", binding="unresolved|fil|No service client has the key fil.|")
+        self.assertIn("EXIT=1", out["output"])
+        self.assertIn("ICAP client key 'fil' does not resolve", out["output"])
+        self.assertIn("To return to 0.1.0-pilot.6, run:", out["output"])
+        self.assertIn("masp-pilot-20261002T000000Z", out["output"])
+        self.assertIn("yes", out["old env unchanged"])
+
+    def test_a_missing_image_stops_before_the_backup(self) -> None:
+        out = self.upgrade("--yes --skip-current-verify", images="images missing")
+        self.assertIn("EXIT=1", out["output"])
+        self.assertIn("image postgres:16-alpine is not on this host", out["output"])
+        self.assertNotIn("old-backup", out["docker"])
+        self.assertNotIn("To return to", out["output"])
+        self.assertEqual(out["new env"], "")
+
+    def test_rules_inside_the_old_release_are_not_merged_silently(self) -> None:
+        out = self.upgrade("--yes --skip-current-verify", rules="rules taken")
+        self.assertIn("EXIT=1", out["output"])
+        self.assertIn("already has files", out["output"])
+        self.assertNotIn("old-backup", out["docker"])
