@@ -535,6 +535,28 @@ only by the clamav container) selects an internal signature mirror, a proxy or n
 container can reach `database.clamav.net`, and remember the pinned image ships a months-old
 database that starts clamd but must be replaced before real traffic.
 
+Offline first installation is `deploy/pilot/offline_install.sh`: Ubuntu 22.04 (`jammy`) and
+24.04 (`noble`) x86_64, from carried media whose Docker and tools archives are flat apt
+repositories with their full dependency closure (apt adds only what is missing and never
+downgrades). It must stay rerunnable and stop with a reason, keep an existing `.env.pilot`, never
+enable UFW, and write secrets root-only. Real intranet hosts are hardened in ways a container
+rehearsal does not show: IPv6 disabled (the nginx package's default site fails its postinst, so
+service starts are blocked through `policy-rc.d` while installing), a strict root umask (the
+extracted bundle is root-only, so `tools/` is opened for the containers), absent
+`/usr/local/bin`, and SSH port forwarding disabled. Rehearse installer changes in an isolated
+Docker network, and treat each real-host failure as a new rule here.
+
+ICAP samples are named from the encapsulated HTTP message (Content-Disposition with `filename*`
+first, the first multipart part, or a URL segment that has an extension); the name is
+client-supplied, reduced to a bounded bare name that keeps its extension, and decides nothing.
+A gateway bound to the wrong client (`MASP_ICAP_SERVICE_CLIENT_KEY` not reaching the icap
+container) silently files scans under `legacy-default`.
+
+The repository is public. Never commit an institution's name, logo, host names, addresses or
+operator material, including in commit messages and the handoff; operator guides live in the
+git-ignored `kilavuz/` and carried artifacts in `dist/`. Institution branding is planned as a
+generic, deployment-provided mechanism (assets outside the repository), never as a fork.
+
 ## Change Rules
 
 - Maintain in-place SQLite and PostgreSQL upgrade compatibility.

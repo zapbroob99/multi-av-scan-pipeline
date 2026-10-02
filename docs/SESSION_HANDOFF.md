@@ -1,6 +1,6 @@
 # MASP session handoff
 
-Updated: 2026-09-29, after storage protection phase 1. This is a workspace
+Updated: 2026-10-02, after the first intranet installation. This is a workspace
 checkpoint, not evidence of a deployment.
 
 ## Start here
@@ -78,21 +78,28 @@ Commits after the last pushed `94f01ed`, oldest first:
   share (3004 files crawled in 0.8 s, inspected in 9.8 s on a local volume).
   The operator's Turkish upgrade and test steps are `kilavuz/04-pilot9-klasor-tarama.md`
 - `484ebd1` handoff for pilot.9
-- `dabb087`, `f8d248c`, and the following fix commit: `deploy/pilot/offline_install.sh`,
-  a one-command first installation for an Ubuntu 22.04 host with no internet
-  access; release named `0.1.0-pilot.10`. Rehearsed end to end on 2026-10-01 in an
-  isolated Docker network (fresh 22.04 server, allowed and unlisted ICAP clients):
-  verify.sh passed, ICAP saw the client's real address, the DOCKER-USER rule
-  dropped the unlisted host, and a rerun and an interrupted Docker install both
-  recovered. The rehearsal also replaced `dist/masp-docker-offline-jammy-amd64.tar`
-  with a flat apt repository carrying the full dependency closure (the old one
-  assumed nftables, dbus-user-session and libglib were present). Carry folders
-  `dist/<carry folder>/` and `dist/deneme-client/`; operator guide
-  `kilavuz/05 (operator guide)`
-- `bc2820a` handoff; then the installer gained Ubuntu 24.04 support (the intranet host runs
-  24.04.5). `dist/` now also has `masp-docker-offline-noble-amd64.tar` and
-  `masp-tools-offline-noble-amd64.tar`; the 24.04 install was rehearsed end to end
-  the same way, with the pilot.10 ZIP rebuilt (same version, not yet installed anywhere)
+- `dabb087`, `f8d248c`, `69d4f78`: `deploy/pilot/offline_install.sh`, a
+  one-command first installation for a host with no internet access; release
+  named `0.1.0-pilot.10`. Rehearsed end to end on 2026-10-01 in an isolated Docker
+  network (fresh server, allowed and unlisted ICAP clients): verify.sh passed, ICAP
+  saw the client's real address, the DOCKER-USER rule dropped the unlisted host,
+  and a rerun and an interrupted Docker install both recovered. The Docker offline
+  archive became a flat apt repository carrying the full dependency closure
+- `bc2820a`, `966e68b`, `da0ab04`: Ubuntu 24.04 support (the intranet host runs
+  24.04.5); `dist/` holds `jammy` and `noble` Docker/tools archives, rehearsed the
+  same way on both releases
+- `da66273`, `046f9af`, `24f9498`: three installer fixes found on the first real
+  intranet installation, none of which the container rehearsal could show: nginx's
+  package postinst failed with IPv6 disabled (default site listens on `[::]:80`;
+  now blocked through `policy-rc.d` and the default site removed), `/usr/local/bin`
+  was absent, and a strict root umask left `tools/` unreadable by the containers
+  (now `umask 022` plus `chmod go+rX tools`). apt's own error lines are shown on
+  failure. The packaged pilot.10 ZIP predates these; the intranet host was fixed by
+  hand
+- `d9a2620` ICAP samples are named from the encapsulated HTTP message
+  (Content-Disposition, multipart part, or a URL segment with an extension) instead
+  of always `icap_reqmod.bin`/`icap_respmod.bin`; the content type comes from the
+  same message. Needed for the ledger and for the `file_type` extension check
 - this commit: handoff
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
@@ -181,6 +188,51 @@ immediately surfaced a real problem: ClamAV had not updated for three days
 `icap_gateway_status:<client key>:<port>` every 30 seconds; older gateways do
 not report, so an upgraded server shows ICAP as "not in use" until the icap
 container runs this release.
+
+**Intranet host (2026-10-02).** A second, fully offline installation runs
+`0.1.0-pilot.10` on Ubuntu 24.04.5 (hardened image: IPv6 off, strict root umask,
+no `/usr/local/bin`, SSH port forwarding disabled). Operator guide and carry
+folders live only in git-ignored places (`kilavuz/`, `dist/`); never name the host,
+the institution or its addresses in tracked files. State reported by the user:
+
+- Installed with `offline_install.sh` plus three manual fixes (default nginx site
+  removed, `/usr/local/bin` created, `chmod -R go+rX tools`).
+- A RESPMOD-only ICAP client (a product with built-in ICAP) is the first
+  integration; a service client was created for it. Scans still showed the
+  `legacy-default` client ("Legacy API / ICAP") because
+  `MASP_ICAP_SERVICE_CLIENT_KEY` had not reached the icap container; the user was
+  told to set it and rerun `install.sh --no-build`. Not yet confirmed.
+- The console is reachable only through an SSH tunnel to 127.0.0.1:443 until the
+  network team opens 443. The user may have prepended `DisableForwarding no`,
+  `AllowTcpForwarding local`, `PermitOpen 127.0.0.1:443` to `/etc/ssh/sshd_config`
+  (backup `/root/sshd_config.masp-yedek`); revert it once 443 is open.
+
+**Pilot.11 scope and decisions waiting on the user (2026-10-02):**
+
+- Ready in code, not yet packaged: the three installer fixes and ICAP file names.
+- Show which service client each ICAP gateway is bound to (System > ICAP and SIEM
+  and the client's Setup tab), so the legacy-default mistake is visible.
+- Console timestamps are hard-coded UTC (`formatTimestamp` in
+  `frontend/src/lib/utils.ts`); the user wants local time. Decide browser time
+  zone versus a fixed institution zone; keep UTC on hover.
+- Per-profile policy: size limit, archive handling, block-on-review and a
+  `file_type` allow/deny list by content family **and extension** (reuse
+  `content_types.classify` and the Folder Scanning type policy; record the policy
+  in the routing snapshot). `scan_profiles.policy_json` exists but nothing reads it.
+  Waiting for the user's rule for the first client.
+- Institution branding: generic mechanism only in the repo (deployment-provided
+  logo and product name under `/srv/masp/branding/`, read at runtime); the
+  institution's assets never enter the repository. Waiting for logo format and name.
+- `deploy/pilot/upgrade.sh`: one-command offline upgrade (detect current install,
+  verify, backup, carry `.env.pilot` adding only new keys, install, verify, print
+  rollback), requested after the error-prone manual pilot.9 upgrade.
+- Smaller: keep non-ASCII display names (storage names are ASCII-only, so Turkish
+  letters become `_`); a RESPMOD option for `tools/icap_probe.py`.
+- The user has to choose: ship the quick fixes first, or wait for the policy work.
+
+**Pilot server:** the pilot.9 upgrade was paused by the user at the `.env.pilot`
+step (an empty shell variable had produced a placeholder file; nothing was
+installed). `upgrade.sh` would make resuming it safer.
 
 **Next steps agreed with the user, in order:**
 
