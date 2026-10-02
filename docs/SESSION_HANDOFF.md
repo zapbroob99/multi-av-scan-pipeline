@@ -30,65 +30,65 @@ here is still current.
 
 Commits after the last pushed `94f01ed`, oldest first:
 
-- `315cc17` `deploy/pilot/rehearse_tls.sh`: disposable app + PostgreSQL + nginx
+- `54c6841` `deploy/pilot/rehearse_tls.sh`: disposable app + PostgreSQL + nginx
   (self-signed) rehearsal of the proxy trust settings; passed locally
-- `bbab676` the pilot release bundle ships the console build inputs
+- `a17a063` the pilot release bundle ships the console build inputs
   (`frontend/`); without them `install.sh` failed at the Dockerfile's first COPY
-- `99ac1b5` `install.sh` refuses the example's placeholder
+- `4ac88b0` `install.sh` refuses the example's placeholder
   `MASP_WORKER_ENROLLMENT_TOKEN` (public value: anyone could enroll a worker) and
   a non-Fernet `MASP_SECRET_ENCRYPTION_KEY`; both may be empty
-- `b8a0c1a` hash lookup redesign, technical About (release image, Python,
+- `82c696a` hash lookup redesign, technical About (release image, Python,
   database, per-engine versions, agent versions), theme-aware logo;
   `MASP_RELEASE` passed through the compose files
-- `33623d6` release named `0.1.0-pilot.7`
-- `63ad691` grouped navigation (Operations, Integrations, Infrastructure,
+- `22161f5` release named `0.1.0-pilot.7`
+- `31c1571` grouped navigation (Operations, Integrations, Infrastructure,
   Administration; phone menu), one UTC timestamp format, heartbeat wording,
   investigation links, copyable `X-Request-ID` on errors, collapsible help.
   Started by a second agent that ran out of credit; reviewed, four tests adapted
   to the intended behaviour, committed here
-- `634437a` operations visibility: health checks on System > Overview and in the
+- `e6ecf41` operations visibility: health checks on System > Overview and in the
   top bar, ClamAV signature version/date in engine health, ICAP gateway activity
   record, System > ICAP and SIEM, intake retry/dismiss, client readiness per
   connection method, name search, ledger client picker, support bundle
-- `e4126bd` notifications that nothing ever tried to deliver are "not in use",
+- `2369905` notifications that nothing ever tried to deliver are "not in use",
   not critical (found on the live local stack)
-- `f222418` handoff, AGENTS.md, architecture and deployment docs synced
-- `d257cc3` Microsoft Defender marked `supported` (product-owner decision based
+- `7ca0274` handoff, AGENTS.md, architecture and deployment docs synced
+- `748e829` Microsoft Defender marked `supported` (product-owner decision based
   on production use; label only). SCM-service run, failure/failover matrix and
   release signing stay open as hardening, not as done
-- `f153ee5` ClamAV on networks without internet access: optional `clamav.env`
+- `ae1b0dc` ClamAV on networks without internet access: optional `clamav.env`
   beside the compose file (internal mirror, proxy, or `CLAMAV_NO_FRESHCLAMD`)
   and `deploy/pilot/load_clamav_signatures.sh` (sigtool-verified copy into the
   service volume; TCP `RELOAD` on a running clamd). Rehearsed in Docker's Linux VM
-- `4444196` release named `0.1.0-pilot.8`
-- `154b131` docs: the pinned ClamAV image ships an old database
-- `9af6cda`, `1da505a`: handoff updates
-- `3c97d5c` storage protection architecture (`STORAGE_PROTECTION.md`)
-- `5d7a28e` storage protection phase 1 core: protection worker, inventory,
+- `4bb4f57` release named `0.1.0-pilot.8`
+- `69105bf` docs: the pinned ClamAV image ships an old database
+- `2c2dd3b`, `1b24954`: handoff updates
+- `2cbd4b0` storage protection architecture (`STORAGE_PROTECTION.md`)
+- `44cbc8e` storage protection phase 1 core: protection worker, inventory,
   light tier, shared header classifier (`content_types.py`), storage outbox
-- `830c5da` browser API under `/api/ui/v1/storage` and a folder scanning
+- `365163d` browser API under `/api/ui/v1/storage` and a folder scanning
   health check
-- `9a1206a` an unreadable stored policy stops only its own location
-- `4204904` Folder scanning console screens
-- `829b302` `storage-protection` compose profile in all three compose files,
+- `7eef7dd` an unreadable stored policy stops only its own location
+- `5d8368b` Folder scanning console screens
+- `f376270` `storage-protection` compose profile in all three compose files,
   env examples, README/deployment/architecture docs, handoff
-- `ef94971` release named `0.1.0-pilot.9`; bundle and MASP image in `dist/`
+- `366ca10` release named `0.1.0-pilot.9`; bundle and MASP image in `dist/`
   (PostgreSQL/ClamAV unchanged). The image passed a folder-scanning smoke run
   as UID 10001 with a read-only root, no capabilities and a root-owned 755/644
   share (3004 files crawled in 0.8 s, inspected in 9.8 s on a local volume).
   The operator's Turkish upgrade and test steps are `kilavuz/04-pilot9-klasor-tarama.md`
-- `484ebd1` handoff for pilot.9
-- `dabb087`, `f8d248c`, `69d4f78`: `deploy/pilot/offline_install.sh`, a
+- `a710c0d` handoff for pilot.9
+- `1dfb6f4`, `b86b617`, `437942a`: `deploy/pilot/offline_install.sh`, a
   one-command first installation for a host with no internet access; release
   named `0.1.0-pilot.10`. Rehearsed end to end on 2026-10-01 in an isolated Docker
   network (fresh server, allowed and unlisted ICAP clients): verify.sh passed, ICAP
   saw the client's real address, the DOCKER-USER rule dropped the unlisted host,
   and a rerun and an interrupted Docker install both recovered. The Docker offline
   archive became a flat apt repository carrying the full dependency closure
-- `bc2820a`, `966e68b`, `da0ab04`: Ubuntu 24.04 support (the intranet host runs
+- `fce9fcb`, `3ef2fa2`, `0b83def`: Ubuntu 24.04 support (the intranet host runs
   24.04.5); `dist/` holds `jammy` and `noble` Docker/tools archives, rehearsed the
   same way on both releases
-- `da66273`, `046f9af`, `24f9498`: three installer fixes found on the first real
+- `69f674e`, `3162c31`, `9c1a54e`: three installer fixes found on the first real
   intranet installation, none of which the container rehearsal could show: nginx's
   package postinst failed with IPv6 disabled (default site listens on `[::]:80`;
   now blocked through `policy-rc.d` and the default site removed), `/usr/local/bin`
@@ -96,7 +96,7 @@ Commits after the last pushed `94f01ed`, oldest first:
   (now `umask 022` plus `chmod go+rX tools`). apt's own error lines are shown on
   failure. The packaged pilot.10 ZIP predates these; the intranet host was fixed by
   hand
-- `d9a2620` ICAP samples are named from the encapsulated HTTP message
+- `98b4091` ICAP samples are named from the encapsulated HTTP message
   (Content-Disposition, multipart part, or a URL segment with an extension) instead
   of always `icap_reqmod.bin`/`icap_respmod.bin`; the content type comes from the
   same message. Needed for the ledger and for the `file_type` extension check
@@ -161,7 +161,7 @@ pilot backup/restore scripts stopped only `app worker icap`, leaving intake and
 notification workers writing during a dump/restore (a fake-docker test now
 drives both scripts); and Uvicorn trusted `X-Forwarded-Proto` only from
 127.0.0.1, so behind a TLS proxy every console save would fail the same-origin
-check and remote workers would be refused. `rehearse_tls.sh` (`315cc17`)
+check and remote workers would be refused. `rehearse_tls.sh` (`54c6841`)
 proves the MASP side against a self-signed nginx; a real institutional proxy
 has still not been exercised.
 
@@ -178,7 +178,7 @@ root-container release (pilot.2) without `install.sh` leaves storage root-owned
 and every upload fails with 500; `restore.sh` restarts services without waiting
 for health, so verify after the app is healthy.
 
-**Operations visibility (`634437a`, `e4126bd`).** The health report
+**Operations visibility (`e6ecf41`, `2369905`).** The health report
 (`app/services/health_read.py`, `GET /api/ui/v1/system/health`) evaluates
 workers, queue age (with why scans wait), engines (using the Engines screen's
 own verdicts), ClamAV signature age, sample storage, manifest and deferred
@@ -244,7 +244,7 @@ installed). `upgrade.sh` would make resuming it safer.
    for Ubuntu 22.04 beside the existing offline Docker packages. The user plans
    a second, intranet installation with no internet access at all; ClamAV
    signatures then come from an internal mirror, a proxy, or
-   `deploy/pilot/load_clamav_signatures.sh` (`f153ee5`). The pinned ClamAV image
+   `deploy/pilot/load_clamav_signatures.sh` (`ae1b0dc`). The pinned ClamAV image
    ships a database from its build date (daily 28045, 2026-06-28), so load
    current signatures before real traffic.
 3. On the pilot server (operator-run; the agent has no access): real network
@@ -313,7 +313,7 @@ server is unconfirmed. Operator manuals in Turkish live in `kilavuz/`
 (`01-kurulum.md`, `02-offline-yukseltme.md`), excluded from git through
 `.git/info/exclude` at the user's request.
 
-**Local environment notes:** the live local stack was rebuilt from `e4126bd` on
+**Local environment notes:** the live local stack was rebuilt from `2369905` on
 2026-09-28 (volumes kept) and now also runs the `icap` profile on
 `127.0.0.1:1344`. `.env` has `MASP_MANIFEST_CLIENT_KEY=drive` (the
 client created in the console is `drive`, id 238, granted `drive`/`uploads/`).
@@ -330,7 +330,7 @@ framing confirmation, and per-client rate limiting.
 ## Verification and environment safety
 
 - Full backend: `python -m unittest discover -s tests`. Last full run (working
-  tree of `634437a`, SQLite): **957 tests, OK, 121 skipped** (the skips are the
+  tree of `e6ecf41`, SQLite): **957 tests, OK, 121 skipped** (the skips are the
   PostgreSQL-gated modules). New PostgreSQL coverage
   (`tests/test_operations_health.py`, About, health and readiness queries) was
   run against a disposable PostgreSQL 16 and passed. The pilot script tests need
@@ -351,7 +351,7 @@ framing confirmation, and per-client rate limiting.
   the exact owned PIDs before stopping them (none were left this session).
 - Preserve live containers `masp-app-1`, `masp-worker-1`, `masp-icap-1`,
   `masp-postgres-1`, `masp-clamav-1`, `masp-deferred-intake-1` and
-  `masp-manifest-intake-1`. They were rebuilt from `e4126bd` on 2026-09-28;
+  `masp-manifest-intake-1`. They were rebuilt from `2369905` on 2026-09-28;
   volumes were kept.
   Run heavy suites sequentially: running the full suite,
   e2e and a disposable PostgreSQL concurrently previously pushed the live
