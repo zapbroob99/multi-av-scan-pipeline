@@ -295,8 +295,12 @@ else
         die "placeholders left in the configuration: $left. Set real values in $FROM/.env.pilot and rerun"
     fi
     if [[ -f "$FROM/clamav.env" && ! -f "$BUNDLE_DIR/clamav.env" ]]; then
-        [[ $DRY_RUN -eq 1 ]] || cp -a "$FROM/clamav.env" "$BUNDLE_DIR/clamav.env"
-        note "clamav.env carried over"
+        if [[ $DRY_RUN -eq 1 ]]; then
+            note "Would carry clamav.env over"
+        else
+            cp -a "$FROM/clamav.env" "$BUNDLE_DIR/clamav.env"
+            note "clamav.env carried over"
+        fi
     fi
 fi
 

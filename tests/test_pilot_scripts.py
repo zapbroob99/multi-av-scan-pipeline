@@ -204,7 +204,10 @@ export FAKE_BINDING="$1" FAKE_DOCKER_LOG="$work/docker.log"
 cat > "$work/bin/docker" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
-if [[ "$*" == *"exec -T icap python -c"* ]]; then printf '%s\r\n' "$FAKE_BINDING"; fi
+if [[ "$*" == *"exec -T icap python -c"* ]]; then
+  # Like the real container with PostgreSQL: importing the app prints first.
+  printf 'MASP DB pool enabled (min=0, max=4)\r\nMASP_ICAP_BINDING|%s\r\n' "$FAKE_BINDING"
+fi
 exit 0
 FAKE
 chmod +x "$work/bin/docker"
@@ -314,7 +317,7 @@ case "$*" in
   "network inspect "*) echo 172.18.0.1 ;;
   *" config --images"*) env_file="${*##*--env-file }"; env_file="${env_file%% *}"
      sed -n 's/^MASP_IMAGE=//p' "$env_file"; echo postgres:16-alpine; echo clamav/clamav:stable ;;
-  *"exec -T icap python -c"*) printf '%s\n' "$FAKE_BINDING" ;;
+  *"exec -T icap python -c"*) printf 'MASP DB pool enabled (min=0, max=4)\nMASP_ICAP_BINDING|%s\n' "$FAKE_BINDING" ;;
 esac
 exit 0
 """

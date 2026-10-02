@@ -39,8 +39,11 @@ from app.services.health_read import icap_binding
 key = os.getenv("MASP_ICAP_SERVICE_CLIENT_KEY", "").strip().lower() or "legacy-default"
 with db.connect() as connection:
     found = icap_binding(connection, key)
-print(found["binding"], key, found["binding_detail"] or "", found["client_name"] or "", sep="|")
+print("MASP_ICAP_BINDING", found["binding"], key, found["binding_detail"] or "", found["client_name"] or "", sep="|")
 ' | tr -d '\r')" || pilot_die "could not read the ICAP client binding from the icap container"
+# Importing the app may print to stdout (with PostgreSQL: "MASP DB pool enabled"),
+# so only the marked line is the answer.
+binding="$(printf '%s\n' "$binding" | sed -n 's/^MASP_ICAP_BINDING|//p' | tail -n 1)"
 # Not tab-separated: read collapses empty whitespace-separated fields. The display
 # name is free text, so it comes last and keeps any separator it contains.
 IFS='|' read -r binding_state binding_key binding_detail binding_name <<< "$binding"
