@@ -25,7 +25,7 @@ test('admin changes role, resets password and removes a local account', async ({
     await page.getByRole('button', { name: 'Refresh users' }).click()
     await expect(row).toContainText('Administrator')
     await target.getByRole('button', { name: 'Check session' }).click()
-    await expect(target.getByRole('heading', { name: 'Welcome back.' })).toBeVisible()
+    await expect(target.getByRole('heading', { name: 'Sign in to MASP' })).toBeVisible()
     await target.getByLabel('Username', { exact: true }).fill('managed-analyst')
     await target.getByLabel('Password', { exact: true }).fill('reset-test-only')
     await target.getByRole('button', { name: 'Sign in', exact: true }).click()
@@ -37,6 +37,6 @@ test('admin changes role, resets password and removes a local account', async ({
     await page.getByRole('button', { name: 'Refresh users' }).click()
     await expect(row).toHaveCount(0)
     await target.getByRole('button', { name: 'Check session' }).click()
-    await expect(target.getByRole('heading', { name: 'Welcome back.' })).toBeVisible()
+    await expect(target.getByRole('heading', { name: 'Sign in to MASP' })).toBeVisible()
   } finally { await other.close() }
 })

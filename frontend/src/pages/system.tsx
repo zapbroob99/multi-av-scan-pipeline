@@ -116,7 +116,7 @@ export default function System({ session }: { session: Session }) {
       <p className="muted">{workers.data.items.length} shown. A heartbeat expires after {workers.data.stale_after_seconds} seconds. Refreshes every 30 seconds.</p>
       {targetNode && !workers.data.items.some(worker => worker.node_id === targetNode) && <p role="status" className="callout">The linked worker is no longer on this page. Refresh workers or return to the first page.</p>}
       {workers.data.items.length === 0 && <p className="empty">No worker nodes on this page.</p>}
-      {workers.data.items.length > 0 && <ul className="entity-list" aria-label="Worker nodes">{workers.data.items.map(worker =>
+      {workers.data.items.length > 0 && <ul className="entity-list" aria-label="Worker nodes"><li className="entity-header" aria-hidden="true"><span /><span>Worker node</span><span>Heartbeat and capacity</span><span>State</span><span /></li>{workers.data.items.map(worker =>
         <WorkerRow key={`${worker.node_id}-${worker.lifecycle_state}`} worker={worker} busy={busy} open={setSelected} />)}</ul>}
       {(after || workers.data.next_after) && <div className="history-pagination"><Button variant="secondary" disabled={!after || busy} onClick={() => setParams({})}>First workers</Button>
         <Button variant="secondary" disabled={!workers.data.next_after || busy} onClick={() => setParams({ after: workers.data!.next_after! })}>Next workers</Button></div>}

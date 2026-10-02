@@ -31,20 +31,21 @@ export default function ScanPolicy({ session }: { session: Session }) {
     <nav className="report-actions"><Link to="/system/overview">System overview</Link></nav>
     <p className="callout">Changes apply to subsequent policy reads without a restart. Blank fields clear database overrides and use the environment or built-in default.
       An upload size cap of 0 removes this policy cap; deployment HTTP body limits still apply. ICAP and deployment settings are configured separately.</p>
-    <p className="muted">Saving replaces all three overrides. Coordinate edits with other administrators; the last successful save wins.</p>
     {policy.isPending && <p role="status">Loading scan policy…</p>}
     {policy.error && <p role="alert" className="error"><ErrorMessage message={policy.error.message || ''} /></p>}
     {save.isSuccess && <p role="status" className="callout">Scan policy saved. Reload policy to see the effective values.</p>}
     {save.error && <p role="alert" className="error"><ErrorMessage message={save.error.message || ''} /> The request may have reached the server. Reload and check the values before another save; this request will not be replayed.</p>}
     {needsRefresh && <p>Reload policy before editing again.</p>}
-    {!needsRefresh && !policy.error && policy.data && <form key={version} onSubmit={review} aria-label="Scan policy settings">
-      <fieldset disabled={busy}>{policy.data.fields.map(field => <section className="submission-card" key={field.key}>
-        <label htmlFor={`policy-${field.key}`}>{field.label}{field.unit && ` (${field.unit})`}</label>
-        <p className="muted">{field.help}</p>
-        <input id={`policy-${field.key}`} name={field.key} type="number" step="1" min={field.minimum} max={field.maximum}
+    {!needsRefresh && !policy.error && policy.data && <form key={version} className="settings-panel" onSubmit={review} aria-label="Scan policy settings">
+      <div className="settings-panel-header"><div><h2>Operational limits</h2><p>Blank uses the environment or built-in default shown in the field.</p></div></div>
+      <fieldset disabled={busy}><div className="settings-panel-body">{policy.data.fields.map(field => <div className="setting-row" key={field.key}>
+        <div className="setting-label"><label htmlFor={`policy-${field.key}`}>{field.label}{field.unit && ` (${field.unit})`}</label>
+          <p>{field.help}</p></div>
+        <div className="setting-control"><input id={`policy-${field.key}`} name={field.key} type="number" step="1" min={field.minimum} max={field.maximum}
           defaultValue={field.override_raw} placeholder={`Default: ${field.default}`} />
-        <p className="muted">Effective: <strong>{field.value.toLocaleString()}</strong> · {field.source}</p>
-      </section>)}<Button type="submit">Review policy changes</Button></fieldset>
+          <p className="setting-effective">Effective <strong>{field.value.toLocaleString()}</strong><span className="tag">{field.source}</span></p></div>
+      </div>)}</div>
+      <div className="settings-panel-footer"><p>Saving replaces all three overrides; the last successful save wins.</p><Button type="submit">Review policy changes</Button></div></fieldset>
     </form>}
     <Dialog open={confirmation !== null} onOpenChange={open => { if (!open && !save.isPending) setConfirmation(null) }} title="Save scan policy?"
       description="Apply these three overrides together. Blank entries revert to the environment or built-in default.">

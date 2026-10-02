@@ -33,7 +33,7 @@ test('admin pages the audit trail with literal search while analysts are refused
   expect(await page.locator('pre script').count()).toBe(0)
 
   await page.getByRole('button', { name: 'Sign out' }).click()
-  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in to MASP' })).toBeVisible()
   await page.getByLabel('Username', { exact: true }).fill('console-analyst')
   await page.getByLabel('Password', { exact: true }).fill('console-test-only')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()

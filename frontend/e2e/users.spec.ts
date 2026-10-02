@@ -18,7 +18,7 @@ test('admin creates a local analyst who can sign in without admin access', async
   await page.getByRole('button', { name: 'Refresh users' }).click()
   await expect(page.getByRole('list', { name: 'Users' })).toContainText('created-analyst')
   await page.getByRole('button', { name: 'Sign out' }).click()
-  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in to MASP' })).toBeVisible()
   await page.getByLabel('Username', { exact: true }).fill('created-analyst')
   await page.getByLabel('Password', { exact: true }).fill('created-test-only')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()

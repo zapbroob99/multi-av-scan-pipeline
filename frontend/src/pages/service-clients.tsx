@@ -71,9 +71,14 @@ function ClientEditor({ client, session, close, updated }: { client: Client; ses
             {action.isSuccess && <p role="status" className="callout">Service client updated. Close this window and refresh clients to see the current state.</p>}
             {action.error && <p role="alert" className="error"><ErrorMessage message={action.error.message || ''} /> The request may have reached the server. Close this window and refresh clients before saving again; no automatic retry is performed.</p>}
             {!needsRefresh && <form onSubmit={submit} aria-label={`Edit client ${client.id}`}><fieldset disabled={blocked || client.managed || client.metadata_incomplete}>
-              <div className="field-grid"><label>Display name<input name="display_name" required maxLength={100} defaultValue={client.display_name} /></label>
-                <label>Client state<select name="enabled" defaultValue={client.enabled ? 'enabled' : 'disabled'}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label></div>
-              <p className="muted client-note">Disabling prevents new submissions. Existing scans and credentials are preserved. Concurrent edits use the last successful save.</p>
+              <div className="form-rows">
+                <div className="form-row"><span>Client key</span><span><code>{client.client_key}</code>
+                  <small>Fixed identity used by ICAP (MASP_ICAP_SERVICE_CLIENT_KEY), manifest and storage settings. It cannot be changed.</small></span></div>
+                <label>Display name<input name="display_name" required maxLength={100} defaultValue={client.display_name} /></label>
+                <div className="form-row"><label htmlFor={`client-state-${client.id}`}>Client state</label><span>
+                  <select id={`client-state-${client.id}`} name="enabled" aria-describedby={`client-state-help-${client.id}`} defaultValue={client.enabled ? 'enabled' : 'disabled'}><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select>
+                  <small id={`client-state-help-${client.id}`}>Disabling prevents new submissions. Existing scans and credentials are preserved. Concurrent edits use the last successful save.</small></span></div>
+              </div>
               <div className="client-form-footer"><Button type="submit">Review client changes</Button></div>
             </fieldset></form>}
           </section>}

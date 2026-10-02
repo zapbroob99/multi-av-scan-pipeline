@@ -68,7 +68,7 @@ test('admin bulk deletion is confirmed and reconciled against history', async ({
   const checkbox = await page.getByRole('checkbox', { name: 'Select scan 23' }).boundingBox()
   expect(checkbox!.width).toBeLessThanOrEqual(20)
   expect(checkbox!.height).toBeLessThanOrEqual(20)
-  expect(await page.getByLabel('Search scans').evaluate(element => parseFloat(getComputedStyle(element).paddingLeft))).toBeGreaterThanOrEqual(39)
+  expect(await page.getByLabel('Search scans').evaluate(element => parseFloat(getComputedStyle(element).paddingLeft))).toBeGreaterThanOrEqual(30)
   expect((await page.getByRole('columnheader', { name: 'Select all on this page' }).boundingBox())!.width).toBeLessThan(100)
   await page.screenshot({ path: '../artifacts/console-e2e/dashboard-admin-desktop.png', fullPage: true })
   await page.getByLabel('Search scans').fill('acceptance-22')

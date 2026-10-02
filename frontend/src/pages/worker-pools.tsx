@@ -71,7 +71,7 @@ export default function WorkerPools({ session }: { session: Session }) {
     {pools.isPending && <p role="status">Loading worker pools…</p>}
     {pools.error && <p className="error" role="alert"><ErrorMessage message={pools.error.message || ''} /></p>}
     {!pools.error && pools.data && <>
-      {pools.data.items.length > 0 && <ul className="entity-list" aria-label="Worker pools">{pools.data.items.map(pool => <li key={pool.id}>
+      {pools.data.items.length > 0 && <ul className="entity-list" aria-label="Worker pools"><li className="entity-header" aria-hidden="true"><span /><span>Pool</span><span>Label selector</span><span>Status</span><span /></li>{pools.data.items.map(pool => <li key={pool.id}>
         <button type="button" className="entity-row" disabled={busy} aria-label={`Manage pool ${pool.id}`} onClick={() => setEditor({ pool })}>
           <span className={`entity-avatar ${pool.enabled ? '' : 'is-muted'}`} aria-hidden="true"><Layers size={17} /></span>
           <span className="entity-identity"><strong>{pool.name}</strong><small>Pool #{pool.id}</small></span>

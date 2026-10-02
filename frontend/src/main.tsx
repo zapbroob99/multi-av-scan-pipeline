@@ -11,6 +11,14 @@ import { SystemLayout } from './components/section-tabs'
 import { WorkspaceNavigation } from './components/workspace-navigation'
 import { ErrorMessage } from './components/error-message'
 import { HealthIndicator } from './components/health-panel'
+import '@fontsource/ibm-plex-sans/latin-400.css'
+import '@fontsource/ibm-plex-sans/latin-ext-400.css'
+import '@fontsource/ibm-plex-sans/latin-500.css'
+import '@fontsource/ibm-plex-sans/latin-ext-500.css'
+import '@fontsource/ibm-plex-sans/latin-600.css'
+import '@fontsource/ibm-plex-sans/latin-ext-600.css'
+import '@fontsource/ibm-plex-mono/latin-400.css'
+import '@fontsource/ibm-plex-mono/latin-500.css'
 import './styles.css'
 
 const Users = lazy(() => import('./pages/users'))
@@ -55,6 +63,29 @@ const client = new QueryClient({ defaultOptions: {
   mutations: { retry: false },
 } })
 
+const SECTIONS: [string, string, string][] = [
+  ['/account', 'Personal', 'Account'], ['/about', 'Personal', 'About'], ['/audit', 'Administration', 'Audit trail'],
+  ['/users', 'Administration', 'Users'], ['/scan-policy', 'Administration', 'Scan policy'],
+  ['/api-ledger', 'Integrations', 'API ledger'], ['/service-clients', 'Integrations', 'Service clients'],
+  ['/storage', 'Operations', 'Folder scanning'], ['/hash-scan', 'Operations', 'Hash lookup'],
+  ['/engines/hash-list', 'Infrastructure', 'Hash list'], ['/engines', 'Infrastructure', 'Engines'], ['/system', 'Infrastructure', 'System'],
+  ['/scans/new', 'Operations', 'Submit sample'], ['/batches/', 'Operations', 'Batch overview'],
+]
+
+function locationTrail(pathname: string): [string, string] {
+  if (pathname.endsWith('/print')) return ['Operations', 'Printable report']
+  if (pathname.endsWith('/children')) return ['Operations', 'Archive contents']
+  const match = SECTIONS.find(([prefix]) => pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`) || pathname.startsWith(prefix))
+  if (match) return [match[1], match[2]]
+  if (pathname.startsWith('/scans/')) return ['Operations', 'Scan report']
+  return ['Operations', 'Dashboard']
+}
+
+function initials(name: string) {
+  const parts = name.split(/[^A-Za-z0-9]+/).filter(Boolean)
+  return (parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2)).toUpperCase()
+}
+
 function clearPrivateQueries() {
   // Keep the mounted session observer attached; clearing its query while it is
   // pending can leave the login screen stuck on "Connecting".
@@ -89,23 +120,36 @@ function App() {
       clearPrivateQueries(); client.setQueryData(['session'], null)
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
-  if (session.isPending) return <main className="login-shell"><ThemeToggle className="login-theme-toggle" /><p role="status">Connecting to MASP…</p></main>
-  if (!session.data) return <main className="login-shell"><ThemeToggle className="login-theme-toggle" /><form className="login-card" onSubmit={login}>
-    <BrandMark size={48} label="MASP" /><p className="eyebrow">MASP CONSOLE</p>
-    <h1>Welcome back.</h1><p className="muted">Sign in with your existing MASP account.</p>
-    {loginOptions.data?.directory_login_enabled && <p className="muted">Directory sign-in enabled: you can also use your directory username and password.</p>}
+  const aside = <aside className="login-aside">
+    <div><span className="brand"><BrandMark size={30} /><span>MASP<small>Scan orchestration</small></span></span>
+      <h2>Multi-engine malware scanning on your own infrastructure.</h2>
+      <p>Files from uploads, gateways and storage are scanned by every engine you deploy, and decided by one policy you control.</p>
+      <ul className="login-facts"><li><span>Deployment</span><span>Self-hosted</span></li><li><span>Decision path</span><span>Offline</span></li>
+        <li><span>Interfaces</span><span>REST · ICAP · Storage</span></li></ul></div>
+    <footer>Authorized personnel only. Activity is recorded.</footer>
+  </aside>
+  if (session.isPending) return <main className="login-shell">{aside}<div className="login-main"><ThemeToggle className="login-theme-toggle" /><p role="status">Connecting to MASP…</p></div></main>
+  if (!session.data) return <main className="login-shell">{aside}<div className="login-main"><ThemeToggle className="login-theme-toggle" /><form className="login-card" onSubmit={login}>
+    <BrandMark size={48} label="MASP" />
+    <h1>Sign in to MASP</h1><p className="muted">Use your MASP account{loginOptions.data?.directory_login_enabled ? ' or your directory credentials' : ''}.</p>
     {notice && <p role="status" className="callout">{notice}</p>}
     <label>Username<input name="username" autoComplete="username" required autoFocus /></label>
     <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
     {(error || session.error) && <p role="alert" className="error"><ErrorMessage message={error || session.error?.message || ''} /></p>}
     <Button disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
-  </form></main>
+  </form></div></main>
+  const [section, title] = locationTrail(location.pathname)
   return <div className="app-shell"><aside className="sidebar">
-    <Link className="brand" to="/dashboard"><BrandMark size={40} /><span>MASP<small>SCAN ORCHESTRATION</small></span></Link>
+    <Link className="brand" to="/dashboard"><BrandMark size={28} /><span>MASP<small>Scan orchestration</small></span></Link>
     <WorkspaceNavigation admin={session.data.user.role === 'admin'} />
-    <div className="sidebar-footer"><span>{session.data.user.username}<small>{session.data.user.role}</small></span><div className="sidebar-controls">
-      <ThemeToggle /><Button variant="secondary" disabled={busy} onClick={logout} aria-label="Sign out"><LogOut size={17} /></Button></div></div>
-  </aside><main className="workspace"><header className="topbar"><span>Workspace <span className="muted">/ {location.pathname === '/account' ? 'Account' : location.pathname === '/about' ? 'About' : location.pathname === '/audit' ? 'Audit trail' : location.pathname.endsWith('/print') ? 'Printable report' : location.pathname === '/users' ? 'Users' : location.pathname.startsWith('/api-ledger') ? 'API ledger' : location.pathname.startsWith('/storage') ? 'Folder scanning' : location.pathname.startsWith('/service-clients') ? 'Service clients' : location.pathname === '/hash-scan' ? 'Hash lookup' : location.pathname === '/scan-policy' ? 'Scan policy' : location.pathname.startsWith('/system') ? 'System' : location.pathname === '/engines/hash-list' ? 'Hash list' : location.pathname === '/engines' ? 'Engine deployments' : location.pathname === '/scans/new' ? 'Submit sample' : location.pathname.startsWith('/batches/') ? 'Batch overview' : location.pathname.endsWith('/children') ? 'Archive contents' : location.pathname.startsWith('/scans/') ? 'Scan report' : 'Dashboard'}</span></span><span className="topbar-status">{session.data.user.role === 'admin' && <HealthIndicator />}<span className="offline-label">SELF-HOSTED</span></span></header>
+  </aside><main className="workspace"><header className="topbar">
+    <ol className="breadcrumb" aria-label="Location"><li>MASP</li><li>{section}</li><li>{title}</li></ol>
+    <div className="topbar-status">{session.data.user.role === 'admin' && <HealthIndicator />}<span className="offline-label">SELF-HOSTED</span>
+      <span className="topbar-divider" aria-hidden="true" />
+      <div className="topbar-user"><span className="user-avatar" aria-hidden="true">{initials(session.data.user.username)}</span>
+        <span className="user-identity"><strong>{session.data.user.username}</strong><small>{session.data.user.role}</small></span>
+        <ThemeToggle /><Button variant="secondary" disabled={busy} onClick={logout} aria-label="Sign out" title="Sign out"><LogOut size={16} /></Button></div></div>
+  </header>
     {error && <p role="alert" className="error"><ErrorMessage message={error} /></p>}
       <Suspense fallback={<p role="status">Loading page…</p>}><Routes>
         <Route path="/account" element={<Account session={session.data} onPasswordChanged={() => {

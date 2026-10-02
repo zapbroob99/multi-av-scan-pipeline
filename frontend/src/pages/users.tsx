@@ -73,7 +73,7 @@ export default function Users({ session }: { session: Session }) {
       <div className="entity-toolbar"><h2>Accounts</h2><p className="muted">{users.data.items.length} on this page ·
         directory roles and passwords are managed by the directory · change your own password in <Link to="/account">Account</Link></p></div>
       {!users.data.items.length && <p className="empty">No users on this page.</p>}
-      <ul className="entity-list" aria-label="Users">{users.data.items.map(user => {
+      <ul className="entity-list" aria-label="Users"><li className="entity-header" aria-hidden="true"><span /><span>User</span><span>Activity</span><span>Role and sign-in</span><span /></li>{users.data.items.map(user => {
         const self = user.id === session.user.id
         const directory = user.auth_source === 'ldap'
         const lastLogin = sinceRecorded(user.last_login_at)

@@ -52,15 +52,22 @@ export default function Account({ session, onPasswordChanged }: { session: Sessi
     {account.isPending && <p role="status">Loading account...</p>}
     {account.error && <p role="alert" className="error"><ErrorMessage message={account.error.message || ''} /></p>}
     {!account.error && account.data && <>
-      <p>{account.data.username} · {account.data.role} · {account.data.auth_source}</p>
+      <section className="settings-panel" aria-label="Profile"><div className="settings-panel-header"><div><h2>Profile</h2>
+        <p>Who you are signed in as. Roles are assigned by an administrator{account.data.auth_source !== 'local' ? ' or your directory' : ''}.</p></div></div>
+        <dl className="property-list"><div><dt>Username</dt><dd>{account.data.username}</dd></div>
+          <div><dt>Role</dt><dd><span className="tag">{account.data.role}</span></dd></div>
+          <div><dt>Sign-in source</dt><dd>{account.data.auth_source === 'local' ? 'Local MASP account' : `Directory (${account.data.auth_source})`}</dd></div></dl></section>
       {account.data.auth_source !== 'local' ? <p className="callout">Your password is managed by the directory. Contact your directory administrator to change it.</p> :
-        <form ref={form} className="submission-card" aria-label="Change your password" onSubmit={prepare}>
-          <h2>Change password</h2><p className="muted">Use a different password of 8 to 4096 characters. All your MASP sessions will be signed out, including this one.</p>
+        <form ref={form} className="settings-panel" aria-label="Change your password" onSubmit={prepare}>
+          <div className="settings-panel-header"><div><h2>Change password</h2>
+            <p>Use a different password of 8 to 4096 characters. All your MASP sessions will be signed out, including this one.</p></div></div>
           <fieldset disabled={busy || review || needsCheck || account.isFetching}>
-            <label>Current password<input name="current_password" type="password" autoComplete="current-password" required maxLength={4096} /></label>
-            <label>New password<input name="new_password" type="password" autoComplete="new-password" required minLength={8} maxLength={4096} /></label>
-            <label>Confirm new password<input name="confirm_password" type="password" autoComplete="new-password" required minLength={8} maxLength={4096} /></label>
-            <Button type="submit">Review password change</Button>
+            <div className="settings-panel-body form-rows">
+              <label>Current password<input name="current_password" type="password" autoComplete="current-password" required maxLength={4096} /></label>
+              <label>New password<input name="new_password" type="password" autoComplete="new-password" required minLength={8} maxLength={4096} /></label>
+              <label>Confirm new password<input name="confirm_password" type="password" autoComplete="new-password" required minLength={8} maxLength={4096} /></label>
+            </div>
+            <div className="settings-panel-footer"><Button type="submit">Review password change</Button></div>
           </fieldset>
         </form>}
     </>}
