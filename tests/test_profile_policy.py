@@ -309,7 +309,8 @@ class ProfilePolicyIntegrationTests(unittest.TestCase):
     def test_icap_blocks_a_rejected_upload_whatever_its_fail_mode(self):
         from app.icap import activity, server
         from app.icap.config import IcapConfig
-        self.set_policy({"block_masquerade": True, "violation_action": "reject"})
+        self.set_policy({"block_masquerade": True, "violation_action": "reject",
+                         "type_rule": {"mode": "denylist", "families": ["executable"]}})
         config = IcapConfig(service_client_key="policy-test", wait_seconds=0, fail_closed=False)
         recorder = activity.IcapActivity(config)
         with patch("app.services.ingest.SAMPLES_DIR", self.samples), patch.object(activity, "ACTIVITY", recorder), \
@@ -318,6 +319,7 @@ class ProfilePolicyIntegrationTests(unittest.TestCase):
         self.assertEqual(recorder.counters["policy_rejected"], 1)
         self.assertEqual(recorder.events[0]["kind"], "policy_rejected")
         self.assertIn("Declared .pdf content is actually pe", recorder.events[0]["detail"])
+        self.assertNotIn(".;", recorder.events[0]["detail"])
         self.assertEqual(self.stored_files(), [])
 
     def test_the_deferred_worker_fails_a_rejected_object_permanently(self):

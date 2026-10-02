@@ -27,7 +27,6 @@ from app.services.decisions import ScanDecision
 
 HEADER_BYTES = 4096
 MAX_SAFE_INTEGER = 9007199254740991
-_CODE_FAMILIES = frozenset({"executable", "script"})
 
 
 class TypeRule(BaseModel):
@@ -98,7 +97,7 @@ class IntakeEvaluation:
 
     @property
     def reason(self) -> str:
-        return "; ".join(str(item["detail"]) for item in self.violations)
+        return " ".join(str(item["detail"]) for item in self.violations)
 
 
 def _size_text(value: int) -> str:
