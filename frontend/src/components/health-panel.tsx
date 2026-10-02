@@ -3,9 +3,9 @@ import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, ChevronRight, CircleDashed, HelpCircle, XCircle } from 'lucide-react'
 import { request } from '../lib/api'
 import type { components } from '../lib/api.generated'
-import { formatTimestamp } from '../lib/utils'
 import { ErrorMessage } from './error-message'
 import { Button } from './ui/button'
+import { Timestamp } from './timestamp'
 
 type Check = components['schemas']['HealthCheck']
 type Overall = components['schemas']['HealthReport']['overall']
@@ -50,7 +50,7 @@ export function HealthPanel() {
       {data.waiting_reason && <p className="notice" role="status"><strong>Why scans are waiting:</strong> {data.waiting_reason}</p>}
       <ul className="health-checks">{data.checks.filter(check => check.state !== 'inactive').map(check => <CheckRow key={check.key} check={check} />)}</ul>
       {inactive.length > 0 && <p className="muted health-inactive">Not in use: {inactive.map(check => check.label).join(', ')}.</p>}
-      <p className="muted health-generated">Checked {formatTimestamp(data.generated_at)}. Refreshes every 30 seconds while open.</p>
+      <p className="muted health-generated">Checked <Timestamp value={data.generated_at} />. Refreshes every 30 seconds while open.</p>
     </>}
   </section>
 }

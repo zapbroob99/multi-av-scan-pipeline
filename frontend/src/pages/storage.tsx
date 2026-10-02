@@ -3,12 +3,13 @@ import { useQuery } from '@tanstack/react-query'
 import { Suspense } from 'react'
 import { Outlet } from 'react-router-dom'
 import { request, type Session } from '../lib/api'
-import { formatTimestamp, shortAge } from '../lib/utils'
+import { shortAge } from '../lib/utils'
 import { STATE_LABELS, locationPath, type LocationSummary } from '../lib/storage'
 import { ErrorMessage } from '../components/error-message'
 import { HelpDetails } from '../components/help-details'
 import { SectionTabs } from '../components/section-tabs'
 import { Button } from '../components/ui/button'
+import { Timestamp } from '../components/timestamp'
 
 export const STORAGE_TABS = [
   { to: '/storage', label: 'Locations', end: true },
@@ -62,7 +63,7 @@ export default function Storage({ session }: { session: Session }) {
             locations are not being read.</p>}
           {!worker.ok && <p className="notice error" role="alert">The last sweep failed: {worker.error || 'no detail recorded'}</p>}
           <dl className="report-metadata">
-            <dt>Last sweep</dt><dd>{formatTimestamp(worker.at)} ({shortAge(worker.age_seconds)} ago)</dd>
+            <dt>Last sweep</dt><dd><Timestamp value={worker.at} /> ({shortAge(worker.age_seconds)} ago)</dd>
             <dt>Locations run</dt><dd>{worker.locations}</dd>
             <dt>Mounted backends</dt><dd>{worker.backends.length ? worker.backends.map(key => <code key={key}>{key} </code>) : 'None'}</dd>
             <dt>Worker</dt><dd><code>{worker.worker_id || 'unknown'}</code></dd>
@@ -89,7 +90,7 @@ export default function Storage({ session }: { session: Session }) {
             <td>{counts.unreadable.toLocaleString()}</td>
             <td>{location.last_cycle ? <small>{shortAge(location.last_cycle.age_seconds)} ago{location.last_cycle.ok ? '' : ' · failed'}</small> : <small>Never</small>}
               {problem && <small className="error">{problem}</small>}
-              {location.last_completed_pass && <small>Last complete crawl {formatTimestamp(location.last_completed_pass.finished_at)}</small>}</td>
+              {location.last_completed_pass && <small>Last complete crawl <Timestamp value={location.last_completed_pass.finished_at} /></small>}</td>
           </tr>
         })}</tbody></table></div>}
       {data.locations_truncated && <p className="muted">Only the first {data.locations.length} locations are shown.</p>}

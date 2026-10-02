@@ -7,6 +7,7 @@ import { request, type Session } from '../lib/api'
 import type { components } from '../lib/api.generated'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
+import { Timestamp } from '../components/timestamp'
 
 type RunBody = components['schemas']['RetentionRunBody']
 
@@ -43,7 +44,7 @@ export default function Retention({ session }: { session: Session }) {
       <p className="muted">Server policy: {data.days} days; batch limit {data.batch_size}. {data.cutoff ? `Candidates created before ${formatTimestamp(data.cutoff)}.` : 'Retention cleanup is disabled.'}</p>
       {!!data.items.length && <div className="history-table-wrap" role="region" aria-label="Retention candidates" tabIndex={0}>
         <table className="history-table"><thead><tr><th>Scan</th><th>Filename</th><th>Source</th><th>Status</th><th>Created</th></tr></thead><tbody>
-          {data.items.map(item => <tr key={item.scan_id}><td>#{item.scan_id}</td><td>{item.filename}</td><td>{item.source}</td><td>{item.status}</td><td>{formatTimestamp(item.created_at)}</td></tr>)}
+          {data.items.map(item => <tr key={item.scan_id}><td>#{item.scan_id}</td><td>{item.filename}</td><td>{item.source}</td><td>{item.status}</td><td><Timestamp value={item.created_at} /></td></tr>)}
         </tbody></table></div>}
       {!data.items.length && data.cutoff && <p>No expired inactive records on this page.</p>}
       <div className="history-pagination">{Boolean(after || data.next_after) && <><Button variant="secondary" disabled={busy || !after} onClick={() => setParams({})}>First candidates</Button>

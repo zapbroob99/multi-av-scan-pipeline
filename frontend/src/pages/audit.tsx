@@ -1,10 +1,10 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp } from '../lib/utils'
 import { type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { Timestamp } from '../components/timestamp'
 
 const OUTCOMES = ['all', 'success', 'failure', 'denied'] as const
 const OUTCOME_TAG: Record<string, string> = { success: 'tag-positive', failure: 'tag-warning', denied: 'tag-danger' }
@@ -66,7 +66,7 @@ export default function Audit() {
           <th scope="col">When</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Actor</th>
           <th scope="col">Target</th><th scope="col">Source</th><th scope="col">Details</th></tr></thead><tbody>
         {events.data.items.map(event => <tr key={event.id} className={event.outcome === 'success' ? '' : 'row-alert'}>
-          <td><small title={event.created_at}>{formatTimestamp(event.created_at)}</small><small>#{event.id}</small></td>
+          <td><small title={event.created_at}><Timestamp value={event.created_at} /></small><small>#{event.id}</small></td>
           <td><code>{event.action}</code></td>
           <td><span className={`tag ${OUTCOME_TAG[event.outcome] || ''}`}>{event.outcome}</span></td>
           <td className="cell-name" title={event.actor_name || event.actor_id || 'Anonymous'}>{event.actor_name || event.actor_id || 'Anonymous'}

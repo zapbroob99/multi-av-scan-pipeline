@@ -1,11 +1,11 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp } from '../lib/utils'
 import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type ScanReport, type ReportEngine } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { BackLink } from '../components/section-tabs'
+import { Timestamp } from '../components/timestamp'
 
 export function reportPollInterval(report?: ScanReport) {
   return report && ['queued', 'running', 'finalizing'].includes(report.status) ? 3000 : false
@@ -82,7 +82,7 @@ export default function Report({ automation = false }: { automation?: boolean })
     {scan.unavailable.length > 0 && <section className="error"><h2>Required engines not completed</h2><ul>{scan.unavailable.map((name, index) => <li key={index}>{name}</li>)}</ul></section>}
     {scan.last_error && <section className="error"><h2>Last worker error</h2><p>{scan.last_error}</p></section>}
     <dl className="submission-card report-metadata"><dt>SHA-256</dt><dd>{scan.sha256}</dd><dt>Size</dt><dd>{scan.size_bytes.toLocaleString()} bytes</dd>
-      <dt>Case</dt><dd>{scan.case_name}</dd><dt>Submitted</dt><dd>{formatTimestamp(scan.created_at)}</dd>
+      <dt>Case</dt><dd>{scan.case_name}</dd><dt>Submitted</dt><dd><Timestamp value={scan.created_at} /></dd>
       {scan.note && <><dt>Analyst note</dt><dd>{scan.note}</dd></>}</dl>
     <div className="history-heading"><h2>Engine results</h2><p className="muted">Technical output loads only when opened.</p></div>
     <div className="report-engines">{scan.engines.map(engine => <EngineRow key={`${scan.attempt_count}-${engine.result_id ?? engine.name}`} scanId={scan.id} engine={engine} automation={automation} />)}</div>

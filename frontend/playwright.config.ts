@@ -2,7 +2,8 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e', outputDir: '../artifacts/console-e2e', workers: 1,
-  use: { baseURL: 'http://127.0.0.1:5175/console/',
+  // Timestamps render in the browser's zone; the expectations are written in UTC.
+  use: { baseURL: 'http://127.0.0.1:5175/console/', timezoneId: 'UTC',
     channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true, trace: 'retain-on-failure' },
   webServer: [
     { command: 'python ../tools/serve_console_fixture.py', url: 'http://127.0.0.1:18765/openapi.json', reuseExistingServer: false, timeout: 30000 },

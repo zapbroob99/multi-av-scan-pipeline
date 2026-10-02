@@ -1,10 +1,10 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp } from '../lib/utils'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type BatchPage, type BatchScan } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { RiskBadge } from '../components/risk-badge'
+import { Timestamp } from '../components/timestamp'
 
 const active = (status: string) => ['queued', 'running', 'finalizing'].includes(status)
 
@@ -50,7 +50,7 @@ export default function BatchOverview({ automation = false }: { automation?: boo
         <div><span>Completed</span><strong>{page.counts.completed.toLocaleString()}</strong></div>
         <div><span>High risk</span><strong>{page.counts.malicious.toLocaleString()}</strong></div>
       </div>
-      <p className="muted archive-context">Batch: {page.status} · Mode: {page.archive_mode} · Recorded {formatTimestamp(page.updated_at)} · Failed: {page.counts.failed} · Skipped: {page.counts.skipped}</p>
+      <p className="muted archive-context">Batch: {page.status} · Mode: {page.archive_mode} · Recorded <Timestamp value={page.updated_at} /> · Failed: {page.counts.failed} · Skipped: {page.counts.skipped}</p>
       {page.items.length === 0 ? <section className="empty"><h2>No registered scans on this page</h2>
         <p>The batch may be empty, the cursor may be beyond its last item, or extraction may not have registered children.</p></section> :
         <div className="history-table-wrap" tabIndex={0} role="region" aria-label="Batch scans"><table className="history-table">
@@ -59,7 +59,7 @@ export default function BatchOverview({ automation = false }: { automation?: boo
             <small>Scan #{scan.id} · {scan.size_bytes.toLocaleString()} bytes{scan.parent_scan_id ? ` · Parent #${scan.parent_scan_id}` : ''}</small></td>
             <td>{scan.role}</td><td><span className={`health-pill ${['failed', 'skipped'].includes(scan.status) ? 'health-failed' : ''}`}>{scan.status}</span></td>
             <td>{riskText(scan)}</td>
-            <td><time dateTime={scan.created_at}>{formatTimestamp(scan.created_at)}</time></td></tr>)}</tbody></table></div>}
+            <td><Timestamp value={scan.created_at} /></td></tr>)}</tbody></table></div>}
       <div className="history-pagination"><p className="muted">{page.items.length} shown · Registration time/ID order{afterId ? ' · Historical page: auto-refresh paused' : ''}</p>
         {Boolean(afterId || page.next_after_id) && <div>{afterId && <Button variant="secondary" onClick={firstPage}>First page</Button>}
           <Button variant="secondary" disabled={!page.next_after_id || !page.next_after_created || batch.isFetching} onClick={() => {

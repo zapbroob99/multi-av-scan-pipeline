@@ -9,6 +9,7 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { ClientNavigation } from '../components/client-navigation'
 import { ClientWorkspace, useClientPanelGuard } from '../components/client-workspace'
+import { Timestamp } from '../components/timestamp'
 
 type Review = { credential_label: string; client_key: string; display_name: string; profile_name: string; engine_ids: number[] }
 
@@ -109,7 +110,7 @@ export default function ClientCredentials({ session, create = false }: { session
       {!credentials.error && credentials.data?.items.map(item => <article className="submission-card" key={item.id}>
         <div className="client-section-heading"><div className="client-identity"><KeyRound size={18} aria-hidden="true" /><h2>{item.label}</h2></div>
           <span className={`client-badge ${item.revoked_at === null ? 'client-badge-enabled' : ''}`}>{item.revoked_at === null ? 'Active' : 'Revoked'}</span></div>
-        <dl className="client-credential-metadata"><div><dt>Credential</dt><dd>#{item.id}</dd></div><div><dt>Created</dt><dd>{formatTimestamp(item.created_at)}</dd></div>
+        <dl className="client-credential-metadata"><div><dt>Credential</dt><dd>#{item.id}</dd></div><div><dt>Created</dt><dd><Timestamp value={item.created_at} /></dd></div>
         <div><dt>Last used</dt><dd>{item.last_used_at === null ? 'Never recorded' : formatTimestamp(item.last_used_at)}</dd></div></dl>
         <div className="client-form-footer"><Button variant="destructive" disabled={disabled || item.revoked_at !== null} onClick={() => setRevokeId(item.id)}>Revoke credential #{item.id}</Button></div></article>)}
       {credentials.data?.items.length === 0 && <div className="empty"><KeyRound size={26} aria-hidden="true" /><h2>No credentials on this page.</h2><p>Add a credential to configure API access.</p></div>}

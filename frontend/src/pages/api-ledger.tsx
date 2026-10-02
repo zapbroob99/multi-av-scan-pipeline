@@ -1,5 +1,4 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp } from '../lib/utils'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -8,6 +7,7 @@ import { RISK_LABELS, RiskBadge, isAlertRisk } from '../components/risk-badge'
 import { Dialog } from '../components/ui/dialog'
 import { Button } from '../components/ui/button'
 import { SelectAllCheckbox } from '../components/select-all'
+import { Timestamp } from '../components/timestamp'
 
 type Candidate = { scan_id: number; attempt: number; job_revision: number }
 
@@ -121,7 +121,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
               }} aria-label={`Filter client #${scan.service_client_id}`} title={`Filter client #${scan.service_client_id}`}>#{scan.service_client_id} {scan.client_name || 'Name unavailable'}</Button>}</td>
           <td>{scan.status}</td>
           <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} failed={scan.status === 'failed'} unavailable={scan.unavailable_engines} /></td>
-          <td><small>{formatTimestamp(scan.created_at)}</small></td>
+          <td><small><Timestamp value={scan.created_at} /></small></td>
           <td className="cell-actions"><Link to={`/api-ledger/scans/${scan.id}`}>Report</Link>
             {scan.batch_id !== null && <Link to={`/api-ledger/batches/${scan.batch_id}`}>Batch</Link>}</td>
         </tr>)}</tbody></table></div>}

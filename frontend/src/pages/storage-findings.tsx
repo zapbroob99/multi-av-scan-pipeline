@@ -2,10 +2,10 @@ import { type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
-import { formatTimestamp } from '../lib/utils'
 import { KIND_LABELS, STATE_LABELS, type StorageFinding } from '../lib/storage'
 import { ErrorMessage } from '../components/error-message'
 import { Button } from '../components/ui/button'
+import { Timestamp } from '../components/timestamp'
 
 const KINDS = Object.keys(KIND_LABELS) as StorageFinding['kind'][]
 
@@ -63,7 +63,7 @@ export default function StorageFindings() {
           <td>{item.severity}<small>{item.detected ? 'detection' : 'review only'}</small></td>
           <td className="cell-name"><Link to={`/storage/locations/${item.location.id}`}>{item.location.name}</Link>
             <small>policy revision {item.policy_revision}</small></td>
-          <td><small>{formatTimestamp(item.created_at)}</small></td>
+          <td><small><Timestamp value={item.created_at} /></small></td>
         </tr>)}</tbody></table></div>}
       {Boolean(params.get('before') || findings.data.next_before) && <div className="history-pagination">
         <Button variant="secondary" disabled={findings.isFetching || !params.get('before')} onClick={() => paginate()}>Newest findings</Button>

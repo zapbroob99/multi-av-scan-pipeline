@@ -8,6 +8,7 @@ import { ErrorMessage } from '../components/error-message'
 import { BackLink } from '../components/section-tabs'
 import { Button } from '../components/ui/button'
 import { cycleProblem } from './storage'
+import { Timestamp } from '../components/timestamp'
 
 function PolicySummary({ detail }: { detail: LocationDetail }) {
   const policy = detail.policy
@@ -123,8 +124,8 @@ export default function StorageLocation({ session }: { session: Session }) {
           <td><small>{item.detected_type || 'unrecognized'}</small><small>{item.families.join(', ')}</small>
             {item.hash_list_kind && <small>hash {item.hash_list_kind}listed</small>}</td>
           <td><small>{formatBytes(item.size_bytes)}</small></td>
-          <td><small>{formatTimestamp(item.last_changed_at)}</small>
-            {item.processed_at && <small>inspected {formatTimestamp(item.processed_at)}</small>}</td>
+          <td><small><Timestamp value={item.last_changed_at} /></small>
+            {item.processed_at && <small>inspected <Timestamp value={item.processed_at} /></small>}</td>
         </tr>)}</tbody></table></div>}
       {Boolean(params.get('before') || objects.data.next_before) && <div className="history-pagination">
         <Button variant="secondary" disabled={objects.isFetching || !params.get('before')} onClick={() => paginate()}>Newest files</Button>

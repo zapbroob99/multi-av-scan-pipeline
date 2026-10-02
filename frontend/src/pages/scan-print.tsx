@@ -1,9 +1,9 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp } from '../lib/utils'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { Timestamp } from '../components/timestamp'
 
 export default function ScanPrint({ automation = false }: { automation?: boolean }) {
   const { scanId = '' } = useParams()
@@ -38,7 +38,7 @@ export default function ScanPrint({ automation = false }: { automation?: boolean
         <dt>SHA-256</dt><dd>{data.sha256}</dd>
         <dt>Size</dt><dd>{data.size_bytes.toLocaleString()} bytes</dd>
         <dt>Content type</dt><dd>{data.content_type || 'Unknown'}</dd>
-        <dt>Submitted</dt><dd>{formatTimestamp(data.created_at)}</dd>
+        <dt>Submitted</dt><dd><Timestamp value={data.created_at} /></dd>
         <dt>Completed</dt><dd>{data.completed_at || 'Not completed'}</dd>
         <dt>Attempt</dt><dd>{data.attempt_count}</dd>
         {data.note && <><dt>Note</dt><dd>{data.note}</dd></>}

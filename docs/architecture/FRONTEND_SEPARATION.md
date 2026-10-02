@@ -1888,7 +1888,11 @@ sidebar and login mark are drawn inline with theme tokens.
 The sidebar groups Operations, Integrations, Infrastructure and Administration;
 Account and About sit with the user controls, and phone widths collapse the
 menu behind a Menu button. System opens on its overview. Every operator
-timestamp uses one UTC format, a node with no heartbeat says so, and an old
+timestamp uses one format in the browser's time zone, labelled with its offset
+(`2026-10-02 09:15:00 UTC+3`; `UTC` at offset zero) so no time is ambiguous; the
+`Timestamp` component shows the stored UTC value on hover. Vitest and Playwright
+pin the zone to UTC so expectations never depend on the machine running them.
+A node with no heartbeat says so, and an old
 heartbeat shows its time instead of an age in days. Runtime worker names open
 the worker, reported and queued scans open their report (automation scans in
 the API ledger) and the overview links to workers, engine health and the

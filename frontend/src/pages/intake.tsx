@@ -6,6 +6,7 @@ import { request, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { HelpDetails } from '../components/help-details'
+import { Timestamp } from '../components/timestamp'
 
 export function age(seconds: number) {
   if (seconds < 90) return `${seconds} s`
@@ -113,7 +114,7 @@ export default function Intake({ session }: { session: Session }) {
             <td className="cell-name" title={row.object_id}>#{row.id} {row.original_filename}<small>{row.backend_key}/{row.object_id} · request {row.client_request_id}</small></td>
             <td className="cell-name">{row.client_name || `#${row.service_client_id}`}</td>
             <td className="hash-value">{row.last_error || 'No error recorded'}<small>{row.attempt_count} attempt(s)</small></td>
-            <td><small>{formatTimestamp(row.updated_at)}</small></td>
+            <td><small><Timestamp value={row.updated_at} /></small></td>
             <td><Button variant="secondary" disabled={act.isPending} aria-label={`Retry submission ${row.id}`}
               onClick={() => setAction({ kind: 'retry', id: row.id, label: `#${row.id} ${row.original_filename}` })}>Retry</Button></td>
           </tr>)}</tbody></table></div>}

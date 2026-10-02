@@ -1,5 +1,4 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp } from '../lib/utils'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -9,6 +8,7 @@ import { RISK_LABELS, RiskBadge, isAlertRisk } from '../components/risk-badge'
 import { SelectAllCheckbox } from '../components/select-all'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
+import { Timestamp } from '../components/timestamp'
 
 export function historyPollInterval(before: string) { return before ? false : 20000 }
 
@@ -120,7 +120,7 @@ export default function Dashboard({ session }: { session: Session }) {
               <small>#{scan.id} · {(scan.size_bytes / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} KB{scan.case_name ? ` · ${scan.case_name}` : ''}</small></td>
             <td><span className={`health-pill ${scan.status === 'failed' ? 'health-failed' : ''}`}>{scan.status}</span></td>
             <td><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} failed={scan.status === 'failed'} unavailable={scan.unavailable_engines} /></td>
-            <td><time dateTime={scan.created_at}>{formatTimestamp(scan.created_at)}</time></td>
+            <td><Timestamp value={scan.created_at} /></td>
           </tr>)}</tbody></table></div>}
       <div className="history-pagination"><p className="muted">{scans.data.items.length} shown · Newest submission ID first{before ? ' · History page (auto-refresh paused)' : ''}</p>
         {Boolean(before || scans.data.next_before) && <div>{before && <Button variant="secondary" onClick={latest}>Latest scans</Button>}
@@ -134,6 +134,6 @@ export default function Dashboard({ session }: { session: Session }) {
         <Button variant="destructive" disabled={deletion.isPending || selected.length === 0} onClick={() => deletion.mutate()}>{deletion.isPending ? 'Deleting…' : 'Confirm deletion'}</Button></div>
     </Dialog>
     <p className="muted history-footnote">Summary covers all manual history. Refresh: 30 seconds; server cache: up to 30 seconds.
-      {summary.data && <> Updated {formatTimestamp(summary.data.generated_at)}.</>} Enabled does not mean healthy.</p>
+      {summary.data && <> Updated <Timestamp value={summary.data.generated_at} />.</>} Enabled does not mean healthy.</p>
   </section>
 }

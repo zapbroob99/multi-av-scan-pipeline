@@ -1,10 +1,11 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp, heartbeatLabel } from '../lib/utils'
+import { heartbeatLabel } from '../lib/utils'
 import { HelpDetails } from '../components/help-details'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { Timestamp } from '../components/timestamp'
 
 export default function Runtime() {
   const [params, setParams] = useSearchParams()
@@ -55,7 +56,7 @@ export default function Runtime() {
         {queue.data.items.map(scan => <tr key={scan.id}><td>{['manual', 'api', 'icap'].includes(scan.source)
           ? <Link to={`${scan.source === 'manual' ? '' : '/api-ledger'}/scans/${scan.id}`}>{scan.filename}</Link>
           : <a href={`/scans/${scan.id}`}>{scan.filename}</a>}<small>#{scan.id}</small></td>
-          <td>{scan.source}</td><td><span className="health-pill">{scan.status}</span></td><td>{scan.priority}</td><td>{formatTimestamp(scan.created_at)}</td></tr>)}</tbody></table></div>
+          <td>{scan.source}</td><td><span className="health-pill">{scan.status}</span></td><td>{scan.priority}</td><td><Timestamp value={scan.created_at} /></td></tr>)}</tbody></table></div>
       {!queue.data.items.length && <p className="empty">No active scans on this page. This does not establish complete coverage or an empty deferred-intake queue.</p>}
       {(after || queue.data.next_after) && <div className="history-pagination"><Button variant="secondary" disabled={!after || queue.isFetching} onClick={() => paginate('after', '')}>First scans</Button>
         <Button variant="secondary" disabled={!queue.data.next_after || queue.isFetching} onClick={() => paginate('after', String(queue.data!.next_after))}>Next scans</Button></div>}

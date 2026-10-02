@@ -1,5 +1,4 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp } from '../lib/utils'
 import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -7,6 +6,7 @@ import { request, type Session } from '../lib/api'
 import type { components } from '../lib/api.generated'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
+import { Timestamp } from '../components/timestamp'
 
 type Entry = components['schemas']['HashListEntry']
 type Added = components['schemas']['HashesAdded']
@@ -143,7 +143,7 @@ export default function HashList({ session }: { session: Session }) {
           <td><code>{entry.sha256}</code></td>
           <td>{LABELS[entry.list_kind]}</td>
           <td className="cell-name" title={entry.note}>{entry.note || <span className="muted">None</span>}</td>
-          <td><small>{formatTimestamp(entry.created_at)}</small>
+          <td><small><Timestamp value={entry.created_at} /></small>
             <small>{entry.created_by || 'Unknown'}</small></td>
           <td className="cell-actions"><Button variant="destructive" disabled={busy} aria-label={`Remove ${entry.sha256}`}
             onClick={() => { setRemoved(''); setRemoval(entry) }}>Remove</Button></td>

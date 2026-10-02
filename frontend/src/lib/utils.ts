@@ -12,11 +12,40 @@ function recordedTime(value: string | number | null | undefined) {
   return Date.parse(/([zZ]|[+-]\d\d:?\d\d)$/.test(text) ? text : `${text}Z`)
 }
 
-/** One explicit timezone and format for operator timestamps across the console. */
-export function formatTimestamp(value: string | number | null | undefined) {
+function validTime(value: string | number | null | undefined) {
   const time = recordedTime(value)
-  if (!Number.isFinite(time) || Math.abs(time) > 8.64e15) return 'Not recorded'
-  return new Date(time).toISOString().slice(0, 19).replace('T', ' ') + ' UTC'
+  return Number.isFinite(time) && Math.abs(time) <= 8.64e15 ? time : null
+}
+
+const pad = (value: number) => String(value).padStart(2, '0')
+
+/** "UTC" at offset zero, otherwise "UTC+3", "UTC-4" or "UTC+05:30". */
+function zoneLabel(date: Date) {
+  const offset = -date.getTimezoneOffset()
+  if (!offset) return 'UTC'
+  const minutes = Math.abs(offset), hours = Math.floor(minutes / 60)
+  return `UTC${offset > 0 ? '+' : '-'}${minutes % 60 ? `${pad(hours)}:${pad(minutes % 60)}` : hours}`
+}
+
+/** Operator timestamps in the browser's time zone, always labelled with their offset so none is ambiguous. */
+export function formatTimestamp(value: string | number | null | undefined) {
+  const time = validTime(value)
+  if (time === null) return 'Not recorded'
+  const date = new Date(time)
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${zoneLabel(date)}`
+}
+
+/** The same instant in UTC, as stored; shown on hover beside the local time. */
+export function formatUtcTimestamp(value: string | number | null | undefined) {
+  const time = validTime(value)
+  return time === null ? 'Not recorded' : new Date(time).toISOString().slice(0, 19).replace('T', ' ') + ' UTC'
+}
+
+/** ISO 8601 form for a <time> element's dateTime, or null when nothing was recorded. */
+export function isoTimestamp(value: string | number | null | undefined) {
+  const time = validTime(value)
+  return time === null ? null : new Date(time).toISOString()
 }
 
 export function heartbeatLabel(timestamp: number | null | undefined, age: number) {

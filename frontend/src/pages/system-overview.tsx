@@ -1,5 +1,4 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp } from '../lib/utils'
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -9,6 +8,7 @@ import { HelpDetails } from '../components/help-details'
 import { HealthPanel } from '../components/health-panel'
 import { SupportBundleButton } from '../components/support-bundle'
 import type { Session } from '../lib/api'
+import { Timestamp } from '../components/timestamp'
 
 export default function SystemOverview({ session }: { session: Session }) {
   const [params, setParams] = useSearchParams()
@@ -42,7 +42,7 @@ export default function SystemOverview({ session }: { session: Session }) {
         ? `Enabled: ${summary.data.retention_days} days; configured batch limit ${summary.data.retention_batch_size}. Console runs are capped at 20 records.` : 'Retention cleanup is disabled.'}</p>
         <p className="muted">Policy is configured on the server. Viewing this page does not delete data.</p>
         <Link to="/system/retention">Review retention cleanup</Link></section>
-      <p className="muted">Overview generated {formatTimestamp(summary.data.generated_at)}</p>
+      <p className="muted">Overview generated <Timestamp value={summary.data.generated_at} /></p>
     </>}
     <div className="history-heading"><div><h2>Historical engine metrics</h2><p className="muted">Statistics by the engine name recorded on retained results.</p></div>
       <Button variant="secondary" disabled={metrics.isFetching} onClick={() => { if (showMetrics) { void metrics.refetch() } else setShowMetrics(true) }}>
@@ -58,9 +58,9 @@ export default function SystemOverview({ session }: { session: Session }) {
         {metrics.data.items.map(metric => <tr key={metric.first_result_id}><td>{metric.engine_name}{metric.name_truncated && <small>Name truncated</small>}</td>
           <td>{metric.total}</td><td>{metric.completed}</td><td>{metric.failed}</td><td>{metric.skipped}</td><td>{metric.detections}</td>
           <td>{metric.avg_duration_ms === null ? 'Unknown' : `${metric.avg_duration_ms.toFixed(1)} ms`} / {metric.max_duration_ms === null ? 'Unknown' : `${metric.max_duration_ms} ms`}</td>
-          <td><small>{formatTimestamp(metric.last_result_at)}</small></td></tr>)}</tbody></table></div>
+          <td><small><Timestamp value={metric.last_result_at} /></small></td></tr>)}</tbody></table></div>
       {!metrics.data.items.length && <p className="empty">No recorded engine results on this page.</p>}
-      <p className="muted">Metrics generated {formatTimestamp(metrics.data.generated_at)}; cached for up to 30 seconds.</p>
+      <p className="muted">Metrics generated <Timestamp value={metrics.data.generated_at} />; cached for up to 30 seconds.</p>
       {Boolean(after || metrics.data.next_after) && <div className="history-pagination"><Button variant="secondary" disabled={!after || metrics.isFetching} onClick={() => setParams({})}>First engine names</Button>
         <Button variant="secondary" disabled={!metrics.data.next_after || metrics.isFetching} onClick={() => setParams({ after: String(metrics.data!.next_after) })}>Next engine names</Button></div>}
     </>}

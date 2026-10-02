@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import { request, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { Timestamp } from '../components/timestamp'
 
 function Spec({ title, children }: { title: string; children: ReactNode }) {
   return <section className="spec-panel"><h2>{title}</h2><dl className="spec-list">{children}</dl></section>
@@ -62,7 +63,7 @@ export default function About({ session }: { session: Session }) {
         {session.user.role === 'admin' && data.service_client_count !== null && <Row term="Service clients">{data.service_client_count}</Row>}
       </Spec>
 
-      <p className="spec-note">Snapshot read {formatTimestamp(data.generated_at)}; it is not cached. Hosts, paths and engine
+      <p className="spec-note">Snapshot read <Timestamp value={data.generated_at} />; it is not cached. Hosts, paths and engine
         configuration are never shown here. Enabled engines and accepting nodes are configuration state, not proof that a scan will reach complete coverage.</p>
     </>}
   </section>

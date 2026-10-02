@@ -1,5 +1,4 @@
 import { ErrorMessage } from '../components/error-message'
-import { formatTimestamp } from '../lib/utils'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, CheckCircle2, CircleAlert, RefreshCw } from 'lucide-react'
@@ -8,6 +7,7 @@ import { Button } from '../components/ui/button'
 import { ClientNavigation } from '../components/client-navigation'
 import { useContext } from 'react'
 import { ClientWorkspace, ClientPanelLink } from '../components/client-workspace'
+import { Timestamp } from '../components/timestamp'
 
 export default function ClientSetup() {
   const params = useParams()
@@ -89,7 +89,7 @@ export default function ClientSetup() {
           Assigned engines are fixed into each accepted scan, so editing routing later does not change scans already accepted.</p>
       </section>
 
-      <p className="muted client-note">Readiness read {formatTimestamp(data.generated_at)}. Network reachability, TLS and firewall
+      <p className="muted client-note">Readiness read <Timestamp value={data.generated_at} />. Network reachability, TLS and firewall
         rules are outside MASP and are not checked here.</p>
     </>}
   </section>
