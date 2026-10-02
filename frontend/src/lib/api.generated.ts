@@ -2499,10 +2499,21 @@ export interface components {
             allowlist_entries: number;
             /** At */
             at: number;
+            /**
+             * Binding
+             * @enum {string}
+             */
+            binding: "client" | "legacy_default" | "unresolved";
+            /** Binding Detail */
+            binding_detail?: string | null;
             /** Block On Review */
             block_on_review: boolean;
+            /** Client Id */
+            client_id?: number | null;
             /** Client Key */
             client_key: string;
+            /** Client Name */
+            client_name?: string | null;
             /** Counters */
             counters: {
                 [key: string]: number;

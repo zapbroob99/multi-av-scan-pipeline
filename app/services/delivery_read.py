@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import time
+from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -17,7 +18,7 @@ from app import database as db
 from app.icap.activity import SETTING_PREFIX as ICAP_SETTING_PREFIX
 from app.services.browser_db_budget import apply_read_budget, write_lock_timeout_ms
 from app.services.deferred_storage import redact_paths
-from app.services.health_read import ICAP_FORGOTTEN_SECONDS, ICAP_STALE_SECONDS, icap_gateways
+from app.services.health_read import ICAP_FORGOTTEN_SECONDS, ICAP_STALE_SECONDS, icap_gateways, with_icap_bindings
 
 
 FAILURE_LIMIT = 20
@@ -47,6 +48,12 @@ class IcapGateway(BaseModel):
     counters: dict[str, int]
     last_request_at: int | None
     events: list[IcapEvent]
+    # How MASP_ICAP_SERVICE_CLIENT_KEY resolves: an integration's own client,
+    # the compatibility client, or nothing, in which case every request fails.
+    binding: Literal['client', 'legacy_default', 'unresolved']
+    client_id: int | None = None
+    client_name: str | None = None
+    binding_detail: str | None = None
 
 
 class NotificationFailure(BaseModel):
@@ -86,18 +93,18 @@ def _text(value: object) -> str | None:
 
 def overview(now: float | None = None) -> DeliveryOverview:
     current = time.time() if now is None else now
+    records = [record for record in icap_gateways(db.list_settings_by_prefix(ICAP_SETTING_PREFIX))
+               if current - int(record['at']) < ICAP_FORGOTTEN_SECONDS]
     gateways = []
-    for record in icap_gateways(db.list_settings_by_prefix(ICAP_SETTING_PREFIX)):
-        age = max(0, int(current - int(record['at'])))
-        if age >= ICAP_FORGOTTEN_SECONDS:
-            continue
-        try:
-            gateways.append(IcapGateway(**{**record, 'age_seconds': age, 'stale': age >= ICAP_STALE_SECONDS,
-                                           'events': [e for e in record.get('events') or [] if isinstance(e, dict)]}))
-        except (TypeError, ValueError):
-            continue  # a record from another version must not break the page
     with db.connect() as connection:
         apply_read_budget(connection)
+        for record in with_icap_bindings(connection, records):
+            age = max(0, int(current - int(record['at'])))
+            try:
+                gateways.append(IcapGateway(**{**record, 'age_seconds': age, 'stale': age >= ICAP_STALE_SECONDS,
+                                               'events': [e for e in record.get('events') or [] if isinstance(e, dict)]}))
+            except (TypeError, ValueError):
+                continue  # a record from another version must not break the page
         counts = {str(row['status']): int(row['n']) for row in connection.execute(
             'SELECT status, COUNT(*) AS n FROM notification_outbox GROUP BY status').fetchall()}
         pending = connection.execute('''SELECT MIN(created_at) AS oldest,

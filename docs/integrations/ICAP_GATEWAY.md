@@ -76,6 +76,15 @@ engine profiles or ledger ownership, run separate ICAP instances with unique
 listeners/service names and bind each instance to its own client key. Do not
 derive client identity from arbitrary ICAP headers or NAT-obscured source IPs.
 
+The key is resolved on every request, exactly as **System > ICAP and SIEM**
+shows it beside each gateway: an enabled client with an enabled profile, the
+`legacy-default` compatibility client (scans land under "Legacy API / ICAP",
+usually because the setting never reached the icap container), or nothing. A
+key that names no client, a disabled client or one without an enabled profile
+makes every request fail; a fail-closed gateway then blocks every upload, and
+the health check reports it as critical. The client's Setup tab names any
+gateway reporting under another key.
+
 ## Running it
 
 Docker (opt-in `icap` profile, shares the DB and storage volume with `app`):

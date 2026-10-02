@@ -200,12 +200,17 @@ def _api_method(active_credentials: int, last_scan) -> ConnectionMethod:
 
 def _icap_method(client_key: str, settings: dict[str, str], last_scan, now: float | None = None) -> ConnectionMethod:
     current = time.time() if now is None else now
-    gateways = [g for g in icap_gateways({k: v for k, v in settings.items() if k.startswith(ICAP_SETTING_PREFIX)})
-                if str(g.get('client_key', '')).lower() == client_key.lower()
-                and current - int(g['at']) < ICAP_FORGOTTEN_SECONDS]
+    reporting_gateways = [g for g in icap_gateways({k: v for k, v in settings.items() if k.startswith(ICAP_SETTING_PREFIX)})
+                          if current - int(g['at']) < ICAP_FORGOTTEN_SECONDS]
+    gateways = [g for g in reporting_gateways if str(g.get('client_key', '')).lower() == client_key.lower()]
+    # A gateway reporting under another key is the usual mistake: the setting
+    # never reached the icap container, so its scans go to legacy-default.
+    others = sorted({f"port {g.get('port')} files scans under {g.get('client_key')}" for g in reporting_gateways
+                     if g not in gateways})
     bound = ReadinessCheck(key='icap_gateway', label='An ICAP gateway is bound to this client', passed=bool(gateways),
                            detail=', '.join(f"port {g.get('port')}" for g in gateways) if gateways
-                           else f'Set MASP_ICAP_SERVICE_CLIENT_KEY={client_key} on the gateway.')
+                           else f'Set MASP_ICAP_SERVICE_CLIENT_KEY={client_key} on the gateway'
+                           + (f" and restart it; the gateway on {'; '.join(others)}." if others else '.'))
     reporting = [g for g in gateways if current - int(g['at']) < ICAP_STALE_SECONDS]
     if reporting:
         alive_detail = 'Reported within the last minute.'

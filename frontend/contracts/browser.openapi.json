@@ -2875,13 +2875,55 @@
             "title": "At",
             "type": "integer"
           },
+          "binding": {
+            "enum": [
+              "client",
+              "legacy_default",
+              "unresolved"
+            ],
+            "title": "Binding",
+            "type": "string"
+          },
+          "binding_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Detail"
+          },
           "block_on_review": {
             "title": "Block On Review",
             "type": "boolean"
           },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
           "client_key": {
             "title": "Client Key",
             "type": "string"
+          },
+          "client_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Name"
           },
           "counters": {
             "additionalProperties": {
@@ -2947,7 +2989,8 @@
           "stale",
           "counters",
           "last_request_at",
-          "events"
+          "events",
+          "binding"
         ],
         "title": "IcapGateway",
         "type": "object"

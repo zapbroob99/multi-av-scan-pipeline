@@ -45,6 +45,7 @@ DEFERRED_CRITICAL_SECONDS = 3600
 NOTIFY_CRITICAL_SECONDS = 3600
 ICAP_STALE_SECONDS = 3 * ICAP_FLUSH_SECONDS
 ICAP_FORGOTTEN_SECONDS = 7 * 86400    # a listener silent this long was removed, not stopped
+LEGACY_CLIENT_KEY = 'legacy-default'
 RECENT_SECONDS = 3600
 
 
@@ -348,6 +349,43 @@ def icap_gateways(settings: dict[str, str]) -> list[dict]:
     return gateways
 
 
+def icap_binding(connection, client_key: object) -> dict[str, object]:
+    """Which service client a gateway files its scans under, resolved as the gateway does.
+
+    Mirrors ``identity_for_service_client_key``: a key that names no client, a
+    disabled client or one without an enabled profile makes every ICAP request
+    fail, which a fail-closed gateway answers by blocking the upload.
+    """
+    key = str(client_key or '').strip().lower() or LEGACY_CLIENT_KEY
+    row = connection.execute('SELECT id, SUBSTR(display_name, 1, 256) AS name, enabled FROM service_clients '
+                             'WHERE client_key = ?', (key,)).fetchone()
+    if key == LEGACY_CLIENT_KEY:
+        return {'binding': 'legacy_default', 'client_id': row['id'] if row else None,
+                'client_name': row['name'] if row else None,
+                'binding_detail': 'Scans are filed under the compatibility client, not an integration of their own.'}
+    unresolved = {'binding': 'unresolved', 'client_id': row['id'] if row else None,
+                  'client_name': row['name'] if row else None}
+    if row is None:
+        return {**unresolved, 'binding_detail': f'No service client has the key {key}.'}
+    if not row['enabled']:
+        return {**unresolved, 'binding_detail': f'Service client {key} is disabled.'}
+    profile = connection.execute('SELECT 1 FROM scan_profiles WHERE service_client_id = ? AND enabled = ? '
+                                 'AND deleted_at IS NULL LIMIT 1', (row['id'], db.db_bool(True))).fetchone()
+    if profile is None:
+        return {**unresolved, 'binding_detail': f'Service client {key} has no enabled scan profile.'}
+    return {'binding': 'client', 'client_id': row['id'], 'client_name': row['name'], 'binding_detail': None}
+
+
+def with_icap_bindings(connection, gateways: list[dict]) -> list[dict]:
+    resolved: dict[str, dict[str, object]] = {}
+    for gateway in gateways:
+        key = str(gateway.get('client_key') or '')
+        if key not in resolved:
+            resolved[key] = icap_binding(connection, key)
+        gateway.update(resolved[key])
+    return gateways
+
+
 def icap_check(gateways: list[dict], now: float) -> HealthCheck:
     link = '/system/delivery'
     current = [g for g in gateways if now - int(g['at']) < ICAP_FORGOTTEN_SECONDS]
@@ -360,6 +398,15 @@ def icap_check(gateways: list[dict], now: float) -> HealthCheck:
         return HealthCheck(key='icap', label='ICAP gateway', state='critical', link=link,
                            summary=f"Gateway for client {g.get('client_key')} on port {g.get('port')} last reported {age_text(now - int(g['at']))} ago.",
                            detail='A stopped fail-closed gateway blocks every upload. Check the icap container.')
+    unresolved = [g for g in current if g.get('binding') == 'unresolved']
+    if unresolved:
+        g = unresolved[0]
+        blocks = bool(g.get('fail_closed'))
+        return HealthCheck(key='icap', label='ICAP gateway', state='critical' if blocks else 'warning', link=link,
+                           summary=f"Gateway on port {g.get('port')} cannot file scans: {g.get('binding_detail')}",
+                           detail=('Every request fails, so this fail-closed gateway blocks every upload. ' if blocks
+                                   else 'Every request fails, so this fail-open gateway allows uploads unscanned. ')
+                                  + 'Fix the client, or set MASP_ICAP_SERVICE_CLIENT_KEY to an enabled client.')
     recent = [e for g in current for e in g.get('events') or []
               if isinstance(e, dict) and now - int(e.get('at') or 0) < RECENT_SECONDS]
     rejected = [e for e in recent if e.get('kind') == 'rejected']
@@ -410,6 +457,7 @@ def report(engines: list[EngineState], *, now: float | None = None) -> HealthRep
             FROM scan_jobs WHERE status = 'queued' ''').fetchone()
         notifications = notifications_check(connection, current)
         storage_protection = storage_protection_check(connection, current)
+        with_icap_bindings(connection, gateways)
     queued = int(queue['queued'] or 0)
     oldest = _when(queue['oldest'])
     oldest_age = current - oldest.timestamp() if oldest else None

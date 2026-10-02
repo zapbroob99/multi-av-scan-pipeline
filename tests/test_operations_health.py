@@ -117,6 +117,20 @@ class HealthRuleTests(unittest.TestCase):
         self.assertEqual((check.state, check.summary), ('warning', '1 refused connection(s) in the last hour.'))
         self.assertIn('10.0.0.9', check.detail)
 
+    def test_an_unresolved_client_binding_fails_every_icap_request(self):
+        def gateway(binding, fail_closed=True):
+            return {'at': NOW - 5, 'client_key': 'typo', 'port': 1344, 'fail_closed': fail_closed, 'counters': {},
+                    'events': [], 'binding': binding, 'binding_detail': 'No service client has the key typo.'}
+        check = health_read.icap_check([gateway('unresolved')], NOW)
+        self.assertEqual(check.state, 'critical')
+        self.assertIn('No service client has the key typo.', check.summary)
+        self.assertIn('blocks every upload', check.detail)
+        open_check = health_read.icap_check([gateway('unresolved', fail_closed=False)], NOW)
+        self.assertEqual(open_check.state, 'warning')
+        self.assertIn('unscanned', open_check.detail)
+        # The compatibility client is a working, if unintended, binding: not an outage.
+        self.assertEqual(health_read.icap_check([gateway('legacy_default')], NOW).state, 'ok')
+
 
 class DatabaseCase(unittest.TestCase):
     postgres = False
@@ -234,6 +248,37 @@ class DeliveryTests(DatabaseCase):
         gateway, = delivery_read.overview(now=NOW).gateways
         self.assertEqual((gateway.client_key, gateway.stale, gateway.events[0].peer), ('storage', True, '10.0.0.9'))
 
+    def test_gateway_binding_resolves_the_client_key_as_the_gateway_does(self):
+        from app.services.service_clients import identity_for_service_client_key
+        disabled = db.create_service_client('disabled', 'Disabled')
+        db.create_service_client('no-profile', 'No Profile')
+        with db.connect() as connection:
+            connection.execute('UPDATE service_clients SET enabled = ? WHERE id = ?', (db.db_bool(False), disabled))
+        for key in ('drive', 'legacy-default', 'disabled', 'no-profile', 'missing'):
+            db.set_setting(f'{activity.SETTING_PREFIX}{key}:1344', json.dumps({
+                'at': NOW - 5, 'client_key': key, 'service_name': 'masp', 'port': 1344, 'fail_closed': True,
+                'block_on_review': False, 'allowlist_entries': 0, 'started_at': NOW - 99, 'counters': {},
+                'last_request_at': None, 'events': []}))
+        gateways = {g.client_key: g for g in delivery_read.overview(now=NOW).gateways}
+        self.assertEqual({key: g.binding for key, g in gateways.items()}, {
+            'drive': 'client', 'legacy-default': 'legacy_default', 'disabled': 'unresolved',
+            'no-profile': 'unresolved', 'missing': 'unresolved'})
+        self.assertEqual((gateways['drive'].client_id, gateways['drive'].client_name), (self.client_id, 'Drive'))
+        self.assertIn('disabled', gateways['disabled'].binding_detail)
+        self.assertIn('no enabled scan profile', gateways['no-profile'].binding_detail)
+        self.assertEqual(gateways['missing'].binding_detail, 'No service client has the key missing.')
+        # The console must agree with what the gateway itself would do with each key.
+        for key, gateway in gateways.items():
+            if gateway.binding == 'unresolved':
+                with self.assertRaises(ValueError):
+                    identity_for_service_client_key(key)
+            else:
+                identity_for_service_client_key(key)
+        with patch('app.services.health_read.shutil.disk_usage', return_value=Usage(100, 10, 90)):
+            report = health_read.report([engine('Metadata', 'healthy', 'static_metadata')], now=NOW)
+        icap = next(check for check in report.checks if check.key == 'icap')
+        self.assertEqual(icap.state, 'critical')
+
     def test_health_report_combines_every_part(self):
         self.outbox('failing', 'pending', 2, error='refused')
         with patch('app.services.health_read.shutil.disk_usage', return_value=Usage(100, 10, 90)):
@@ -267,6 +312,15 @@ class ReadModelTests(DatabaseCase):
         view = client_readiness.readiness(self.client_id, 'https://masp.example')
         self.assertEqual({m.key: m.ready for m in view.methods}, {'api': False, 'icap': True, 'manifest': False})
         self.assertTrue(view.ready)
+        # A client whose gateway reports under another key is told which one.
+        db.set_setting(activity.SETTING_PREFIX + 'drive:1344', json.dumps({'at': int(time.time()),
+            'client_key': 'legacy-default', 'port': 1344, 'counters': {}, 'events': []}))
+        icap = next(m for m in client_readiness.readiness(self.client_id, 'https://masp.example').methods if m.key == 'icap')
+        self.assertFalse(icap.ready)
+        self.assertIn('MASP_ICAP_SERVICE_CLIENT_KEY=drive', icap.checks[0].detail)
+        self.assertIn('port 1344 files scans under legacy-default', icap.checks[0].detail)
+        db.set_setting(activity.SETTING_PREFIX + 'drive:1344', json.dumps({'at': int(time.time()), 'client_key': 'drive',
+            'port': 1344, 'counters': {}, 'events': []}))
         with patch('app.services.health_read.shutil.disk_usage', return_value=Usage(100, 10, 90)):
             report = health_read.report([engine('Metadata', 'healthy', 'static_metadata')])
             bundle = json.loads(support_bundle.build(report, []).content)

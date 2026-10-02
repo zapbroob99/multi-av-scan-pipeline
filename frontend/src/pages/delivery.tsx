@@ -9,6 +9,7 @@ import { Dialog } from '../components/ui/dialog'
 import { ErrorMessage } from '../components/error-message'
 import { HelpDetails } from '../components/help-details'
 import { age } from './intake'
+import { Timestamp } from '../components/timestamp'
 
 type Gateway = components['schemas']['IcapGateway']
 
@@ -18,15 +19,36 @@ const EVENT_LABEL: Record<string, string> = {
 const COUNTER_LABEL: [string, string][] = [['requests', 'Requests'], ['allowed', 'Allowed'], ['blocked', 'Blocked'],
   ['fail_actions', 'Fail-closed'], ['errors', 'Errors'], ['connections_rejected', 'Refused connections']]
 
+function ClientBinding({ gateway }: { gateway: Gateway }) {
+  const name = gateway.client_name || gateway.client_key
+  const label = <>{name} <small><code>{gateway.client_key}</code></small></>
+  if (gateway.binding === 'unresolved') return <>Nothing: <code>{gateway.client_key}</code> does not resolve</>
+  return gateway.client_id ? <Link to={`/service-clients/${gateway.client_id}/setup`}>{label}</Link> : label
+}
+
+function BindingNotice({ gateway }: { gateway: Gateway }) {
+  const setting = 'MASP_ICAP_SERVICE_CLIENT_KEY'
+  if (gateway.binding === 'unresolved') return <p className="notice error" role="alert">{gateway.binding_detail} Every request through
+    this gateway fails, so {gateway.fail_closed ? 'every upload is blocked' : 'uploads pass unscanned'}. Enable the client and its
+    profile, or set <code>{setting}</code> to an enabled client&apos;s key and restart the icap container.</p>
+  if (gateway.binding === 'legacy_default') return <p className="notice">Scans from this gateway are filed under the compatibility
+    client, not an integration of their own, so they use its profile and appear as {gateway.client_name || 'legacy-default'} in the
+    ledger. To use an integration&apos;s client, set <code>{setting}</code> to its key (shown on the client&apos;s Setup tab) and
+    restart the icap container; on pilot installs, edit <code>.env.pilot</code> and run <code>install.sh --no-build</code>.</p>
+  return null
+}
+
 function GatewayCard({ gateway }: { gateway: Gateway }) {
   return <article className="submission-card" aria-label={`ICAP gateway ${gateway.client_key}`}>
-    <div className="delivery-card-heading"><h2>ICAP gateway · {gateway.client_key}</h2>
+    <div className="delivery-card-heading"><h2>ICAP gateway · {gateway.client_name || gateway.client_key}</h2>
       <span className={`tag tag-dot ${gateway.stale ? 'tag-danger' : 'tag-positive'}`}>{gateway.stale ? 'Not reporting' : 'Reporting'}</span></div>
     {gateway.stale && <p className="notice error" role="alert">No report for {age(gateway.age_seconds)}. A stopped fail-closed gateway blocks every upload; check the icap container.</p>}
+    <BindingNotice gateway={gateway} />
     <dl className="report-metadata">
+      <dt>Files scans under</dt><dd><ClientBinding gateway={gateway} /></dd>
       <dt>Service</dt><dd><code>{gateway.service_name}</code> on port {gateway.port}</dd>
       <dt>Policy</dt><dd>{gateway.fail_closed ? 'Fail-closed' : 'Fail-open'}{gateway.block_on_review ? ', review blocks' : ''} · allowlist {gateway.allowlist_entries || 'empty (firewall only)'}</dd>
-      <dt>Running since</dt><dd>{formatTimestamp(gateway.started_at)}</dd>
+      <dt>Running since</dt><dd><Timestamp value={gateway.started_at} /></dd>
       <dt>Last request</dt><dd>{gateway.last_request_at ? formatTimestamp(gateway.last_request_at) : 'None since start'}</dd>
     </dl>
     <div className="stats-row delivery-counters">{COUNTER_LABEL.map(([key, label]) =>
@@ -36,7 +58,7 @@ function GatewayCard({ gateway }: { gateway: Gateway }) {
       <div className="history-table-wrap" role="region" aria-label={`Recent ICAP events for ${gateway.client_key}`} tabIndex={0}><table className="history-table compact-table">
         <thead><tr><th scope="col">When</th><th scope="col">Event</th><th scope="col">Detail</th></tr></thead>
         <tbody>{gateway.events.map((event, index) => <tr key={`${event.at}-${index}`} className={event.kind === 'blocked' ? '' : 'row-alert'}>
-          <td><small>{formatTimestamp(event.at)}</small></td><td>{EVENT_LABEL[event.kind] ?? event.kind}</td>
+          <td><small><Timestamp value={event.at} /></small></td><td>{EVENT_LABEL[event.kind] ?? event.kind}</td>
           <td className="hash-value">{event.detail}{event.peer && <small>Source {event.peer}</small>}
             {event.scan_id && <small><Link to={`/api-ledger/scans/${event.scan_id}`}>Scan #{event.scan_id}</Link></small>}</td>
         </tr>)}</tbody></table></div>}
@@ -85,7 +107,7 @@ export default function Delivery({ session }: { session: Session }) {
             <td><Link to={`/api-ledger/scans/${row.scan_job_id}`}>Scan #{row.scan_job_id}</Link><small>{row.event_type}</small></td>
             <td className="cell-name">{row.client_name || 'Unknown client'}</td>
             <td className="hash-value">{row.last_error || 'No error recorded'}<small>{row.attempt_count} attempt(s)</small></td>
-            <td><small>{formatTimestamp(row.next_attempt_at)}</small></td>
+            <td><small><Timestamp value={row.next_attempt_at} /></small></td>
           </tr>)}</tbody></table></div>}
         {!notes.pending && !notes.delivered && <p className="muted">No notification has been produced. Detections on deferred and API scans create them.</p>}
         {notes.pending > 0 && !notes.delivered && !notes.retrying && !notes.delivering && <p className="muted">No delivery has been attempted yet.
