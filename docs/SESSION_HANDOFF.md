@@ -20,6 +20,14 @@ checkpoint, not evidence of a deployment.
 
 ## Git checkpoint
 
+**Working branch: `experiment/ui-redesign`** (created 2026-10-02 from
+`feat/frontend-separation-hardening` at `4b1a8da`; that branch has not moved, so
+merging is a fast-forward). It holds the console redesign `4349311`, which the
+user reviewed and approved on 2026-10-05 ("beğendim"), plus this handoff. It is
+not merged into `feat/frontend-separation-hardening` yet: ask the user before
+merging, and remember the deployed pilot.13 predates it. Going back to the old
+look is `git switch feat/frontend-separation-hardening`.
+
 Checkpoint branch: `feat/frontend-separation-hardening`, not merged to `main`.
 `origin/feat/frontend-separation-hardening` was last confirmed at `94f01ed`;
 **everything below is local and NOT pushed**. The user authorizes each push
@@ -122,7 +130,9 @@ Commits after the last pushed `94f01ed`, oldest first:
   engines had cleared (reported by the user from the intranet: "console allow,
   ICAP block"); the ICAP event now names the archive rule
 - `e5a6ab8` release named `0.1.0-pilot.13`
-- this commit: handoff
+- `67a11e5`, `4b1a8da`: handoff
+- on `experiment/ui-redesign` only: `4349311` console redesign (see "Visual
+  language" in `FRONTEND_SEPARATION.md`), then this commit: handoff
 
 Pre-existing staged files to preserve: `bench_sample.txt`, `sample_30mb.bin`,
 `sample_45mb.bin`, `sample_5mb.bin`, `skills-lock.json`. These are intentionally
@@ -255,6 +265,11 @@ both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
 **Decisions and offers waiting on the user:**
 
+- **Console redesign:** approved; merge `experiment/ui-redesign` into
+  `feat/frontend-separation-hardening` (fast-forward) and ship it in the next
+  pilot release, or keep iterating first. Offered second pass: dashboard table
+  density, scan report, engine cards, phone layout.
+
 - **Archives over ICAP.** `MASP_ICAP_BLOCK_ARCHIVES` (default on) blocks every
   zip/7z/tar whatever the scan says, because members are extracted only when the
   container itself is detected (`scan_worker.py`, `lazy_extract_on_detection`),
@@ -376,7 +391,14 @@ framing confirmation, and per-client rate limiting.
   Disposable containers used on this branch (ports 15441-15444, names
   `masp-test-pg-*`) were started with `--rm` and stopped; none should remain
   (`docker ps -a` to check).
-- Frontend: `npm --prefix frontend test` (192 tests passing), `run build`,
+- Console preview without real data: from `frontend/`, run
+  `python ../tools/serve_console_fixture.py` (port 18765) and
+  `MASP_BACKEND_URL=http://127.0.0.1:18765 npx vite --host 127.0.0.1 --port 5175`,
+  then sign in at `http://127.0.0.1:5175/console/` as `console-admin` /
+  `console-test-only`. Stop both before `run test:e2e`, which starts its own on
+  the same ports.
+- Frontend: `npm --prefix frontend test` (192 tests passing on both branches;
+  e2e 39/39 on `experiment/ui-redesign` on 2026-10-02), `run build`,
   `run contracts:check`. Regenerate contracts with
   `npm --prefix frontend run contracts:generate` after browser API changes.
   `run test:e2e` for Playwright (39 workflows, all passing on 2026-10-02).

@@ -1883,6 +1883,40 @@ signature versions from the newest worker health report, and worker agent
 versions. Hosts, paths and engine configuration stay off the screen. The
 sidebar and login mark are drawn inline with theme tokens.
 
+### Visual language
+
+Approved by the user on 2026-10-05 after an experimental redesign
+(`experiment/ui-redesign`, `4349311`). The look is a control-room instrument
+panel rather than a template:
+
+- Tokens only. `styles.css` defines every colour once per theme (`--bg`,
+  `--surface`, `--surface-2/3`, `--line`, `--line-strong`, `--text`, `--text-2/3`,
+  `--link`, `--action`, `--focus`, `--brand`, the `--rail-*` set and the
+  `--ok/--warn/--crit/--info` status pairs); older names (`--border`,
+  `--entity-*`, `--client-*`, `--health-*`, `--verdict-*`) are aliases. A rule
+  never hard-codes a theme colour.
+- Shell: a graphite navigation rail in both themes with an orange active marker;
+  a top bar with the location trail (MASP / section / page), health indicator and
+  the signed-in user (initials, name, role, theme, sign out). Sign-in is a
+  two-pane page.
+- Shape: hairlines instead of shadows (only dialogs float), 3-4 px corners,
+  square status markers (`.tag`, `.health-pill`, `.risk-badge`), readout strips
+  (`.stats-row`) whose cells flow to their count with Plex Mono numerals.
+- Type: IBM Plex Sans for text, IBM Plex Mono for hashes, IDs, keys and numbers,
+  bundled with `@fontsource` (latin and latin-ext, 400-600) so offline hosts and
+  the `font-src 'self'` CSP need nothing external.
+- Patterns: settings pages are `.settings-panel` sections (header strip,
+  `.setting-row` or `.form-rows` label-left rows, footer actions); entity lists
+  carry an `aria-hidden` `.entity-header` row; dialogs have a header rule and a
+  footer action bar (`.dialog-actions` or a trailing `.report-actions`).
+- Avoided on purpose: gradients, glass, glows, rounded cards, pill badges,
+  tracked uppercase decoration and template copy ("Welcome back.").
+
+Converted structurally so far: shell, sign-in, Account, Scan policy, client
+settings, Users/Workers/Pools lists. Every other screen changed through the
+shared classes only; candidates for a second pass are the dashboard table
+density, the scan report, engine cards and the phone layout.
+
 ### Grouped navigation and investigation links
 
 The sidebar groups Operations, Integrations, Infrastructure and Administration;

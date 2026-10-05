@@ -31,6 +31,18 @@ arbitrary command parsers.
   preference; an explicit browser-local selection is applied by the same-origin
   `/console/theme-init.js` before React renders. Keep it compatible with the
   frontend CSP and never put user, scan or secret data in theme storage.
+  Visual language (approved by the user 2026-10-05; see "Visual language" in
+  `FRONTEND_SEPARATION.md`): every colour is a token in `styles.css` with a dark
+  value on `:root` and a light value on `:root[data-theme=light]`; never hard-code
+  a theme colour in a rule or component. Fixed graphite rail in both themes, one
+  signal orange (`--brand`) for identity only, steel-blue actions, hairlines
+  instead of shadows, 3-4 px corners, square status markers, IBM Plex Sans/Mono
+  bundled through `@fontsource` (offline hosts: no font CDN, CSP `font-src
+  'self'`). Avoid generic AI-template traits: gradients, glass, glows, pill
+  badges, tracked uppercase decoration, template copy. Settings pages use
+  `.settings-panel` (header, label-left `.setting-row`/`.form-rows`, footer
+  actions); help text sits outside a control's label (`aria-describedby`) so
+  accessible names stay exact.
 - The application image builds the console in a Node stage and serves it from
   `app/services/console_static.py` on port 8000; no deployment needs a separate web
   server. Keep its headers aligned with `frontend/nginx.conf.template` (strict CSP,
