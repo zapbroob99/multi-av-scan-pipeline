@@ -5,6 +5,7 @@ import { Button } from './ui/button'
 
 export type ProfilePolicy = components['schemas']['ProfilePolicy']
 type TypeMode = 'none' | 'allowlist' | 'denylist'
+type ArchiveHandling = NonNullable<ProfilePolicy['archive_handling']>
 
 const FAMILIES = Object.keys(FAMILY_LABELS)
 const MIB = 1024 * 1024
@@ -16,7 +17,10 @@ export function policySummary(policy: ProfilePolicy): string[] {
   const rule = policy.type_rule
   if (rule) lines.push(`${rule.mode === 'allowlist' ? 'Only' : 'Not'} accepted: ${rule.families.join(', ')}.`)
   if (policy.block_masquerade) lines.push('Files whose extension contradicts their content are not accepted.')
-  if (rule || policy.block_masquerade) lines.push(policy.violation_action === 'reject'
+  if (policy.archive_handling === 'inspect') lines.push('Archives are opened and checked: encrypted, damaged, oversized or unsupported archives are blocked.')
+  if (policy.archive_handling === 'scan_members') lines.push('Every file inside an archive is scanned; an archive is allowed only when all of them are.')
+  const archives = policy.archive_handling === 'inspect' || policy.archive_handling === 'scan_members'
+  if (rule || policy.block_masquerade || archives) lines.push(policy.violation_action === 'reject'
     ? 'Content that is not accepted is rejected without scanning.'
     : 'Content that is not accepted is scanned and blocked.')
   if (policy.review_action === 'block') lines.push('Files that could not be fully assessed are blocked.')
@@ -41,6 +45,7 @@ export function ProfilePolicyEditor({ name, policy, invalid, disabled, onCancel,
   const [masquerade, setMasquerade] = useState(start.block_masquerade ?? false)
   const [violation, setViolation] = useState(start.violation_action ?? 'scan_and_block')
   const [review, setReview] = useState(start.review_action ?? 'inherit')
+  const [archives, setArchives] = useState<ArchiveHandling>(start.archive_handling ?? 'inherit')
   const [error, setError] = useState('')
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -60,10 +65,11 @@ export function ProfilePolicyEditor({ name, policy, invalid, disabled, onCancel,
       block_masquerade: masquerade,
       violation_action: violation,
       review_action: review,
+      archive_handling: archives,
     })
   }
 
-  const contentRules = typeMode !== 'none' || masquerade
+  const contentRules = typeMode !== 'none' || masquerade || archives !== 'inherit'
   return <form className="submission-card" onSubmit={submit}><fieldset disabled={disabled}>
     <legend className="client-form-title">Scan policy for {name}</legend>
     <p className="muted client-note">Applies to scans this profile accepts from now on. Accepted scans keep the policy they were accepted under.
@@ -81,6 +87,13 @@ export function ProfilePolicyEditor({ name, policy, invalid, disabled, onCancel,
         onChange={event => setFamilies(event.target.checked ? [...families, family] : families.filter(item => item !== family))} /> {FAMILY_LABELS[family]}</label>)}</fieldset>}
     <label className="check-row"><input type="checkbox" checked={masquerade} onChange={event => setMasquerade(event.target.checked)} />
       Do not accept files whose extension contradicts their content (for example an executable named report.pdf)</label>
+    <label>Archive handling (zip, 7z, tar)<select value={archives} onChange={event => setArchives(event.target.value as ArchiveHandling)}>
+      <option value="inherit">Deployment behaviour: an ICAP gateway blocks every archive, the API scans it as one file</option>
+      <option value="inspect">Check them: engines scan the archive, MASP opens it to block what they could not see</option>
+      <option value="scan_members">Scan every file inside: each member is also scanned by this profile's engines</option></select>
+      <small className="muted">Checking blocks encrypted, damaged or oversized archives, formats MASP cannot open (RAR, CAB, single-file gzip)
+        and members that the content rule above does not accept or the hash blocklist lists. Scanning every file inside takes longer:
+        an ICAP gateway waits for all members within MASP_ICAP_WAIT_SECONDS and blocks or allows by its fail mode when they do not finish.</small></label>
     {contentRules && <label>When content is not accepted<select value={violation} onChange={event => setViolation(event.target.value as typeof violation)}>
       <option value="scan_and_block">Scan it and block it: engine results are recorded</option>
       <option value="reject">Reject it without scanning: faster, no scan record (ICAP blocks, the API answers 415)</option></select></label>}

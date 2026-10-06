@@ -1896,9 +1896,26 @@ panel rather than a template:
   `--entity-*`, `--client-*`, `--health-*`, `--verdict-*`) are aliases. A rule
   never hard-codes a theme colour.
 - Shell: a graphite navigation rail in both themes with an orange active marker;
-  a top bar with the location trail (MASP / section / page), health indicator and
-  the signed-in user (initials, name, role, theme, sign out). Sign-in is a
-  two-pane page.
+  a top bar with the location trail (MASP / section / page), the notification
+  bell and the signed-in user (initials, name, role, theme, sign out). Sign-in is
+  a two-pane page whose rail carries only the product line.
+- Notification bell (`components/notifications.tsx`): replaces the former health
+  pill. Every operator sees the ten most recently completed detections
+  (`GET /api/ui/v1/notifications`: recorded high/critical verdicts from every
+  source, archive members included, ordered by completion with the
+  `idx_scan_jobs_detection_feed` partial index; no engine output). Administrators
+  also see the health checks that are warning, critical or unknown, from the same
+  `system/health` query as System > Overview, or "All systems normal". The badge
+  counts unread detections plus those checks. Only detections can be acted on:
+  `POST /api/ui/v1/notifications/read` greys them out and stops counting them,
+  `POST /api/ui/v1/notifications/clear` also removes them from that operator's
+  list (clearing implies reading). Both take CSRF and a strict body naming the
+  newest detection shown, so later ones are unaffected. Each marker is a per-user
+  (completed_at, scan ID) pair that moves only forward in one conditional update;
+  both are excluded from the audit trail as view preferences, and neither touches
+  the scans: an emptied list points to the dashboard and the API ledger. A health
+  problem stays until the system recovers; an unreadable report is shown as
+  unknown, never as normal.
 - Shape: hairlines instead of shadows (only dialogs float), 3-4 px corners,
   square status markers (`.tag`, `.health-pill`, `.risk-badge`), readout strips
   (`.stats-row`) whose cells flow to their count with Plex Mono numerals.
@@ -1966,3 +1983,17 @@ Validation (2026-09-29): the Python storage suites ran on SQLite and a disposabl
 frontend 185 tests; a new Edge workflow covers confirmed creation, a refused prefix outside the
 client's grant and analyst read-only access. Build and contract drift check passed.
 
+
+
+### Archive-wide report decisions (2026-10-05)
+
+A `scan_members` container report now uses the same backend archive decision as
+ICAP, public integration status/result, summary/full exports and print. The
+backend reads member metadata and admitted routing/policy data in the report's
+repeatable snapshot, checking ownership, ancestry and exact inspection count.
+Engine rows, recorded risk and coverage counts remain per-file; the report says
+so. React calculates no decision and keeps polling while the backend decision
+is `wait`, including a completed container awaiting members. Invalid/oversized
+member policy suppresses the report/export decision with a warning and refuses
+complete-contract previews. No member raw output or findings are hydrated.
+See the archive section in SERVICE_CLIENTS_AND_SCAN_PROFILES.md for read bounds.

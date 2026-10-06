@@ -237,13 +237,26 @@ def _full_export_rows(scan_id: int, *, automation: bool = False, connection=None
     return scan, results, required, policy_complete
 
 
+def _full_report(scan_id: int, *, automation: bool = False):
+    from app.services.archive_assessment import ArchiveDecisionUnavailable
+    with db.connect() as connection:
+        connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+        scan, results, required, policy_complete = _full_export_rows(scan_id, automation=automation, connection=connection)
+        warning = None if policy_complete else 'Decision unavailable: engine policy details are invalid.'
+        try:
+            payload = build_scan_report_payload(scan, results, required_names=required,
+                                                decision_available=policy_complete, connection=connection)
+        except ArchiveDecisionUnavailable as exc:
+            warning = str(exc)
+            payload = build_scan_report_payload(scan, results, required_names=required,
+                                                decision_available=False, connection=connection)
+        if warning:
+            payload['decision_warning'] = warning
+    return scan, results, payload, warning
+
+
 def full_export(scan_id: int, format: Literal['json', 'csv'], *, automation: bool = False) -> SummaryExport:
-    scan, results, required, policy_complete = _full_export_rows(scan_id, automation=automation)
-    payload = build_scan_report_payload(
-        scan, results, required_names=required, decision_available=policy_complete
-    )
-    if not policy_complete:
-        payload['decision_warning'] = 'Decision unavailable: engine policy details are invalid.'
+    scan, results, payload, warning = _full_report(scan_id, automation=automation)
     content = (json.dumps(payload, ensure_ascii=False, indent=2) if format == 'json'
                else create_scan_report_csv(scan, results, payload))
     if len(content.encode('utf-8')) > EXPORT_LIMIT:
@@ -330,9 +343,7 @@ def printable_report(scan_id: int, *, automation: bool = False) -> PrintableRepo
     reuses the export admission and server-selected scope instead, and bounds
     each engine preview; complete output stays behind the per-result reads.
     """
-    scan, results, required, policy_complete = _full_export_rows(scan_id, automation=automation)
-    payload = build_scan_report_payload(scan, results, required_names=required,
-                                        decision_available=policy_complete)
+    scan, results, payload, warning = _full_report(scan_id, automation=automation)
     summary = payload['summary']
     detection, coverage, assessment = summary['detection'], summary['coverage'], summary['assessment']
     decision_payload = summary['decision']
@@ -365,8 +376,7 @@ def printable_report(scan_id: int, *, automation: bool = False) -> PrintableRepo
             coverage_ran=int(coverage['ran']), coverage_total=int(coverage['total']),
             coverage_unavailable=_bounded_text_list(coverage['unavailable'], 2048, 32)),
         decision=scan_report_read.DecisionSummary(**decision_payload) if decision_payload else None,
-        decision_warning=None if policy_complete else
-            'Decision unavailable: engine policy details are invalid or exceed the reader limit. Review each engine\'s recorded details and output.',
+        decision_warning=warning,
         findings=findings, findings_truncated=len(raw_findings) > MAX_PRINT_FINDINGS, engines=engines)
     if len(report.model_dump_json().encode('utf-8')) > EXPORT_LIMIT:
         raise HTTPException(413, 'Printable report exceeds the 2 MiB browser response limit. Download the full export instead.')

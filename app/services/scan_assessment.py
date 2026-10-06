@@ -12,7 +12,7 @@ from app.database import list_engine_results
 from app.models import EngineResultRecord, ScanRecord
 from app.services.decisions import ScanDecision, decide_scan_action
 from app.services.engine_registry import detection_engine_names
-from app.services.profile_policy import apply_profile_policy
+from app.services.profile_policy import apply_profile_policy, archive_handling
 from app.services.scoring import calculate_risk
 from app.services.service_clients import parse_profile_snapshot, required_detection_engine_names
 
@@ -205,3 +205,83 @@ def scan_decision(
 def resolve_scan_decision(scan: ScanRecord) -> ScanDecision:
     """Load a scan's engine results and compute its final decision."""
     return scan_decision(scan, list_engine_results(scan.id))
+
+
+def every_member_is_scanned(scan: ScanRecord) -> bool:
+    """Whether this archive is judged on all of its members (scan_members)."""
+    if scan.batch_id is None or scan.scan_role != "container":
+        return False
+    return archive_handling(parse_profile_snapshot(scan)) == "scan_members"
+
+
+def archive_decision(container: ScanRecord, *, connection=None, decision=None) -> ScanDecision:
+    """Resolve the archive in the caller's snapshot, or open one for ICAP.
+
+    Bounded readers can catch ArchiveDecisionUnavailable and suppress decisions.
+    ICAP explicitly blocks unassessable archives, even under fail-open transport.
+    """
+    from app import database as db
+    from app.services import archive_assessment
+
+    if connection is not None:
+        return archive_assessment.read(connection, container, decision)
+    try:
+        with db.connect() as connection:
+            connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+            archive_assessment.apply_read_budget(connection)
+            current = db.get_scan(container.id, connection=connection)
+            if current is None or (current.source, current.service_client_id) != (container.source, container.service_client_id):
+                raise archive_assessment.ArchiveDecisionUnavailable('Archive decision unavailable: scan is missing or ownership changed.')
+            results = db.list_engine_results(current.id, connection=connection)
+            base = scan_decision(current, results)
+            if not every_member_is_scanned(current):
+                return base
+            return archive_assessment.read(connection, current, base)
+    except archive_assessment.ArchiveDecisionUnavailable as exc:
+        return _archive_block('archive_unassessed', str(exc), [])
+
+
+def combine_archive_decisions(decision: ScanDecision, expected: int,
+                              members: list[tuple[str, str, ScanDecision | None]]) -> ScanDecision:
+    """Pure aggregation shared by ICAP, reports and integration projections."""
+    if decision.action in {'wait', 'block'}:
+        return decision
+    if any(status not in {'completed', 'failed'} for status, _, _ in members):
+        return ScanDecision(action='wait', label='Wait', tone='neutral', confidence='low',
+                            policy='archive_members_in_progress', reason='Archive members are still being scanned.',
+                            reasons=['Archive members are still being scanned.'])
+    if len(members) != expected:
+        reason = (f'Only {len(members)} of the archive\'s {expected} members were registered for scanning.'
+                  if len(members) < expected else 'The registered member count differs from the inspected archive.')
+        return _archive_block('archive_incomplete', reason, [])
+    blocked, unscanned, review = [], [], []
+    for status, name, member_decision in members:
+        if status == 'failed' or member_decision is None:
+            unscanned.append(f'{name}: the member could not be scanned.')
+        elif member_decision.action == 'block':
+            blocked.append(f'{name}: {member_decision.reason}')
+        elif member_decision.action != 'allow':
+            review.append(f'{name}: {member_decision.reason}')
+    if blocked:
+        return _archive_block('archive_member_blocked', f'Archive member {blocked[0]}', blocked + unscanned)
+    if unscanned:
+        return _archive_block('archive_member_unscanned', f'Archive member {unscanned[0]}', unscanned)
+    if review:
+        return ScanDecision(action='review', label='Review', tone='warning', confidence='medium',
+                            policy='archive_member_review', reason=f'Archive member {review[0]}',
+                            reasons=[f'Archive member {item}' for item in review[:20]])
+    if decision.action != 'allow':
+        return decision
+    return ScanDecision(action='allow', label='Allow', tone='success', confidence='high',
+                        policy='archive_full_coverage',
+                        reason='The archive and all inspected members allow with complete required coverage.',
+                        reasons=['The archive and all inspected members allow with complete required coverage.'])
+
+
+def _archive_block(policy: str, reason: str, members: list[str]) -> ScanDecision:
+    # The first member is usually the reason itself; list it once.
+    reasons = list(dict.fromkeys([reason, *(f"Archive member {item}" for item in members[:20])]))
+    if len(members) > 20:
+        reasons.append(f"{len(members) - 20} more members are not listed.")
+    return ScanDecision(action="block", label="Block", tone="danger", confidence="high", policy=policy,
+                        reason=reason, reasons=reasons)

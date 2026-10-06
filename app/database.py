@@ -631,6 +631,12 @@ def init_sqlite_db() -> None:
         ensure_column(connection, "users", "external_id", "TEXT")
         ensure_column(connection, "users", "display_name", "TEXT")
         ensure_column(connection, "users", "last_login_at", "TEXT")
+        # The newest detection this operator marked read, and cleared from the
+        # notification list, each as (completed_at, scan id).
+        ensure_column(connection, "users", "notifications_seen_at", "TEXT")
+        ensure_column(connection, "users", "notifications_seen_scan_id", "BIGINT")
+        ensure_column(connection, "users", "notifications_cleared_at", "TEXT")
+        ensure_column(connection, "users", "notifications_cleared_scan_id", "BIGINT")
         migrate_engine_instances_for_multiple_instances(connection)
         ensure_service_client_schema(connection)
         ensure_hash_list_schema(connection)
@@ -660,6 +666,10 @@ def init_sqlite_db() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_scan_jobs_active_seek ON scan_jobs (id) "
             "WHERE status IN ('queued', 'running', 'finalizing')"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_jobs_detection_feed ON scan_jobs (completed_at, id) "
+            "WHERE status = 'completed' AND verdict IN ('high', 'critical')"
         )
         connection.execute(
             """
@@ -1064,6 +1074,12 @@ def init_postgres_db() -> None:
         ensure_column(connection, "users", "external_id", "TEXT")
         ensure_column(connection, "users", "display_name", "TEXT")
         ensure_column(connection, "users", "last_login_at", "TIMESTAMPTZ")
+        # The newest detection this operator marked read, and cleared from the
+        # notification list, each as (completed_at, scan id).
+        ensure_column(connection, "users", "notifications_seen_at", "TIMESTAMPTZ")
+        ensure_column(connection, "users", "notifications_seen_scan_id", "BIGINT")
+        ensure_column(connection, "users", "notifications_cleared_at", "TIMESTAMPTZ")
+        ensure_column(connection, "users", "notifications_cleared_scan_id", "BIGINT")
         migrate_engine_instances_for_multiple_instances(connection)
         ensure_service_client_schema(connection)
         ensure_hash_list_schema(connection)
@@ -1093,6 +1109,10 @@ def init_postgres_db() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_scan_jobs_active_seek ON scan_jobs (id) "
             "WHERE status IN ('queued', 'running', 'finalizing')"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_jobs_detection_feed ON scan_jobs (completed_at, id) "
+            "WHERE status = 'completed' AND verdict IN ('high', 'critical')"
         )
         connection.execute(
             """
@@ -2493,6 +2513,20 @@ def get_hash_list_entry(sha256: str) -> dict | None:
     return dict(row) if row is not None else None
 
 
+def blocklisted_sha256s(digests: list[str]) -> set[str]:
+    """The given SHA-256 values that are on the blocklist, in chunked lookups."""
+    unique = sorted(set(digests))
+    found: set[str] = set()
+    with connect() as connection:
+        for start in range(0, len(unique), SQL_IN_CHUNK_SIZE):
+            chunk = unique[start:start + SQL_IN_CHUNK_SIZE]
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = connection.execute(f"""SELECT sha256 FROM hash_list_entries
+                WHERE list_kind = 'block' AND sha256 IN ({placeholders})""", tuple(chunk)).fetchall()
+            found.update(str(row_value(row, "sha256")) for row in rows)
+    return found
+
+
 def hash_list_counts() -> dict[str, int]:
     with connect() as connection:
         rows = connection.execute("""SELECT list_kind, COUNT(*) AS entries
@@ -3013,12 +3047,15 @@ def complete_deferred_scan_intake(
     engines: list[EngineInstanceRecord],
     archive_format: str | None,
     profile_snapshot_json: str | None = None,
+    archive_mode: str | None = None,
 ) -> int | None:
     """Atomically create the scan and fence-link it to its deferred request.
 
     ``profile_snapshot_json`` replaces the request's snapshot on the scan only,
     when intake recorded a policy evaluation; the request keeps what the client
-    submitted against, so retry comparison is unaffected.
+    submitted against, so retry comparison is unaffected. ``archive_mode``
+    likewise replaces the requested mode on the batch only (a profile's
+    scan_members policy), never on the request.
     """
     if not engines:
         raise ValueError("Deferred intake requires at least one engine.")
@@ -3047,7 +3084,7 @@ def complete_deferred_scan_intake(
                 connection,
                 source="api",
                 original_filename=sample.original_filename,
-                archive_mode=request.archive_mode,
+                archive_mode=archive_mode or request.archive_mode,
                 total_items=1,
                 metadata_json=json.dumps(
                     {
@@ -4219,6 +4256,18 @@ def list_scan_batch_scans(
     return [row_to_scan_record(row) for row in rows]
 
 
+def count_active_batch_scans(batch_id: int) -> int:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS active FROM scan_jobs
+            WHERE batch_id = ? AND status IN ('queued', 'running', 'finalizing')
+            """,
+            (batch_id,),
+        ).fetchone()
+    return int(row_value(row, "active"))
+
+
 def refresh_scan_batch_counts(batch_id: int) -> bool:
     with connect() as connection:
         rows = connection.execute(
@@ -4674,8 +4723,8 @@ def renew_scan_engine_job_lease(
         return int(cursor.rowcount) > 0
 
 
-def list_engine_results(scan_job_id: int) -> list[EngineResultRecord]:
-    with connect() as connection:
+def list_engine_results(scan_job_id: int, *, connection=None) -> list[EngineResultRecord]:
+    with (connect() if connection is None else nullcontext(connection)) as connection:
         rows = connection.execute(
             """
             SELECT
@@ -5777,8 +5826,8 @@ def list_active_scans(limit: int = 20, offset: int = 0) -> list[ScanRecord]:
     return [row_to_scan_record(row) for row in rows]
 
 
-def get_scan(scan_id: int) -> ScanRecord | None:
-    with connect() as connection:
+def get_scan(scan_id: int, *, connection=None) -> ScanRecord | None:
+    with (connect() if connection is None else nullcontext(connection)) as connection:
         row = connection.execute(
             """
             SELECT

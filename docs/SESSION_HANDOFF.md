@@ -1,7 +1,8 @@
 # MASP session handoff
 
-Updated: 2026-10-02, after the intranet upgrade to pilot.13. This is a workspace
-checkpoint, not evidence of a deployment.
+Updated: 2026-10-06, archive report verification recovered after a usage-limit
+interruption on `feat/archive-handling`. This is a
+workspace checkpoint, not evidence of a deployment.
 
 ## Start here
 
@@ -20,7 +21,20 @@ checkpoint, not evidence of a deployment.
 
 ## Git checkpoint
 
-**Working branch: `experiment/ui-redesign`** (created 2026-10-02 from
+**Working branch: `feat/archive-handling`** (created 2026-10-05 from
+`experiment/ui-redesign` at `04748b5`, so it carries the redesign too): the
+per-client archive handling the user asked for ("users will send archives; MASP
+must handle zips somehow"). See "Archives" in
+`SERVICE_CLIENTS_AND_SCAN_PROFILES.md`. Same branch, also requested on
+2026-10-05: the sign-in rail keeps only the product line (the user found the rest
+"advert-like"), the expected 401 no longer shows as a red error on the sign-in
+page, and a notification bell replaced the top bar health pill (recent detections
+for everyone, failing health checks for admins, per-user read and clear markers; see
+"Notification bell" in `FRONTEND_SEPARATION.md`). Not rehearsed in a release
+container yet and not packaged; merging it also brings the unmerged redesign
+along.
+
+**Redesign branch: `experiment/ui-redesign`** (created 2026-10-02 from
 `feat/frontend-separation-hardening` at `4b1a8da`; that branch has not moved, so
 merging is a fast-forward). It holds the console redesign `4349311`, which the
 user reviewed and approved on 2026-10-05 ("beğendim"), plus this handoff. It is
@@ -144,6 +158,34 @@ branch's history was made with an explicit file list.
 file still carries partner naming. Do not `git add` it.
 
 ## Current work
+
+**2026-10-05 archive report follow-up (uncommitted).** The archive-wide decision
+now reaches the console report, exports, print view, public status/result and
+browser contract previews, using the same bounded member reader as ICAP. Recorded
+container risk and engine rows stay per-file. Running members keep result_ready
+false (`/result` 409) and the console polling. Invalid policy or inconsistent
+ownership/ancestry never falls back to container allow: reports suppress the
+decision, previews fail, API returns 503 and ICAP blocks. Admission: 5000 members,
+20000 results, 2 MiB routing/policy/name bytes, 64 KiB per engine policy, no member
+raw output/findings. Added profile/archive policy values missing from the public
+API schema. This is not packaged or deployed; release-container ICAP rehearsal
+and capacity acceptance remain open.
+
+**Verification recovered on 2026-10-06.** The interrupted session's final full
+backend run finished on 2026-10-05: 1113 tests, OK, 179 environment/platform
+skips. The initial run's API source-isolation test failure was fixed before
+that final run; its standalone scan fixture now includes batch/role metadata.
+The last edit added `engine_policy_review` to the public decision schema and
+checks that a container requiring review is never promoted to archive allow.
+After resuming, the archive, API authorization, public contract and browser
+contract modules were rerun against the current tree: 65 tests, OK, 14
+PostgreSQL-gated skips. Browser contracts and TypeScript typecheck also passed.
+The prior session additionally passed 15 isolated PostgreSQL archive/notification
+tests (including coherent report snapshots), all 200 frontend tests and the
+production console build. Its disposable PostgreSQL container was stopped and
+removed. No release-container ICAP rehearsal or deployment was performed.
+All feature changes remain uncommitted; the five pre-existing staged files and
+the private untracked pilot follow-up document remain untouched.
 
 **`1fdf768` Hash List engine.** Decisions made with the user: one global list
 (not per engine instance), and an allowlist match is informational only — it
@@ -270,14 +312,18 @@ both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
   pilot release, or keep iterating first. Offered second pass: dashboard table
   density, scan report, engine cards, phone layout.
 
-- **Archives over ICAP.** `MASP_ICAP_BLOCK_ARCHIVES` (default on) blocks every
-  zip/7z/tar whatever the scan says, because members are extracted only when the
-  container itself is detected (`scan_worker.py`, `lazy_extract_on_detection`),
-  most engines do not look inside, and an encrypted archive looks clean to all of
-  them. Offered as a per-profile policy setting, not started: "open and scan every
-  member" (eager extraction; block on any detection, encryption, extraction
-  failure or limit; allow only when every member is clean), alongside "block".
-  The user asked why archives are blocked and has not chosen.
+- **Archives over ICAP: built on `feat/archive-handling`, not shipped.** The
+  user chose (2026-10-05) a per-profile `archive_handling`: `inspect` as the
+  recommended default (engines scan the archive whole; MASP opens it at intake
+  and blocks encrypted, damaged, over-limit, unopenable formats such as RAR, and
+  members the content rule refuses or the hash blocklist lists) and
+  `scan_members` as the stronger option (every member also scanned; ICAP waits for
+  all of them). Decisions taken with the recommended answers: encrypted blocks,
+  unopenable formats block, member content follows the profile's content rule.
+  Open follow-ups: RAR extraction support (needs a decision on an unrar/7z
+  binary and its licence) and per-member SHA-256 deduplication for `scan_members` capacity. Before shipping:
+  rehearse with a real zip/encrypted zip/RAR over ICAP in the release container
+  and set `fil`'s profile in the console.
 - **Analytics tab** with charts: requested, then deferred by the user ("not needed
   now"). Proposed scope: scans over time by source and client, decisions,
   detecting engines, blocked types and policy rejections, ICAP wait times and

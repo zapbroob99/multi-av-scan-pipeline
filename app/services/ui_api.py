@@ -44,6 +44,7 @@ from app.services import health_read
 from app.services import delivery_read
 from app.services import support_bundle
 from app.services import about_read
+from app.services import notification_read
 from app.services import storage_admin
 from app.services import storage_read
 from app.services import account
@@ -122,12 +123,14 @@ class BrowserRoute(APIRoute):
                 hash_allowed = (request.method == 'GET' and self.path == PREFIX + '/hash-scan/options') or (request.method == 'POST' and self.path == PREFIX + '/hash-scan')
                 account_allowed = (request.method == 'GET' and self.path == PREFIX + '/account') or (request.method == 'POST' and self.path == PREFIX + '/account/password')
                 about_allowed = request.method == 'GET' and self.path == PREFIX + '/about'
+                notifications_allowed = (request.method == 'GET' and self.path == PREFIX + '/notifications') or (
+                    request.method == 'POST' and self.path in {PREFIX + '/notifications/read', PREFIX + '/notifications/clear'})
                 # Folder Scanning results are readable like the dashboards; managing locations is admin work.
                 storage_read_allowed = request.method == 'GET' and self.path in {
                     PREFIX + '/storage/overview', PREFIX + '/storage/locations/{location_id}',
                     PREFIX + '/storage/locations/{location_id}/objects', PREFIX + '/storage/findings',
                 }
-                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not hash_allowed and not account_allowed and not about_allowed and not storage_read_allowed and user.role != "admin":
+                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not hash_allowed and not account_allowed and not about_allowed and not notifications_allowed and not storage_read_allowed and user.role != "admin":
                     raise HTTPException(403, "Admin permission is required.")
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 origin = str(request.base_url).rstrip("/")
@@ -500,6 +503,23 @@ def browser_storage_findings(limit: int = Query(default=20, ge=1, le=100),
                              detected: Literal['all', 'detected', 'not_detected'] = 'all'):
     return storage_read.findings(limit=limit, before=before, location_id=location_id, kind=kind,
                                  detected=detected)
+
+
+@router.get('/notifications', response_model=notification_read.Notifications)
+def browser_notifications(request: Request):
+    return notification_read.read(request.state.ui_user.id)
+
+
+@router.post('/notifications/read', status_code=204)
+def browser_mark_notifications_read(request: Request, body: notification_read.ThroughDetection):
+    notification_read.mark_read(request.state.ui_user.id, body)
+    return Response(status_code=204)
+
+
+@router.post('/notifications/clear', status_code=204)
+def browser_clear_notifications(request: Request, body: notification_read.ThroughDetection):
+    notification_read.clear(request.state.ui_user.id, body)
+    return Response(status_code=204)
 
 
 @router.get('/about', response_model=about_read.AboutPayload)

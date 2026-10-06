@@ -12,6 +12,7 @@ from fastapi.security import HTTPBearer
 from starlette.concurrency import run_in_threadpool
 
 from app import APP_VERSION
+from app import database as db
 from app.database import (
     find_deferred_scan_submission,
     create_deferred_scan_submission,
@@ -70,7 +71,9 @@ from app.services.scan_intake import (
     scan_is_terminal,
     wait_for_terminal_scan,
 )
-from app.services.scan_assessment import scan_decision
+from app.services.scan_assessment import scan_decision, archive_decision, every_member_is_scanned
+from app.services.archive_assessment import ArchiveDecisionUnavailable
+from app.services.browser_db_budget import apply_read_budget
 from app.services.api_payloads import (
     create_api_scan_result_payload,
     create_api_scan_status_payload,
@@ -316,12 +319,28 @@ def build_api_scan_status_payload(
     request: Request,
     scan: ScanRecord,
     engine_results: list[EngineResultRecord] | None = None,
+    *, connection=None,
 ) -> dict[str, object]:
-    results = engine_results if engine_results is not None else list_engine_results(scan.id)
-    queue_metrics = get_queue_metrics()
-    queue_position = get_scan_queue_position(scan.id)
+    if every_member_is_scanned(scan) and connection is None:
+        with db.connect() as connection:
+            connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+            apply_read_budget(connection)
+            current = db.get_scan(scan.id, connection=connection)
+            if current is None or (current.source, current.service_client_id) != (scan.source, scan.service_client_id):
+                raise HTTPException(404, 'Scan not found.')
+            return build_api_scan_status_payload(request, current, connection=connection)
+    results = engine_results if engine_results is not None else (
+        list_engine_results(scan.id) if connection is None else db.list_engine_results(scan.id, connection=connection))
+    queue_metrics = get_queue_metrics() if connection is None else get_queue_metrics(connection=connection)
+    queue_position = get_scan_queue_position(scan.id) if connection is None else get_scan_queue_position(scan.id, connection=connection)
     result_ready = scan_is_terminal(scan)
     decision = scan_decision(scan, results)
+    if every_member_is_scanned(scan):
+        try:
+            decision = archive_decision(scan, connection=connection, decision=decision)
+        except ArchiveDecisionUnavailable as exc:
+            raise HTTPException(503, str(exc)) from None
+    result_ready = result_ready and decision.action != 'wait'
     payload = create_api_scan_status_payload(
         result_ready=result_ready,
         recommended_poll_seconds=None if result_ready else configured_api_retry_after_seconds(),
@@ -342,10 +361,20 @@ def build_api_scan_result_payload(
     request: Request,
     scan: ScanRecord,
     engine_results: list[EngineResultRecord] | None = None,
+    *, connection=None,
 ) -> dict[str, object]:
-    results = engine_results if engine_results is not None else list_engine_results(scan.id)
-    report_payload = build_scan_report_payload(scan, results)
-    result_ready = scan_is_terminal(scan)
+    if every_member_is_scanned(scan) and connection is None:
+        with db.connect() as connection:
+            connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+            apply_read_budget(connection)
+            current = db.get_scan(scan.id, connection=connection)
+            if current is None or (current.source, current.service_client_id) != (scan.source, scan.service_client_id):
+                raise HTTPException(404, 'Scan not found.')
+            return build_api_scan_result_payload(request, current, connection=connection)
+    results = engine_results if engine_results is not None else (
+        list_engine_results(scan.id) if connection is None else db.list_engine_results(scan.id, connection=connection))
+    report_payload = build_scan_report_payload(scan, results, connection=connection)
+    result_ready = scan_is_terminal(scan) and report_payload['summary']['decision']['action'] != 'wait'
     payload = create_api_scan_result_payload(
         report_payload=report_payload,
         scan_payload=build_scan_summary_payload(scan),
@@ -457,8 +486,12 @@ async def enqueue_scan_from_upload(
 def build_scan_report_payload(
     scan: ScanRecord,
     engine_results: list[EngineResultRecord],
+    *, connection=None,
 ) -> dict[str, object]:
-    return build_shared_scan_report_payload(scan, engine_results)
+    try:
+        return build_shared_scan_report_payload(scan, engine_results, connection=connection)
+    except ArchiveDecisionUnavailable as exc:
+        raise HTTPException(503, str(exc)) from None
 
 
 def backfill_missing_assessments(limit: int = 250) -> None:
@@ -816,6 +849,20 @@ def api_scan_result(request: Request, scan_id: int) -> JSONResponse:
     # Public API exposes API-sourced scans only; ICAP/manual scans return 404.
     if scan is None or not identity_can_access_scan(identity, scan):
         raise HTTPException(status_code=404, detail="Scan not found.")
+    if every_member_is_scanned(scan):
+        with db.connect() as connection:
+            connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+            apply_read_budget(connection)
+            current = db.get_scan(scan.id, connection=connection)
+            if current is None or not identity_can_access_scan(identity, current):
+                raise HTTPException(404, 'Scan not found.')
+            result = build_api_scan_result_payload(request, current, connection=connection)
+            if result['result_ready']:
+                return JSONResponse(result)
+            payload = build_api_scan_status_payload(request, current, connection=connection)
+            payload['detail'] = 'Archive result is not ready yet.'
+            return JSONResponse(payload, status_code=409,
+                                headers={'Retry-After': str(configured_api_retry_after_seconds())})
     if not scan_is_terminal(scan):
         payload = build_api_scan_status_payload(request, scan)
         payload["detail"] = "Scan result is not ready yet."

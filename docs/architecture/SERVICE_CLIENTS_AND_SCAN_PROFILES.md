@@ -100,6 +100,7 @@ admin and CSRF, fenced by the profile's `management_revision`; the managed
 | `block_masquerade` | Off | An extension the header contradicts is a violation |
 | `violation_action` | `scan_and_block` | `reject`: refuse at intake without scanning (API `415`, ICAP block, deferred `failed`) |
 | `review_action` | `inherit` | `block`: a review decision (failed engine, partial coverage, elevated risk, failed scan) becomes block |
+| `archive_handling` | `inherit` | `inspect` or `scan_members`; see "Archives" below |
 
 Semantics:
 
@@ -119,6 +120,78 @@ Semantics:
   reports an unreadable stored policy instead of editing a guessed one.
 - Rejections create no scan record. They are visible as the API error, an ICAP
   "Rejected by policy" counter and event, or a failed deferred submission.
+
+### Archives
+
+An archive (zip, 7z, tar, including compressed tar; never an Office Open XML or
+OpenDocument file) is scanned by the engines as one file. ClamAV and Defender
+unpack the common formats themselves, so a known threat inside is normally
+detected at that level. What a clean result cannot report is what the engine did
+not see: an encrypted member, content past the engine's own limits, or a format it
+skips all read as clean, and the profile's content rules and the hash blocklist
+only ever see the container. `archive_handling` decides how far MASP goes beyond
+that (`app/services/archive_inspection.py`):
+
+| Value | Intake | Engines | ICAP |
+|---|---|---|---|
+| `inherit` | Nothing extra | The archive as one file; members only after a detection (`lazy_extract_on_detection`) | `MASP_ICAP_BLOCK_ARCHIVES` (default on) blocks every archive |
+| `inspect` | MASP opens the archive with its bounded extractor and judges every member | As `inherit` | The scan's decision |
+| `scan_members` | As `inspect` | Also every member, at every nesting level (`extract_all` batch) | The archive's decision over all members, inside `MASP_ICAP_WAIT_SECONDS` |
+
+Inspection records a violation, and the decision blocks the archive, when:
+
+- it is encrypted, damaged or exceeds `MASP_ARCHIVE_MAX_FILES` or
+  `MASP_ARCHIVE_MAX_TOTAL_BYTES` (both counted across all levels together),
+  `MASP_ARCHIVE_MAX_SINGLE_FILE_BYTES`, `MASP_ARCHIVE_MAX_DEPTH` or
+  `MASP_ARCHIVE_MAX_NESTED_LEVELS`;
+- it is a format MASP recognizes but cannot open (RAR, CAB, single-file gzip,
+  bzip2, xz), at the top or nested: its content is unknown to MASP, and an
+  encrypted one reads as clean to every engine;
+- a member breaks the profile's `type_rule` or `block_masquerade`, so an
+  executable zipped up is judged as an executable;
+- a member's SHA-256 is on the hash blocklist, when the profile routes the Hash
+  List engine.
+
+`violation_action: reject` refuses such an archive without a scan (API `415`,
+ICAP block), except for a blocklisted member, which is always scanned and blocked
+so the record says why. The inspection summary is stored as `archive_inspection`
+in the scan's snapshot whatever it found (format, member count, bytes, nested
+archives, violation total), and at most 20 violations are recorded.
+
+Under `scan_members` only an archive that passed inspection is opened for member
+scanning; one the policy already blocks costs no engine work. The batch mode is
+`extract_all`, set by intake (a client cannot request it), while a deferred
+request keeps the `archive_mode` the client sent, so retry comparison is
+unaffected. The archive's decision (`scan_assessment.archive_decision`) allows
+only when the container allows, every registered member allows, and as many
+members were registered as inspection counted; a member that could not be
+scanned blocks, a member in review keeps the archive in review. The console
+report, summary/full exports, print view, integration status/result and their
+browser previews share this archive decision with ICAP. Recorded risk, coverage
+counts and engine rows still describe the container file; member risk is never
+written into the container. While members run, the decision is `wait`, public
+`result_ready` is false and `/result` returns 409 with Retry-After. The report
+continues polling even after the container's own job completes.
+
+The member reader (`archive_assessment.py`) uses the caller's repeatable snapshot,
+checks exact source/client ownership and ancestry, and requires the registered
+count to equal the inspected count. It admits at most 5000 members, 20000 engine
+results and 2 MiB of combined recorded routing/policy/name bytes, with at most
+64 KiB per engine policy. It never hydrates member raw output, findings or sample
+paths. These are decision-read limits, separate from extraction limits. If data
+exceeds them or policy/ownership is invalid, reports/exports suppress the decision
+with a warning, browser contract previews fail explicitly, the integration API
+returns 503 and ICAP blocks (`archive_unassessed`). No partial member set can
+produce an allow. PostgreSQL reads retain transaction-local statement budgets;
+these bounds are not a capacity guarantee.
+
+Cost: inspection extracts the archive once at intake into the staging directory
+(within the limits above) and reads every member's 4 KiB header and SHA-256.
+`scan_members` adds one engine job per member and engine, so a 1000-file archive
+is 1000 scans; size `MASP_ICAP_WAIT_SECONDS` and the worker capacity for that.
+These modes lift the ICAP blanket block for this client only. That is the one
+setting that relaxes something, deliberately: the blanket block is exchanged for
+a decision that still blocks whatever MASP could not check.
 
 ## Connecting a client
 

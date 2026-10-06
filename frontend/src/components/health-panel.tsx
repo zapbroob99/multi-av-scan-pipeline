@@ -10,24 +10,24 @@ import { Timestamp } from './timestamp'
 type Check = components['schemas']['HealthCheck']
 type Overall = components['schemas']['HealthReport']['overall']
 
-const ICONS = { ok: CheckCircle2, warning: AlertTriangle, critical: XCircle, unknown: HelpCircle, inactive: CircleDashed }
-const STATE_LABEL = { ok: 'OK', warning: 'Attention', critical: 'Failing', unknown: 'Unknown', inactive: 'Not in use' }
+export const HEALTH_ICONS = { ok: CheckCircle2, warning: AlertTriangle, critical: XCircle, unknown: HelpCircle, inactive: CircleDashed }
+export const HEALTH_STATE_LABEL = { ok: 'OK', warning: 'Attention', critical: 'Failing', unknown: 'Unknown', inactive: 'Not in use' }
 export const OVERALL_LABEL: Record<Overall, string> = {
   ok: 'All systems normal', warning: 'Needs attention', critical: 'Action required', unknown: 'Status unknown',
 }
 
-/** One query shared by the System overview and the top bar indicator. */
-export function useHealth(refetchInterval: number | false = 60000) {
+/** One query shared by the System overview and the notification bell (administrators only). */
+export function useHealth(refetchInterval: number | false = 60000, enabled = true) {
   return useQuery({ queryKey: ['system-health'], queryFn: ({ signal }) => request('/api/ui/v1/system/health', 'get', { signal }),
-    retry: false, gcTime: 60000, refetchInterval, refetchIntervalInBackground: false, refetchOnWindowFocus: false })
+    enabled, retry: false, gcTime: 60000, refetchInterval, refetchIntervalInBackground: false, refetchOnWindowFocus: false })
 }
 
 function CheckRow({ check }: { check: Check }) {
-  const Icon = ICONS[check.state]
+  const Icon = HEALTH_ICONS[check.state]
   return <li className={`health-check health-check-${check.state}`}>
     <Icon size={18} aria-hidden="true" className="health-check-icon" />
     <div className="health-check-body">
-      <div className="health-check-title"><strong>{check.label}</strong><span className="health-check-state">{STATE_LABEL[check.state]}</span></div>
+      <div className="health-check-title"><strong>{check.label}</strong><span className="health-check-state">{HEALTH_STATE_LABEL[check.state]}</span></div>
       <p>{check.summary}</p>
       {check.detail && <p className="health-check-detail">{check.detail}</p>}
     </div>
@@ -53,13 +53,4 @@ export function HealthPanel() {
       <p className="muted health-generated">Checked <Timestamp value={data.generated_at} />. Refreshes every 30 seconds while open.</p>
     </>}
   </section>
-}
-
-/** Top bar status for administrators; opens the overview when clicked. */
-export function HealthIndicator() {
-  const health = useHealth()
-  if (!health.data) return null
-  const { overall } = health.data
-  return <Link to="/system/overview" className={`health-indicator health-overall-${overall}`} title="Open system health">
-    <span className="health-indicator-dot" aria-hidden="true" />{OVERALL_LABEL[overall]}</Link>
 }

@@ -11,6 +11,7 @@ from app.services.api_payloads import build_batch_summary_payload, build_scan_su
 from app.services.api_schemas import BatchStatusResponse, BatchResultResponse
 from app.services.browser_db_budget import apply_read_budget
 from app.services.reports import build_scan_report_payload
+from app.services.archive_assessment import ArchiveDecisionUnavailable
 from app.services.scan_intake import scan_is_terminal
 from app.services.scan_management import _full_export_rows, EXPORT_LIMIT
 
@@ -109,7 +110,10 @@ def _build(batch_id: int, kind: Literal['status', 'result'], base_url: str,
                 scan, results, required, valid_policy = _full_export_rows(member.id, automation=True, connection=connection)
                 if not valid_policy:
                     raise HTTPException(409, 'Batch result unavailable: a member has invalid policy details.')
-                report = build_scan_report_payload(scan, results, required_names=required)
+                try:
+                    report = build_scan_report_payload(scan, results, required_names=required, connection=connection)
+                except ArchiveDecisionUnavailable as exc:
+                    raise HTTPException(409, str(exc)) from None
                 entries.append({'id': scan.id, 'role': scan.scan_role, 'parent_scan_id': scan.parent_scan_id,
                                 'relative_path': scan.relative_path,
                                 'result': public_scan_report_payload(report, build_scan_summary_payload(scan)),

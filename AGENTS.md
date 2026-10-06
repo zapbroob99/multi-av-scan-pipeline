@@ -43,6 +43,12 @@ arbitrary command parsers.
   `.settings-panel` (header, label-left `.setting-row`/`.form-rows`, footer
   actions); help text sits outside a control's label (`aria-describedby`) so
   accessible names stay exact.
+  The top bar's notification bell (see "Notification bell" in
+  `FRONTEND_SEPARATION.md`) lists recent detections for every operator and failing
+  health checks for admins. Only detections can be marked read or cleared, per
+  user and only forward, never changing the scans; never let a health problem be
+  dismissed or an unreadable report read as normal, and keep both marker routes out
+  of the audit trail.
 - The application image builds the console in a Node stage and serves it from
   `app/services/console_static.py` on port 8000; no deployment needs a separate web
   server. Keep its headers aligned with `frontend/nginx.conf.template` (strict CSP,
@@ -521,6 +527,29 @@ block whatever the fail mode (`policy_rejected` counter and event), deferred sub
 permanently. Deployment upload/ICAP limits stay the ceiling. Browser writes are admin/CSRF, fenced
 by `management_revision`; `legacy-default` stays read-only; the console never edits a guessed
 policy over an unreadable one.
+Profile `archive_handling` (`app/services/archive_inspection.py`) is `inherit`, `inspect` or
+`scan_members`. Both non-inherit modes open the archive once at intake with the shared bounded
+extractor (limits counted across all nesting levels) and record `archive_inspection` in the scan
+snapshot whatever it found; encrypted, damaged, over-limit, too deeply nested and unopenable
+formats (RAR, CAB, single-file gzip/bzip2/xz) are violations, as are members that break the
+profile's content rules or are on the hash blocklist (only when the profile routes Hash List). A
+check that did not happen never reads as passed: a hash-list read failure fails intake. Reject
+refuses everything except a blocklisted member, which is always scanned and blocked. Only a clean
+inspected archive under `scan_members` gets an `extract_all` batch (intake-set, never client
+requested; a deferred request keeps its own `archive_mode` for retry comparison); the worker then
+registers members without waiting for a detection. `scan_assessment.archive_decision` allows only
+when the container and every member allow and the registered member count reaches the inspected
+count; an unscanned member blocks. These modes replace `MASP_ICAP_BLOCK_ARCHIVES` for that client:
+the one policy setting that lifts a block, exchanged for a decision that still blocks what MASP
+could not check. Reports, exports, print views and public status/results now share that archive
+decision through `archive_assessment.py`, in the caller's repeatable snapshot. Engine rows and
+recorded risk remain per-file. Running members keep `result_ready` false and the report polling;
+`/result` returns 409. Verify exact batch/member source/client ownership and rooted ancestry;
+require the registered count to equal the inspection count. Bound decision reads to 5000 members,
+20000 results, 2 MiB of combined routing/policy/name bytes and 64 KiB per engine policy before
+hydration; never load member raw output/findings. Unreadable/oversized policy or inconsistent
+ownership suppresses report/export decisions, fails contract previews, returns API 503 and blocks
+ICAP (`archive_unassessed`). Never replace unavailable archive decisions with container allow.
 
 Deferred retry safety must not depend on server-side configuration staying still. Answer a
 repeat `client_request_id` from the accepted record before resolving live routing, and compare

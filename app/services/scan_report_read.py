@@ -7,7 +7,8 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from app import database as db
-from app.services.scan_assessment import detection_summary, required_engine_coverage, scan_decision
+from app.services.scan_assessment import detection_summary, required_engine_coverage, scan_decision, archive_decision, every_member_is_scanned
+from app.services.archive_assessment import ArchiveDecisionUnavailable
 from app.services.service_clients import required_detection_engine_names, parse_profile_snapshot
 from app.services.browser_db_budget import apply_read_budget
 
@@ -198,19 +199,26 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
         if len(required) > MAX_ENGINES:
             raise HTTPException(413, 'Large routing snapshot: this report exceeds the browser reader limit.')
         results = [db.row_to_engine_result_record(row) for row in rows]
+        policy_complete = True
+        for result in results:
+            try:
+                details = json.loads(result.details_json or '{}')
+                if len(result.details_json) > POLICY_LIMIT or not isinstance(details, dict):
+                    policy_complete = False
+            except (ValueError, TypeError, RecursionError):
+                policy_complete = False
+        # Never invent an allow/review decision from truncated policy input: show
+        # no decision rather than one the compact reader cannot reproduce faithfully.
+        decision = scan_decision(scan, results, required_names=required) if policy_complete else None
+        decision_warning = None
+        if decision is not None and every_member_is_scanned(scan):
+            try:
+                decision = archive_decision(scan, connection=connection, decision=decision)
+            except ArchiveDecisionUnavailable as exc:
+                decision = None
+                decision_warning = str(exc)
     ran, total, unavailable = required_engine_coverage(results, scan=scan, required_names=required)
     detected, _ = detection_summary(results, scan=scan, required_names=required)
-    policy_complete = True
-    for result in results:
-        try:
-            details = json.loads(result.details_json or '{}')
-            if len(result.details_json) > POLICY_LIMIT or not isinstance(details, dict):
-                policy_complete = False
-        except (ValueError, TypeError, RecursionError):
-            policy_complete = False
-    # Never invent an allow/review decision from truncated policy input: show
-    # no decision rather than one the compact reader cannot reproduce faithfully.
-    decision = scan_decision(scan, results, required_names=required) if policy_complete else None
     decision_payload = asdict(decision) if decision else None
     if decision_payload:
         decision_payload['reason'] = decision_payload['reason'][:2048]
@@ -234,7 +242,7 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
         required_engines=total, completed_engines=ran, unavailable=[value[:2048] for value in unavailable],
         coverage_basis=coverage_basis,
         decision=DecisionSummary(**decision_payload) if decision_payload else None,
-        warning=None if policy_complete else 'Decision unavailable: policy details exceed the compact reader limit or are invalid. Review each engine\'s recorded details and output.',
+        warning=decision_warning or (None if policy_complete else 'Decision unavailable: policy details exceed the compact reader limit or are invalid. Review each engine\'s recorded details and output.'),
         engines=summaries)
 
 

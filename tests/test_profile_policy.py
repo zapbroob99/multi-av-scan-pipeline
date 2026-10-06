@@ -51,14 +51,15 @@ class PolicyModelTests(unittest.TestCase):
         self.assertEqual(policy, ProfilePolicy())
         self.assertEqual(parse_profile_policy(None), ProfilePolicy())
         self.assertEqual(json.loads(profile_policy_json(policy)), {
-            "block_masquerade": False, "max_file_bytes": None, "review_action": "inherit",
-            "type_rule": None, "violation_action": "scan_and_block"})
+            "archive_handling": "inherit", "block_masquerade": False, "max_file_bytes": None,
+            "review_action": "inherit", "type_rule": None, "violation_action": "scan_and_block"})
 
     def test_invalid_policies_are_refused_whole(self):
         for raw in ({"type_rule": {"mode": "allowlist", "families": ["documents"]}},
                     {"type_rule": {"mode": "allowlist", "families": []}},
                     {"max_file_bytes": 0}, {"max_file_bytes": "5"}, {"review_action": "allow"},
-                    {"violation_action": "quarantine"}, {"unknown": True}, [], "not json"):
+                    {"violation_action": "quarantine"}, {"archive_handling": "extract"}, {"unknown": True},
+                    [], "not json"):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 parse_profile_policy(raw if not isinstance(raw, (dict, list)) else json.dumps(raw))
 

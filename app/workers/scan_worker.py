@@ -66,6 +66,7 @@ from app.services.routing import (
 )
 from app.services.scoring import RiskAssessment, calculate_risk
 from app.services.archive_extractor import (
+    EXTRACT_ALL_ARCHIVE_MODE,
     ArchiveExtractionError,
     cleanup_stale_staging_dirs,
     configured_archive_limits,
@@ -158,6 +159,7 @@ MAINTENANCE_INTERVAL_SECONDS = max(
 )
 ENGINE_JOB_TERMINAL_STATUSES = {"completed", "failed", "skipped"}
 LAZY_ARCHIVE_TRIGGER_VERDICTS = {"medium", "high", "critical"}
+EXTRACTING_ARCHIVE_MODES = {"lazy_extract_on_detection", EXTRACT_ALL_ARCHIVE_MODE}
 WORKER_ID = current_worker_process_id()
 WORKER_NODE_ID = current_worker_node_id()
 
@@ -866,7 +868,7 @@ def maybe_enqueue_lazy_archive_children(
         return 0
 
     batch = get_scan_batch(scan.batch_id)
-    if batch is None or batch.archive_mode != "lazy_extract_on_detection":
+    if batch is None or batch.archive_mode not in EXTRACTING_ARCHIVE_MODES:
         return 0
 
     detected = any(
@@ -875,7 +877,10 @@ def maybe_enqueue_lazy_archive_children(
         for result in engine_results
     )
     verdict = assessment.verdict
-    if not detected and verdict not in LAZY_ARCHIVE_TRIGGER_VERDICTS:
+    # extract_all (a profile's scan_members policy) registers every member
+    # whatever the container's verdict; the lazy mode only after a detection.
+    if (batch.archive_mode != EXTRACT_ALL_ARCHIVE_MODE
+            and not detected and verdict not in LAZY_ARCHIVE_TRIGGER_VERDICTS):
         refresh_scan_batch_counts(batch.id)
         return 0
 

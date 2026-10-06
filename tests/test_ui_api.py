@@ -2069,7 +2069,8 @@ class BrowserApiTests(unittest.TestCase):
         client, profile, _ = self.profile_fixture()
         path = f'/service-clients/{client}/profiles/{profile}/policy'
         policy = {'max_file_bytes': 1048576, 'type_rule': {'mode': 'denylist', 'families': ['executable', 'script']},
-                  'block_masquerade': True, 'violation_action': 'reject', 'review_action': 'block'}
+                  'block_masquerade': True, 'violation_action': 'reject', 'review_action': 'block',
+                  'archive_handling': 'inspect'}
         self.assertEqual(self.request(path, 'PUT', {'expected_revision': 0, 'policy': policy}, csrf=False)[0], 403)
         self.assertEqual(self.reads, 0)
         with db.connect() as connection:
@@ -2079,7 +2080,8 @@ class BrowserApiTests(unittest.TestCase):
         with db.connect() as connection:
             connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
         for invalid in ({'max_file_bytes': '1048576'}, {'max_file_bytes': 0}, {'review_action': 'allow'},
-                        {'type_rule': {'mode': 'allowlist', 'families': ['documents']}}, {'unknown': True}):
+                        {'type_rule': {'mode': 'allowlist', 'families': ['documents']}}, {'archive_handling': 'eager'},
+                        {'unknown': True}):
             self.assertEqual(self.request(path, 'PUT', {'expected_revision': 0, 'policy': policy | invalid})[0], 422)
         revision = next(p for p in self.request(f'/service-clients/{client}/profiles')[1]['items'] if p['id'] == profile)['management_revision']
         self.assertEqual(self.request(path, 'PUT', {'expected_revision': revision, 'policy': policy})[0], 204)

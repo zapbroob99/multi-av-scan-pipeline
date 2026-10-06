@@ -11,11 +11,11 @@ import asyncio
 from starlette.concurrency import run_in_threadpool
 from pathlib import Path
 
-from app.database import create_scan_intake, get_scan
+from app.database import count_active_batch_scans, create_scan_intake, get_scan
 from app.models import EngineInstanceRecord, ScanRecord, StoredSample
-from app.services.archive_extractor import detect_archive_format
+from app.services.archive_extractor import EXTRACT_ALL_ARCHIVE_MODE, detect_archive_format
 from app.services.engine_registry import enabled_engines
-from app.services.profile_policy import apply_intake_policy
+from app.services.profile_policy import apply_intake_policy, scans_every_member
 
 
 API_TERMINAL_SCAN_STATUSES = {"completed", "failed"}
@@ -80,6 +80,7 @@ def enqueue_scan_from_stored_sample(
             storage_path=stored_sample.storage_path,
         )
         archive_format = detect_archive_format(stored_sample.storage_path)
+        archive_mode = effective_archive_mode(profile_snapshot_json, archive_mode)
         scan_id = create_scan_intake(
             sample=stored_sample,
             engines=selected_engines,
@@ -108,6 +109,13 @@ def enqueue_scan_from_stored_sample(
     return scan
 
 
+def effective_archive_mode(profile_snapshot_json: str, requested_archive_mode: str) -> str:
+    """The batch mode for this sample: the profile's scan_members overrides the request."""
+    if scans_every_member(profile_snapshot_json):
+        return EXTRACT_ALL_ARCHIVE_MODE
+    return requested_archive_mode
+
+
 async def wait_for_terminal_scan(scan_id: int, wait_seconds: int) -> ScanRecord | None:
     scan = await run_in_threadpool(get_scan, scan_id)
     if scan is None or wait_seconds <= 0 or scan_is_terminal(scan):
@@ -121,3 +129,19 @@ async def wait_for_terminal_scan(scan_id: int, wait_seconds: int) -> ScanRecord 
         if scan is None or scan_is_terminal(scan):
             return scan
     return await run_in_threadpool(get_scan, scan_id)
+
+
+async def wait_for_settled_batch(batch_id: int, wait_seconds: float) -> bool:
+    """Wait until no scan in the batch is active; False when the window ends first.
+
+    A member registers its own members before it completes, so a batch with no
+    active scan cannot grow any further.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, wait_seconds)
+    while True:
+        if await run_in_threadpool(count_active_batch_scans, batch_id) == 0:
+            return True
+        if loop.time() >= deadline:
+            return False
+        await asyncio.sleep(min(0.5, max(0.1, deadline - loop.time())))

@@ -9,6 +9,8 @@ from typing import Callable
 
 from app.models import EngineResultRecord, ScanRecord
 from app.services.scan_assessment import (
+    archive_decision,
+    every_member_is_scanned,
     detection_engine_results,
     detection_summary,
     required_engine_coverage,
@@ -331,8 +333,21 @@ def build_scan_report_payload(
     *,
     required_names: list[str] | None = None,
     decision_available: bool = True,
+    connection=None,
 ) -> dict[str, object]:
     """Build the shared complete operator export without importing app.main."""
+    if every_member_is_scanned(scan) and connection is None:
+        from app import database as db
+        from app.services.browser_db_budget import apply_read_budget
+        with db.connect() as connection:
+            connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
+            apply_read_budget(connection)
+            current = db.get_scan(scan.id, connection=connection)
+            if current is None or (current.source, current.service_client_id) != (scan.source, scan.service_client_id):
+                from app.services.archive_assessment import ArchiveDecisionUnavailable
+                raise ArchiveDecisionUnavailable('Archive decision unavailable: scan is missing or ownership changed.')
+            return build_scan_report_payload(current, db.list_engine_results(scan.id, connection=connection),
+                                             decision_available=decision_available, connection=connection)
     required = required_detection_engine_names(scan) if required_names is None else required_names
     assessment = calculate_risk(engine_results)
     verdict = scan.verdict if scan.risk_score is not None else assessment.verdict
@@ -378,6 +393,8 @@ def build_scan_report_payload(
     decision = scan_decision(
         scan, engine_results, risk_score=risk_score, verdict=verdict, required_names=required
     ) if decision_available else None
+    if decision is not None and every_member_is_scanned(scan):
+        decision = archive_decision(scan, connection=connection, decision=decision)
     return create_scan_report_payload(
         scan,
         engine_results,
@@ -395,5 +412,3 @@ def build_scan_report_payload(
         coverage_label=coverage_label,
         coverage_detail=coverage_detail,
     )
-
-

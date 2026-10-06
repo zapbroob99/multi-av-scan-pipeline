@@ -210,7 +210,7 @@ class ApiScanSourceIsolationTests(unittest.TestCase):
         )
 
     def _scan(self, source: str, status: str = "completed"):
-        return SimpleNamespace(id=1, source=source, status=status)
+        return SimpleNamespace(id=1, source=source, status=status, batch_id=None, scan_role="standalone")
 
     def _auth_header(self) -> list[tuple[bytes, bytes]]:
         return [(b"authorization", b"Bearer shared-secret")]

@@ -215,6 +215,10 @@ def should_audit_request(request: Request) -> bool:
     path = request.url.path.rstrip("/") or "/"
     # Browser writes all go through /api/ui/v1 now that the server-rendered UI
     # is retired; its former form paths no longer exist.
+    if path in {"/api/ui/v1/notifications/read", "/api/ui/v1/notifications/clear"}:
+        # An operator's own markers for the notification bell: a view
+        # preference, not a security or administrative change.
+        return False
     if path.startswith("/api/ui/v1/"):
         return True
     return path == "/api/v1/worker-control/enroll"

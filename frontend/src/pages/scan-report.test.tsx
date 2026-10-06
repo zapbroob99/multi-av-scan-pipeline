@@ -72,4 +72,15 @@ describe('Scan report', () => {
     for (const status of ['completed', 'failed']) expect(reportPollInterval({ ...payload, status })).toBe(false)
     expect(reportPollInterval()).toBe(false)
   })
+  it('keeps polling when the container finished but its archive members are pending', async () => {
+    const report: ScanReport = { ...payload, batch_id: 8, decision: {
+      action: 'wait', label: 'Wait', tone: 'neutral', confidence: 'low',
+      policy: 'archive_members_in_progress', reason: 'Archive members are still being scanned.', reasons: [],
+    } }
+    expect(reportPollInterval(report)).toBe(3000)
+    mount(report)
+    await screen.findByRole('heading', { name: 'Wait' })
+    expect(screen.queryByRole('heading', { name: 'Allow' })).toBeNull()
+    expect(screen.getByText(/The risk, coverage and engine results below describe this file/)).toBeInTheDocument()
+  })
 })

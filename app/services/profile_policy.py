@@ -12,6 +12,11 @@ turns a review or a detection into an allow.
 Content is judged from the sample's header, never from its name alone, with
 the same classifier and family names as the file_type engine and storage
 protection's light tier.
+
+Archive handling is the one rule that also lifts something: an ICAP gateway
+blocks every archive unless the profile says how archives are judged. Both
+modes only make the scan's own decision stricter, so the exchange is a blanket
+block for a decision that still blocks what MASP could not check.
 """
 from __future__ import annotations
 
@@ -22,6 +27,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.archive_inspection import inspect_archive
 from app.services.content_types import FAMILIES, classify
 from app.services.decisions import ScanDecision
 
@@ -61,6 +67,11 @@ class ProfilePolicy(BaseModel):
     # "inherit" keeps review as review (an ICAP gateway then follows its own
     # MASP_ICAP_BLOCK_ON_REVIEW); "block" blocks what could not be assessed.
     review_action: Literal["inherit", "block"] = "inherit"
+    # "inherit": an ICAP gateway follows MASP_ICAP_BLOCK_ARCHIVES and the API
+    # scans the archive as one file. "inspect": engines scan it as one file and
+    # MASP opens it to block what they could not see. "scan_members": also scan
+    # every member with the profile's engines and decide on all of them.
+    archive_handling: Literal["inherit", "inspect", "scan_members"] = "inherit"
 
 
 def parse_profile_policy(raw: object) -> ProfilePolicy:
@@ -114,6 +125,13 @@ def evaluate_intake(policy: ProfilePolicy, *, filename: str, size: int, header: 
                   f"{_size_text(policy.max_file_bytes)}.")
         return IntakeEvaluation(({"kind": "size", "detail": detail, "size_bytes": size,
                                   "max_file_bytes": policy.max_file_bytes},), reject_kind="size")
+    violations = content_violations(policy, filename=filename, header=header)
+    reject = "type" if violations and policy.violation_action == "reject" else None
+    return IntakeEvaluation(tuple(violations), reject_kind=reject)
+
+
+def content_violations(policy: ProfilePolicy, *, filename: str, header: bytes) -> list[dict]:
+    """The content and masquerade rules one file breaks, judged from its header."""
     classification = classify(header, filename)
     families = sorted(classification.families, key=FAMILIES.index)
     base = {"detected_type": classification.detected_type, "extension": classification.extension or None,
@@ -132,8 +150,7 @@ def evaluate_intake(policy: ProfilePolicy, *, filename: str, size: int, header: 
                            "expected_types": sorted(classification.expected_types or ()),
                            "detail": (f"Declared .{classification.extension} content is actually "
                                       f"{classification.detected_type}.")})
-    reject = "type" if violations and policy.violation_action == "reject" else None
-    return IntakeEvaluation(tuple(violations), reject_kind=reject)
+    return violations
 
 
 def _read_header(path: str) -> bytes:
@@ -152,6 +169,8 @@ def apply_intake_policy(snapshot_json: str, *, filename: str, size: int, storage
     The evaluation is recorded in the scan's own snapshot so the decision can
     apply it later without reading the sample again. A snapshot whose policy
     cannot be parsed is stored unchanged; the decision then withholds an allow.
+    An archive inspection is recorded as ``archive_inspection`` whatever it
+    found, so scan_members can later prove every member was registered.
     """
     try:
         snapshot = json.loads(snapshot_json or "{}")
@@ -165,14 +184,62 @@ def apply_intake_policy(snapshot_json: str, *, filename: str, size: int, storage
         return snapshot_json
     if is_inherit_only(policy):
         return snapshot_json
-    header = _read_header(storage_path) if (policy.type_rule or policy.block_masquerade) else b""
+    inspecting = policy.archive_handling != "inherit"
+    needs_header = policy.type_rule or policy.block_masquerade or inspecting
+    header = _read_header(storage_path) if needs_header else b""
     evaluation = evaluate_intake(policy, filename=filename, size=size, header=header)
     if evaluation.reject_kind is not None:
         raise PolicyRejectedError(evaluation.reject_kind, evaluation.reason)
-    if not evaluation.violations:
+    violations = list(evaluation.violations)
+    inspection = inspect_archive(
+        storage_path, header=header, check_blocklist=_routes_hash_list(snapshot),
+        member_check=lambda member_header, member_name: content_violations(
+            policy, filename=member_name, header=member_header),
+    ) if inspecting else None
+    if inspection is not None:
+        snapshot["archive_inspection"] = inspection.summary(policy.archive_handling)
+        violations.extend(inspection.violations)
+        # A blocklisted member is a detection, not content this client refuses:
+        # it is always scanned and blocked so the scan records why.
+        refused = [item for item in inspection.violations if item["kind"] != "member_blocklisted"]
+        if refused and policy.violation_action == "reject":
+            raise PolicyRejectedError("archive", " ".join(str(item["detail"]) for item in refused))
+    elif not violations:
         return snapshot_json
-    snapshot["intake_policy"] = {"violations": list(evaluation.violations)}
+    if violations:
+        snapshot["intake_policy"] = {"violations": violations}
     return json.dumps(snapshot, separators=(",", ":"), sort_keys=True)
+
+
+def _routes_hash_list(snapshot: dict) -> bool:
+    engines = snapshot.get("engines")
+    return isinstance(engines, list) and any(
+        isinstance(engine, dict) and engine.get("adapter_key") == "hash_list" for engine in engines)
+
+
+def archive_handling(snapshot: dict) -> str:
+    """The recorded archive handling; "inherit" when the policy cannot be read."""
+    try:
+        return parse_profile_policy(snapshot_policy(snapshot)).archive_handling
+    except (ValueError, TypeError):
+        return "inherit"
+
+
+def scans_every_member(snapshot_json: str) -> bool:
+    """Whether intake registers every archive member for scanning.
+
+    Only an archive that passed inspection is opened for member scanning: one
+    the policy already blocks needs no further engine work.
+    """
+    try:
+        snapshot = json.loads(snapshot_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(snapshot, dict) or archive_handling(snapshot) != "scan_members":
+        return False
+    inspection = snapshot.get("archive_inspection")
+    return (isinstance(inspection, dict) and inspection.get("violation_total") == 0
+            and inspection.get("members", 0) > 0 and "intake_policy" not in snapshot)
 
 
 def _block(decision: ScanDecision, policy: str, reason: str, extra: list[str]) -> ScanDecision:
@@ -204,6 +271,11 @@ def apply_profile_policy(decision: ScanDecision, snapshot: dict, *, scan_role: s
     if details:
         if decision.action == "block":
             return replace(decision, reasons=[*decision.reasons, *details])
+        kinds = [str(item.get("kind", "")) for item in violations or [] if isinstance(item, dict)]
+        if kinds and all(kind.startswith(("archive_", "member_")) for kind in kinds):
+            return _block(decision, "profile_archive_policy",
+                          "The archive could not be fully checked, or holds content the client's profile does not accept.",
+                          details)
         return _block(decision, "profile_content_policy", "The client's profile does not accept this content.", details)
     if decision.action == "review" and policy.review_action == "block":
         return _block(decision, "profile_review_block",

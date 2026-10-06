@@ -3,14 +3,14 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
-import { request } from './lib/api'
+import { ApiError, request } from './lib/api'
 import { Button } from './components/ui/button'
 import { ThemeToggle } from './components/theme-toggle'
 import { BrandMark } from './components/brand-mark'
 import { SystemLayout } from './components/section-tabs'
 import { WorkspaceNavigation } from './components/workspace-navigation'
 import { ErrorMessage } from './components/error-message'
-import { HealthIndicator } from './components/health-panel'
+import { NotificationBell } from './components/notifications'
 import '@fontsource/ibm-plex-sans/latin-400.css'
 import '@fontsource/ibm-plex-sans/latin-ext-400.css'
 import '@fontsource/ibm-plex-sans/latin-500.css'
@@ -120,12 +120,11 @@ function App() {
       clearPrivateQueries(); client.setQueryData(['session'], null)
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
+  // Not being signed in is the reason this form is shown, not an error to report.
+  const sessionError = session.error && !(session.error instanceof ApiError && session.error.status === 401) ? session.error.message : ''
   const aside = <aside className="login-aside">
     <div><span className="brand"><BrandMark size={30} /><span>MASP<small>Scan orchestration</small></span></span>
-      <h2>Multi-engine malware scanning on your own infrastructure.</h2>
-      <p>Files from uploads, gateways and storage are scanned by every engine you deploy, and decided by one policy you control.</p>
-      <ul className="login-facts"><li><span>Deployment</span><span>Self-hosted</span></li><li><span>Decision path</span><span>Offline</span></li>
-        <li><span>Interfaces</span><span>REST · ICAP · Storage</span></li></ul></div>
+      <h2>Multi-engine malware scanning on your own infrastructure.</h2></div>
     <footer>Authorized personnel only. Activity is recorded.</footer>
   </aside>
   if (session.isPending) return <main className="login-shell">{aside}<div className="login-main"><ThemeToggle className="login-theme-toggle" /><p role="status">Connecting to MASP…</p></div></main>
@@ -135,7 +134,7 @@ function App() {
     {notice && <p role="status" className="callout">{notice}</p>}
     <label>Username<input name="username" autoComplete="username" required autoFocus /></label>
     <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
-    {(error || session.error) && <p role="alert" className="error"><ErrorMessage message={error || session.error?.message || ''} /></p>}
+    {(error || sessionError) && <p role="alert" className="error"><ErrorMessage message={error || sessionError} /></p>}
     <Button disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
   </form></div></main>
   const [section, title] = locationTrail(location.pathname)
@@ -144,7 +143,8 @@ function App() {
     <WorkspaceNavigation admin={session.data.user.role === 'admin'} />
   </aside><main className="workspace"><header className="topbar">
     <ol className="breadcrumb" aria-label="Location"><li>MASP</li><li>{section}</li><li>{title}</li></ol>
-    <div className="topbar-status">{session.data.user.role === 'admin' && <HealthIndicator />}<span className="offline-label">SELF-HOSTED</span>
+    <div className="topbar-status"><span className="offline-label">SELF-HOSTED</span>
+      <NotificationBell admin={session.data.user.role === 'admin'} csrf={session.data.csrf_token} />
       <span className="topbar-divider" aria-hidden="true" />
       <div className="topbar-user"><span className="user-avatar" aria-hidden="true">{initials(session.data.user.username)}</span>
         <span className="user-identity"><strong>{session.data.user.username}</strong><small>{session.data.user.role}</small></span>

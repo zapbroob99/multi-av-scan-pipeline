@@ -9,7 +9,7 @@ from app.services.api_payloads import build_scan_summary_payload, create_api_sca
 from app.services.api_schemas import ScanResultResponse
 from app.services.reports import build_scan_report_payload
 from app.services.scan_intake import scan_is_terminal
-from app.services.scan_management import _full_export_rows, EXPORT_LIMIT
+from app.services.scan_management import _full_export_rows, _full_report, EXPORT_LIMIT
 from app import database as db
 from app.services import scan_policy
 from app.services.api_payloads import create_api_scan_status_payload
@@ -17,7 +17,8 @@ from app.services.api_schemas import ScanStatusResponse
 from app.services.browser_db_budget import apply_read_budget
 from app.services.engine_registry import engine_allowed_for_source
 from app.services.service_clients import parse_profile_snapshot, _file_capable
-from app.services.scan_assessment import scan_decision
+from app.services.scan_assessment import scan_decision, archive_decision, every_member_is_scanned
+from app.services.archive_assessment import ArchiveDecisionUnavailable
 
 
 class ResultPreview(BaseModel):
@@ -65,7 +66,13 @@ def status_preview(scan_id: int, base_url: str) -> ResultPreview:
         if not policy_complete:
             raise HTTPException(409, 'Status JSON unavailable: engine policy details are invalid.')
         expected = _expected_engines(connection, scan)
-        ready = scan_is_terminal(scan)
+        decision = scan_decision(scan, results, required_names=required)
+        if every_member_is_scanned(scan):
+            try:
+                decision = archive_decision(scan, connection=connection, decision=decision)
+            except ArchiveDecisionUnavailable as exc:
+                raise HTTPException(409, str(exc)) from None
+        ready = scan_is_terminal(scan) and decision.action != 'wait'
         poll_seconds = None
         if not ready:
             setting = connection.execute('SELECT SUBSTR(value, 1, 1025) AS value FROM app_settings WHERE key = ?',
@@ -79,7 +86,7 @@ def status_preview(scan_id: int, base_url: str) -> ResultPreview:
     status_url = f'{base_url.rstrip("/")}/api/v1/scans/{scan.id}'
     payload = create_api_scan_status_payload(
         result_ready=ready, recommended_poll_seconds=poll_seconds,
-        decision_payload=asdict(scan_decision(scan, results, required_names=required)),
+        decision_payload=asdict(decision),
         scan_payload=build_scan_summary_payload(scan), queue_metrics=metrics,
         queue_position=position, expected_engines=expected, results=results,
         links={'status': status_url, 'result': status_url + '/result'})
@@ -98,12 +105,13 @@ def status_preview(scan_id: int, base_url: str) -> ResultPreview:
 
 def result_preview(scan_id: int, base_url: str) -> ResultPreview:
     # Same coherent preflight and hydration as exports, including recorded routing.
-    scan, results, required, policy_complete = _full_export_rows(scan_id, automation=True)
+    scan, results, report, warning = _full_report(scan_id, automation=True)
     if not scan_is_terminal(scan):
         raise HTTPException(409, 'Result is not ready. Refresh after the scan finishes.')
-    if not policy_complete:
-        raise HTTPException(409, 'Result JSON unavailable: engine policy details are invalid.')
-    report = build_scan_report_payload(scan, results, required_names=required)
+    if warning:
+        raise HTTPException(409, warning)
+    if report['summary']['decision']['action'] == 'wait':
+        raise HTTPException(409, 'Archive result is not ready. Members are still being scanned.')
 
     def links(resource, identifier):
         status = f'{base_url.rstrip("/")}/api/v1/{resource}/{identifier}'

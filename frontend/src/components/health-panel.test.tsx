@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
-import { HealthIndicator, HealthPanel } from './health-panel'
+import { HealthPanel } from './health-panel'
 
 const REPORT = {
   overall: 'critical', generated_at: '2026-09-28T07:00:00+00:00',
@@ -30,18 +30,5 @@ describe('Health', () => {
     // Parts that are not in use are named once instead of listed as rows.
     expect(screen.queryByRole('link', { name: 'Open ICAP gateway' })).toBeNull()
     expect(screen.getByText('Not in use: ICAP gateway.')).toBeInTheDocument()
-  })
-
-  it('shows a compact top bar status that opens the overview', async () => {
-    mount(<HealthIndicator />, { ...REPORT, overall: 'ok', waiting_reason: null })
-    const link = await screen.findByRole('link', { name: 'All systems normal' })
-    expect(link).toHaveAttribute('href', '/system/overview')
-  })
-
-  it('stays out of the top bar when the report cannot be read', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ detail: 'no' }), { status: 503 })))
-    const { container } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><HealthIndicator /></MemoryRouter></QueryClientProvider>)
-    await new Promise(resolve => setTimeout(resolve, 20))
-    expect(container).toBeEmptyDOMElement()
   })
 })

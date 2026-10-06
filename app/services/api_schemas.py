@@ -35,6 +35,18 @@ DecisionPolicy = Literal[
     "metadata_only",
     "scan_failed",
     "scan_in_progress",
+    "engine_policy_review",
+    "profile_content_policy",
+    "profile_review_block",
+    "profile_policy_invalid",
+    "profile_archive_policy",
+    "archive_members_in_progress",
+    "archive_incomplete",
+    "archive_member_blocked",
+    "archive_member_unscanned",
+    "archive_member_review",
+    "archive_full_coverage",
+    "archive_unassessed",
 ]
 
 

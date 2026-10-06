@@ -102,6 +102,10 @@ def cleanup_stale_staging_dirs(max_age_seconds: int = DEFAULT_STAGING_MAX_AGE_SE
     return removed
 
 
+# Set on a batch only by a profile's scan_members policy, never requested by a
+# client: every member is registered for scanning whatever the container's verdict.
+EXTRACT_ALL_ARCHIVE_MODE = "extract_all"
+
 ARCHIVE_FORMAT_ZIP = "zip"
 ARCHIVE_FORMAT_TAR = "tar"
 ARCHIVE_FORMAT_SEVEN_ZIP = "7z"
@@ -129,6 +133,10 @@ class ArchiveExtractionLimitError(ArchiveExtractionError):
 
 class UnsafeArchivePathError(ArchiveExtractionError):
     pass
+
+
+class ArchiveEncryptedError(ArchiveExtractionError):
+    """A member is encrypted, so its content cannot be inspected or scanned."""
 
 
 @dataclass(frozen=True)
@@ -296,7 +304,7 @@ def _extract_zip_members(
         for info in infos:
             relative_path = safe_member_relative_path(info.filename, limits)
             if info.flag_bits & 0x1:
-                raise ArchiveExtractionError(
+                raise ArchiveEncryptedError(
                     f"Encrypted ZIP member is not supported: {relative_path}"
                 )
             _check_declared_member_size(info.file_size, relative_path, total_uncompressed_bytes, limits)
@@ -367,13 +375,13 @@ def _extract_7z_members(
     try:
         seven_zip = py7zr.SevenZipFile(archive)
     except py7zr.exceptions.PasswordRequired as exc:
-        raise ArchiveExtractionError("Encrypted 7z archive is not supported.") from exc
+        raise ArchiveEncryptedError("Encrypted 7z archive is not supported.") from exc
     except py7zr.exceptions.ArchiveError as exc:
         raise ArchiveExtractionError(f"Archive is not a readable 7z file: {exc}") from exc
 
     with seven_zip:
         if seven_zip.needs_password():
-            raise ArchiveExtractionError("Encrypted 7z archive is not supported.")
+            raise ArchiveEncryptedError("Encrypted 7z archive is not supported.")
 
         infos = [info for info in seven_zip.list() if not info.is_directory]
         if len(infos) > limits.max_files:

@@ -10,19 +10,24 @@ blocked.
 from __future__ import annotations
 
 import asyncio
+import json
+
+from starlette.concurrency import run_in_threadpool
 
 from app.database import init_db, set_setting
 from app.icap import activity
 from app.icap import protocol
 from app.icap.config import IcapConfig, load_icap_config
 from app.services.ingest import UploadTooLargeError, store_bytes
-from app.services.profile_policy import PolicyRejectedError
+from app.services.decisions import ScanDecision
+from app.services.profile_policy import PolicyRejectedError, archive_handling
 from app.services.scan_intake import (
     enqueue_scan_from_stored_sample,
     scan_is_terminal,
+    wait_for_settled_batch,
     wait_for_terminal_scan,
 )
-from app.services.scan_assessment import resolve_scan_decision
+from app.services.scan_assessment import archive_decision, resolve_scan_decision
 from app.services.service_clients import (
     resolve_profile_routing,
     identity_for_service_client_key,
@@ -254,24 +259,43 @@ def client_accepts_204(head: protocol.IcapHead) -> bool:
     return "preview" in head.headers
 
 
-def resolve_icap_action(scan, config: IcapConfig) -> str:
-    """Map a (possibly unfinished) scan to 'allow' or 'block'."""
+def scan_archive_handling(scan) -> str:
+    """The client's recorded archive handling for this scan ("inherit" if unknown)."""
+    try:
+        snapshot = json.loads(getattr(scan, "profile_snapshot_json", None) or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return "inherit"
+    return archive_handling(snapshot) if isinstance(snapshot, dict) else "inherit"
+
+
+def judges_every_member(scan) -> bool:
+    return (scan is not None and scan.batch_id is not None and getattr(scan, "scan_role", "") == "container"
+            and scan_archive_handling(scan) == "scan_members")
+
+
+def resolve_icap_action(scan, config: IcapConfig, decision: ScanDecision | None = None) -> tuple[str, str]:
+    """Map a (possibly unfinished) scan to 'allow' or 'block', and why it blocks."""
+    fail_action = "block" if config.fail_closed else "allow"
     if scan is None or not scan_is_terminal(scan):
-        return "block" if config.fail_closed else "allow"
-    if config.block_archives and scan.batch_id is not None:
-        # Archive/container uploads are not independently member-scanned on the
-        # ICAP path (children are only extracted lazily on parent detection, and
-        # there is no batch-level verdict here), so they are rejected outright —
-        # matching the REST vendor archive policy. Lifting this requires an eager
-        # recursive member scan with a batch verdict.
+        return fail_action, "Blocked: scan did not finish within the wait window"
+    if config.block_archives and scan.batch_id is not None and scan_archive_handling(scan) == "inherit":
+        # Without an archive policy on the client's profile, a clean result for
+        # an archive is the engines' word on content they may not have seen
+        # (encrypted members, their own limits), so the archive is refused
+        # outright. A profile that inspects or scans archives lifts this.
         log("archive upload rejected (block_archives)")
-        return "block"
-    decision = resolve_scan_decision(scan)
+        return "block", "Blocked: archive upload (MASP_ICAP_BLOCK_ARCHIVES), whatever the scan decided"
+    if decision is None:
+        decision = resolve_scan_decision(scan)
+    if decision.action == "wait":
+        return fail_action, "Blocked: archive members did not finish within the wait window"
+    archive_rule = decision.policy.startswith("archive_") or decision.policy == "profile_archive_policy"
+    reason = f"Blocked: {decision.reason}" if archive_rule else "Blocked by scan decision"
     if decision.action == "block":
-        return "block"
+        return "block", reason
     if decision.action == "review" and config.block_on_review:
-        return "block"
-    return "allow"
+        return "block", reason
+    return "allow", ""
 
 
 async def scan_and_decide(
@@ -294,9 +318,13 @@ async def scan_and_decide(
         return "block" if config.fail_closed else "allow"
 
     try:
+        loop = asyncio.get_running_loop()
+        started = loop.time()
         identity = identity_for_service_client_key(config.service_client_key)
         identity, engines = resolve_profile_routing(identity, source=ICAP_SOURCE)
-        scan = enqueue_scan_from_stored_sample(
+        # Off the event loop: a profile that inspects archives opens them here.
+        scan = await run_in_threadpool(
+            enqueue_scan_from_stored_sample,
             stored_sample,
             case_name="ICAP",
             priority="Normal",
@@ -308,18 +336,19 @@ async def scan_and_decide(
             profile_snapshot_json=profile_snapshot_json(identity, engines),
         )
         scan = await wait_for_terminal_scan(scan.id, config.wait_seconds)
-        action = resolve_icap_action(scan, config)
+        decision = None
+        if scan is not None and scan_is_terminal(scan) and judges_every_member(scan):
+            # The archive is decided on all of its members, inside the same window.
+            remaining = config.wait_seconds - (loop.time() - started)
+            settled = await wait_for_settled_batch(scan.batch_id, remaining)
+            decision = await run_in_threadpool(archive_decision, scan) if settled else ScanDecision(
+                action="wait", label="Wait", tone="neutral", confidence="low",
+                policy="archive_members_in_progress", reason="Archive members are still being scanned.",
+                reasons=["Archive members are still being scanned."])
+        action, reason = resolve_icap_action(scan, config, decision)
         log(f"{filename} (scan {stored_sample.sha256[:12]}): {action}")
         activity.count("allowed" if action == "allow" else "blocked")
         if action == "block":
-            finished = scan is not None and scan_is_terminal(scan)
-            if not finished:
-                reason = "Blocked: scan did not finish within the wait window"
-            elif config.block_archives and scan.batch_id is not None:
-                # The scan itself may allow it; say so, or the console's allow looks wrong.
-                reason = "Blocked: archive upload (MASP_ICAP_BLOCK_ARCHIVES), whatever the scan decided"
-            else:
-                reason = "Blocked by scan decision"
             activity.event("blocked", reason, scan_id=scan.id if scan else None)
         return action
     except PolicyRejectedError as exc:

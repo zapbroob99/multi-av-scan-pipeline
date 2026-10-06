@@ -409,6 +409,17 @@ what could not be fully assessed) or `profile_policy_invalid` (the recorded
 policy could not be read, so an allow is withheld). The policy is frozen when
 the scan is accepted.
 
+With profile `archive_handling=scan_members`, the container's status/result
+`decision` covers the archive and all inspected members. `archive_full_coverage`
+allows only when all allow; `archive_member_blocked`, `archive_member_unscanned`
+and `archive_incomplete` block, and `archive_member_review` requires review.
+While members run, `archive_members_in_progress` means `wait`, `result_ready`
+remains false and `/result` returns 409 with Retry-After, even if `scan.status`
+is already `completed`. Recorded risk and engine results remain per-file.
+Unassessable archive policy/ownership or decision-read limits produce 503,
+never a partial allow; inspect the operator report's warning. Inspection-time
+violations use `profile_archive_policy`.
+
 Use `decision.action` for workflow routing and `decision.reasons` for audit text.
 
 ## Read Final Result

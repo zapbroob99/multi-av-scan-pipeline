@@ -8,7 +8,7 @@ import { BackLink } from '../components/section-tabs'
 import { Timestamp } from '../components/timestamp'
 
 export function reportPollInterval(report?: ScanReport) {
-  return report && ['queued', 'running', 'finalizing'].includes(report.status) ? 3000 : false
+  return report && (['queued', 'running', 'finalizing'].includes(report.status) || report.decision?.action === 'wait') ? 3000 : false
 }
 
 function Technical({ scanId, resultId, automation }: { scanId: number; resultId: number; automation: boolean }) {
@@ -74,6 +74,8 @@ export default function Report({ automation = false }: { automation?: boolean })
       {scan.decision && <><small>Policy: {scan.decision.policy} · Confidence: {scan.decision.confidence}</small>
         <ul>{scan.decision.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></>}
     </section>
+    {scan.batch_id !== null && <p className="callout">The risk, coverage and engine results below describe this file.
+      When the profile scans every archive member, the policy decision also includes those members.</p>}
     <div className="stats-row"><div><span>Recorded risk</span><strong>{scan.risk_score === null ? '—' : `${scan.risk_score}/100`}</strong></div>
       <div><span>Required coverage</span><strong>{scan.completed_engines}/{scan.required_engines}</strong></div>
       <div><span>Detecting engines</span><strong>{scan.detected_engines}</strong></div></div>

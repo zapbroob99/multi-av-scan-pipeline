@@ -34,12 +34,14 @@ describe('Profile scan policy', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: /extension contradicts their content/ }))
     await userEvent.selectOptions(screen.getByLabelText('When content is not accepted'), 'reject')
     await userEvent.selectOptions(screen.getByLabelText(/^Files that could not be fully assessed/), 'block')
+    await userEvent.selectOptions(screen.getByLabelText(/^Archive handling/), 'inspect')
     await userEvent.click(screen.getByRole('button', { name: 'Review policy' }))
     expect(fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(0)
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveTextContent('Files larger than 5.0 MiB are rejected.')
     expect(dialog).toHaveTextContent('Not accepted: executable, script.')
     expect(dialog).toHaveTextContent('Files that could not be fully assessed are blocked.')
+    expect(dialog).toHaveTextContent('Archives are opened and checked')
     await userEvent.click(screen.getByRole('button', { name: 'Confirm scan policy' }))
     await screen.findByText('Scan policy saved. Refresh before editing again.')
     const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')
@@ -47,7 +49,7 @@ describe('Profile scan policy', () => {
     expect(writes[0][0]).toBe('/api/ui/v1/service-clients/3/profiles/7/policy')
     expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ expected_revision: 4, policy: {
       max_file_bytes: 5242880, type_rule: { mode: 'denylist', families: ['executable', 'script'] },
-      block_masquerade: true, violation_action: 'reject', review_action: 'block' } })
+      block_masquerade: true, violation_action: 'reject', review_action: 'block', archive_handling: 'inspect' } })
     expect(writes[0][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
   })
   it('says when a stored policy cannot be read instead of guessing one', async () => {
@@ -68,6 +70,19 @@ describe('Profile scan policy', () => {
     expect(screen.getByText('Enter a size in MiB greater than zero, or leave it blank.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+  it('offers archive handling alone and asks what refused archives do', async () => {
+    const fetcher = mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit policy' }))
+    expect(screen.queryByLabelText('When content is not accepted')).toBeNull()
+    await userEvent.selectOptions(screen.getByLabelText(/^Archive handling/), 'scan_members')
+    expect(screen.getByLabelText('When content is not accepted')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Review policy' }))
+    expect(screen.getByRole('dialog')).toHaveTextContent('Every file inside an archive is scanned; an archive is allowed only when all of them are.')
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm scan policy' }))
+    await screen.findByText('Scan policy saved. Refresh before editing again.')
+    const write = fetcher.mock.calls.find(([, options]) => options?.method === 'PUT')
+    expect(JSON.parse(String(write?.[1]?.body)).policy).toEqual({ ...INHERIT, archive_handling: 'scan_members' })
   })
 })
 
