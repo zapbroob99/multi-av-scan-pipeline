@@ -10,25 +10,28 @@ export type StoragePolicy = Schemas['StoragePolicy']
 export type StorageOptions = Schemas['StorageOptions']
 export type ObjectState = StorageObject['state']
 
-/** Every state is shown as what it means. "Type check passed" is deliberately
- * not "clean": the light tier never ran an antivirus engine. */
+/** Every state is shown as what it means. "Light check passed" is deliberately
+ * not "clean": a light check never runs an antivirus engine. */
 export const STATE_LABELS: Record<ObjectState, string> = {
   waiting: 'Waiting to settle',
   changed: 'Changed, waiting to settle',
-  light_passed: 'Type check passed (not antivirus scanned)',
-  light_detected: 'Detected by light inspection',
-  full_pending: 'Awaiting full scan',
+  light_passed: 'Light check passed (not antivirus scanned)',
+  light_detected: 'Detected or blocked by a rule',
+  allowed: 'Allowed by a rule (not scanned)',
+  full_pending: 'Awaiting antivirus scan',
   unreadable: 'Unreadable',
   removed: 'Removed',
 }
 
-export const STATE_ORDER: ObjectState[] = ['light_detected', 'full_pending', 'light_passed', 'waiting', 'changed', 'unreadable', 'removed']
+export const STATE_ORDER: ObjectState[] = ['light_detected', 'full_pending', 'light_passed', 'allowed', 'waiting', 'changed', 'unreadable', 'removed']
 
 export const KIND_LABELS: Record<StorageFinding['kind'], string> = {
-  type_policy: 'Content type not permitted',
+  rule_block: 'Blocked by a profile rule',
   type_mismatch: 'Extension does not match content',
-  archive_policy: 'Archive not permitted',
   hash_block: 'Hash on blocklist',
+  // Findings recorded under folder settings from before profile rules.
+  type_policy: 'Content type not permitted (earlier settings)',
+  archive_policy: 'Archive not permitted (earlier settings)',
 }
 
 export const FAMILY_LABELS: Record<string, string> = {

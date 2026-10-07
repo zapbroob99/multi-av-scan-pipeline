@@ -12,7 +12,7 @@ import { Button } from '../components/ui/button'
 import { Timestamp } from '../components/timestamp'
 
 export const STORAGE_TABS = [
-  { to: '/storage', label: 'Locations', end: true },
+  { to: '/storage', label: 'Folders', end: true },
   { to: '/storage/findings', label: 'Findings' },
 ]
 
@@ -39,21 +39,20 @@ export default function Storage({ session }: { session: Session }) {
   const data = view.data, worker = data?.worker
 
   return <section className="page management-page">
-    <div className="page-heading"><div><p className="eyebrow">FOLDER SCANNING</p><h1>Protected locations</h1>
-      <p className="muted">Storage locations MASP crawls itself, and what it found in them.</p></div>
+    <div className="page-heading"><div><p className="eyebrow">FOLDER SCANNING</p><h1>Watched folders</h1>
+      <p className="muted">Folders MASP reads itself, and what it found in them. Folders are added on a service client's Storage tab.</p></div>
       <div className="report-actions">
-        {admin && <Link className="button button-primary" to="/storage/locations/new">New location</Link>}
         <Button variant="secondary" disabled={view.isFetching} onClick={() => { void view.refetch() }}>Refresh</Button></div></div>
-    <p className="callout">This release runs the light tier only: a content-type policy and the institution hash list. Files routed to the
-      full tier wait as <strong>Awaiting full scan</strong> until antivirus scanning of protected locations is available. A file that passed the
-      type check was <strong>not</strong> scanned by an antivirus engine.</p>
+    <p className="callout">Each file follows the rules of its folder's scan profile. Light check and Block are applied here; a file a Scan rule
+      matches waits as <strong>Awaiting antivirus scan</strong> until antivirus scanning of folders is available. A light check never runs an
+      antivirus engine.</p>
     <HelpDetails title="How folder scanning works">The storage protection worker walks each enabled location in bounded slices, records every file
       in an inventory, and inspects a file once its size and modification time have stopped changing. Nothing on the share is modified: findings are
       reported here and sent to SIEM, never quarantined. This page is a point-in-time read and does not refresh itself.</HelpDetails>
     {view.isPending && <p role="status">Loading protected locations…</p>}
     {view.error && <p role="alert" className="error"><ErrorMessage message={view.error.message || ''} /></p>}
     {!view.error && data && <>
-      <article className="submission-card" aria-label="Storage protection worker">
+      <article className="submission-card" aria-label="Folder scanning worker">
         <h2>Worker</h2>
         {data.worker_record_invalid && <p className="notice error" role="alert">The recorded worker state is unreadable. Check the storage protection worker log.</p>}
         {!worker && !data.worker_record_invalid && <p className="muted">No storage protection worker has reported. Either the storage-protection
@@ -71,11 +70,11 @@ export default function Storage({ session }: { session: Session }) {
         </>}
       </article>
 
-      {!data.locations.length && <p className="empty">No protected location exists yet.{admin ? ' Create one to start folder scanning.' : ''}</p>}
-      {data.locations.length > 0 && <div className="history-table-wrap" role="region" aria-label="Protected locations" tabIndex={0}>
+      {!data.locations.length && <p className="empty">No folder is watched yet.{admin ? " Add one on a service client's Storage tab." : ''}</p>}
+      {data.locations.length > 0 && <div className="history-table-wrap" role="region" aria-label="Watched folders" tabIndex={0}>
         <table className="history-table compact-table"><thead><tr>
-          <th scope="col">Location</th><th scope="col">Detected</th><th scope="col">Awaiting full scan</th>
-          <th scope="col">Type check passed</th><th scope="col">Waiting</th><th scope="col">Unreadable</th><th scope="col">Last cycle</th>
+          <th scope="col">Folder</th><th scope="col">Detected</th><th scope="col">Awaiting antivirus scan</th>
+          <th scope="col">Light check passed</th><th scope="col">Allowed unscanned</th><th scope="col">Waiting</th><th scope="col">Unreadable</th><th scope="col">Last cycle</th>
         </tr></thead><tbody>
         {data.locations.map(location => {
           const problem = cycleProblem(location), counts = location.counts
@@ -86,6 +85,7 @@ export default function Storage({ session }: { session: Session }) {
             <td>{counts.light_detected.toLocaleString()}<small>{location.detected_findings.toLocaleString()} finding(s)</small></td>
             <td>{counts.full_pending.toLocaleString()}</td>
             <td title={STATE_LABELS.light_passed}>{counts.light_passed.toLocaleString()}</td>
+            <td title={STATE_LABELS.allowed}>{(counts.allowed ?? 0).toLocaleString()}</td>
             <td>{(counts.waiting + counts.changed).toLocaleString()}</td>
             <td>{counts.unreadable.toLocaleString()}</td>
             <td>{location.last_cycle ? <small>{shortAge(location.last_cycle.age_seconds)} ago{location.last_cycle.ok ? '' : ' · failed'}</small> : <small>Never</small>}

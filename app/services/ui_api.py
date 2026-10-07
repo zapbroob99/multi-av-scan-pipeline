@@ -488,7 +488,7 @@ def browser_update_storage_location(request: Request, body: storage_admin.Locati
 def browser_storage_objects(location_id: int = Path(ge=1, le=9007199254740991),
                             limit: int = Query(default=20, ge=1, le=100),
                             before: int | None = Query(default=None, ge=1, le=9007199254740991),
-                            state: Literal['all', 'waiting', 'changed', 'light_passed', 'light_detected',
+                            state: Literal['all', 'waiting', 'changed', 'light_passed', 'light_detected', 'allowed',
                                            'full_pending', 'unreadable', 'removed'] = 'all',
                             q: str = Query(default='', max_length=200)):
     return storage_read.objects(location_id, limit=limit, before=before, state=state, query=q)
@@ -498,7 +498,7 @@ def browser_storage_objects(location_id: int = Path(ge=1, le=9007199254740991),
 def browser_storage_findings(limit: int = Query(default=20, ge=1, le=100),
                              before: int | None = Query(default=None, ge=1, le=9007199254740991),
                              location_id: int | None = Query(default=None, ge=1, le=9007199254740991),
-                             kind: Literal['all', 'type_policy', 'type_mismatch', 'archive_policy',
+                             kind: Literal['all', 'rule_block', 'type_policy', 'type_mismatch', 'archive_policy',
                                            'hash_block'] = 'all',
                              detected: Literal['all', 'detected', 'not_detected'] = 'all'):
     return storage_read.findings(limit=limit, before=before, location_id=location_id, kind=kind,

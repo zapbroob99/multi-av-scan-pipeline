@@ -30,7 +30,7 @@ MIN_STALE_SECONDS = 60
 # location is not being run (lease held elsewhere, backend not mounted).
 LOCATION_STALE_SECONDS = 900
 
-ObjectState = Literal["waiting", "changed", "light_passed", "light_detected", "full_pending",
+ObjectState = Literal["waiting", "changed", "light_passed", "light_detected", "allowed", "full_pending",
                       "unreadable", "removed"]
 
 
@@ -84,6 +84,7 @@ class StateCounts(BaseModel):
     changed: int
     light_passed: int
     light_detected: int
+    allowed: int = 0
     full_pending: int
     unreadable: int
     removed: int
@@ -150,7 +151,8 @@ class StorageFinding(BaseModel):
     object_id: str
     object_state: ObjectState | None
     sha256: str | None
-    kind: Literal["type_policy", "type_mismatch", "archive_policy", "hash_block"]
+    # type_policy and archive_policy come from location settings before profile rules.
+    kind: Literal["rule_block", "type_policy", "type_mismatch", "archive_policy", "hash_block"]
     severity: str
     detected: bool
     title: str

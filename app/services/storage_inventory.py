@@ -18,7 +18,8 @@ from app.services.storage_policy import LightFinding, StoragePolicy, parse_polic
 
 # Object states. Only the two "due" states are ever picked up for inspection.
 DUE_STATES = ("waiting", "changed")
-STATES = ("waiting", "changed", "light_passed", "light_detected", "full_pending",
+# "allowed": a profile rule allows the object without scanning it.
+STATES = ("waiting", "changed", "light_passed", "light_detected", "allowed", "full_pending",
           "unreadable", "removed")
 LOCATION_MODES = ("crawl", "manifest", "both")
 NOTIFY_SEVERITIES = ("high", "critical")

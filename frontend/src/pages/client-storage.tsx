@@ -1,7 +1,7 @@
 import { ErrorMessage } from '../components/error-message'
 import { useContext, useState, type FormEvent } from 'react'
-import { useParams } from 'react-router-dom'
-import { Database, RefreshCw } from 'lucide-react'
+import { Link, useParams } from 'react-router-dom'
+import { Database, FolderSearch, Plus, RefreshCw } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
 import type { components } from '../lib/api.generated'
@@ -9,6 +9,7 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { ClientNavigation } from '../components/client-navigation'
 import { ClientWorkspace, useClientPanelGuard } from '../components/client-workspace'
+import { locationPath } from '../lib/storage'
 
 type Access = components['schemas']['ClientStorageAccess']
 type Change = components['schemas']['StorageAccessUpdate']
@@ -68,6 +69,27 @@ function StorageForm({ data, disabled, review }: { data: Access; disabled: boole
   </fieldset></form>
 }
 
+/** The folders MASP reads for this client. Each uses the access below, and its files follow the client's profile rules. */
+function WatchedFolders({ clientId }: { clientId: number }) {
+  const overview = useQuery({ queryKey: ['storage-overview', 'client', clientId], queryFn: ({ signal }) => request('/api/ui/v1/storage/overview', 'get', { signal }),
+    retry: false, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: false, refetchOnReconnect: false })
+  const folders = overview.data?.locations?.filter(location => location.client.id === clientId) ?? []
+  return <section className="client-watched-folders" aria-label="Watched folders">
+    <div className="client-section-heading"><h2><FolderSearch size={18} aria-hidden="true" /> Watched folders</h2>
+      <Link className="button button-secondary" to={`/storage/locations/new?client=${clientId}`}><Plus size={14} aria-hidden="true" />Watch a folder</Link></div>
+    <p className="muted client-note">Folders MASP reads itself for this client. Every file takes the first matching rule of the folder's scan profile,
+      and the folder must lie inside the storage access below.</p>
+    {overview.isPending && <p role="status">Loading watched folders…</p>}
+    {overview.error && <p role="alert" className="error"><ErrorMessage message={overview.error.message || ''} /></p>}
+    {overview.data && !folders.length && <p className="muted">No folder is watched for this client.</p>}
+    {folders.length > 0 && <ul className="client-storage-summary">{folders.map(folder => <li key={folder.id}>
+      <strong><Link to={`/storage/locations/${folder.id}`}>{folder.name}</Link></strong>
+      <span><code>{locationPath(folder)}</code> · rules of {folder.profile.name}{folder.enabled ? '' : ' · disabled'}
+        {folder.counts.light_detected > 0 && ` · ${folder.counts.light_detected.toLocaleString()} detected`}</span>
+    </li>)}</ul>}
+  </section>
+}
+
 export default function ClientStorage({ session }: { session: Session }) {
   const route = useParams()
   const workspace = useContext(ClientWorkspace)
@@ -82,11 +104,13 @@ export default function ClientStorage({ session }: { session: Session }) {
   useClientPanelGuard('storage', confirmation !== null || save.isPending)
   const busy = access.isFetching || save.isPending || confirmation !== null
   return <section className="page management-page client-page"><ClientNavigation clientId={clientId} />
-    <div className="page-heading"><div><p className="eyebrow">INTEGRATIONS</p><h1>Storage access</h1><p className="muted">Service client #{clientId}</p></div>
+    <div className="page-heading"><div><p className="eyebrow">INTEGRATIONS</p><h1>Storage</h1><p className="muted">Watched folders, and where this client may have MASP read files.</p></div>
       <Button variant="secondary" disabled={busy} onClick={async () => { save.reset(); const result = await access.refetch(); if (!result.error) setNeedsRefresh(false) }}>
         <RefreshCw size={14} aria-hidden="true" />Refresh storage access</Button></div>
-    <p className="callout">Choose where this client may submit deferred files. Backend locations stay deployment-managed.
-      Access is checked at submission and again before the intake worker starts copying. A copy already in progress may continue.</p>
+    <WatchedFolders clientId={clientId} />
+    <h2 className="client-storage-access-title">Storage access</h2>
+    <p className="callout">Where this client may have MASP read files: watched folders, large files it names over the API, and manifests.
+      Backend locations stay deployment-managed. Access is checked when a file is named or read, and again before copying.</p>
     {access.isPending && <p role="status">Loading storage access…</p>}
     {access.error && <p role="alert" className="error"><ErrorMessage message={access.error.message || ''} /></p>}
     {save.isSuccess && <p role="status" className="callout">Storage access saved. Refresh before editing again.</p>}

@@ -23,6 +23,7 @@ from app.services.deferred_storage import (
     configured_backend_keys,
     validate_object_id,
 )
+from app.services.profile_rules import is_rules_policy
 from app.services.storage_policy import StoragePolicy, policy_json
 
 CLIENT_LIMIT = 200
@@ -132,11 +133,14 @@ def _lock(connection) -> None:
 
 
 def _checked_profile(connection, client_id: int, profile_id: int) -> None:
-    profile = connection.execute("""SELECT service_client_id, enabled, deleted_at FROM scan_profiles
+    profile = connection.execute("""SELECT service_client_id, enabled, deleted_at, policy_json FROM scan_profiles
         WHERE id = ?""", (profile_id,)).fetchone()
     if (profile is None or int(profile["service_client_id"]) != client_id or profile["deleted_at"] is not None
             or not bool(profile["enabled"])):
         raise HTTPException(422, "Select an enabled scan profile owned by the location's client.")
+    # The profile's rules judge every file in the folder; one without rules would judge nothing.
+    if not is_rules_policy(str(profile["policy_json"])):
+        raise HTTPException(422, "The scan profile has no rules yet. Set its rules on the client's Scan profiles tab first.")
 
 
 def _name_taken(connection, name: str, exclude_id: int | None = None) -> bool:

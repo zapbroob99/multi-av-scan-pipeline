@@ -6,7 +6,13 @@ import { describe, it, expect, vi } from 'vitest'
 import ClientStorage from './client-storage'
 
 function mount({ fail = false, managed = false, readError = false } = {}) {
-  const fetcher = vi.fn(async (_url: string, options?: RequestInit) => options?.method === 'PUT'
+  const fetcher = vi.fn(async (url: string, options?: RequestInit) => url.startsWith('/api/ui/v1/storage/overview')
+    ? new Response(JSON.stringify({ worker: null, worker_record_invalid: false, locations_truncated: false, locations: [
+        { id: 9, name: 'Uploads', enabled: true, backend_key: 'shared', prefix: 'incoming/client-a', client: { id: 3, name: 'Client' },
+          profile: { id: 4, name: 'Default' }, counts: { light_detected: 2 } },
+        { id: 10, name: 'Elsewhere', enabled: true, backend_key: 'shared', prefix: 'other', client: { id: 5, name: 'Other' },
+          profile: { id: 6, name: 'Default' }, counts: { light_detected: 0 } }] }))
+    : options?.method === 'PUT'
     ? fail ? new Response(JSON.stringify({ detail: 'Storage access changed' }), { status: 409 }) : new Response(null, { status: 204 })
     : readError ? new Response(JSON.stringify({ detail: 'Storage configuration unavailable' }), { status: 503 })
       : new Response(JSON.stringify({ client_id: 3, managed, mode: 'environment', revision: 2, environment_fingerprint: 'a'.repeat(64),
@@ -19,6 +25,18 @@ function mount({ fail = false, managed = false, readError = false } = {}) {
   return fetcher
 }
 
+describe('Watched folders', () => {
+  it("lists only this client's folders and opens the form for this client", async () => {
+    mount()
+    const folders = await screen.findByRole('region', { name: 'Watched folders' })
+    expect(await within(folders).findByRole('link', { name: 'Uploads' })).toHaveAttribute('href', '/storage/locations/9')
+    expect(within(folders).queryByText('Elsewhere')).toBeNull()
+    expect(folders).toHaveTextContent('rules of Default')
+    expect(folders).toHaveTextContent('2 detected')
+    expect(within(folders).getByRole('link', { name: 'Watch a folder' })).toHaveAttribute('href', '/storage/locations/new?client=3')
+  })
+})
+
 describe('Client storage access', () => {
   it('confirms prefix replacement with revision and environment fences', async () => {
     const fetcher = mount()
@@ -29,7 +47,7 @@ describe('Client storage access', () => {
     const confirmation = screen.getByRole('dialog')
     expect(within(confirmation).getByText(/incoming\/new-client/)).toBeVisible()
     await userEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }))
-    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(0)
     await userEvent.click(screen.getByRole('button', { name: 'Review storage access' }))
     await userEvent.click(screen.getByRole('button', { name: 'Confirm storage access' }))
     await screen.findByText('Storage access saved. Refresh before editing again.')

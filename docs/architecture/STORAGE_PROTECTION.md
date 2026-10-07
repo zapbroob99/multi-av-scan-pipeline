@@ -345,3 +345,26 @@ off one location; `MASP_STORAGE_CRAWL_SECONDS` bounds each crawl slice and
 `MASP_STORAGE_SWEEP_PAUSE_SECONDS` spaces working sweeps. No capacity run has been
 done; the scale items above remain OPEN.
 
+## Folders follow profile rules (pilot.17, 2026-10-07)
+
+The per-location policy language (default tier, tier rules, type policy, archive action, hash
+check) was removed so there is one way to say what happens to a file: the rules of the folder's
+scan profile (`docs/architecture/PROFILE_RULES.md`), the same rules API and ICAP files follow.
+
+- Each stable object is opened once: the 4 KiB header and its size pick the first matching rule.
+- Block: a `rule_block` finding (high for programs and scripts, else medium), state
+  `light_detected`, delivered through the storage outbox like other findings.
+- Allow without scanning: state `allowed`; nothing is recorded as clean.
+- Light check: only the checks the rule names run. File Type reports a disguised extension
+  (a detection only for code); Hash List hashes the whole file and reports a blocklist match.
+  A light rule whose engines are all disabled leaves the object `unreadable` with the reason.
+- Scan: the object waits as `full_pending`, unhashed, until the full tier exists.
+- The folder keeps only discovery settings: ignored names, settle time, crawl interval and
+  per-cycle limits. Stored settings from before are read with the old policy fields dropped;
+  their old findings keep their kinds (`type_policy`, `archive_policy`).
+- A profile without readable rules stops its folders (recorded on the folder's last cycle) and
+  cannot be chosen for a new folder.
+
+Console: folders are added and listed on the client's Storage tab ("Watched folders", above the
+storage access they need); `/console/storage` is the results view across clients and is shown
+in the menu once a worker has reported or a folder exists.

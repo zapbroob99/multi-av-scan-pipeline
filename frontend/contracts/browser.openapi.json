@@ -2437,24 +2437,6 @@
         "title": "GatewayLimits",
         "type": "object"
       },
-      "HashCheck": {
-        "additionalProperties": false,
-        "properties": {
-          "enabled": {
-            "default": true,
-            "title": "Enabled",
-            "type": "boolean"
-          },
-          "max_bytes": {
-            "default": 10737418240,
-            "minimum": 0.0,
-            "title": "Max Bytes",
-            "type": "integer"
-          }
-        },
-        "title": "HashCheck",
-        "type": "object"
-      },
       "HashEngineSummary": {
         "properties": {
           "id": {
@@ -6388,6 +6370,11 @@
       },
       "StateCounts": {
         "properties": {
+          "allowed": {
+            "default": 0,
+            "title": "Allowed",
+            "type": "integer"
+          },
           "changed": {
             "title": "Changed",
             "type": "integer"
@@ -6490,6 +6477,7 @@
           },
           "kind": {
             "enum": [
+              "rule_block",
               "type_policy",
               "type_mismatch",
               "archive_policy",
@@ -6513,6 +6501,7 @@
                   "changed",
                   "light_passed",
                   "light_detected",
+                  "allowed",
                   "full_pending",
                   "unreadable",
                   "removed"
@@ -6715,6 +6704,7 @@
               "changed",
               "light_passed",
               "light_detected",
+              "allowed",
               "full_pending",
               "unreadable",
               "removed"
@@ -6839,16 +6829,6 @@
       "StoragePolicy": {
         "additionalProperties": false,
         "properties": {
-          "archive_action": {
-            "default": "full",
-            "enum": [
-              "full",
-              "allow",
-              "detect"
-            ],
-            "title": "Archive Action",
-            "type": "string"
-          },
           "crawl_entries_per_cycle": {
             "default": 5000,
             "maximum": 100000.0,
@@ -6862,18 +6842,6 @@
             "minimum": 10.0,
             "title": "Crawl Interval Seconds",
             "type": "integer"
-          },
-          "default_tier": {
-            "default": "full",
-            "enum": [
-              "full",
-              "light"
-            ],
-            "title": "Default Tier",
-            "type": "string"
-          },
-          "hash_check": {
-            "$ref": "#/components/schemas/HashCheck"
           },
           "ignore_patterns": {
             "items": {
@@ -6896,17 +6864,6 @@
             "minimum": 5.0,
             "title": "Stability Seconds",
             "type": "integer"
-          },
-          "tier_rules": {
-            "items": {
-              "$ref": "#/components/schemas/TierRule"
-            },
-            "maxItems": 50,
-            "title": "Tier Rules",
-            "type": "array"
-          },
-          "type_policy": {
-            "$ref": "#/components/schemas/TypePolicy"
           }
         },
         "title": "StoragePolicy",
@@ -7209,77 +7166,6 @@
           "through_scan_id"
         ],
         "title": "ThroughDetection",
-        "type": "object"
-      },
-      "TierRule": {
-        "additionalProperties": false,
-        "properties": {
-          "max_bytes": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Bytes"
-          },
-          "min_bytes": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Min Bytes"
-          },
-          "pattern": {
-            "default": "*",
-            "title": "Pattern",
-            "type": "string"
-          },
-          "tier": {
-            "enum": [
-              "full",
-              "light"
-            ],
-            "title": "Tier",
-            "type": "string"
-          }
-        },
-        "required": [
-          "tier"
-        ],
-        "title": "TierRule",
-        "type": "object"
-      },
-      "TypePolicy": {
-        "additionalProperties": false,
-        "properties": {
-          "families": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 8,
-            "title": "Families",
-            "type": "array"
-          },
-          "mode": {
-            "default": "denylist",
-            "enum": [
-              "allowlist",
-              "denylist"
-            ],
-            "title": "Mode",
-            "type": "string"
-          }
-        },
-        "title": "TypePolicy",
         "type": "object"
       },
       "UpdateUserBody": {
@@ -17488,6 +17374,7 @@
               "default": "all",
               "enum": [
                 "all",
+                "rule_block",
                 "type_policy",
                 "type_mismatch",
                 "archive_policy",
@@ -18008,6 +17895,7 @@
                 "changed",
                 "light_passed",
                 "light_detected",
+                "allowed",
                 "full_pending",
                 "unreadable",
                 "removed"

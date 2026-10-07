@@ -4,8 +4,11 @@ the objects that have stopped changing.
 Nothing here writes to the source. Crawling reads directory metadata only;
 inspection opens objects through ``open_deferred_source`` (link, traversal and
 hardlink checks included) and reads a bounded header, plus one streaming pass
-when the location hashes. Phase 1 runs the light tier only: an object routed to
-the full tier is recorded as ``full_pending`` and nothing claims it is clean.
+when the matched rule runs the hash list. Each object takes the first rule of
+the location's profile it matches, like an API or ICAP file: Light check and
+Block are judged here, Allow without scanning is recorded as allowed, and a
+Scan rule's object waits as ``full_pending`` until antivirus scanning of
+protected locations exists. Nothing claims an unscanned object is clean.
 """
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ from pathlib import Path
 import time
 
 from app import database as db
+from app.services import profile_rules
 from app.services.content_types import classify
 from app.services.deferred_storage import (
     DeferredSourceError,
@@ -29,7 +33,8 @@ from app.services.deferred_storage import (
 )
 from app.services import storage_inventory as inventory
 from app.services.storage_inventory import DueObject, StorageLocation
-from app.services.storage_policy import choose_tier, evaluate_light, ignored
+from app.services.profile_rules import Rule, RulesPolicy
+from app.services.storage_policy import ignored, judge
 
 HEADER_BYTES = 4096
 READ_CHUNK = 1024 * 1024
@@ -83,7 +88,19 @@ class CycleResult:
                 "errors": [redact_paths(item)[:300] for item in self.errors[:5]]}
 
 
-def _authorize(location: StorageLocation) -> tuple[str, dict]:
+@dataclass(frozen=True)
+class Access:
+    client_key: str
+    client_snapshot: dict
+    rules: RulesPolicy
+    # Adapter key of every rule engine that is enabled now, by instance id.
+    engines: dict[int, str]
+
+    def checks(self, rule: Rule) -> set[str]:
+        return {self.engines[engine] for engine in rule.engines if engine in self.engines}
+
+
+def _authorize(location: StorageLocation) -> Access:
     """Fail closed on anything that would make the location's access stale."""
     if location.policy_error:
         raise LocationUnavailable(location.policy_error)
@@ -91,17 +108,29 @@ def _authorize(location: StorageLocation) -> tuple[str, dict]:
     if client is None or not client.enabled:
         raise LocationUnavailable("The location's service client is missing or disabled.")
     with db.connect() as connection:
-        profile = connection.execute("""SELECT service_client_id, enabled, deleted_at FROM scan_profiles
+        profile = connection.execute("""SELECT service_client_id, enabled, deleted_at, policy_json FROM scan_profiles
             WHERE id = ?""", (location.scan_profile_id,)).fetchone()
     if (profile is None or int(profile["service_client_id"]) != client.id
             or not bool(profile["enabled"]) or profile["deleted_at"] is not None):
         raise LocationUnavailable("The location's scan profile is missing, disabled or not owned by its client.")
+    try:
+        rules = profile_rules.parse_rules_policy(str(profile["policy_json"]))
+    except (ValueError, TypeError):
+        # Never judge files from a guessed policy.
+        raise LocationUnavailable("The location's scan profile has no readable rules. Edit its rules first.") from None
     if location.mode != "crawl":
         raise LocationUnavailable("Manifest discovery for protected locations is not available in this release.")
     scope = client_backend_scope(location.backend_key, client.client_key)
     if scope is None or not scope.covers_prefix(location.prefix):
         raise LocationUnavailable("The client's storage grant does not cover this location.")
-    return client.client_key, {"id": client.id, "key": client.client_key, "name": client.display_name}
+    ids = rules.engine_ids()
+    with db.connect() as connection:
+        marks = ", ".join("?" for _ in ids)
+        engines = {int(row["id"]): str(row["adapter_key"]) for row in connection.execute(
+            f"SELECT id, adapter_key FROM engine_instances WHERE enabled = ? AND id IN ({marks})",
+            (db.db_bool(True), *ids)).fetchall()}
+    return Access(client.client_key, {"id": client.id, "key": client.client_key, "name": client.display_name},
+                  rules, engines)
 
 
 def _inside(root: Path, path: Path) -> bool:
@@ -180,11 +209,13 @@ class _Read:
     item: DueObject
     sha256: str | None
     header: bytes
+    number: int
+    rule: Rule
 
 
-def _read(location: StorageLocation, item: DueObject, now: int) -> _Read | None:
-    """Read header (and hash) of one object, or record why it could not be."""
-    policy = location.policy
+def _read(location: StorageLocation, item: DueObject, now: int, access: Access) -> _Read | None:
+    """Read the header of one object, match it to a rule, and hash it when the
+    rule runs the hash list; or record why it could not be read."""
     try:
         with open_deferred_source(location.backend_key, item.object_id) as handle:
             before = os.fstat(handle.fileno())
@@ -192,8 +223,11 @@ def _read(location: StorageLocation, item: DueObject, now: int) -> _Read | None:
                 inventory.mark_changed(item, int(before.st_size), int(before.st_mtime_ns), now)
                 return None
             header = handle.read(HEADER_BYTES)
+            name = item.object_id.rsplit("/", 1)[-1]
+            number, rule = profile_rules.match(access.rules, size=int(before.st_size),
+                                               classification=classify(header, name))
             digest = None
-            if policy.hash_check.enabled and before.st_size <= policy.hash_check.max_bytes:
+            if rule.action == "light" and "hash_list" in access.checks(rule):
                 hasher = hashlib.sha256(header)
                 total = len(header)
                 while chunk := handle.read(READ_CHUNK):
@@ -211,47 +245,44 @@ def _read(location: StorageLocation, item: DueObject, now: int) -> _Read | None:
             or after.st_ctime_ns != before.st_ctime_ns):
         inventory.mark_changed(item, int(after.st_size), int(after.st_mtime_ns), now)
         return None
-    return _Read(item, digest, header)
+    return _Read(item, digest, header, number, rule)
 
 
-def _relative(location: StorageLocation, object_id: str) -> str:
-    if location.prefix and object_id.startswith(location.prefix + "/"):
-        return object_id[len(location.prefix) + 1:]
-    return object_id
-
-
-def _inspect(location: StorageLocation, client_key: str, client_snapshot: dict, now: int,
-             result: CycleResult) -> None:
+def _inspect(location: StorageLocation, access: Access, now: int, result: CycleResult) -> None:
     policy = location.policy
     due = inventory.due_objects(location.id, now - policy.stability_seconds, policy.inspections_per_cycle)
     reads: list[_Read] = []
     for item in due:
         result.inspected += 1
         # Re-checked per object: a grant narrowed mid-pass must stop reads at once.
-        if not backend_allowed_for_client(location.backend_key, client_key, item.object_id):
+        if not backend_allowed_for_client(location.backend_key, access.client_key, item.object_id):
             inventory.mark_simple(item, "unreadable", now, error="Object is outside the client's storage grant.")
             continue
-        if choose_tier(policy, _relative(location, item.object_id), item.size_bytes) == "full":
-            inventory.mark_simple(item, "full_pending", now, tier="full", policy_revision=location.policy_revision)
+        read = _read(location, item, now, access)
+        if read is None:
             continue
-        read = _read(location, item, now)
-        if read is not None:
+        if read.rule.action == "scan":
+            # Antivirus scanning of protected locations is not built yet: the
+            # object waits, and nothing reads it as clean.
+            inventory.mark_simple(item, "full_pending", now, tier="full", policy_revision=location.policy_revision)
+        elif read.rule.action == "allow":
+            inventory.mark_simple(item, "allowed", now, policy_revision=location.policy_revision)
+        elif read.rule.action == "light" and not access.checks(read.rule):
+            inventory.mark_simple(item, "unreadable", now, error=f"No engine of rule {read.number} is enabled.")
+        else:
             reads.append(read)
     kinds = inventory.hash_list_kinds(read.sha256 for read in reads if read.sha256)
     for read in reads:
         name = read.item.object_id.rsplit("/", 1)[-1]
         classification = classify(read.header, name)
         hash_kind = kinds.get(read.sha256) if read.sha256 else None
-        outcome = evaluate_light(policy, classification, hash_kind)
-        if outcome.escalate_to_full:
-            inventory.mark_simple(read.item, "full_pending", now, tier="full",
-                                  policy_revision=location.policy_revision)
-            continue
+        outcome = judge(read.number, read.rule, classification, checks=access.checks(read.rule),
+                        hash_list_kind=hash_kind)
         result.findings += inventory.record_light_result(
             location, read.item, state="light_detected" if outcome.detected else "light_passed", now=now,
             sha256=read.sha256, detected_type=classification.detected_type,
             families=sorted(classification.families), hash_list_kind=hash_kind,
-            findings=list(outcome.findings), client_snapshot=client_snapshot)
+            findings=list(outcome.findings), client_snapshot=access.client_snapshot)
 
 
 def run_location_cycle(location: StorageLocation, worker_id: str, now: int | None = None) -> CycleResult:
@@ -260,9 +291,9 @@ def run_location_cycle(location: StorageLocation, worker_id: str, now: int | Non
     current = int(time.time()) if now is None else now
     result = CycleResult()
     try:
-        client_key, snapshot = _authorize(location)
+        access = _authorize(location)
         _crawl(location, worker_id, current, result)
-        _inspect(location, client_key, snapshot, current, result)
+        _inspect(location, access, current, result)
     except LocationUnavailable as exc:
         inventory.record_location_cycle(location.id, result.payload(ok=False, now=current, error=str(exc)))
         return result

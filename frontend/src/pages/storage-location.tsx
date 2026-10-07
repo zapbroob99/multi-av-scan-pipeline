@@ -3,28 +3,22 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
 import { formatTimestamp, shortAge } from '../lib/utils'
-import { FAMILY_LABELS, STATE_LABELS, STATE_ORDER, formatBytes, locationPath, type LocationDetail } from '../lib/storage'
+import { STATE_LABELS, STATE_ORDER, formatBytes, locationPath, type LocationDetail } from '../lib/storage'
 import { ErrorMessage } from '../components/error-message'
 import { BackLink } from '../components/section-tabs'
 import { Button } from '../components/ui/button'
 import { cycleProblem } from './storage'
 import { Timestamp } from '../components/timestamp'
 
-function PolicySummary({ detail }: { detail: LocationDetail }) {
-  const policy = detail.policy
-  const families = policy.type_policy?.families ?? []
+/** A folder's own settings; what happens to each file is its profile's rules. */
+function SettingsSummary({ detail }: { detail: LocationDetail }) {
+  const settings = detail.policy
   return <dl className="report-metadata">
-    <dt>Default tier</dt><dd>{policy.default_tier === 'light' ? 'Light (type policy and hash list, no antivirus)' : 'Full (antivirus scan)'}</dd>
-    <dt>Tier rules</dt><dd>{policy.tier_rules?.length ? <ol>{policy.tier_rules.map((rule, index) => <li key={index}>
-      <code>{rule.pattern ?? '*'}</code>{rule.min_bytes != null ? ` from ${formatBytes(rule.min_bytes)}` : ''}
-      {rule.max_bytes != null ? ` up to ${formatBytes(rule.max_bytes)}` : ''} → {rule.tier}</li>)}</ol> : 'None; every file gets the default tier'}</dd>
-    <dt>Type policy</dt><dd>{policy.type_policy?.mode === 'allowlist' ? 'Only these may appear: ' : 'These must not appear: '}
-      {families.length ? families.map(family => FAMILY_LABELS[family] ?? family).join('; ') : 'none'}</dd>
-    <dt>Archives in the light tier</dt><dd>{{ full: 'Sent to the full tier', allow: 'Allowed', detect: 'Detected' }[policy.archive_action ?? 'full']}</dd>
-    <dt>Hash list check</dt><dd>{policy.hash_check?.enabled === false ? 'Off' : `On, up to ${formatBytes(policy.hash_check?.max_bytes ?? 0)}`}</dd>
-    <dt>Ignored names</dt><dd>{policy.ignore_patterns?.length ? policy.ignore_patterns.map(item => <code key={item}>{item} </code>) : 'None'}</dd>
-    <dt>Timing</dt><dd>Settles after {policy.stability_seconds} s; crawled every {policy.crawl_interval_seconds} s,
-      {' '}{policy.crawl_entries_per_cycle?.toLocaleString()} entries and {policy.inspections_per_cycle?.toLocaleString()} inspections per cycle</dd>
+    <dt>Rules</dt><dd>Each file takes the first rule of the profile <Link to={`/service-clients/${detail.client.id}/profiles`}>{detail.profile.name}</Link> it
+      matches. Light check and Block are applied here; a file a Scan rule matches waits for antivirus scanning of folders.</dd>
+    <dt>Ignored names</dt><dd>{settings.ignore_patterns?.length ? settings.ignore_patterns.map(item => <code key={item}>{item} </code>) : 'None'}</dd>
+    <dt>Timing</dt><dd>Settles after {settings.stability_seconds} s; crawled every {settings.crawl_interval_seconds} s,
+      {' '}{settings.crawl_entries_per_cycle?.toLocaleString()} entries and {settings.inspections_per_cycle?.toLocaleString()} inspections per cycle</dd>
   </dl>
 }
 
@@ -62,23 +56,23 @@ export default function StorageLocation({ session }: { session: Session }) {
   return <section className="page management-page">
     <div className="page-heading"><div><p className="eyebrow">FOLDER SCANNING</p><h1>{data?.name ?? `Location #${locationId}`}</h1>
       {data && <p className="muted"><code>{locationPath(data)}</code> · {data.client.name} · profile {data.profile.name}{data.enabled ? '' : ' · disabled'}</p>}</div>
-      <div className="report-actions"><BackLink to="/storage" label="Locations" />
-        {session.user.role === 'admin' && data && <Link className="button button-secondary" to={`/storage/locations/${locationId}/edit`}>Edit location</Link>}
+      <div className="report-actions"><BackLink to="/storage" label="Folders" />
+        {session.user.role === 'admin' && data && <Link className="button button-secondary" to={`/storage/locations/${locationId}/edit`}>Edit folder</Link>}
         <Link className="button button-secondary" to={`/storage/findings?location_id=${locationId}`}>Findings</Link>
         <Button variant="secondary" disabled={detail.isFetching || objects.isFetching}
           onClick={() => { void detail.refetch(); void objects.refetch() }}>Refresh</Button></div></div>
     {detail.isPending && <p role="status">Loading location…</p>}
     {detail.error && <p role="alert" className="error"><ErrorMessage message={detail.error.message || ''} /></p>}
     {data && <>
-      {!data.enabled && <p className="notice">This location is disabled. Its inventory and findings are kept; nothing is crawled or inspected.</p>}
+      {!data.enabled && <p className="notice">This folder is disabled. Its inventory and findings are kept; nothing is crawled or inspected.</p>}
       {problem && <p className="notice error" role="alert">{problem}</p>}
-      {data.policy_invalid && <p className="notice error" role="alert">The stored policy could not be read. The worker skips this location
-        until an administrator saves a valid policy; the values below are defaults, not the stored policy.</p>}
+      {data.policy_invalid && <p className="notice error" role="alert">The stored folder settings could not be read. The worker skips this folder
+        until an administrator saves valid settings; the values below are defaults, not the stored settings.</p>}
       <article className="submission-card" aria-label="Coverage">
         <h2>Coverage</h2>
         <dl className="report-metadata">
           {STATE_ORDER.map(state => <Fragment key={state}><dt>{STATE_LABELS[state]}</dt>
-            <dd>{data.counts[state].toLocaleString()}</dd></Fragment>)}
+            <dd>{(data.counts[state] ?? 0).toLocaleString()}</dd></Fragment>)}
           <dt>Detected findings</dt><dd>{data.detected_findings.toLocaleString()}</dd>
           <dt>Last cycle</dt><dd>{data.last_cycle ? `${formatTimestamp(data.last_cycle.at)} (${shortAge(data.last_cycle.age_seconds)} ago): `
             + `${data.last_cycle.crawled.toLocaleString()} entries read, ${data.last_cycle.inspected.toLocaleString()} inspected, `
@@ -90,14 +84,14 @@ export default function StorageLocation({ session }: { session: Session }) {
             + `${data.last_completed_pass.objects_changed.toLocaleString()} changed, ${data.last_completed_pass.objects_removed.toLocaleString()} removed`
             : 'No crawl has read the whole location yet'}</dd>
         </dl>
-        <p className="muted">Counts cover the whole inventory. "{STATE_LABELS.light_passed}" means no finding by the type policy and hash list;
+        <p className="muted">Counts cover the whole inventory. "{STATE_LABELS.light_passed}" means the rule's light checks found nothing;
           it is not a clean antivirus result.</p>
       </article>
-      <article className="submission-card" aria-label="Policy">
-        <h2>Policy <small className="muted">revision {data.policy_revision}</small></h2>
-        <PolicySummary detail={data} />
-        <p className="muted">A policy change applies to files inspected afterwards. Files already inspected keep the revision that judged them
-          until they change.</p>
+      <article className="submission-card" aria-label="Rules and settings">
+        <h2>Rules and settings <small className="muted">settings revision {data.policy_revision}</small></h2>
+        <SettingsSummary detail={data} />
+        <p className="muted">A rule or settings change applies to files inspected afterwards. Files already inspected are judged again only
+          when they change.</p>
       </article>
     </>}
 

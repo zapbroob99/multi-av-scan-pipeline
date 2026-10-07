@@ -59,6 +59,13 @@ allow or block.
 
 Detections always win: a detection blocks whatever the rule says.
 
+## Watched folders
+
+A folder MASP reads itself (folder scanning) uses the rules of its profile too. Light check and
+Block are applied while the folder is read; Allow without scanning is recorded as allowed; a
+file a Scan rule matches waits until antivirus scanning of folders exists. See "Folders follow
+profile rules" in `STORAGE_PROTECTION.md`.
+
 ## What stays outside the profile
 
 Only what cannot be a per-file decision stays a deployment setting, and the profile

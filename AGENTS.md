@@ -208,6 +208,16 @@ live in a separate Folder Scanning console area. Engines read in place with ever
 verified against the inventory digest; MASP storage receives a copy only as evidence of a
 detection. A location binds to a service client and its profile, so storage grants and routing
 snapshots stay authoritative. Multi-object engine jobs and pruning wait for a capacity run.
+Since pilot.17 a watched folder has no policy language of its own: each object takes the first
+rule of the folder's profile it matches (`profile_rules.match`, size and 4 KiB header). Block
+records a `rule_block` finding, Allow without scanning records the state `allowed`, Light check
+runs only the checks its rule names (File Type mismatch, Hash List lookup; hashing happens only
+when the rule names Hash List), and a Scan rule's object waits as `full_pending`. A folder's
+`policy_json` keeps only discovery settings (ignored names, settle time, crawl interval and
+per-cycle limits); fields from before rules are dropped when read. A profile without readable
+rules stops its folders and cannot be chosen for one. Folders are added and listed on the
+client's Storage tab (Watched folders); `/console/storage` is the cross-client results view and
+appears in the menu only once a worker has reported or a folder exists.
 
 The frontend target is all browser UI migrated incrementally, not permanent
 legacy escape links. Track every remaining screen and cutover gate in the complete

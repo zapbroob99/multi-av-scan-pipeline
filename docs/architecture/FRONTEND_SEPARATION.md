@@ -1983,6 +1983,15 @@ Validation (2026-09-29): the Python storage suites ran on SQLite and a disposabl
 frontend 185 tests; a new Edge workflow covers confirmed creation, a refused prefix outside the
 client's grant and analyst read-only access. Build and contract drift check passed.
 
+Since pilot.17 (2026-10-07) folders are added from the client: its Storage tab lists "Watched
+folders" above the storage access they need, with "Watch a folder" opening the form with the
+client fixed. The form keeps name, profile, backend, folder, enabled state and reading settings
+(ignored names, settle time, crawl interval); what happens to a file is the profile's rules,
+linked from the form and the folder page. `/console/storage` is the results view across
+clients, without a create button, and the menu shows it once a worker has reported or a folder
+exists (an unreadable answer shows it). States read "Light check passed (not antivirus
+scanned)", "Allowed by a rule (not scanned)" and "Awaiting antivirus scan".
+
 
 
 ### Archive-wide report decisions (2026-10-05)

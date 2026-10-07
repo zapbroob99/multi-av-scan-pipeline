@@ -11,7 +11,8 @@ from app.services import storage_inventory as inventory
 from app.services.content_types import classify
 from app.services.deferred_storage import BackendScope, backend_allowed_for_client
 from app.services.notification_delivery import deliver_next
-from app.services.storage_policy import StoragePolicy, choose_tier, evaluate_light, parse_policy
+from app.services.profile_rules import Rule
+from app.services.storage_policy import StoragePolicy, judge, parse_policy
 from app.services import storage_protection
 from app.services.storage_protection import run_location_cycle
 
@@ -44,59 +45,35 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(disguised.content_family, "executable")
 
 
-class PolicyTests(unittest.TestCase):
-    def test_defaults_and_validation(self) -> None:
-        policy = parse_policy(None)
-        self.assertEqual(policy.default_tier, "full")
-        self.assertEqual(policy.type_policy.families, ["executable", "script"])
+class SettingsAndJudgementTests(unittest.TestCase):
+    def test_settings_defaults_validation_and_previous_fields(self) -> None:
+        settings = parse_policy(None)
+        self.assertEqual((settings.stability_seconds, settings.crawl_interval_seconds), (60, 300))
         with self.assertRaises(ValueError):
-            parse_policy({"type_policy": {"mode": "denylist", "families": ["binaries"]}})
-        with self.assertRaises(ValueError):
-            parse_policy({"tier_rules": [{"tier": "light", "min_bytes": 10, "max_bytes": 5}]})
+            parse_policy({"stability_seconds": 1})
         with self.assertRaises(ValueError):
             parse_policy({"unexpected": True})
+        # Settings written before profile rules still read; their policy fields are dropped.
+        previous = parse_policy({"default_tier": "light", "type_policy": {"mode": "denylist", "families": ["script"]},
+                                 "archive_action": "detect", "hash_check": {"enabled": False}, "stability_seconds": 30})
+        self.assertEqual(previous, StoragePolicy(stability_seconds=30))
 
-    def test_first_matching_rule_wins(self) -> None:
-        policy = StoragePolicy.model_validate({"default_tier": "full", "tier_rules": [
-            {"pattern": "bulk/*", "tier": "light"},
-            {"pattern": "*", "min_bytes": 100, "tier": "light"},
-        ]})
-        self.assertEqual(choose_tier(policy, "bulk/a.csv", 5), "light")
-        self.assertEqual(choose_tier(policy, "docs/a.pdf", 500), "light")
-        self.assertEqual(choose_tier(policy, "docs/a.pdf", 5), "full")
-        self.assertEqual(choose_tier(policy, "docs/deep/a.pdf", 500), "light")
+    def test_block_rule_is_a_detection_named_by_its_rule(self) -> None:
+        rule = Rule.model_validate({"when": {"families": ["executable"]}, "action": "block"})
+        outcome = judge(2, rule, classify(PE, "tool.exe"), checks=set(), hash_list_kind=None)
+        self.assertEqual([(f.kind, f.severity, f.detected, f.title) for f in outcome.findings],
+                         [("rule_block", "high", True, "Blocked by rule 2 (programs)")])
 
-    def test_denylist_detects_code_at_high_severity(self) -> None:
-        outcome = evaluate_light(StoragePolicy(), classify(PE, "tool.exe"), None)
-        self.assertTrue(outcome.detected)
-        self.assertEqual([(f.kind, f.severity) for f in outcome.findings], [("type_policy", "high")])
-
-    def test_allowlist_rejects_anything_not_listed(self) -> None:
-        policy = StoragePolicy.model_validate({"type_policy": {"mode": "allowlist", "families": ["pdf", "office"]}})
-        self.assertFalse(evaluate_light(policy, classify(PDF, "a.pdf"), None).findings)
-        image = evaluate_light(policy, classify(b"\x89PNG\r\n\x1a\n", "a.png"), None)
-        self.assertEqual([(f.kind, f.severity, f.detected) for f in image.findings],
-                         [("type_policy", "medium", True)])
-
-    def test_archive_actions(self) -> None:
-        classification = classify(ZIP, "bundle.zip")
-        self.assertTrue(evaluate_light(StoragePolicy(), classification, None).escalate_to_full)
-        allow = StoragePolicy.model_validate({"archive_action": "allow"})
-        self.assertEqual(evaluate_light(allow, classification, None).findings, ())
-        detect = StoragePolicy.model_validate({"archive_action": "detect"})
-        self.assertEqual([f.kind for f in evaluate_light(detect, classification, None).findings], ["archive_policy"])
-
-    def test_non_code_mismatch_is_a_finding_not_a_detection(self) -> None:
-        policy = StoragePolicy.model_validate({"type_policy": {"mode": "denylist", "families": []}})
-        outcome = evaluate_light(policy, classify(PDF, "photo.png"), None)
-        self.assertEqual([(f.kind, f.detected) for f in outcome.findings], [("type_mismatch", False)])
-        self.assertFalse(outcome.detected)
-
-    def test_hash_block_detects_and_allow_is_silent(self) -> None:
-        policy = StoragePolicy.model_validate({"type_policy": {"mode": "denylist", "families": []}})
-        self.assertEqual([f.kind for f in evaluate_light(policy, classify(PDF, "a.pdf"), "block").findings],
-                         ["hash_block"])
-        self.assertEqual(evaluate_light(policy, classify(PDF, "a.pdf"), "allow").findings, ())
+    def test_light_check_runs_only_the_checks_its_rule_names(self) -> None:
+        rule = Rule.model_validate({"action": "light", "engines": [1, 2]})
+        disguised = classify(PE, "contract.pdf")
+        both = judge(1, rule, disguised, checks={"file_type", "hash_list"}, hash_list_kind="block")
+        self.assertEqual([(f.kind, f.detected) for f in both.findings], [("type_mismatch", True), ("hash_block", True)])
+        self.assertEqual(judge(1, rule, disguised, checks={"hash_list"}, hash_list_kind=None).findings, ())
+        # A disguise that is not code is a finding, not a detection; an allowlisted hash is silent.
+        picture = judge(1, rule, classify(PDF, "photo.png"), checks={"file_type", "hash_list"}, hash_list_kind="allow")
+        self.assertEqual([(f.kind, f.detected) for f in picture.findings], [("type_mismatch", False)])
+        self.assertFalse(picture.detected)
 
 
 class BackendScopeTests(unittest.TestCase):
@@ -130,9 +107,15 @@ class StorageCycleCase(unittest.TestCase):
                 connection.execute("CREATE SCHEMA public")
         db.init_db()
         self.client_id = db.create_service_client("storage", "Storage")
-        engine = db.create_engine_instance("static_metadata", "Metadata")
-        self.profile_id = db.create_scan_profile(self.client_id, "Default", engine_instance_ids=[engine],
+        self.file_type = db.create_engine_instance("file_type", "File Type")
+        self.hash_list = db.create_engine_instance("hash_list", "Hash List")
+        self.clamav = db.create_engine_instance("clamav", "ClamAV")
+        self.profile_id = db.create_scan_profile(self.client_id, "Default", engine_instance_ids=[self.file_type],
                                                  is_default=True)
+        # The light defaults of the settings before profile rules, as rules: programs
+        # and scripts are blocked, every other file gets the header and hash checks.
+        self.rules({"when": {"families": ["executable", "script"]}, "action": "block"},
+                   {"action": "light", "engines": [self.file_type, self.hash_list]})
         self.env = patch.dict(os.environ, {
             "MASP_DEFERRED_STORAGE_BACKENDS_JSON": json.dumps({"share": str(self.share)}),
             "MASP_DEFERRED_BACKEND_CLIENTS_JSON": json.dumps({"share": {"storage": "data/"}}),
@@ -141,12 +124,18 @@ class StorageCycleCase(unittest.TestCase):
         self.addCleanup(self.env.stop)
         self.now = int(time.time())
 
+    def rules(self, *rules: dict) -> None:
+        policy = {"version": 2, "inconclusive": "block", "rules": list(rules)}
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_profiles SET policy_json = ? WHERE id = ?",
+                               (json.dumps(policy), self.profile_id))
+
     def _restore(self) -> None:
         db.close_pool()
         db.DB_PATH, db.DATABASE_URL, db.DB_POOL_ENABLED = self.original
 
     def location(self, policy: dict | None = None, *, prefix: str = "data") -> inventory.StorageLocation:
-        base = {"default_tier": "light", "stability_seconds": 60}
+        base = {"stability_seconds": 60}
         location_id = inventory.create_location(
             name=f"Location {prefix}", service_client_id=self.client_id, scan_profile_id=self.profile_id,
             backend_key="share", prefix=prefix, mode="crawl", policy=parse_policy({**base, **(policy or {})}))
@@ -170,6 +159,12 @@ class StorageCycleCase(unittest.TestCase):
         with db.connect() as connection:
             return [dict(row) for row in connection.execute(
                 "SELECT * FROM storage_notification_outbox ORDER BY id").fetchall()]
+
+    def last_cycle(self, location: inventory.StorageLocation) -> dict:
+        with db.connect() as connection:
+            return json.loads(connection.execute(
+                "SELECT last_cycle_json FROM storage_location_runtime WHERE location_id = ?",
+                (location.id,)).fetchone()["last_cycle_json"])
 
     def write(self, relative: str, body: bytes) -> Path:
         path = self.share.joinpath(*relative.split("/"))
@@ -200,9 +195,9 @@ class StorageCycleTests(StorageCycleCase):
         self.assertEqual(objects["data/contract.pdf"]["state"], "light_detected")
         self.assertEqual(len(objects["data/report.pdf"]["sha256"]), 64)
         kinds = sorted((row["object_id"], row["kind"]) for row in self.findings())
-        self.assertEqual(kinds, [("data/contract.pdf", "type_mismatch"), ("data/contract.pdf", "type_policy"),
-                                 ("data/sub/tool.exe", "type_policy")])
-        self.assertEqual(len(self.outbox()), 3)
+        # A disguised program takes the first rule it matches: blocked as a program.
+        self.assertEqual(kinds, [("data/contract.pdf", "rule_block"), ("data/sub/tool.exe", "rule_block")])
+        self.assertEqual(len(self.outbox()), 2)
         payload = json.loads(self.outbox()[0]["payload_json"])
         self.assertEqual(payload["event_type"], "storage.finding")
         self.assertEqual(payload["inspection"], "light")
@@ -259,43 +254,71 @@ class StorageCycleTests(StorageCycleCase):
         self.assertEqual(complete.removed, 1)
         self.assertEqual(self.objects()["data/sub/old.pdf"]["state"], "removed")
 
-    def test_full_tier_and_archives_wait_without_being_read(self) -> None:
-        self.write("data/big.pdf", PDF)
+    def test_scan_rules_wait_for_antivirus_and_are_never_hashed(self) -> None:
+        self.rules({"when": {"larger_than_bytes": 1000}, "action": "scan", "engines": [self.clamav], "archive": "whole"},
+                   {"when": {"families": ["archive"]}, "action": "scan", "engines": [self.clamav], "archive": "inspect"},
+                   {"action": "light", "engines": [self.file_type, self.hash_list]})
+        self.write("data/big.pdf", PDF + b"x" * 2000)
         self.write("data/small/bundle.zip", ZIP)
-        location = self.location({"tier_rules": [{"pattern": "big.pdf", "tier": "full"}]})
+        location = self.location()
         self.cycle(location)
-        opened = []
-        real_open = storage_protection.open_deferred_source
-
-        def tracking(backend, object_id):
-            opened.append(object_id)
-            return real_open(backend, object_id)
-
-        with patch.object(storage_protection, "open_deferred_source", side_effect=tracking):
-            self.cycle(location, 61)
+        self.cycle(location, 61)
         objects = self.objects()
-        self.assertEqual(objects["data/big.pdf"]["state"], "full_pending")
-        self.assertEqual(objects["data/small/bundle.zip"]["state"], "full_pending")
-        self.assertEqual(opened, ["data/small/bundle.zip"])
+        for name in ("data/big.pdf", "data/small/bundle.zip"):
+            self.assertEqual((objects[name]["state"], objects[name]["tier"], objects[name]["sha256"]),
+                             ("full_pending", "full", None))
+        self.assertEqual(self.findings(), [])
+
+    def test_allow_without_scanning_is_recorded_as_allowed(self) -> None:
+        self.rules({"when": {"families": ["script"]}, "action": "allow"},
+                   {"action": "light", "engines": [self.file_type, self.hash_list]})
+        self.write("data/run.sh", b"#!/bin/sh\necho hi\n")
+        location = self.location()
+        self.cycle(location)
+        self.cycle(location, 61)
+        row = self.objects()["data/run.sh"]
+        self.assertEqual((row["state"], row["sha256"]), ("allowed", None))
+        self.assertEqual(self.findings(), [])
 
     def test_hash_blocklist_match_is_a_detection(self) -> None:
         import hashlib
         self.write("data/report.pdf", PDF)
         db.add_hash_list_entries([(hashlib.sha256(PDF).hexdigest(), "block", "known bad")], "admin")
-        location = self.location({"type_policy": {"mode": "denylist", "families": []}})
+        location = self.location()
         self.cycle(location)
         self.cycle(location, 61)
         self.assertEqual([row["kind"] for row in self.findings()], ["hash_block"])
         self.assertEqual(self.objects()["data/report.pdf"]["hash_list_kind"], "block")
 
-    def test_large_files_skip_hashing_when_configured(self) -> None:
+    def test_a_light_rule_without_the_hash_list_does_not_hash(self) -> None:
+        self.rules({"when": {"larger_than_bytes": 10}, "action": "light", "engines": [self.file_type]},
+                   {"action": "light", "engines": [self.file_type, self.hash_list]})
         self.write("data/report.pdf", PDF)
-        location = self.location({"hash_check": {"enabled": True, "max_bytes": 10}})
+        location = self.location()
         self.cycle(location)
         self.cycle(location, 61)
         row = self.objects()["data/report.pdf"]
         self.assertEqual(row["state"], "light_passed")
         self.assertIsNone(row["sha256"])
+
+    def test_a_light_rule_with_no_enabled_engine_judges_nothing(self) -> None:
+        with db.connect() as connection:
+            connection.execute("UPDATE engine_instances SET enabled = ?", (db.db_bool(False),))
+        self.write("data/report.pdf", PDF)
+        location = self.location()
+        self.cycle(location)
+        self.cycle(location, 61)
+        row = self.objects()["data/report.pdf"]
+        self.assertEqual(row["state"], "unreadable")
+        self.assertIn("No engine of rule 2", row["last_error"])
+
+    def test_a_profile_without_rules_stops_the_location(self) -> None:
+        self.write("data/tool.exe", PE)
+        location = self.location()
+        with db.connect() as connection:
+            connection.execute("UPDATE scan_profiles SET policy_json = '{}' WHERE id = ?", (self.profile_id,))
+        self.assertEqual(self.cycle(location).crawled, 0)
+        self.assertIn("no readable rules", self.last_cycle(location)["error"])
 
     def test_location_outside_the_grant_does_nothing(self) -> None:
         self.write("other/tool.exe", PE)
@@ -305,10 +328,7 @@ class StorageCycleTests(StorageCycleCase):
         self.assertEqual(self.objects(), {})
         runtime = inventory.get_runtime(location.id)
         self.assertIsNone(runtime.pass_id)
-        with db.connect() as connection:
-            record = json.loads(connection.execute(
-                "SELECT last_cycle_json FROM storage_location_runtime WHERE location_id = ?",
-                (location.id,)).fetchone()["last_cycle_json"])
+        record = self.last_cycle(location)
         self.assertFalse(record["ok"])
         self.assertIn("grant", record["error"])
 
@@ -323,7 +343,7 @@ class StorageCycleTests(StorageCycleCase):
         location = self.location()
         with db.connect() as connection:
             connection.execute("UPDATE storage_locations SET policy_json = ? WHERE id = ?",
-                               ('{"default_tier": "sideways"}', location.id))
+                               ('{"stability_seconds": 1}', location.id))
         broken = inventory.get_location(location.id)
         self.assertIn("invalid", broken.policy_error)
         self.assertEqual([item.id for item in inventory.enabled_locations(["share"])], [location.id])

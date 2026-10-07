@@ -6,14 +6,12 @@ import { describe, it, expect, vi } from 'vitest'
 import Storage from './storage'
 import StorageLocation from './storage-location'
 import StorageFindings from './storage-findings'
-import StorageLocationForm, { rulesToPolicy } from './storage-location-form'
+import StorageLocationForm from './storage-location-form'
 
 const ADMIN = { user: { id: 1, username: 'admin', role: 'admin' }, csrf_token: 'csrf' }
 const ANALYST = { user: { id: 2, username: 'analyst', role: 'analyst' }, csrf_token: 'csrf' }
-const COUNTS = { waiting: 2, changed: 1, light_passed: 40, light_detected: 3, full_pending: 5, unreadable: 1, removed: 0 }
-const POLICY = { default_tier: 'light', tier_rules: [{ pattern: 'bulk/*', min_bytes: null, max_bytes: null, tier: 'light' }],
-  type_policy: { mode: 'denylist', families: ['executable', 'script'] }, archive_action: 'full',
-  hash_check: { enabled: true, max_bytes: 10 * 1024 ** 3 }, ignore_patterns: ['*.tmp'], stability_seconds: 60,
+const COUNTS = { waiting: 2, changed: 1, light_passed: 40, light_detected: 3, allowed: 6, full_pending: 5, unreadable: 1, removed: 0 }
+const POLICY = { ignore_patterns: ['*.tmp'], stability_seconds: 60,
   crawl_interval_seconds: 300, crawl_entries_per_cycle: 5000, inspections_per_cycle: 500 }
 const LOCATION = { id: 4, name: 'Finance uploads', enabled: true, mode: 'crawl', backend_key: 'share', prefix: 'finance',
   client: { id: 2, name: 'Drive' }, profile: { id: 3, name: 'Default' }, policy_revision: 2, management_revision: 5, counts: COUNTS,
@@ -22,6 +20,9 @@ const LOCATION = { id: 4, name: 'Finance uploads', enabled: true, mode: 'crawl',
   last_completed_pass: null, current_pass: null }
 const WORKER = { at: 1790000000, age_seconds: 20, stale: false, ok: true, error: null, poll_seconds: 10, locations: 1,
   worker_id: 'storage-host-1', backends: ['share'] }
+const OPTIONS = { backends: ['share'], clients_truncated: false,
+  families: ['executable', 'script', 'archive', 'office', 'pdf', 'image', 'markup', 'unrecognized'], default_policy: POLICY,
+  clients: [{ id: 2, name: 'Drive', client_key: 'drive', enabled: true, profiles: [{ id: 3, name: 'Default', enabled: true }] }] }
 
 function stub(routes: Record<string, unknown>) {
   const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
@@ -41,29 +42,30 @@ function renderAt(path: string, element: React.ReactNode, pattern = '*') {
 }
 
 describe('Folder scanning overview', () => {
-  it('shows coverage without calling type-checked files clean', async () => {
+  it('shows coverage without calling light-checked files clean, and sends folder creation to the client', async () => {
     stub({ '/api/ui/v1/storage/overview': { worker: WORKER, worker_record_invalid: false, locations: [LOCATION], locations_truncated: false } })
     renderAt('/storage', <Storage session={ADMIN} />)
-    const table = await screen.findByRole('region', { name: 'Protected locations' })
+    const table = await screen.findByRole('region', { name: 'Watched folders' })
     expect(within(table).getByText('Finance uploads')).toBeInTheDocument()
     expect(within(table).getByText('40')).toBeInTheDocument()
-    expect(document.querySelector('.callout')).toHaveTextContent(/type check was not scanned by an antivirus engine/)
+    expect(within(table).getByText('6')).toBeInTheDocument()
+    expect(document.querySelector('.callout')).toHaveTextContent(/A light check never runs an antivirus engine/)
     expect(screen.queryByText(/clean/i)).toBeNull()
-    expect(screen.getByRole('link', { name: 'New location' })).toBeInTheDocument()
+    expect(screen.getByText(/Folders are added on a service client's Storage tab/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /New location/ })).toBeNull()
   })
 
-  it('warns about a stale worker and hides management from analysts', async () => {
+  it('warns about a stale worker', async () => {
     stub({ '/api/ui/v1/storage/overview': { worker: { ...WORKER, stale: true, age_seconds: 7200 }, worker_record_invalid: false,
       locations: [{ ...LOCATION, last_cycle: null }], locations_truncated: false } })
     renderAt('/storage', <Storage session={ANALYST} />)
     expect((await screen.findAllByRole('alert'))[0]).toHaveTextContent(/2 h ago.*stopped or is stuck/)
     expect(screen.getByText('No cycle has run for this location yet.')).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'New location' })).toBeNull()
   })
 })
 
-describe('Location detail', () => {
-  it('lists files with their state and renders paths as inert text', async () => {
+describe('Folder detail', () => {
+  it('lists files with their state, links the profile rules and renders paths as inert text', async () => {
     stub({ '/api/ui/v1/storage/locations/4': { ...LOCATION, policy: POLICY, policy_invalid: false },
       '/api/ui/v1/storage/locations/4/objects': { items: [{ id: 8, object_id: 'finance/<b>x</b>.exe', size_bytes: 2048,
         state: 'light_detected', tier: 'light', detected_type: 'pe', families: ['executable'], sha256: 'a'.repeat(64), hash_list_kind: null,
@@ -73,9 +75,11 @@ describe('Location detail', () => {
     const files = await screen.findByRole('region', { name: 'Files' })
     expect(within(files).getByText('finance/<b>x</b>.exe')).toBeInTheDocument()
     expect(document.querySelector('td b')).toBeNull()
-    expect(within(files).getByText('Detected by light inspection')).toBeInTheDocument()
+    expect(within(files).getByText('Detected or blocked by a rule')).toBeInTheDocument()
     expect(screen.getByText(/not a clean antivirus result/)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Edit location' })).toBeNull()
+    // The folder's files follow its profile's rules, linked from here.
+    expect(screen.getByRole('link', { name: 'Default' })).toHaveAttribute('href', '/service-clients/2/profiles')
+    expect(screen.queryByRole('link', { name: 'Edit folder' })).toBeNull()
   })
 })
 
@@ -91,24 +95,20 @@ describe('Findings', () => {
   })
 })
 
-describe('Location form', () => {
-  it('converts tier rule sizes from MiB and leaves blanks unbounded', () => {
-    expect(rulesToPolicy([{ pattern: ' big/* ', min: '100', max: '', tier: 'light' }, { pattern: '', min: '', max: '', tier: 'full' }]))
-      .toEqual([{ pattern: 'big/*', min_bytes: 100 * 1024 * 1024, max_bytes: null, tier: 'light' }])
-  })
-
-  it('creates a location only after confirmation', async () => {
-    const fetcher = stub({ '/api/ui/v1/storage/options': { backends: ['share'], clients_truncated: false,
-      families: ['executable', 'script', 'archive', 'office', 'pdf', 'image', 'markup', 'unrecognized'], default_policy: POLICY,
-      clients: [{ id: 2, name: 'Drive', client_key: 'drive', enabled: true, profiles: [{ id: 3, name: 'Default', enabled: true }] }] } })
-    renderAt('/storage/locations/new', <StorageLocationForm session={ADMIN} />, '/storage/locations/new')
+describe('Folder form', () => {
+  it('watches a folder for the client it was opened from, only after confirmation', async () => {
+    const fetcher = stub({ '/api/ui/v1/storage/options': OPTIONS })
+    renderAt('/storage/locations/new?client=2', <StorageLocationForm session={ADMIN} />, '/storage/locations/new')
     await userEvent.type(await screen.findByLabelText('Name'), 'Finance uploads')
-    await userEvent.selectOptions(screen.getByLabelText('Service client'), '2')
+    expect(screen.getByLabelText('Service client')).toHaveValue('2')
+    expect(screen.getByLabelText('Service client')).toBeDisabled()
     await userEvent.selectOptions(screen.getByLabelText('Scan profile'), '3')
+    expect(screen.getByRole('link', { name: "Drive's Scan profiles" })).toHaveAttribute('href', '/service-clients/2/profiles')
     await userEvent.selectOptions(screen.getByLabelText('Storage backend'), 'share')
-    await userEvent.type(screen.getByLabelText('Prefix inside the backend'), 'finance')
+    await userEvent.type(screen.getByLabelText('Folder inside the backend'), 'finance')
     await userEvent.click(screen.getByRole('button', { name: 'Review' }))
     expect(fetcher.mock.calls.filter(([, o]) => o?.method === 'POST')).toHaveLength(0)
+    expect(screen.getByRole('dialog')).toHaveTextContent('Rules of Default')
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm' }))
     expect(await screen.findByText('navigated')).toBeInTheDocument()
     const [url, options] = fetcher.mock.calls.find(([, o]) => o?.method === 'POST')!
@@ -116,24 +116,21 @@ describe('Location form', () => {
     const body = JSON.parse(String(options?.body))
     expect(body).toMatchObject({ name: 'Finance uploads', service_client_id: 2, scan_profile_id: 3, backend_key: 'share',
       prefix: 'finance', mode: 'crawl', enabled: true })
-    expect(body.policy.default_tier).toBe('light')
-    expect(body.policy.type_policy).toEqual({ mode: 'denylist', families: ['executable', 'script'] })
+    expect(body.policy).toEqual(POLICY)
     expect(options?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
   })
 
-  it('refuses an allowlist without families before sending anything', async () => {
-    const fetcher = stub({ '/api/ui/v1/storage/options': { backends: ['share'], clients_truncated: false, families: ['executable', 'script'],
-      default_policy: POLICY, clients: [{ id: 2, name: 'Drive', client_key: 'drive', enabled: true, profiles: [{ id: 3, name: 'Default', enabled: true }] }] } })
+  it('refuses settings that are not whole seconds before sending anything', async () => {
+    const fetcher = stub({ '/api/ui/v1/storage/options': OPTIONS })
     renderAt('/storage/locations/new', <StorageLocationForm session={ADMIN} />, '/storage/locations/new')
     await userEvent.type(await screen.findByLabelText('Name'), 'Strict')
     await userEvent.selectOptions(screen.getByLabelText('Service client'), '2')
     await userEvent.selectOptions(screen.getByLabelText('Scan profile'), '3')
     await userEvent.selectOptions(screen.getByLabelText('Storage backend'), 'share')
-    await userEvent.selectOptions(screen.getByLabelText('Type policy'), 'allowlist')
-    await userEvent.click(screen.getByLabelText(/Executables/))
-    await userEvent.click(screen.getByLabelText(/Scripts/))
+    await userEvent.clear(screen.getByLabelText(/Settle time/))
+    await userEvent.type(screen.getByLabelText(/Settle time/), 'soon')
     await userEvent.click(screen.getByRole('button', { name: 'Review' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('Choose at least one family')
+    expect(screen.getByRole('alert')).toHaveTextContent('whole numbers of seconds')
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(fetcher.mock.calls.filter(([, o]) => o?.method === 'POST')).toHaveLength(0)
   })

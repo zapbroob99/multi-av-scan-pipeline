@@ -2422,19 +2422,6 @@ export interface components {
             /** Wait Seconds */
             wait_seconds?: number | null;
         };
-        /** HashCheck */
-        HashCheck: {
-            /**
-             * Enabled
-             * @default true
-             */
-            enabled?: boolean;
-            /**
-             * Max Bytes
-             * @default 10737418240
-             */
-            max_bytes?: number;
-        };
         /** HashEngineSummary */
         HashEngineSummary: {
             /** Id */
@@ -3707,6 +3694,11 @@ export interface components {
         };
         /** StateCounts */
         StateCounts: {
+            /**
+             * Allowed
+             * @default 0
+             */
+            allowed?: number;
             /** Changed */
             changed: number;
             /** Full Pending */
@@ -3752,12 +3744,12 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "type_policy" | "type_mismatch" | "archive_policy" | "hash_block";
+            kind: "rule_block" | "type_policy" | "type_mismatch" | "archive_policy" | "hash_block";
             location: components["schemas"]["NamedRef"];
             /** Object Id */
             object_id: string;
             /** Object State */
-            object_state: ("waiting" | "changed" | "light_passed" | "light_detected" | "full_pending" | "unreadable" | "removed") | null;
+            object_state: ("waiting" | "changed" | "light_passed" | "light_detected" | "allowed" | "full_pending" | "unreadable" | "removed") | null;
             /** Policy Revision */
             policy_revision: number;
             /** Severity */
@@ -3813,7 +3805,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "waiting" | "changed" | "light_passed" | "light_detected" | "full_pending" | "unreadable" | "removed";
+            state: "waiting" | "changed" | "light_passed" | "light_detected" | "allowed" | "full_pending" | "unreadable" | "removed";
             /** Tier */
             tier: ("full" | "light") | null;
         };
@@ -3842,12 +3834,6 @@ export interface components {
         /** StoragePolicy */
         StoragePolicy: {
             /**
-             * Archive Action
-             * @default full
-             * @enum {string}
-             */
-            archive_action?: "full" | "allow" | "detect";
-            /**
              * Crawl Entries Per Cycle
              * @default 5000
              */
@@ -3857,13 +3843,6 @@ export interface components {
              * @default 300
              */
             crawl_interval_seconds?: number;
-            /**
-             * Default Tier
-             * @default full
-             * @enum {string}
-             */
-            default_tier?: "full" | "light";
-            hash_check?: components["schemas"]["HashCheck"];
             /** Ignore Patterns */
             ignore_patterns?: string[];
             /**
@@ -3876,9 +3855,6 @@ export interface components {
              * @default 60
              */
             stability_seconds?: number;
-            /** Tier Rules */
-            tier_rules?: components["schemas"]["TierRule"][];
-            type_policy?: components["schemas"]["TypePolicy"];
         };
         /** StorageWorker */
         StorageWorker: {
@@ -3990,34 +3966,6 @@ export interface components {
         ThroughDetection: {
             /** Through Scan Id */
             through_scan_id: number;
-        };
-        /** TierRule */
-        TierRule: {
-            /** Max Bytes */
-            max_bytes?: number | null;
-            /** Min Bytes */
-            min_bytes?: number | null;
-            /**
-             * Pattern
-             * @default *
-             */
-            pattern?: string;
-            /**
-             * Tier
-             * @enum {string}
-             */
-            tier: "full" | "light";
-        };
-        /** TypePolicy */
-        TypePolicy: {
-            /** Families */
-            families?: string[];
-            /**
-             * Mode
-             * @default denylist
-             * @enum {string}
-             */
-            mode?: "allowlist" | "denylist";
         };
         /** UpdateUserBody */
         UpdateUserBody: {
@@ -11716,7 +11664,7 @@ export interface operations {
             query?: {
                 before?: number | null;
                 detected?: "all" | "detected" | "not_detected";
-                kind?: "all" | "type_policy" | "type_mismatch" | "archive_policy" | "hash_block";
+                kind?: "all" | "rule_block" | "type_policy" | "type_mismatch" | "archive_policy" | "hash_block";
                 limit?: number;
                 location_id?: number | null;
             };
@@ -12101,7 +12049,7 @@ export interface operations {
                 before?: number | null;
                 limit?: number;
                 q?: string;
-                state?: "all" | "waiting" | "changed" | "light_passed" | "light_detected" | "full_pending" | "unreadable" | "removed";
+                state?: "all" | "waiting" | "changed" | "light_passed" | "light_detected" | "allowed" | "full_pending" | "unreadable" | "removed";
             };
             header?: never;
             path: {

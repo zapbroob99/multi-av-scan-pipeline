@@ -44,9 +44,14 @@ class StorageConsoleTests(unittest.TestCase):
         self.share = Path(self.temp.name) / 'share'
         (self.share / 'data').mkdir(parents=True)
         self.client_id = db.create_service_client('storage', 'Storage')
-        engine = db.create_engine_instance('static_metadata', 'Metadata')
-        self.profile_id = db.create_scan_profile(self.client_id, 'Default', engine_instance_ids=[engine],
-                                                 is_default=True)
+        file_type = db.create_engine_instance('file_type', 'File Type')
+        hash_list = db.create_engine_instance('hash_list', 'Hash List')
+        # Folder files follow the profile's rules: programs and scripts blocked, the rest light-checked.
+        rules = {'version': 2, 'inconclusive': 'block', 'rules': [
+            {'when': {'families': ['executable', 'script']}, 'action': 'block'},
+            {'action': 'light', 'engines': [file_type, hash_list]}]}
+        self.profile_id = db.create_scan_profile(self.client_id, 'Default', engine_instance_ids=[file_type, hash_list],
+                                                 is_default=True, policy_json=json.dumps(rules))
         env = patch.dict(os.environ, {
             'MASP_DEFERRED_STORAGE_BACKENDS_JSON': json.dumps({'share': str(self.share)}),
             'MASP_DEFERRED_BACKEND_CLIENTS_JSON': json.dumps({'share': {'storage': 'data/'}}),
@@ -61,7 +66,7 @@ class StorageConsoleTests(unittest.TestCase):
     def body(self, **changes):
         base = {'name': 'Uploads', 'service_client_id': self.client_id, 'scan_profile_id': self.profile_id,
                 'backend_key': 'share', 'prefix': 'data', 'mode': 'crawl', 'enabled': True,
-                'policy': {'default_tier': 'light', 'stability_seconds': 5}}
+                'policy': {'stability_seconds': 5}}
         base.update(changes)
         return base
 
@@ -80,8 +85,14 @@ class StorageConsoleTests(unittest.TestCase):
         self.assertEqual(self.request('/storage/locations', 'POST', self.body(backend_key='missing'))[0], 422)
         self.assertEqual(self.request('/storage/locations', 'POST', self.body(mode='both'))[0], 422)
         self.assertEqual(self.request('/storage/locations', 'POST', self.body(prefix='../data'))[0], 422)
-        bad_policy = self.body(policy={'type_policy': {'mode': 'denylist', 'families': ['binaries']}})
+        bad_policy = self.body(policy={'stability_seconds': 1})
         self.assertEqual(self.request('/storage/locations', 'POST', bad_policy)[0], 422)
+        # The profile's rules judge every file; a profile without rules is refused.
+        engine = db.create_engine_instance('static_metadata', 'Metadata')
+        plain = db.create_scan_profile(self.client_id, 'Plain', engine_instance_ids=[engine])
+        status, error, _ = self.request('/storage/locations', 'POST', self.body(scan_profile_id=plain))
+        self.assertEqual(status, 422)
+        self.assertIn('no rules', error['detail'])
         status, created, _ = self.request('/storage/locations', 'POST', self.body())
         self.assertEqual(status, 201, created)
         self.assertEqual(inventory.get_location(created['id']).prefix, 'data')
@@ -109,7 +120,7 @@ class StorageConsoleTests(unittest.TestCase):
         self.assertEqual((detail['enabled'], detail['management_revision'], detail['policy_revision']), (False, 1, 1))
         self.assertEqual(self.request(path, 'PUT', update)[0], 409)
         changed = {**update, 'expected_management_revision': 1,
-                   'policy': {**detail['policy'], 'archive_action': 'detect'}}
+                   'policy': {**detail['policy'], 'crawl_interval_seconds': 30}}
         self.assertEqual(self.request(path, 'PUT', changed)[0], 204)
         self.assertEqual(self.request(path)[1]['policy_revision'], 2)
         self.assertEqual(self.request(path, 'PUT', {**changed, 'backend_key': 'share'})[0], 422)
@@ -132,7 +143,7 @@ class StorageConsoleTests(unittest.TestCase):
         self.assertEqual([item['object_id'] for item in objects['items']], ['data/tool.exe'])
         self.assertEqual(self.request(f"/storage/locations/{location.id}/objects?q=nothing")[1]['items'], [])
         findings = self.request('/storage/findings?detected=detected')[1]
-        self.assertEqual(findings['items'][0]['kind'], 'type_policy')
+        self.assertEqual(findings['items'][0]['kind'], 'rule_block')
         self.assertEqual(findings['items'][0]['object_state'], 'light_detected')
         self.assertEqual(self.request('/storage/options')[0], 403)
         self.assertEqual(self.request('/storage/locations', 'POST', self.body(name='Again'))[0], 403)
