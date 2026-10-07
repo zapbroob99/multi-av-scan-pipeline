@@ -235,6 +235,13 @@ class RuleIntakeTests(unittest.TestCase):
         self.assertIn("Blocked by rule 2 (programs)", decision.reason)
         allowed = resolve_scan_decision(db.get_scan(unscanned.id))
         self.assertEqual((allowed.action, allowed.policy), ("allow", "profile_rule_not_scanned"))
+        # The ICAP end user is told the file is not accepted, never that it could not be scanned.
+        from app.icap.config import IcapConfig
+        from app.icap.server import resolve_icap_action
+        action, reason, message = resolve_icap_action(db.get_scan(blocked.id), IcapConfig(fail_closed=False))
+        self.assertEqual((action, message), ("block", "Blocked by MASP: files like this are not accepted."))
+        self.assertIn("Blocked by rule 2", reason)
+        self.assertEqual(resolve_icap_action(db.get_scan(unscanned.id), IcapConfig())[0], "allow")
         rows = {item.id: item for item in ledger_read.page(limit=20, before=None, query="", source="all", status="all",
                                                             risk="all", client_id=None, unassigned=False).items}
         self.assertEqual((rows[blocked.id].not_allowed, rows[blocked.id].not_allowed_label, rows[blocked.id].rule_action),

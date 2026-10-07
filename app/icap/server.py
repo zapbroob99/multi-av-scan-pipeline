@@ -291,7 +291,7 @@ _DECISION_MESSAGES = {
     "archive_incomplete": MESSAGE_ARCHIVE_UNSCANNED,
     "archive_member_unscanned": MESSAGE_ARCHIVE_UNSCANNED,
 }
-_NOT_ALLOWED_POLICIES = {"profile_content_policy", "profile_archive_policy"}
+_NOT_ALLOWED_POLICIES = {"profile_content_policy", "profile_archive_policy", "profile_rule_block"}
 
 
 def decision_message(decision: ScanDecision, scan=None) -> str:
