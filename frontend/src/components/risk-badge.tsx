@@ -1,4 +1,4 @@
-import { Ban, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
+import { Ban, ScanLine, ShieldAlert, ShieldCheck, ShieldOff, ShieldQuestion } from 'lucide-react'
 
 const ALERT_LEVELS = new Set(['high', 'critical'])
 const REVIEW_LEVELS = new Set(['medium', 'low'])
@@ -49,6 +49,16 @@ export function RiskBadge({ level, score, pending = false, failed = false, unava
 export function NotAllowedBadge({ label }: { label: string }) {
   return <span className="risk-badge risk-badge-refused" title="The client's rules refused this file. This is not a malware detection.">
     <Ban size={14} aria-hidden="true" /><strong>Not allowed</strong><span className="risk-badge-score">{label}</span></span>
+}
+
+/** A profile rule chose not to run antivirus on this file: a light check, or no scan at all.
+ * Shown beside the recorded risk so a quiet result is never read as a full scan. */
+export function RuleBadge({ action }: { action: string | null | undefined }) {
+  if (action === 'light') return <span className="risk-badge risk-badge-review" title="A profile rule ran only File Type, Hash List or Static Metadata checks: no antivirus engine scanned this file.">
+    <ScanLine size={14} aria-hidden="true" /><strong>Light check only</strong></span>
+  if (action === 'allow') return <span className="risk-badge risk-badge-review" title="A profile rule allowed this file without scanning it.">
+    <ShieldOff size={14} aria-hidden="true" /><strong>Not scanned</strong></span>
+  return null
 }
 
 /** True when a row should be called out in the list itself, not only in a cell. */

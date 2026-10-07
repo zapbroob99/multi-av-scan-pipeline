@@ -203,8 +203,11 @@ Each step is independently useful and independently verifiable:
 3. **Multiple named profiles — implemented.** Client administration supports
    create, rename, delete and default selection, so a lightweight profile can
    exist beside a full one. Steps 4 and 5 remain open.
-4. **Result semantics.** Make deliberately narrow coverage explicit everywhere a
-   decision is shown.
+4. **Result semantics — decided 2026-10-07 with profile rules.** A rule's action is
+   explicit: a Light check that finds nothing is allowed and labelled Light check
+   only, and Allow without scanning is labelled Not scanned, in the decision, the
+   ledger and the report (`docs/architecture/PROFILE_RULES.md`). The classification is
+   explicit (the rule action frozen in the snapshot), not derived from adapters.
 5. **In-place reading.** Only after 1-4, because it carries the security decisions
    and its value is clearest once the cheap checks exist.
 

@@ -38,6 +38,7 @@ from app.services.archive_extractor import detect_archive_format
 from app.services.archive_inspection import inspect_archive
 from app.services.content_types import FAMILIES, classify
 from app.services.decisions import ScanDecision
+from app.services import profile_rules
 
 HEADER_BYTES = 4096
 MAX_SAFE_INTEGER = 9007199254740991
@@ -106,6 +107,9 @@ NOT_ALLOWED: dict[str, NotAllowed] = {
     "member_type": NotAllowed("archive_content", "File type in archive", _ARCHIVE_MEMBER),
     "member_masquerade": NotAllowed("archive_content", "File type in archive", _ARCHIVE_MEMBER),
     "member_blocklisted": NotAllowed("blocklisted", "Hash blocklist", _ARCHIVE_MEMBER),
+    # A profile rule whose action is Block, and an archive member such a rule blocks.
+    "rule_block": NotAllowed("rule_block", "Blocked by rule", "Blocked by MASP: files like this are not accepted."),
+    "member_rule": NotAllowed("archive_content", "File type in archive", _ARCHIVE_MEMBER),
 }
 # A kind this release does not know (written by a newer one) still reads as refused.
 _UNKNOWN = NotAllowed("policy", "Policy", _CONTENT)
@@ -257,6 +261,9 @@ def apply_intake_policy(snapshot_json: str, *, filename: str, size: int, storage
         return snapshot_json
     if not isinstance(snapshot, dict):
         return snapshot_json
+    if profile_rules.is_rules_policy(snapshot_policy(snapshot)):
+        # A rule profile decides archives itself: the gateway's refusal does not apply.
+        return _apply_rules_intake(snapshot, snapshot_json, filename=filename, size=size, storage_path=storage_path)
     try:
         policy = parse_profile_policy(snapshot_policy(snapshot))
     except ValueError:
@@ -303,6 +310,66 @@ def apply_intake_policy(snapshot_json: str, *, filename: str, size: int, storage
     return json.dumps(snapshot, separators=(",", ":"), sort_keys=True)
 
 
+def _apply_rules_intake(snapshot: dict, snapshot_json: str, *, filename: str, size: int, storage_path: str) -> str:
+    """Freeze the first matching rule into the snapshot; inspect an archive it asks to open."""
+    try:
+        policy = profile_rules.parse_rules_policy(snapshot_policy(snapshot))
+    except (ValueError, TypeError):
+        # Stored unchanged: the decision then withholds an allow (profile_policy_invalid).
+        return snapshot_json
+    header = _read_header(storage_path)
+    number, rule = profile_rules.match(policy, size=size, classification=classify(header, filename))
+    routed = profile_rules.routed_snapshot(snapshot, number, rule)
+    if rule.action == "scan" and rule.archive in ("inspect", "members"):
+        inspection = inspect_archive(
+            storage_path, header=header, check_blocklist=_routes_hash_list(routed),
+            member_check=lambda member_header, member_name: member_rule_violations(
+                policy, filename=member_name, header=member_header),
+        )
+        if inspection is not None:
+            routed["archive_inspection"] = inspection.summary("inspect" if rule.archive == "inspect" else "scan_members")
+            if inspection.violations:
+                routed["intake_policy"] = {"violations": list(inspection.violations)}
+    return json.dumps(routed, separators=(",", ":"), sort_keys=True)
+
+
+def route_member(parent_snapshot_json: str, *, filename: str, size: int, storage_path: str) -> str | None:
+    """A rule-routed archive member's own snapshot; None when the parent is not rule-routed.
+
+    A member is a file of its own: it takes the first rule it matches by its own
+    size and type, from every engine the profile routes, never the container's
+    narrowed engines or intake verdict.
+    """
+    try:
+        parent = json.loads(parent_snapshot_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(parent, dict) or profile_rules.snapshot_rule(parent) is None:
+        return None
+    base = {key: value for key, value in parent.items() if key not in ("rule", "intake_policy", "archive_inspection")}
+    base["engines"] = parent.get("profile_engines") if isinstance(parent.get("profile_engines"), list) else []
+    return _apply_rules_intake(base, json.dumps(base), filename=filename, size=size, storage_path=storage_path)
+
+
+def member_rule_violations(policy: profile_rules.RulesPolicy, *, filename: str, header: bytes) -> list[dict]:
+    """Whether a rule blocks an archive member, judged when the archive is inspected.
+
+    Inspection sees a member's header and name, not its size, so it applies the
+    first rule without a size condition that the member matches. Size rules apply
+    when members are scanned on their own (``members``), where the size is known.
+    """
+    classification = classify(header, filename)
+    for number, rule in enumerate(policy.rules, start=1):
+        if rule.when.larger_than_bytes is not None or rule.when.up_to_bytes is not None:
+            continue
+        if profile_rules.rule_matches(rule, size=0, classification=classification):
+            if rule.action != "block":
+                return []
+            return [{"kind": "rule", "families": sorted(classification.families, key=FAMILIES.index),
+                     "detail": profile_rules.block_detail(number, rule)}]
+    return []
+
+
 def _routes_hash_list(snapshot: dict) -> bool:
     engines = snapshot.get("engines")
     return isinstance(engines, list) and any(
@@ -311,6 +378,9 @@ def _routes_hash_list(snapshot: dict) -> bool:
 
 def archive_handling(snapshot: dict) -> str:
     """The recorded archive handling; "inherit" when the policy cannot be read."""
+    treatment = profile_rules.archive_treatment(snapshot)
+    if treatment is not None:
+        return treatment
     try:
         return parse_profile_policy(snapshot_policy(snapshot)).archive_handling
     except (ValueError, TypeError):
@@ -346,6 +416,21 @@ def apply_profile_policy(decision: ScanDecision, snapshot: dict, *, scan_role: s
         return decision
     if decision.action == "wait":
         return decision
+    if profile_rules.is_rules_policy(raw):
+        try:
+            rules = profile_rules.parse_rules_policy(raw)
+        except (ValueError, TypeError):
+            rules = None
+        if rules is not None and profile_rules.snapshot_rule(snapshot) is not None:
+            # Each rule scan, archive members included, carries its own evaluation.
+            return profile_rules.apply_rules_decision(decision, snapshot, rules)
+        if decision.action == "block":
+            return decision
+        return ScanDecision(action="review", label="Review", tone="warning", confidence="low",
+                            policy="profile_policy_invalid",
+                            reason="The client's recorded profile rules could not be read.",
+                            reasons=["The client's recorded profile rules could not be read.",
+                                     "An allow decision is withheld until the rules are fixed."])
     try:
         policy = parse_profile_policy(raw)
     except (ValueError, TypeError):

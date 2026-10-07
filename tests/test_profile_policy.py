@@ -11,10 +11,12 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException, UploadFile
 
+import app.main  # noqa: F401  (startup runs once here, not in the middle of a test)
 from app import database as db
 from app.models import StoredSample
 from app.services import profile_admin as admin
 from app.services.decisions import decide_scan_action
+from app.services.profile_rules import RulesPolicy
 from app.services.profile_policy import (
     PolicyRejectedError, ProfilePolicy, apply_intake_policy, apply_profile_policy, evaluate_intake,
     parse_profile_policy, profile_policy_json,
@@ -209,8 +211,11 @@ class ProfilePolicyIntegrationTests(unittest.TestCase):
         return next(item for item in admin.page(self.client, None).items if item.id == self.profile).management_revision
 
     def set_policy(self, policy):
-        admin.save_policy(self.client, self.profile, admin.ProfilePolicyBody(
-            expected_revision=self.revision(), policy=parse_profile_policy(policy)))
+        # A profile written before rules, as an upgrade finds it; scans keep this logic.
+        with db.connect() as connection:
+            connection.execute("""UPDATE scan_profiles SET policy_json = ?,
+                management_revision = management_revision + 1 WHERE id = ?""",
+                (profile_policy_json(parse_profile_policy(policy)), self.profile))
 
     def upload(self, content, filename):
         from app.main import enqueue_scan_from_upload
@@ -222,16 +227,19 @@ class ProfilePolicyIntegrationTests(unittest.TestCase):
     def stored_files(self):
         return [path for path in self.samples.rglob("*") if path.is_file()] if self.samples.exists() else []
 
-    def test_the_console_reads_and_fences_policy_writes(self):
+    def test_the_console_shows_rules_and_fences_rule_writes(self):
+        # A profile still in the previous format is shown as needing rules, never guessed.
         item = next(item for item in admin.page(self.client, None).items if item.id == self.profile)
-        self.assertEqual((item.policy, item.policy_invalid), (ProfilePolicy(), False))
-        self.set_policy({"max_file_bytes": 2048, "review_action": "block"})
+        self.assertEqual((item.rules, item.rules_invalid), (None, True))
+        rules = RulesPolicy.model_validate({"version": 2, "inconclusive": "block",
+                                            "rules": [{"action": "light", "engines": [self.engine]}]})
+        admin.save_rules(self.client, self.profile, admin.ProfileRulesBody(expected_revision=self.revision(), rules=rules))
         item = next(item for item in admin.page(self.client, None).items if item.id == self.profile)
-        self.assertEqual((item.policy.max_file_bytes, item.policy.review_action), (2048, "block"))
+        self.assertEqual((item.rules, item.rules_invalid), (rules, False))
         # A stale revision is refused, as for every other profile write.
         with self.assertRaises(HTTPException) as error:
-            admin.save_policy(self.client, self.profile, admin.ProfilePolicyBody(
-                expected_revision=item.management_revision - 1, policy=ProfilePolicy()))
+            admin.save_rules(self.client, self.profile, admin.ProfileRulesBody(
+                expected_revision=item.management_revision - 1, rules=rules))
         self.assertEqual(error.exception.status_code, 409)
         # The compatibility client's routing is deployment-managed.
         legacy = db.get_service_client_by_key("legacy-default")
@@ -240,15 +248,16 @@ class ProfilePolicyIntegrationTests(unittest.TestCase):
             seed_legacy_service_client()
             legacy = db.get_service_client_by_key("legacy-default")
         legacy_profile = admin.page(legacy.id, None).items[0]
+        self.assertFalse(legacy_profile.rules_invalid)
         with self.assertRaises(HTTPException) as error:
-            admin.save_policy(legacy.id, legacy_profile.id, admin.ProfilePolicyBody(
-                expected_revision=legacy_profile.management_revision, policy=ProfilePolicy()))
+            admin.save_rules(legacy.id, legacy_profile.id, admin.ProfileRulesBody(
+                expected_revision=legacy_profile.management_revision, rules=rules))
         self.assertIn("deployment-managed", error.exception.detail)
-        # A stored policy that cannot be read is reported, never guessed.
+        # Stored rules that cannot be read are reported, never guessed.
         with db.connect() as connection:
-            connection.execute("UPDATE scan_profiles SET policy_json = ? WHERE id = ?", ('{"review_action":"maybe"}', self.profile))
+            connection.execute("UPDATE scan_profiles SET policy_json = ? WHERE id = ?", ('{"version":2,"rules":[]}', self.profile))
         item = next(item for item in admin.page(self.client, None).items if item.id == self.profile)
-        self.assertEqual((item.policy, item.policy_invalid), (None, True))
+        self.assertEqual((item.rules, item.rules_invalid), (None, True))
 
     def test_api_uploads_are_rejected_or_blocked_as_the_profile_says(self):
         self.set_policy({"max_file_bytes": 32})

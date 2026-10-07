@@ -6,12 +6,13 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Cpu, KeyRound, RefreshCw } from 'lucide-react'
 import { request, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { INCONCLUSIVE_HELP } from '../components/profile-rules'
 import { Dialog } from '../components/ui/dialog'
 import { ClientNavigation } from '../components/client-navigation'
 import { ClientWorkspace, useClientPanelGuard } from '../components/client-workspace'
 import { Timestamp } from '../components/timestamp'
 
-type Review = { credential_label: string; client_key: string; display_name: string; profile_name: string; engine_ids: number[] }
+type Review = { credential_label: string; client_key: string; display_name: string; profile_name: string; engine_ids: number[]; inconclusive: 'block' | 'allow' }
 
 export default function ClientCredentials({ session, create = false }: { session: Session; create?: boolean }) {
   const routeClientId = useParams().clientId
@@ -42,7 +43,8 @@ export default function ClientCredentials({ session, create = false }: { session
     const form = event.currentTarget
     const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement | null)?.value || ''
     setReview({ credential_label: value('credential_label'), client_key: value('client_key'), display_name: value('display_name'),
-      profile_name: value('profile_name'), engine_ids: Array.from(form.querySelectorAll<HTMLInputElement>('input[name="engine_ids"]:checked')).map(input => Number(input.value)) })
+      profile_name: value('profile_name'), engine_ids: Array.from(form.querySelectorAll<HTMLInputElement>('input[name="engine_ids"]:checked')).map(input => Number(input.value)),
+      inconclusive: value('inconclusive') as Review['inconclusive'] })
   }
   function cancel() { if (!busy) { setReview(null); setRevokeId(null); if (secret.current) secret.current.value = '' } }
   async function submit() {
@@ -90,8 +92,11 @@ export default function ClientCredentials({ session, create = false }: { session
         <section className="client-form-section"><h2><span className="client-step">2</span>Scan routing</h2>
         <label>Default profile name<input name="profile_name" required maxLength={100} placeholder="e.g. Standard scanning" /></label>
         <fieldset><legend>Required engine instances</legend><div className="client-engine-options">{options.data?.engines.map(engine => <label className="client-engine-option" key={engine.id}>
-          <input type="checkbox" name="engine_ids" value={engine.id} /><Cpu size={18} aria-hidden="true" /><span><strong>{engine.display_name}</strong><small>#{engine.id}{engine.enabled ? '' : ' · disabled'}</small></span></label>)}</div></fieldset>
-        <p className="muted client-note">Choose at least one engine. Disabled or source-ineligible engines remain excluded at intake.</p></section></>}
+          <input type="checkbox" name="engine_ids" value={engine.id} disabled={!!engine.excluded_reason} /><Cpu size={18} aria-hidden="true" /><span><strong>{engine.display_name}</strong><small>{engine.excluded_reason ?? engine.adapter_key}</small></span></label>)}</div></fieldset>
+        <p className="muted client-note">The default profile starts with one rule that sends every file to these engines. Add more rules on its Scan profiles tab.</p>
+        <label>When the result is not conclusive<select name="inconclusive" required defaultValue="" aria-describedby="client-inconclusive-help">
+          <option value="" disabled>Choose…</option><option value="block">Block</option><option value="allow">Allow, labelled Not fully scanned</option></select></label>
+        <p id="client-inconclusive-help" className="muted client-note">{INCONCLUSIVE_HELP}</p></section></>}
       <section className="client-form-section">{create && <h2><span className="client-step">3</span>API access</h2>}
       <label>Credential label<input name="credential_label" required maxLength={100} placeholder="e.g. Gateway production" /></label>
       <label>API token<input ref={secret} type="password" required minLength={32} maxLength={512} autoComplete="new-password" aria-describedby="client-token-help" /></label>
@@ -118,7 +123,7 @@ export default function ClientCredentials({ session, create = false }: { session
         <Button disabled={busy || locked || review !== null || revokeId !== null || !credentials.data?.next_after} onClick={() => setAfter(credentials.data!.next_after)}>Next credentials</Button></div>}</section>}
     </div>
     <Dialog open={review !== null || revokeId !== null} onOpenChange={open => { if (!open) cancel() }} title={review ? 'Save credential?' : 'Revoke credential?'}
-      description={review ? `Save ${review.credential_label} for ${create ? review.display_name : `client #${clientId}`}${create ? ` with required engine IDs ${review.engine_ids.join(', ') || '(none selected)'}` : ''}? The token will not be shown again.` : `Revoke credential #${revokeId} for client #${clientId}? Subsequent authentication with it will fail.`}>
+      description={review ? `Save ${review.credential_label} for ${create ? review.display_name : `client #${clientId}`}${create ? ` with engine IDs ${review.engine_ids.join(', ') || '(none selected)'}; an inconclusive result is ${review.inconclusive === 'block' ? 'blocked' : 'allowed and labelled'}` : ''}? The token will not be shown again.` : `Revoke credential #${revokeId} for client #${clientId}? Subsequent authentication with it will fail.`}>
       <div className="report-actions"><Button variant="secondary" disabled={busy} onClick={cancel}>Cancel</Button>
         <Button disabled={busy || (create && !!review && !review.engine_ids.length)} onClick={submit}>{busy ? 'Saving…' : 'Confirm'}</Button></div>
     </Dialog>

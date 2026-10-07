@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException, UploadFile
+import app.main  # noqa: F401  (startup runs once here, not in the middle of a test)
 from app import database as db
 from app.services import profile_admin as admin
 from app.services.service_clients import resolve_stored_api_client, resolve_profile_routing, profile_snapshot_json, hash_api_token, engines_for_scan
@@ -48,7 +49,7 @@ class ProfileManagementTests(unittest.TestCase):
         self.temp.cleanup()
 
     def create(self, name='Metadata only'):
-        return admin.create(self.client, admin.ProfileCreateBody(name=name, engine_ids=[self.metadata])).profile_id
+        return admin.create(self.client, admin.ProfileCreateBody(name=name, engine_ids=[self.metadata], inconclusive='block')).profile_id
 
     def http(self, path, *, method='GET', body=b'', content_type='application/json', authenticate=True):
         from app.main import app

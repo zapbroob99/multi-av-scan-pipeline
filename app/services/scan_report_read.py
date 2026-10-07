@@ -84,6 +84,7 @@ class ScanReport(BaseModel):
     # Refused by the client's rules at intake (not malware): code and label.
     not_allowed: str | None = None
     not_allowed_label: str | None = None
+    rule_action: str | None = None
 
 
 class TechnicalDetails(BaseModel):
@@ -174,7 +175,7 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
             j.created_at, j.started_at, j.completed_at, j.failed_at, j.attempt_count,
             SUBSTR(j.last_error, 1, 2048) AS last_error, j.batch_id, j.parent_scan_id,
             j.scan_role, NULL AS relative_path, j.service_client_id, j.scan_profile_id,
-            SUBSTR(j.not_allowed, 1, 64) AS not_allowed,
+            SUBSTR(j.not_allowed, 1, 64) AS not_allowed, SUBSTR(j.rule_action, 1, 16) AS rule_action,
             SUBSTR(j.profile_snapshot_json, 1, ?) AS profile_snapshot_json,
             SUBSTR(s.original_filename, 1, 512) AS original_filename,
             '' AS stored_filename, '' AS storage_path, s.content_type, s.size_bytes, s.md5, s.sha1, s.sha256
@@ -250,7 +251,7 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
         decision=DecisionSummary(**decision_payload) if decision_payload else None,
         warning=decision_warning or (None if policy_complete else 'Decision unavailable: policy details exceed the compact reader limit or are invalid. Review each engine\'s recorded details and output.'),
         engines=summaries, not_allowed=refused.code if refused else None,
-        not_allowed_label=refused.label if refused else None)
+        not_allowed_label=refused.label if refused else None, rule_action=row['rule_action'])
 
 
 def technical_details(scan_id: int, result_id: int, *, automation: bool = False) -> TechnicalDetails:

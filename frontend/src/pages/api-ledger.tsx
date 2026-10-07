@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
-import { NotAllowedBadge, RISK_LABELS, RiskBadge, isAlertRisk } from '../components/risk-badge'
+import { NotAllowedBadge, RISK_LABELS, RiskBadge, RuleBadge, isAlertRisk } from '../components/risk-badge'
 import { Dialog } from '../components/ui/dialog'
 import { Button } from '../components/ui/button'
 import { SelectAllCheckbox } from '../components/select-all'
@@ -121,7 +121,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
               }} aria-label={`Filter client #${scan.service_client_id}`} title={`Filter client #${scan.service_client_id}`}>#{scan.service_client_id} {scan.client_name || 'Name unavailable'}</Button>}</td>
           <td>{scan.status}</td>
           <td><div className="risk-cell"><RiskBadge level={scan.risk_level} score={scan.risk_score} pending={ACTIVE.includes(scan.status)} failed={scan.status === 'failed'} unavailable={scan.unavailable_engines} />
-            {scan.not_allowed_label && <NotAllowedBadge label={scan.not_allowed_label} />}</div></td>
+            {scan.not_allowed_label && <NotAllowedBadge label={scan.not_allowed_label} />}<RuleBadge action={scan.rule_action} /></div></td>
           <td><small><Timestamp value={scan.created_at} /></small></td>
           <td className="cell-actions"><Link to={`/api-ledger/scans/${scan.id}`}>Report</Link>
             {scan.batch_id !== null && <Link to={`/api-ledger/batches/${scan.batch_id}`}>Batch</Link>}</td>

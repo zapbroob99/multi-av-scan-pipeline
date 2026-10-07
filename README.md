@@ -76,7 +76,9 @@ snapshot; service-client totals stay admin-only.
 Admin `/console/service-clients` now lists integration clients with bounded pages
 and confirms display-name and enabled-state changes. The managed `legacy-default`
 client remains read-only. Clicking a client opens a large dialog with Settings,
-Connection, Scan profiles, Storage and Credentials tabs. Scan profiles supports multiple
+Connection, Scan profiles, Storage and Credentials tabs. Each profile is an ordered rule
+list (first match wins: size, type, disguised extension -> scan with chosen engines, light
+check, allow without scanning, or block; see `docs/architecture/PROFILE_RULES.md`). Scan profiles supports multiple
 named profiles, create/rename/disable/delete and default selection, with confirmed
 engine assignments and stale-edit protection. Client creation
 and credential add/list/revoke now stay in React too. Tokens are supplied by the

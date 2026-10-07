@@ -16,6 +16,7 @@ from app.models import EngineInstanceRecord, ScanRecord, StoredSample
 from app.services.archive_extractor import EXTRACT_ALL_ARCHIVE_MODE, detect_archive_format
 from app.services.engine_registry import enabled_engines
 from app.services.profile_policy import apply_intake_policy, not_allowed_code, scans_every_member
+from app.services import profile_rules
 
 
 API_TERMINAL_SCAN_STATUSES = {"completed", "failed"}
@@ -81,7 +82,14 @@ def enqueue_scan_from_stored_sample(
             storage_path=stored_sample.storage_path,
             refuse_archives=refuse_archives,
         )
-        archive_format = detect_archive_format(stored_sample.storage_path)
+        # A rule profile runs only the matched rule's engines; Block and Allow
+        # without scanning run none and complete at intake.
+        selected_engines, rule_action = profile_rules.narrow(selected_engines, profile_snapshot_json)
+        if rule_action in ("scan", "light") and not selected_engines:
+            raise NoEligibleEnginesError("None of the matched profile rule's engines is available; intake rejected.")
+        # Only a Scan rule opens an archive; any other rule treats it as one file.
+        archive_format = (detect_archive_format(stored_sample.storage_path)
+                          if rule_action in (None, "scan") else None)
         archive_mode = effective_archive_mode(profile_snapshot_json, archive_mode)
         scan_id = create_scan_intake(
             sample=stored_sample,
@@ -96,6 +104,7 @@ def enqueue_scan_from_stored_sample(
             scan_profile_id=scan_profile_id,
             profile_snapshot_json=profile_snapshot_json,
             not_allowed=not_allowed_code(profile_snapshot_json),
+            rule_action=rule_action,
         )
     except Exception:
         # Any failure BEFORE the intake transaction commits (zero engines,

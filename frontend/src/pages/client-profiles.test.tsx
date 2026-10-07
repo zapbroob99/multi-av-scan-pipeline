@@ -5,23 +5,27 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import ClientProfiles from './client-profiles'
 
-const INHERIT = { max_file_bytes: null, type_rule: null, block_masquerade: false, violation_action: 'scan_and_block', review_action: 'inherit' }
+const MB = 1024 * 1024
+const RULES = { version: 2, inconclusive: 'block', rules: [
+  { when: { larger_than_bytes: 500 * MB, up_to_bytes: null, families: [], masquerade: false }, action: 'light', engines: [2], archive: null },
+  { when: { larger_than_bytes: null, up_to_bytes: null, families: [], masquerade: false }, action: 'scan', engines: [1], archive: 'whole' },
+] }
+const ENGINES = [
+  { id: 1, display_name: 'ClamAV', adapter_key: 'clamav', enabled: true, detection: true, excluded_reason: null },
+  { id: 2, display_name: 'File Type', adapter_key: 'file_type', enabled: true, detection: false, excluded_reason: null },
+  { id: 3, display_name: 'VirusTotal', adapter_key: 'virustotal', enabled: true, detection: true, excluded_reason: 'Paid reputation service.' },
+]
 
-const OUTCOME = { icap: 'no_gateway', icap_ports: [],
-  engines: [{ id: 1, display_name: 'One', runs: true, reason: null }, { id: 9, display_name: 'Lookup', runs: false, reason: 'Paid reputation service.' }],
-  lines: [{ topic: 'archives', label: 'Archives', api: 'Scanned as one file; MASP does not look inside.',
-    icap: 'Unknown: no ICAP gateway reports for this client.', icap_known: false }] }
-
-function mount(incomplete = false, fail = false, named = false, policy: object | null = INHERIT, outcome: object | null = null) {
+function mount({ fail = false, named = false, rules = RULES as object | null } = {}) {
   const fetcher = vi.fn(async (_url: string, options?: RequestInit) => options?.method && options.method !== 'GET'
-    ? fail ? new Response(JSON.stringify({ detail: 'Routing changed' }), { status: 409 })
+    ? fail ? new Response(JSON.stringify({ detail: 'Profile changed' }), { status: 409 })
       : options.method === 'POST' ? new Response(JSON.stringify({ profile_id: 8 }), { status: 201 }) : new Response(null, { status: 204 })
-    : new Response(JSON.stringify({ client_id: 3, managed: false, next_after: null, engines_incomplete: incomplete,
-      default_profile_id: named ? 6 : 7,
-      items: [{ id: 7, name: '<script>Profile</script>', enabled: true, is_default: !named, engine_ids: [1], incomplete: false, management_revision: 4,
-        policy, policy_invalid: policy === null, outcome }],
-      engines: [{ id: 1, display_name: 'One', adapter_key: 'static_metadata', enabled: true, excluded_reason: null },
-        { id: 2, display_name: 'Two', adapter_key: 'clamav', enabled: false, excluded_reason: 'Engine instance is disabled.' }] })))
+    : new Response(JSON.stringify({ client_id: 3, managed: false, next_after: null, engines_incomplete: false,
+      default_profile_id: named ? 6 : 7, upload_cap_bytes: 0,
+      gateways: [{ port: 1344, fail_closed: true, max_bytes: 50 * MB, wait_seconds: 30 }],
+      items: [{ id: 7, name: '<script>Profile</script>', enabled: true, is_default: !named, engine_ids: [1, 2], incomplete: false,
+        management_revision: 4, rules, rules_invalid: rules === null }],
+      engines: ENGINES })))
   vi.stubGlobal('fetch', fetcher)
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/service-clients/3/profiles']}><Routes>
     <Route path="/service-clients/:clientId/profiles" element={<ClientProfiles session={{ user: { id: 1, username: 'admin', role: 'admin' }, csrf_token: 'csrf' }} />} />
@@ -29,140 +33,124 @@ function mount(incomplete = false, fail = false, named = false, policy: object |
   return fetcher
 }
 
-describe('Profile scan policy', () => {
-  it('shows an inheriting policy and saves an edited one behind the revision fence', async () => {
-    const fetcher = mount()
-    const section = await screen.findByRole('region', { name: 'File rules for <script>Profile</script>' })
-    expect(section).toHaveTextContent("No rules of its own: the server's limits and review handling apply.")
-    await userEvent.click(screen.getByRole('button', { name: 'Edit rules' }))
-    await userEvent.type(screen.getByLabelText(/^Largest accepted file/), '5')
-    await userEvent.selectOptions(screen.getByLabelText(/^Content rule/), 'denylist')
-    await userEvent.click(screen.getByRole('checkbox', { name: /extension contradicts their content/ }))
-    await userEvent.selectOptions(screen.getByLabelText('When content is not accepted'), 'reject')
-    await userEvent.selectOptions(screen.getByLabelText(/^Files that could not be fully assessed/), 'block')
-    await userEvent.selectOptions(screen.getByLabelText(/^Archive handling/), 'inspect')
-    await userEvent.click(screen.getByRole('button', { name: 'Review rules' }))
-    expect(fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(0)
-    const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveTextContent('Files larger than 5.0 MiB are rejected.')
-    expect(dialog).toHaveTextContent('Not accepted: executable, script.')
-    expect(dialog).toHaveTextContent('Files that could not be fully assessed are blocked.')
-    expect(dialog).toHaveTextContent('Archives are opened and checked')
-    await userEvent.click(screen.getByRole('button', { name: 'Save file rules' }))
-    await screen.findByText('File rules saved.')
-    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')
-    expect(writes).toHaveLength(1)
-    expect(writes[0][0]).toBe('/api/ui/v1/service-clients/3/profiles/7/policy')
-    expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ expected_revision: 4, policy: {
-      max_file_bytes: 5242880, type_rule: { mode: 'denylist', families: ['executable', 'script'] },
-      block_masquerade: true, violation_action: 'reject', review_action: 'block', archive_handling: 'inspect' } })
-    expect(writes[0][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
+const writes = (fetcher: ReturnType<typeof mount>, method: string) => fetcher.mock.calls.filter(([, options]) => options?.method === method)
+const reads = (fetcher: ReturnType<typeof mount>) => fetcher.mock.calls.filter(([, options]) => !options?.method || options.method === 'GET')
+
+describe('Profile rules', () => {
+  it('lists the rules in order with the inconclusive choice and what acts before them', async () => {
+    mount()
+    const section = await screen.findByRole('region', { name: 'Rules for <script>Profile</script>' })
+    const rows = within(section).getAllByRole('row').slice(1)
+    expect(rows.map(row => row.textContent)).toEqual(['1Larger than 500 MBLight check: File Type', '2Every other fileScan: ClamAV'])
+    expect(section).toHaveTextContent('When the result is not conclusive: Block')
+    expect(document.querySelector('script')).toBeNull()
+    expect(screen.getByText(/ICAP gateway on port 1344: files over 50 MiB are blocked; no verdict within 30 s or MASP unreachable: blocked/)).toBeInTheDocument()
   })
-  it('says when a stored policy cannot be read instead of guessing one', async () => {
-    mount(false, false, false, null)
-    expect(await screen.findByText(/The stored rules cannot be read/)).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Edit rules' }))
-    expect(screen.getByText('The stored rules cannot be read. Saving replaces them with the rules below.')).toBeInTheDocument()
-  })
-  it('refuses a rule that would accept nothing or everything, without a request', async () => {
+
+  it('adds a rule above the last one and saves the whole list behind the revision fence', async () => {
     const fetcher = mount()
     await userEvent.click(await screen.findByRole('button', { name: 'Edit rules' }))
-    await userEvent.selectOptions(screen.getByLabelText(/^Content rule/), 'allowlist')
-    for (const box of screen.getAllByRole('checkbox', { checked: true })) await userEvent.click(box)
+    await userEvent.click(screen.getByRole('button', { name: 'Add rule' }))
+    const added = screen.getByRole('listitem', { name: 'Rule 2' })
+    await userEvent.click(within(added).getByRole('checkbox', { name: 'Programs' }))
+    await userEvent.selectOptions(within(added).getByRole('combobox', { name: 'Action' }), 'block')
+    // The last rule stays last and keeps matching every other file.
+    expect(within(screen.getByRole('listitem', { name: 'Rule 3' })).getByText('Every other file')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Review rules' }))
-    expect(screen.getByText('Choose at least one content family, or turn the content rule off.')).toBeInTheDocument()
-    await userEvent.type(screen.getByLabelText(/^Largest accepted file/), '0')
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getAllByRole('row').slice(1).map(row => row.textContent)).toEqual(
+      ['1Larger than 500 MBLight check: File Type', '2Type: ProgramsBlock', '3Every other fileScan: ClamAV'])
+    expect(writes(fetcher, 'PUT')).toHaveLength(0)
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save rules' }))
+    await screen.findByText('Rules saved.')
+    const [[url, options]] = writes(fetcher, 'PUT')
+    expect(url).toBe('/api/ui/v1/service-clients/3/profiles/7/policy')
+    expect(options?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
+    const body = JSON.parse(String(options?.body))
+    expect(body.expected_revision).toBe(4)
+    expect(body.rules.rules[1]).toEqual({ when: { larger_than_bytes: null, up_to_bytes: null, families: ['executable'], masquerade: false },
+      action: 'block', engines: [], archive: null })
+    expect(body.rules.inconclusive).toBe('block')
+    // One fresh read after the save, never a second write.
+    expect(reads(fetcher)).toHaveLength(2)
+  })
+
+  it('moves rules, and offers only the engines that fit each action', async () => {
+    const fetcher = mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit rules' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Add rule' }))
+    const added = screen.getByRole('listitem', { name: 'Rule 2' })
+    await userEvent.type(within(added).getByLabelText('Up to (MB)'), '5')
+    await userEvent.selectOptions(within(added).getByRole('combobox', { name: 'Action' }), 'light')
+    // A light check offers only checks; paid reputation services never appear.
+    const engines = within(within(added).getByRole('group', { name: 'Engines' })).getAllByRole('checkbox')
+    expect(engines.map(box => box.parentElement?.textContent)).toEqual(['File Type'])
+    await userEvent.click(engines[0])
+    await userEvent.click(screen.getByRole('button', { name: 'Move rule 2 up' }))
     await userEvent.click(screen.getByRole('button', { name: 'Review rules' }))
-    expect(screen.getByText('Enter a size in MiB greater than zero, or leave it blank.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Save rules' }))
+    await screen.findByText('Rules saved.')
+    const body = JSON.parse(String(writes(fetcher, 'PUT')[0][1]?.body))
+    expect(body.rules.rules.map((rule: { action: string }) => rule.action)).toEqual(['light', 'light', 'scan'])
+    expect(body.rules.rules[0].when.up_to_bytes).toBe(5 * MB)
+  })
+
+  it('refuses incomplete rules in the browser without a request', async () => {
+    const fetcher = mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit rules' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Add rule' }))
+    const added = screen.getByRole('listitem', { name: 'Rule 2' })
+    await userEvent.selectOptions(within(added).getByRole('combobox', { name: 'Action' }), 'block')
+    await userEvent.click(screen.getByRole('button', { name: 'Review rules' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Rule 2: give it a condition; only the last rule matches every file.')
+    await userEvent.click(within(added).getByRole('checkbox', { name: 'Scripts' }))
+    await userEvent.selectOptions(within(added).getByRole('combobox', { name: 'Action' }), 'scan')
+    await userEvent.click(screen.getByRole('button', { name: 'Review rules' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Rule 2: choose at least one engine.')
+    await userEvent.click(within(added).getByRole('checkbox', { name: 'File Type' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Review rules' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Rule 2: Scan needs at least one antivirus')
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
-  it('offers archive handling alone and asks what refused archives do', async () => {
-    const fetcher = mount()
-    await userEvent.click(await screen.findByRole('button', { name: 'Edit rules' }))
-    expect(screen.queryByLabelText('When content is not accepted')).toBeNull()
-    await userEvent.selectOptions(screen.getByLabelText(/^Archive handling/), 'scan_members')
-    expect(screen.getByLabelText('When content is not accepted')).toBeInTheDocument()
+
+  it('says when stored rules cannot be read and starts the editor empty', async () => {
+    mount({ rules: null })
+    expect(await screen.findByText(/This profile has no readable rules/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Edit rules' }))
+    expect(screen.getByText(/Saving replaces whatever is stored/)).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem')).toHaveLength(1)
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Action' }), 'block')
     await userEvent.click(screen.getByRole('button', { name: 'Review rules' }))
-    expect(screen.getByRole('dialog')).toHaveTextContent('Every file inside an archive is scanned; an archive is allowed only when all of them are.')
-    await userEvent.click(screen.getByRole('button', { name: 'Save file rules' }))
-    await screen.findByText('File rules saved.')
-    const write = fetcher.mock.calls.find(([, options]) => options?.method === 'PUT')
-    expect(JSON.parse(String(write?.[1]?.body)).policy).toEqual({ ...INHERIT, archive_handling: 'scan_members' })
+    expect(screen.getByText('Choose what happens when the result is not conclusive.')).toHaveAttribute('role', 'alert')
+  })
+
+  it('requires reconciliation after a stale or uncertain write, without replay', async () => {
+    const fetcher = mount({ fail: true })
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit rules' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Review rules' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save rules' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Profile changed')
+    expect(screen.queryByRole('button', { name: 'Edit rules' })).toBeNull()
+    expect(writes(fetcher, 'PUT')).toHaveLength(1)
+    expect(reads(fetcher)).toHaveLength(1)
   })
 })
 
-describe('What happens to files', () => {
-  it('shows running and left-out engines and marks ICAP answers nobody reported as unknown', async () => {
-    mount(false, false, false, INHERIT, OUTCOME)
-    const section = await screen.findByRole('region', { name: 'What happens to files under <script>Profile</script>' })
-    expect(section).toHaveTextContent('Scanned by One.')
-    expect(section).toHaveTextContent('Lookup is left out: Paid reputation service.')
-    expect(section).toHaveTextContent('No ICAP gateway reports for this client')
-    const cell = within(section).getByText('Unknown: no ICAP gateway reports for this client.')
-    expect(cell).toHaveClass('outcome-unknown')
-    expect(within(section).getByRole('columnheader', { name: 'ICAP gateway' })).toBeInTheDocument()
-    // The reason is shown where the engine is chosen, too.
-    expect(screen.getByRole('checkbox', { name: /Two.*not used for API or ICAP files: Engine instance is disabled/ })).toBeInTheDocument()
-  })
-  it('leaves the ICAP column out for a profile the gateway never uses', async () => {
-    mount(false, false, false, INHERIT, { ...OUTCOME, icap: 'not_default' })
-    const section = await screen.findByRole('region', { name: /What happens to files/ })
-    expect(within(section).queryByRole('columnheader', { name: /ICAP/ })).toBeNull()
-    expect(section).toHaveTextContent('only the API column applies here')
-  })
-})
-
-describe('Profile engines', () => {
-  it('confirms explicit instance IDs and sends the previous selection as a fence', async () => {
-    const fetcher = mount()
-    await userEvent.click(await screen.findByRole('checkbox', { name: /Two/ }))
-    expect(document.querySelector('script')).toBeNull()
-    await userEvent.click(screen.getByRole('button', { name: 'Review engine changes' }))
-    expect(screen.getByRole('dialog')).toHaveTextContent('Adds: Two.')
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(fetcher).toHaveBeenCalledTimes(1)
-    await userEvent.click(screen.getByRole('button', { name: 'Review engine changes' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Save engines' }))
-    await screen.findByText('Engines saved.')
-    // A successful write is followed by one fresh read, never by a second write.
-    expect(fetcher.mock.calls.filter(([, options]) => !options?.method || options.method === 'GET')).toHaveLength(2)
-    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')
-    expect(writes).toHaveLength(1)
-    expect(writes[0][0]).toBe('/api/ui/v1/service-clients/3/profiles/7/engines')
-    expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ engine_ids: [1, 2], expected_engine_ids: [1], expected_revision: 4 })
-    expect(writes[0][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
-  })
-  it('blocks edits from an incomplete engine inventory', async () => {
-    mount(true)
-    expect(await screen.findByRole('checkbox', { name: /One/ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Review engine changes' })).toBeDisabled()
-  })
-  it('requires reconciliation after stale or uncertain writes without replay', async () => {
-    const fetcher = mount(false, true)
-    await userEvent.click(await screen.findByRole('checkbox', { name: /Two/ }))
-    await userEvent.click(screen.getByRole('button', { name: 'Review engine changes' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Save engines' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Routing changed')
-    expect(screen.queryByRole('checkbox')).toBeNull()
-    expect(fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(1)
-  })
-  it('creates a named profile only after an explicit engine selection and confirmation', async () => {
+describe('Profile management', () => {
+  it('creates a profile only with chosen engines and an explicit inconclusive choice', async () => {
     const fetcher = mount()
     await userEvent.click(await screen.findByRole('button', { name: 'Add profile' }))
     await userEvent.type(screen.getByLabelText('Profile name'), 'Fast')
+    expect(screen.queryByRole('checkbox', { name: 'VirusTotal' })).toBeNull()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'ClamAV' }))
+    await userEvent.selectOptions(screen.getByLabelText('When the result is not conclusive'), 'allow')
     await userEvent.click(screen.getByRole('button', { name: 'Review profile' }))
-    expect(screen.getByRole('button', { name: 'Confirm profile change' })).toBeDisabled()
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    await userEvent.click(screen.getAllByRole('checkbox', { name: /One/ })[0])
-    await userEvent.click(screen.getByRole('button', { name: 'Review profile' }))
+    expect(screen.getByRole('dialog')).toHaveTextContent('Its one rule sends every file to ClamAV; an inconclusive result is allowed and labelled.')
     await userEvent.click(screen.getByRole('button', { name: 'Confirm profile change' }))
     await screen.findByText('Profile created.')
-    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'POST')
-    expect(writes).toHaveLength(1)
-    expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ name: 'Fast', engine_ids: [1] })
-    expect(await screen.findByRole('button', { name: 'Rename or disable' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Add profile' })).toBeEnabled()
+    const [[, options]] = writes(fetcher, 'POST')
+    expect(JSON.parse(String(options?.body))).toEqual({ name: 'Fast', engine_ids: [1], inconclusive: 'allow' })
   })
   it('protects the default profile from disable and delete', async () => {
     mount()
@@ -172,18 +160,18 @@ describe('Profile engines', () => {
     expect(screen.getByLabelText('Profile state')).toBeDisabled()
   })
   it.each(['default', 'delete'] as const)('confirms a %s operation with the displayed revision', async kind => {
-    const fetcher = mount(false, false, true)
+    const fetcher = mount({ named: true })
     await userEvent.click(await screen.findByRole('button', { name: kind === 'default' ? 'Make default' : 'Delete profile' }))
     await userEvent.click(screen.getByRole('button', { name: 'Confirm profile change' }))
     await screen.findByText(kind === 'default' ? 'Default profile changed.' : 'Profile deleted.')
-    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === (kind === 'default' ? 'PUT' : 'DELETE'))
-    expect(writes).toHaveLength(1)
-    expect(writes[0][0]).toBe('/api/ui/v1/service-clients/3/profiles/7' + (kind === 'default' ? '/default' : ''))
-    expect(JSON.parse(String(writes[0][1]?.body))).toEqual(kind === 'default'
+    const sent = writes(fetcher, kind === 'default' ? 'PUT' : 'DELETE')
+    expect(sent).toHaveLength(1)
+    expect(sent[0][0]).toBe('/api/ui/v1/service-clients/3/profiles/7' + (kind === 'default' ? '/default' : ''))
+    expect(JSON.parse(String(sent[0][1]?.body))).toEqual(kind === 'default'
       ? { expected_revision: 4, expected_default_profile_id: 6 } : { expected_revision: 4 })
   })
   it('renames and disables a named profile with its revision', async () => {
-    const fetcher = mount(false, false, true)
+    const fetcher = mount({ named: true })
     await userEvent.click(await screen.findByRole('button', { name: 'Rename or disable' }))
     await userEvent.clear(screen.getByLabelText('Profile name'))
     await userEvent.type(screen.getByLabelText('Profile name'), 'Renamed')
@@ -191,7 +179,6 @@ describe('Profile engines', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Review profile' }))
     await userEvent.click(screen.getByRole('button', { name: 'Confirm profile change' }))
     await screen.findByText('Profile saved.')
-    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')
-    expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ name: 'Renamed', enabled: false, expected_revision: 4 })
+    expect(JSON.parse(String(writes(fetcher, 'PUT')[0][1]?.body))).toEqual({ name: 'Renamed', enabled: false, expected_revision: 4 })
   })
 })

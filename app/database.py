@@ -330,8 +330,85 @@ def is_missing_users_table(exc: sqlite3.OperationalError) -> bool:
 def init_db() -> None:
     if using_postgres():
         init_postgres_db()
-        return
-    init_sqlite_db()
+    else:
+        init_sqlite_db()
+    convert_profiles_to_rules()
+
+
+def convert_profiles_to_rules() -> int:
+    """Rewrite each integration profile still in the previous policy format as rules.
+
+    Idempotent and safe to run from every process at startup: a profile already
+    in the rules format is skipped, and each rewrite is a compare-and-set on the
+    stored policy, so a concurrent conversion or an admin edit is never
+    overwritten. The managed legacy-default client keeps the previous format:
+    its engines follow the deployment. A policy that cannot be read is left as
+    it is; its scans keep withholding an allow until an admin saves rules.
+    See docs/architecture/PROFILE_RULES.md for how settings map to rules.
+    """
+    from app.icap.activity import SETTING_PREFIX as ICAP_SETTING_PREFIX
+    from app.services import profile_rules
+    from app.services.engine_registry import adapter_definition
+    from app.services.profile_policy import parse_profile_policy
+
+    converted = 0
+    with connect() as connection:
+        profiles = connection.execute(
+            """SELECT p.id, p.service_client_id, p.policy_json, c.client_key FROM scan_profiles p
+               JOIN service_clients c ON c.id = p.service_client_id
+               WHERE p.deleted_at IS NULL AND c.client_key != 'legacy-default' ORDER BY p.id"""
+        ).fetchall()
+        for profile in profiles:
+            raw = str(row_value(profile, "policy_json") or "")
+            if profile_rules.is_rules_policy(raw):
+                continue
+            try:
+                previous = parse_profile_policy(raw)
+            except (ValueError, TypeError):
+                continue
+            engines = connection.execute(
+                """SELECT e.id, e.adapter_key FROM scan_profile_engines pe
+                   JOIN engine_instances e ON e.id = pe.engine_instance_id
+                   WHERE pe.scan_profile_id = ? ORDER BY e.id""",
+                (row_value(profile, "id"),),
+            ).fetchall()
+            detection = set()
+            for engine in engines:
+                try:
+                    if adapter_definition(str(row_value(engine, "adapter_key"))).detection:
+                        detection.add(int(row_value(engine, "id")))
+                except KeyError:
+                    continue
+            client_key = str(row_value(profile, "client_key"))
+            client_id = row_value(profile, "service_client_id")
+            gateways = []
+            for row in connection.execute("SELECT key, value FROM app_settings WHERE key LIKE ?",
+                                          (ICAP_SETTING_PREFIX + "%",)).fetchall():
+                try:
+                    record = json.loads(str(row_value(row, "value")))
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(record, dict) and str(record.get("client_key", "")).lower() == client_key.lower():
+                    gateways.append(record)
+            icap_scan = connection.execute(
+                "SELECT 1 FROM scan_jobs WHERE service_client_id = ? AND source = 'icap' LIMIT 1", (client_id,)
+            ).fetchone()
+            try:
+                rules = profile_rules.from_previous_policy(
+                    previous, [int(row_value(engine, "id")) for engine in engines],
+                    detection_engine_ids=detection,
+                    receives_icap=bool(gateways) or icap_scan is not None,
+                    gateway_blocks_review=any(bool(record.get("block_on_review")) for record in gateways),
+                )
+            except ValueError:
+                continue
+            cursor = connection.execute(
+                """UPDATE scan_profiles SET policy_json = ?, management_revision = management_revision + 1,
+                   updated_at = CURRENT_TIMESTAMP WHERE id = ? AND policy_json = ?""",
+                (profile_rules.rules_policy_json(rules), row_value(profile, "id"), raw),
+            )
+            converted += int(cursor.rowcount)
+    return converted
 
 
 def init_sqlite_db() -> None:
@@ -619,6 +696,9 @@ def init_sqlite_db() -> None:
         ensure_column(connection, "scan_jobs", "unavailable_engines", "INTEGER")
         # Why intake refused the file (profile_policy.NOT_ALLOWED code); NULL when allowed.
         ensure_column(connection, "scan_jobs", "not_allowed", "TEXT")
+        # The action of the profile rule the file matched (profile_rules); NULL
+        # for scans accepted under the previous policy format or without a profile.
+        ensure_column(connection, "scan_jobs", "rule_action", "TEXT")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
@@ -1067,6 +1147,9 @@ def init_postgres_db() -> None:
         ensure_column(connection, "scan_jobs", "unavailable_engines", "INTEGER")
         # Why intake refused the file (profile_policy.NOT_ALLOWED code); NULL when allowed.
         ensure_column(connection, "scan_jobs", "not_allowed", "TEXT")
+        # The action of the profile rule the file matched (profile_rules); NULL
+        # for scans accepted under the previous policy format or without a profile.
+        ensure_column(connection, "scan_jobs", "rule_action", "TEXT")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
@@ -2232,6 +2315,7 @@ def create_service_client_bundle(
     credential_label: str,
     token_hash: str,
     token_prefix: str,
+    policy_json: str = "{}",
 ) -> tuple[int, int, int]:
     """Create a client, default profile, engine set and credential atomically."""
     unique_engine_ids = sorted(set(engine_instance_ids))
@@ -2258,10 +2342,10 @@ def create_service_client_bundle(
             f"""
             INSERT INTO scan_profiles (
                 service_client_id, name, enabled, is_default, policy_json, updated_at
-            ) VALUES (?, ?, ?, ?, '{{}}', CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             {returning_id_clause()}
             """,
-            (client_id, profile_name, db_bool(True), db_bool(True)),
+            (client_id, profile_name, db_bool(True), db_bool(True), policy_json),
         )
         profile_id = require_lastrowid(profile_cursor)
         for engine_id in unique_engine_ids:
@@ -3059,6 +3143,7 @@ def complete_deferred_scan_intake(
     profile_snapshot_json: str | None = None,
     archive_mode: str | None = None,
     not_allowed: str | None = None,
+    rule_action: str | None = None,
 ) -> int | None:
     """Atomically create the scan and fence-link it to its deferred request.
 
@@ -3068,8 +3153,7 @@ def complete_deferred_scan_intake(
     likewise replaces the requested mode on the batch only (a profile's
     scan_members policy), never on the request.
     """
-    if not engines:
-        raise ValueError("Deferred intake requires at least one engine.")
+    settled = _intake_status(engines, rule_action)
     with connect() as connection:
         if not using_postgres():
             connection.execute("BEGIN IMMEDIATE")
@@ -3125,6 +3209,8 @@ def complete_deferred_scan_intake(
             scan_profile_id=request.scan_profile_id,
             profile_snapshot_json=snapshot,
             not_allowed=not_allowed,
+            rule_action=rule_action,
+            **settled,
         )
         _insert_engine_jobs(connection, scan_id, engines)
         cursor = connection.execute(
@@ -3140,6 +3226,9 @@ def complete_deferred_scan_intake(
         )
         if int(cursor.rowcount) <= 0:
             raise RuntimeError("Deferred intake ownership was lost during commit.")
+        if settled:
+            # Linked first, so the request settles with its scan in this transaction.
+            _settle_scan_outcome(connection, scan_id, "info", None, failed=False)
         return scan_id
 
 
@@ -4367,6 +4456,7 @@ def _insert_scan_job(
     scan_profile_id: int | None = None,
     profile_snapshot_json: str = "{}",
     not_allowed: str | None = None,
+    rule_action: str | None = None,
 ) -> int:
     cursor = connection.execute(
         f"""
@@ -4388,11 +4478,12 @@ def _insert_scan_job(
             scan_profile_id,
             profile_snapshot_json,
             not_allowed,
+            rule_action,
             started_at,
             completed_at
         )
         VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
             CASE
                 WHEN ? IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
                 ELSE NULL
@@ -4418,10 +4509,27 @@ def _insert_scan_job(
             scan_profile_id,
             profile_snapshot_json,
             not_allowed,
+            rule_action,
             status,
         ),
     )
     return require_lastrowid(cursor)
+
+
+# A profile rule that blocks or allows without scanning runs no engine: its scan
+# is complete when it is accepted, with no risk recorded.
+RULE_ACTIONS_WITHOUT_ENGINES = ("allow", "block")
+
+
+def _intake_status(engines: list, rule_action: str | None) -> dict[str, object]:
+    """Insert arguments for a new scan: queued, or complete at intake for a rule without engines."""
+    if rule_action in RULE_ACTIONS_WITHOUT_ENGINES:
+        if engines:
+            raise ValueError(f"A {rule_action} rule runs no engine.")
+        return {"status": "completed", "verdict": "info", "risk_score": None}
+    if not engines:
+        raise ValueError("Scan intake requires at least one enabled engine.")
+    return {}
 
 
 def create_scan_job(
@@ -4924,17 +5032,19 @@ def create_scan_intake(
     scan_profile_id: int | None = None,
     profile_snapshot_json: str = "{}",
     not_allowed: str | None = None,
+    rule_action: str | None = None,
 ) -> int:
     """Atomically create the sample, optional archive batch, scan job, and its
     engine jobs in ONE transaction. Either the whole scan is persisted or nothing
     is — no orphaned sample rows or engine-jobless scans stuck queued forever.
 
     The caller must pass a non-empty ``engines`` list; every engine yields an
-    engine job in the same transaction. The stored sample FILE is created before
-    this call, so the caller compensates (deletes it) if this raises.
+    engine job in the same transaction. The one exception is a profile rule that
+    blocks or allows without scanning: no engines, and the scan is completed in
+    the same transaction. The stored sample FILE is created before this call, so
+    the caller compensates (deletes it) if this raises.
     """
-    if not engines:
-        raise ValueError("create_scan_intake requires at least one enabled engine")
+    settled = _intake_status(engines, rule_action)
     with connect() as connection:
         sample_id = _insert_sample(connection, sample)
         batch_id: int | None = None
@@ -4975,8 +5085,12 @@ def create_scan_intake(
             scan_profile_id=scan_profile_id,
             profile_snapshot_json=profile_snapshot_json,
             not_allowed=not_allowed,
+            rule_action=rule_action,
+            **settled,
         )
         _insert_engine_jobs(connection, scan_id, engines)
+        if settled:
+            _settle_scan_outcome(connection, scan_id, "info", None, failed=False)
     return scan_id
 
 
@@ -5012,6 +5126,8 @@ def create_archive_child(
     service_client_id: int | None = None,
     scan_profile_id: int | None = None,
     profile_snapshot_json: str = "{}",
+    not_allowed: str | None = None,
+    rule_action: str | None = None,
 ) -> int | None:
     """Atomically register one archive member as a child scan, idempotent by its
     ordinal within the parent, and fenced to the parent's finalizer.
@@ -5024,6 +5140,8 @@ def create_archive_child(
     already registered, and raises :class:`StaleFinalizerError` if the caller is
     no longer the parent's finalizer.
     """
+    # A member's own profile rule may block it or allow it without scanning.
+    settled = _intake_status(engines, rule_action)
     try:
         with connect() as connection:
             if not using_postgres():
@@ -5076,8 +5194,13 @@ def create_archive_child(
                 service_client_id=service_client_id,
                 scan_profile_id=scan_profile_id,
                 profile_snapshot_json=profile_snapshot_json,
+                not_allowed=not_allowed,
+                rule_action=rule_action,
+                **settled,
             )
             _insert_engine_jobs(connection, child_id, engines)
+            if settled:
+                _settle_scan_outcome(connection, child_id, "info", None, failed=False)
             return child_id
     except IntegrityViolation:
         # The exception propagated OUT of the transaction, so the whole

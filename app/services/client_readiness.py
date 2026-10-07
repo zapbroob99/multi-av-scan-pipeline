@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from app import database as db
 from app.services.browser_db_budget import apply_read_budget
-from app.services.profile_outcome import engine_eligibility
+from app.services.profile_rules import engine_eligibility
 from app.icap.activity import SETTING_PREFIX as ICAP_SETTING_PREFIX
 from app.services.deferred_storage import backend_allowed_for_client
 from app.services.health_read import ICAP_FORGOTTEN_SECONDS, ICAP_STALE_SECONDS, age_text, icap_gateways

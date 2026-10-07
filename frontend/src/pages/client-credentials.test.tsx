@@ -27,6 +27,7 @@ describe('Client credential workflows', () => {
     await userEvent.type(screen.getByLabelText('Display name'), 'New client')
     await userEvent.type(screen.getByLabelText('Default profile name'), 'Default')
     await userEvent.click(screen.getByLabelText(/Engine/))
+    await userEvent.selectOptions(screen.getByLabelText('When the result is not conclusive'), 'block')
     await userEvent.type(screen.getByLabelText('Credential label'), 'Initial')
     await userEvent.type(screen.getByLabelText('API token'), token)
     await userEvent.click(screen.getByRole('button', { name: 'Review client creation' }))
@@ -38,7 +39,7 @@ describe('Client credential workflows', () => {
     expect(client.getMutationCache().getAll()).toHaveLength(0)
     expect(JSON.stringify(client.getQueryData(['client-create-options']))).not.toContain(token)
     const write = fetcher.mock.calls.find(([, o]) => o?.method === 'POST')!
-    expect(JSON.parse(String(write[1]?.body))).toMatchObject({ api_token: token, engine_ids: [7] })
+    expect(JSON.parse(String(write[1]?.body))).toMatchObject({ api_token: token, engine_ids: [7], inconclusive: 'block' })
     expect(write[1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
   })
   it('clears secret on cancellation and uncertain failure, without replay', async () => {

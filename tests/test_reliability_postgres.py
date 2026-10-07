@@ -222,7 +222,8 @@ class ReliabilityPostgresTests(unittest.TestCase):
         db = self.database
         engine = db.create_engine_instance('static_metadata', 'Credential engine')
         body = service.ClientCreateBody(client_key='credential-test', display_name='Client',
-            profile_name='Default', engine_ids=[engine], credential_label='Initial', api_token='x' * 32)
+            profile_name='Default', engine_ids=[engine], credential_label='Initial', api_token='x' * 32,
+            inconclusive='block')
         created = service.create_client(body)
         with self.assertRaises(HTTPException) as duplicate:
             service.create_client(body.model_copy(update={'client_key': 'rollback-test'}))

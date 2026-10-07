@@ -98,10 +98,13 @@ from app.services.worker_scheduling import (
 )
 from app.services.service_clients import (
     engines_for_scan as profile_engines_for_scan,
+    engines_for_snapshot_json,
     is_security_event_deferred_scan,
     seed_legacy_service_client,
 )
 from app.services.worker_health import run_due_worker_health_checks
+from app.services import profile_rules
+from app.services.profile_policy import not_allowed_code, route_member
 
 
 POLL_INTERVAL_SECONDS = float(os.getenv("MASP_WORKER_POLL_SECONDS", "2"))
@@ -990,6 +993,18 @@ def maybe_enqueue_lazy_archive_children(
         # mutate the DB (raises StaleFinalizerError, handled by the caller).
         child_scope: dict[str, object] = {}
         snapshot = getattr(scan, "profile_snapshot_json", "{}") or "{}"
+        child_engines, child_rule = engines, {}
+        # Under profile rules a member takes its own rule by its own size and type.
+        member_snapshot = route_member(snapshot, filename=child_sample.original_filename,
+                                       size=child_sample.size_bytes, storage_path=str(final_path))
+        if member_snapshot is not None:
+            snapshot = member_snapshot
+            child_engines, action = profile_rules.narrow(
+                engines_for_snapshot_json(member_snapshot, source=scan.source), member_snapshot)
+            if action in ("scan", "light") and not child_engines:
+                snapshot = profile_rules.without_engines(member_snapshot)
+                action = "block"
+            child_rule = {"rule_action": action, "not_allowed": not_allowed_code(snapshot)}
         if (
             getattr(scan, "service_client_id", None) is not None
             or getattr(scan, "scan_profile_id", None) is not None
@@ -1006,7 +1021,7 @@ def maybe_enqueue_lazy_archive_children(
             parent_finalize_generation=finalize_generation,
             batch_id=batch.id,
             sample=child_sample,
-            engines=engines,
+            engines=child_engines,
             case_name=scan.case_name,
             priority=scan.priority,
             note=scan.note,
@@ -1014,6 +1029,7 @@ def maybe_enqueue_lazy_archive_children(
             relative_path=f"{relative_prefix}{member.relative_path}",
             member_ordinal=member_ordinal,
             **child_scope,
+            **child_rule,
         )
         if child_scan_id is not None:
             created_children += 1

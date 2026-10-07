@@ -2005,7 +2005,7 @@ knowledge of MASP's internals. Round one changes wording, controls and save flow
 no decision, routing or policy semantics changed.
 
 - Names: the Administration screen is "System limits & notifications" (route unchanged);
-  the client tab is "Scan profiles", each profile showing its "File rules" and "Engines".
+  the client tab is "Scan profiles" (each profile now shows its rule list).
   Two different things were both called "Scan policy" before.
 - Controls follow the value: `PolicySpec.control` (`number`, `size`, `switch`) makes the
   upload cap a MiB field and the SIEM setting an On/Off/Not set here choice. A blank
@@ -2026,12 +2026,16 @@ no decision, routing or policy semantics changed.
   "Connected" (nothing tests reachability). Folder scanning's full tier is marked
   "not available yet" and cannot be newly chosen; archives held for it say so.
 
-Round two: every profile card carries "What happens to files", a server-built table
-(`ProfileSummary.outcome`, `app/services/profile_outcome.py`) with the engines that scan the
-files, those left out and why, and one row per situation (large files, file types, archives, an
-engine fails, no verdict in time) for the API and, on the default profile, the ICAP gateway.
-React renders the sentences and calculates nothing. Cells the server marks `icap_known: false`
-are shown in the warning colour; a named profile has no ICAP column. Engine choices carry
-`excluded_reason`, shown next to the checkbox. The ICAP and SIEM screen shows the gateway's
-reported archive, size and wait settings ("Not reported by this gateway version" for older
-records). On a phone the table stacks one situation per block.
+Round two (a "what happens" table per profile) was replaced the same day by profile
+rules (`docs/architecture/PROFILE_RULES.md`): the product owner wanted the policy itself to
+be simple rather than explained. The profile card shows the numbered rule list (When / Do)
+and the inconclusive choice; "Edit rules" opens an ordered editor that replaces the card
+(add above the last rule, move, remove; conditions size range in MB, types, disguised
+extension; action and the engines that fit it; archive treatment for a Scan rule that can
+match archives). Only engines that run for API/ICAP files are offered, and a light check
+offers only non-detection checks. React validates the obvious mistakes and the server
+validates everything again. Above the cards, the settings that act before any rule (server
+upload limit, each bound gateway's size limit, wait and fail mode) are shown read-only. The
+ledger and report add Light check only and Not scanned badges (`rule_action`). Creating a
+profile or a client asks for its engines and the inconclusive choice and starts with one
+rule.

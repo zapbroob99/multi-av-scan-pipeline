@@ -738,11 +738,11 @@ def default_browser_profile(request: Request, body: profile_admin.ProfileDefault
 
 
 @router.put('/service-clients/{client_id}/profiles/{profile_id}/policy', status_code=204)
-def policy_browser_profile(request: Request, body: profile_admin.ProfilePolicyBody,
+def policy_browser_profile(request: Request, body: profile_admin.ProfileRulesBody,
                            client_id: int = Path(ge=1, le=9007199254740991), profile_id: int = Path(ge=1, le=9007199254740991)):
     set_audit_context(request, action='scan_profile.policy_update', target_type='scan_profile', target_id=profile_id, actor=request.state.ui_user)
-    profile_admin.save_policy(client_id, profile_id, body)
-    set_audit_context(request, details={'client_id': client_id, 'policy': body.policy.model_dump(mode='json')})
+    profile_admin.save_rules(client_id, profile_id, body)
+    set_audit_context(request, details={'client_id': client_id, 'rules': body.rules.model_dump(mode='json')})
     return Response(status_code=204)
 
 

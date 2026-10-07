@@ -91,7 +91,9 @@ def main():
             connection.execute("UPDATE scan_jobs SET created_at = '2000-01-01 00:00:00' WHERE id = ?", (expired,))
         client = db.create_service_client('console-client', 'Acceptance integration')
         metadata = next(engine for engine in db.list_engine_instances() if engine.adapter_key == 'static_metadata')
-        db.create_scan_profile(client, 'Acceptance routing', engine_instance_ids=[metadata.id], is_default=True)
+        # A rule profile, as the console creates one: every file gets the metadata check.
+        db.create_scan_profile(client, 'Acceptance routing', engine_instance_ids=[metadata.id], is_default=True,
+            policy_json=json.dumps({'version': 2, 'inconclusive': 'block', 'rules': [{'action': 'light', 'engines': [metadata.id]}]}))
         # Synthetic roots only: browser storage administration must never probe,
         # create or expose these locations.
         os.environ['MASP_DEFERRED_STORAGE_BACKENDS_JSON'] = json.dumps({

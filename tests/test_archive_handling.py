@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
+import app.main  # noqa: F401  (startup runs once here, not in the middle of a test)
 from app import database as db
 from app.icap.config import IcapConfig
 from app.models import EngineResultInput, StoredSample
@@ -21,7 +22,7 @@ from app.services import profile_admin as admin
 from app.services.decisions import ScanDecision
 from app.services.ingest import store_bytes
 from app.services.profile_policy import (
-    PolicyRejectedError, apply_intake_policy, parse_profile_policy, scans_every_member,
+    PolicyRejectedError, apply_intake_policy, parse_profile_policy, profile_policy_json, scans_every_member,
 )
 from app.services.scoring import RiskAssessment
 from app.services.service_clients import (
@@ -255,10 +256,11 @@ class ArchiveHandlingIntegrationTests(_Storage):
         db.DB_PATH, db.DATABASE_URL, db.DB_POOL_ENABLED = self.original
 
     def set_policy(self, policy):
-        revision = next(item for item in admin.page(self.client, None).items
-                        if item.id == self.profile).management_revision
-        admin.save_policy(self.client, self.profile, admin.ProfilePolicyBody(
-            expected_revision=revision, policy=parse_profile_policy(policy)))
+        # A profile written before rules, as an upgrade finds it; scans keep this logic.
+        with db.connect() as connection:
+            connection.execute("""UPDATE scan_profiles SET policy_json = ?,
+                management_revision = management_revision + 1 WHERE id = ?""",
+                (profile_policy_json(parse_profile_policy(policy)), self.profile))
 
     def enqueue(self, content: bytes, filename: str = "bundle.zip", source: str = "icap"):
         from app.services.scan_intake import enqueue_scan_from_stored_sample

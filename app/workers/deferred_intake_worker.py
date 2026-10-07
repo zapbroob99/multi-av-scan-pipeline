@@ -26,6 +26,7 @@ from app.services.deferred_storage import (
 )
 from app.services.profile_policy import PolicyRejectedError, apply_intake_policy, not_allowed_code
 from app.services.scan_intake import effective_archive_mode
+from app.services import profile_rules
 from app.services.service_clients import engines_for_snapshot_json
 
 
@@ -91,7 +92,11 @@ def process_next() -> bool:
             except PolicyRejectedError as exc:
                 # Retrying cannot change the content, so this is final.
                 raise DeferredSourcePermanentError(f"Rejected by the client's profile policy: {exc.reason}") from exc
-            archive_format = detect_archive_format(stored.storage_path)
+            engines, rule_action = profile_rules.narrow(engines, snapshot)
+            if rule_action in ("scan", "light") and not engines:
+                raise DeferredSourceChangedError("None of the matched profile rule's engines is available.")
+            archive_format = (detect_archive_format(stored.storage_path)
+                              if rule_action in (None, "scan") else None)
             scan_id = complete_deferred_scan_intake(
                 submission_id=request.id,
                 worker_id=WORKER_ID,
@@ -102,6 +107,7 @@ def process_next() -> bool:
                 profile_snapshot_json=snapshot,
                 archive_mode=effective_archive_mode(snapshot, request.archive_mode),
                 not_allowed=not_allowed_code(snapshot),
+                rule_action=rule_action,
             )
             if scan_id is None:
                 Path(stored.storage_path).unlink(missing_ok=True)

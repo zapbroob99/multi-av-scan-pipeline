@@ -1138,6 +1138,14 @@
             "title": "Engine Ids",
             "type": "array"
           },
+          "inconclusive": {
+            "enum": [
+              "block",
+              "allow"
+            ],
+            "title": "Inconclusive",
+            "type": "string"
+          },
           "profile_name": {
             "maxLength": 100,
             "minLength": 1,
@@ -1151,7 +1159,8 @@
           "client_key",
           "display_name",
           "profile_name",
-          "engine_ids"
+          "engine_ids",
+          "inconclusive"
         ],
         "title": "ClientCreateBody",
         "type": "object"
@@ -1228,6 +1237,13 @@
             "title": "Engines Incomplete",
             "type": "boolean"
           },
+          "gateways": {
+            "items": {
+              "$ref": "#/components/schemas/GatewayLimits"
+            },
+            "title": "Gateways",
+            "type": "array"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/ProfileSummary"
@@ -1249,6 +1265,11 @@
               }
             ],
             "title": "Next After"
+          },
+          "upload_cap_bytes": {
+            "default": 0,
+            "title": "Upload Cap Bytes",
+            "type": "integer"
           }
         },
         "required": [
@@ -2084,41 +2105,6 @@
         "title": "EngineMetricPage",
         "type": "object"
       },
-      "EngineOutcome": {
-        "properties": {
-          "display_name": {
-            "title": "Display Name",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "runs": {
-            "title": "Runs",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "display_name",
-          "runs",
-          "reason"
-        ],
-        "title": "EngineOutcome",
-        "type": "object"
-      },
       "EnginePayload": {
         "properties": {
           "adapter_key": {
@@ -2408,6 +2394,47 @@
           "findings_json"
         ],
         "title": "FullTechnicalDetails",
+        "type": "object"
+      },
+      "GatewayLimits": {
+        "description": "What an ICAP gateway bound to this client decides before any rule runs.",
+        "properties": {
+          "fail_closed": {
+            "title": "Fail Closed",
+            "type": "boolean"
+          },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Bytes"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "wait_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Seconds"
+          }
+        },
+        "required": [
+          "port",
+          "fail_closed"
+        ],
+        "title": "GatewayLimits",
         "type": "object"
       },
       "HashCheck": {
@@ -3521,6 +3548,17 @@
             ],
             "title": "Risk Score"
           },
+          "rule_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Action"
+          },
           "service_client_id": {
             "anyOf": [
               {
@@ -4381,46 +4419,6 @@
         "title": "ObjectPage",
         "type": "object"
       },
-      "Outcome": {
-        "properties": {
-          "api": {
-            "title": "Api",
-            "type": "string"
-          },
-          "icap": {
-            "title": "Icap",
-            "type": "string"
-          },
-          "icap_known": {
-            "title": "Icap Known",
-            "type": "boolean"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "topic": {
-            "enum": [
-              "size",
-              "content",
-              "archives",
-              "unassessed",
-              "unfinished"
-            ],
-            "title": "Topic",
-            "type": "string"
-          }
-        },
-        "required": [
-          "topic",
-          "label",
-          "api",
-          "icap",
-          "icap_known"
-        ],
-        "title": "Outcome",
-        "type": "object"
-      },
       "PassSummary": {
         "properties": {
           "finished_at": {
@@ -5058,6 +5056,14 @@
             "title": "Engine Ids",
             "type": "array"
           },
+          "inconclusive": {
+            "enum": [
+              "block",
+              "allow"
+            ],
+            "title": "Inconclusive",
+            "type": "string"
+          },
           "name": {
             "maxLength": 100,
             "minLength": 1,
@@ -5067,7 +5073,8 @@
         },
         "required": [
           "name",
-          "engine_ids"
+          "engine_ids",
+          "inconclusive"
         ],
         "title": "ProfileCreateBody",
         "type": "object"
@@ -5121,6 +5128,10 @@
             "title": "Adapter Key",
             "type": "string"
           },
+          "detection": {
+            "title": "Detection",
+            "type": "boolean"
+          },
           "display_name": {
             "title": "Display Name",
             "type": "string"
@@ -5149,7 +5160,8 @@
           "id",
           "display_name",
           "adapter_key",
-          "enabled"
+          "enabled",
+          "detection"
         ],
         "title": "ProfileEngineChoice",
         "type": "object"
@@ -5168,131 +5180,6 @@
           "expected_revision"
         ],
         "title": "ProfileFence",
-        "type": "object"
-      },
-      "ProfileOutcome": {
-        "properties": {
-          "engines": {
-            "items": {
-              "$ref": "#/components/schemas/EngineOutcome"
-            },
-            "title": "Engines",
-            "type": "array"
-          },
-          "icap": {
-            "enum": [
-              "gateway",
-              "no_gateway",
-              "not_default"
-            ],
-            "title": "Icap",
-            "type": "string"
-          },
-          "icap_ports": {
-            "items": {
-              "type": "integer"
-            },
-            "title": "Icap Ports",
-            "type": "array"
-          },
-          "lines": {
-            "items": {
-              "$ref": "#/components/schemas/Outcome"
-            },
-            "title": "Lines",
-            "type": "array"
-          }
-        },
-        "required": [
-          "engines",
-          "icap",
-          "icap_ports",
-          "lines"
-        ],
-        "title": "ProfileOutcome",
-        "type": "object"
-      },
-      "ProfilePolicy": {
-        "additionalProperties": false,
-        "properties": {
-          "archive_handling": {
-            "default": "inherit",
-            "enum": [
-              "inherit",
-              "inspect",
-              "scan_members"
-            ],
-            "title": "Archive Handling",
-            "type": "string"
-          },
-          "block_masquerade": {
-            "default": false,
-            "title": "Block Masquerade",
-            "type": "boolean"
-          },
-          "max_file_bytes": {
-            "anyOf": [
-              {
-                "maximum": 9007199254740991.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max File Bytes"
-          },
-          "review_action": {
-            "default": "inherit",
-            "enum": [
-              "inherit",
-              "block"
-            ],
-            "title": "Review Action",
-            "type": "string"
-          },
-          "type_rule": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/TypeRule"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "violation_action": {
-            "default": "scan_and_block",
-            "enum": [
-              "scan_and_block",
-              "reject"
-            ],
-            "title": "Violation Action",
-            "type": "string"
-          }
-        },
-        "title": "ProfilePolicy",
-        "type": "object"
-      },
-      "ProfilePolicyBody": {
-        "additionalProperties": false,
-        "properties": {
-          "expected_revision": {
-            "maximum": 9007199254740991.0,
-            "minimum": 0.0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
-          "policy": {
-            "$ref": "#/components/schemas/ProfilePolicy"
-          }
-        },
-        "required": [
-          "expected_revision",
-          "policy"
-        ],
-        "title": "ProfilePolicyBody",
         "type": "object"
       },
       "ProfileRoutingBody": {
@@ -5340,6 +5227,26 @@
         "title": "ProfileRoutingBody",
         "type": "object"
       },
+      "ProfileRulesBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/RulesPolicy"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "rules"
+        ],
+        "title": "ProfileRulesBody",
+        "type": "object"
+      },
       "ProfileSummary": {
         "properties": {
           "enabled": {
@@ -5373,28 +5280,18 @@
             "title": "Name",
             "type": "string"
           },
-          "outcome": {
+          "rules": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ProfileOutcome"
+                "$ref": "#/components/schemas/RulesPolicy"
               },
               {
                 "type": "null"
               }
             ]
           },
-          "policy": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProfilePolicy"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "policy_invalid": {
-            "title": "Policy Invalid",
+          "rules_invalid": {
+            "title": "Rules Invalid",
             "type": "boolean"
           }
         },
@@ -5406,8 +5303,8 @@
           "engine_ids",
           "incomplete",
           "management_revision",
-          "policy",
-          "policy_invalid"
+          "rules",
+          "rules_invalid"
         ],
         "title": "ProfileSummary",
         "type": "object"
@@ -5672,6 +5569,53 @@
         "title": "RetryNow",
         "type": "object"
       },
+      "Rule": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "scan",
+              "light",
+              "allow",
+              "block"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "archive": {
+            "anyOf": [
+              {
+                "enum": [
+                  "whole",
+                  "inspect",
+                  "members"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive"
+          },
+          "engines": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "title": "Engines",
+            "type": "array"
+          },
+          "when": {
+            "$ref": "#/components/schemas/RuleWhen"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "Rule",
+        "type": "object"
+      },
       "RuleBody": {
         "additionalProperties": false,
         "properties": {
@@ -5741,6 +5685,53 @@
         "title": "RuleSaved",
         "type": "object"
       },
+      "RuleWhen": {
+        "additionalProperties": false,
+        "description": "All given conditions must match; no condition matches every file.",
+        "properties": {
+          "families": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Families",
+            "type": "array"
+          },
+          "larger_than_bytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Larger Than Bytes"
+          },
+          "masquerade": {
+            "default": false,
+            "title": "Masquerade",
+            "type": "boolean"
+          },
+          "up_to_bytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Up To Bytes"
+          }
+        },
+        "title": "RuleWhen",
+        "type": "object"
+      },
       "RulesPayload": {
         "properties": {
           "rules": {
@@ -5755,6 +5746,40 @@
           "rules"
         ],
         "title": "RulesPayload",
+        "type": "object"
+      },
+      "RulesPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "inconclusive": {
+            "enum": [
+              "block",
+              "allow"
+            ],
+            "title": "Inconclusive",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Rules",
+            "type": "array"
+          },
+          "version": {
+            "const": 2,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "rules",
+          "inconclusive"
+        ],
+        "title": "RulesPolicy",
         "type": "object"
       },
       "ScanAttemptBody": {
@@ -6170,6 +6195,17 @@
               }
             ],
             "title": "Risk Score"
+          },
+          "rule_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Action"
           },
           "service_client_id": {
             "anyOf": [
@@ -7244,34 +7280,6 @@
           }
         },
         "title": "TypePolicy",
-        "type": "object"
-      },
-      "TypeRule": {
-        "additionalProperties": false,
-        "properties": {
-          "families": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 8,
-            "minItems": 1,
-            "title": "Families",
-            "type": "array"
-          },
-          "mode": {
-            "enum": [
-              "allowlist",
-              "denylist"
-            ],
-            "title": "Mode",
-            "type": "string"
-          }
-        },
-        "required": [
-          "mode",
-          "families"
-        ],
-        "title": "TypeRule",
         "type": "object"
       },
       "UpdateUserBody": {
@@ -16573,7 +16581,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProfilePolicyBody"
+                "$ref": "#/components/schemas/ProfileRulesBody"
               }
             }
           },

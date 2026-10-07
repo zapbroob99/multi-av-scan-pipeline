@@ -85,13 +85,25 @@ and preserves historical snapshots. For compatibility, a legacy/custom database
 without a flagged enabled default retains its pre-existing first-enabled-profile
 fallback; the setup screen still reports the missing explicit default.
 
-## Profile scan policy
+## Profile rules
 
-Each profile carries its own scan policy, so every client can have independent
-rules. It is edited per profile under **Service Clients > Scan profiles >
-File rules** (`PUT /api/ui/v1/service-clients/{id}/profiles/{profile_id}/policy`,
-admin and CSRF, fenced by the profile's `management_revision`; the managed
-`legacy-default` client stays read-only).
+Every integration profile is an ordered rule list: a file takes the first rule it
+matches (size range, content type, disguised extension) and the rule says what to do
+(Scan with chosen engines, Light check, Allow without scanning, or Block). The last
+rule matches every other file, and what an inconclusive result becomes is chosen
+explicitly, so nothing is inherited from a server or gateway setting. Rules are edited
+under **Service Clients > Scan profiles > Edit rules** (`PUT
+/api/ui/v1/service-clients/{id}/profiles/{profile_id}/policy` with a `rules` body,
+admin and CSRF, fenced by `management_revision`). See
+`docs/architecture/PROFILE_RULES.md` for the model, decisions and how existing
+profiles were converted.
+
+## Profile scan policy (previous format)
+
+Before profile rules each profile carried the scan policy below. The managed
+`legacy-default` client keeps it (read-only), and scans accepted before the upgrade
+keep the decision it gave them; integration profiles were converted to rules once at
+startup.
 
 | Setting | Empty (default) | Set |
 |---|---|---|
@@ -221,28 +233,6 @@ the default scan-and-block where refused files must be visible. A code written b
 a newer release reads as the generic `policy` entry, never as allowed. Scans
 accepted before this release have no stored code and show their recorded risk
 only.
-
-## What happens to a client's files
-
-Each profile card on the Scan profiles tab answers "what happens when this client sends a
-file?" in one table, API and ICAP side by side: large files, file types, archives, an engine
-failing, and no verdict in time, plus which engines scan the files and which are left out and
-why (disabled, or a paid reputation service that automation never uses). The reason an engine
-is left out is also shown where engines are chosen.
-
-`app/services/profile_outcome.py` builds it from what already exists: the profile's file rules,
-its engines, the server upload limit (System limits & notifications) and the settings each ICAP
-gateway bound to the client reports in its activity record (`fail_closed`, `block_on_review`,
-`block_archives`, `max_bytes`, `wait_seconds`). The function is pure: it decides nothing a scan
-uses, and the wording mirrors intake, `scan_decision` and the gateway. Rules:
-
-- Only the default profile serves ICAP; a named profile shows the API column only.
-- A client without a reporting gateway (silent for a week counts as removed) has no ICAP answer
-  where the gateway decides: those cells read "Unknown", never a guessed default. A gateway
-  from a release before these fields reports fail mode and review only; the rest is unknown.
-- Gateways bound to one client that disagree are listed per port.
-- The gateway size limit follows the fail mode: a fail-open gateway lets larger files through
-  unscanned, and the summary says so. A profile size limit refuses whatever the fail mode.
 
 ## Connecting a client
 

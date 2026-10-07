@@ -1959,6 +1959,11 @@ export interface components {
             display_name: string;
             /** Engine Ids */
             engine_ids: number[];
+            /**
+             * Inconclusive
+             * @enum {string}
+             */
+            inconclusive: "block" | "allow";
             /** Profile Name */
             profile_name: string;
         };
@@ -1988,12 +1993,19 @@ export interface components {
             engines: components["schemas"]["ProfileEngineChoice"][];
             /** Engines Incomplete */
             engines_incomplete: boolean;
+            /** Gateways */
+            gateways?: components["schemas"]["GatewayLimits"][];
             /** Items */
             items: components["schemas"]["ProfileSummary"][];
             /** Managed */
             managed: boolean;
             /** Next After */
             next_after: number | null;
+            /**
+             * Upload Cap Bytes
+             * @default 0
+             */
+            upload_cap_bytes?: number;
         };
         /** ClientReadiness */
         ClientReadiness: {
@@ -2299,17 +2311,6 @@ export interface components {
             /** Next After */
             next_after: number | null;
         };
-        /** EngineOutcome */
-        EngineOutcome: {
-            /** Display Name */
-            display_name: string;
-            /** Id */
-            id: number;
-            /** Reason */
-            reason: string | null;
-            /** Runs */
-            runs: boolean;
-        };
         /** EnginePayload */
         EnginePayload: {
             /** Adapter Key */
@@ -2406,6 +2407,20 @@ export interface components {
             result_id: number;
             /** Scan Id */
             scan_id: number;
+        };
+        /**
+         * GatewayLimits
+         * @description What an ICAP gateway bound to this client decides before any rule runs.
+         */
+        GatewayLimits: {
+            /** Fail Closed */
+            fail_closed: boolean;
+            /** Max Bytes */
+            max_bytes?: number | null;
+            /** Port */
+            port: number;
+            /** Wait Seconds */
+            wait_seconds?: number | null;
         };
         /** HashCheck */
         HashCheck: {
@@ -2764,6 +2779,8 @@ export interface components {
             risk_level: string;
             /** Risk Score */
             risk_score: number | null;
+            /** Rule Action */
+            rule_action?: string | null;
             /** Service Client Id */
             service_client_id: number | null;
             /** Sha256 */
@@ -3041,22 +3058,6 @@ export interface components {
             /** Next Before */
             next_before: number | null;
         };
-        /** Outcome */
-        Outcome: {
-            /** Api */
-            api: string;
-            /** Icap */
-            icap: string;
-            /** Icap Known */
-            icap_known: boolean;
-            /** Label */
-            label: string;
-            /**
-             * Topic
-             * @enum {string}
-             */
-            topic: "size" | "content" | "archives" | "unassessed" | "unfinished";
-        };
         /** PassSummary */
         PassSummary: {
             /** Finished At */
@@ -3269,6 +3270,11 @@ export interface components {
         ProfileCreateBody: {
             /** Engine Ids */
             engine_ids: number[];
+            /**
+             * Inconclusive
+             * @enum {string}
+             */
+            inconclusive: "block" | "allow";
             /** Name */
             name: string;
         };
@@ -3288,6 +3294,8 @@ export interface components {
         ProfileEngineChoice: {
             /** Adapter Key */
             adapter_key: string;
+            /** Detection */
+            detection: boolean;
             /** Display Name */
             display_name: string;
             /** Enabled */
@@ -3302,55 +3310,6 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
         };
-        /** ProfileOutcome */
-        ProfileOutcome: {
-            /** Engines */
-            engines: components["schemas"]["EngineOutcome"][];
-            /**
-             * Icap
-             * @enum {string}
-             */
-            icap: "gateway" | "no_gateway" | "not_default";
-            /** Icap Ports */
-            icap_ports: number[];
-            /** Lines */
-            lines: components["schemas"]["Outcome"][];
-        };
-        /** ProfilePolicy */
-        ProfilePolicy: {
-            /**
-             * Archive Handling
-             * @default inherit
-             * @enum {string}
-             */
-            archive_handling?: "inherit" | "inspect" | "scan_members";
-            /**
-             * Block Masquerade
-             * @default false
-             */
-            block_masquerade?: boolean;
-            /** Max File Bytes */
-            max_file_bytes?: number | null;
-            /**
-             * Review Action
-             * @default inherit
-             * @enum {string}
-             */
-            review_action?: "inherit" | "block";
-            type_rule?: components["schemas"]["TypeRule"] | null;
-            /**
-             * Violation Action
-             * @default scan_and_block
-             * @enum {string}
-             */
-            violation_action?: "scan_and_block" | "reject";
-        };
-        /** ProfilePolicyBody */
-        ProfilePolicyBody: {
-            /** Expected Revision */
-            expected_revision: number;
-            policy: components["schemas"]["ProfilePolicy"];
-        };
         /** ProfileRoutingBody */
         ProfileRoutingBody: {
             /** Engine Ids */
@@ -3359,6 +3318,12 @@ export interface components {
             expected_engine_ids: number[];
             /** Expected Revision */
             expected_revision?: number | null;
+        };
+        /** ProfileRulesBody */
+        ProfileRulesBody: {
+            /** Expected Revision */
+            expected_revision: number;
+            rules: components["schemas"]["RulesPolicy"];
         };
         /** ProfileSummary */
         ProfileSummary: {
@@ -3376,10 +3341,9 @@ export interface components {
             management_revision: number;
             /** Name */
             name: string;
-            outcome?: components["schemas"]["ProfileOutcome"] | null;
-            policy: components["schemas"]["ProfilePolicy"] | null;
-            /** Policy Invalid */
-            policy_invalid: boolean;
+            rules: components["schemas"]["RulesPolicy"] | null;
+            /** Rules Invalid */
+            rules_invalid: boolean;
         };
         /** ProfileUpdateBody */
         ProfileUpdateBody: {
@@ -3470,6 +3434,19 @@ export interface components {
             /** Rescheduled */
             rescheduled: number;
         };
+        /** Rule */
+        Rule: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "scan" | "light" | "allow" | "block";
+            /** Archive */
+            archive?: ("whole" | "inspect" | "members") | null;
+            /** Engines */
+            engines?: number[];
+            when?: components["schemas"]["RuleWhen"];
+        };
         /** RuleBody */
         RuleBody: {
             /** Content */
@@ -3499,6 +3476,38 @@ export interface components {
         RulesPayload: {
             /** Rules */
             rules: components["schemas"]["RulePayload"][];
+        };
+        /** RulesPolicy */
+        RulesPolicy: {
+            /**
+             * Inconclusive
+             * @enum {string}
+             */
+            inconclusive: "block" | "allow";
+            /** Rules */
+            rules: components["schemas"]["Rule"][];
+            /**
+             * Version
+             * @constant
+             */
+            version: 2;
+        };
+        /**
+         * RuleWhen
+         * @description All given conditions must match; no condition matches every file.
+         */
+        RuleWhen: {
+            /** Families */
+            families?: string[];
+            /** Larger Than Bytes */
+            larger_than_bytes?: number | null;
+            /**
+             * Masquerade
+             * @default false
+             */
+            masquerade?: boolean;
+            /** Up To Bytes */
+            up_to_bytes?: number | null;
         };
         /** ScanAttemptBody */
         ScanAttemptBody: {
@@ -3641,6 +3650,8 @@ export interface components {
             risk_level: string;
             /** Risk Score */
             risk_score: number | null;
+            /** Rule Action */
+            rule_action?: string | null;
             /** Service Client Id */
             service_client_id?: number | null;
             /** Sha256 */
@@ -4007,16 +4018,6 @@ export interface components {
              * @enum {string}
              */
             mode?: "allowlist" | "denylist";
-        };
-        /** TypeRule */
-        TypeRule: {
-            /** Families */
-            families: string[];
-            /**
-             * Mode
-             * @enum {string}
-             */
-            mode: "allowlist" | "denylist";
         };
         /** UpdateUserBody */
         UpdateUserBody: {
@@ -10879,7 +10880,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProfilePolicyBody"];
+                "application/json": components["schemas"]["ProfileRulesBody"];
             };
         };
         responses: {

@@ -1,13 +1,14 @@
 """Admin credential workflows: accept secrets, never return them."""
 import re
 import time
-from typing import Annotated
+from typing import Annotated, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from app import database as db
 from app.services.browser_db_budget import apply_read_budget, write_lock_timeout_ms
 from app.services.service_clients import hash_api_token
-from app.services.profile_admin import ProfileEngineChoice
+from app.services.profile_admin import ProfileEngineChoice, engine_choice, starting_rules
+from app.services.profile_rules import rules_policy_json
 
 
 def validated_api_token(raw: str) -> str:
@@ -28,6 +29,9 @@ class ClientCreateBody(CredentialBody):
     display_name: str = Field(min_length=1, max_length=100)
     profile_name: str = Field(min_length=1, max_length=100)
     engine_ids: list[Annotated[int, Field(ge=1, le=9007199254740991)]] = Field(min_length=1, max_length=100)
+    # What an inconclusive result becomes for the new default profile; explicit,
+    # like every other rule setting.
+    inconclusive: Literal['block', 'allow']
 
 
 class ClientCreated(BaseModel):
@@ -63,7 +67,7 @@ def options() -> ClientCreateOptions:
         apply_read_budget(connection)
         rows = connection.execute('''SELECT id, SUBSTR(display_name, 1, 128) AS display_name,
             SUBSTR(adapter_key, 1, 64) AS adapter_key, enabled FROM engine_instances ORDER BY id LIMIT 101''').fetchall()
-    return ClientCreateOptions(engines=[ProfileEngineChoice(**dict(row)) for row in rows[:100]], incomplete=len(rows) > 100)
+    return ClientCreateOptions(engines=[engine_choice(row) for row in rows[:100]], incomplete=len(rows) > 100)
 
 
 def clean_secret(body: CredentialBody):
@@ -82,10 +86,12 @@ def create_client(body: ClientCreateBody) -> ClientCreated:
     if not name or not profile or len(set(body.engine_ids)) != len(body.engine_ids):
         raise HTTPException(422, 'Names must be nonblank and engine IDs unique.')
     label, token_hash, prefix = clean_secret(body)
+    with db.connect() as connection:
+        rules = starting_rules(connection, body.engine_ids, body.inconclusive)
     try:
         client_id, profile_id, credential_id = db.create_service_client_bundle(client_key=key, display_name=name,
-            profile_name=profile, engine_instance_ids=body.engine_ids, credential_label=label,
-            token_hash=token_hash, token_prefix=prefix)
+            profile_name=profile, engine_instance_ids=rules.engine_ids(), credential_label=label,
+            token_hash=token_hash, token_prefix=prefix, policy_json=rules_policy_json(rules))
     except db.IntegrityViolation as exc:
         raise HTTPException(409, 'Client key or API token is already registered.') from exc
     return ClientCreated(client_id=client_id, profile_id=profile_id, credential_id=credential_id)

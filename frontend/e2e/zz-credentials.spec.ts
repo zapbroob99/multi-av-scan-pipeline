@@ -9,6 +9,7 @@ test('create client, add and revoke credentials without displaying secrets', asy
   await page.getByLabel('Display name').fill('Credential acceptance')
   await page.getByLabel('Default profile name').fill('Default acceptance')
   await page.getByRole('checkbox', { name: /Static Metadata/ }).check()
+  await page.getByRole('combobox', { name: 'When the result is not conclusive' }).selectOption('block')
   await page.getByLabel('Credential label').fill('Initial acceptance')
   await page.setViewportSize({ width: 1440, height: 960 })
   await page.evaluate(() => window.scrollTo(0, 0))

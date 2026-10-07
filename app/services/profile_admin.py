@@ -1,5 +1,5 @@
-"""Client-scoped routing and scan policy, without engine configuration."""
-from typing import Annotated
+"""Client-scoped profiles: an ordered rule list each, without engine configuration."""
+from typing import Annotated, Literal
 import time
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -7,14 +7,17 @@ from app import database as db
 from app.icap.activity import SETTING_PREFIX as ICAP_SETTING_PREFIX
 from app.services import scan_policy
 from app.services.browser_db_budget import apply_read_budget, write_lock_timeout_ms
+from app.services.engine_registry import adapter_definition
 from app.services.health_read import ICAP_FORGOTTEN_SECONDS, icap_gateways
-from app.services.profile_outcome import ProfileOutcome, describe, engine_eligibility
-from app.services.profile_policy import ProfilePolicy, parse_profile_policy, profile_policy_json
+from app.services.profile_rules import (
+    Rule, RulesPolicy, engine_eligibility, is_rules_policy, parse_rules_policy, rules_policy_json,
+)
 
-# A valid policy serializes to well under 1 KiB; anything this large is not one.
-POLICY_READ_LIMIT = 16384
+# A valid rule list serializes to a few KiB at most; anything this large is not one.
+POLICY_READ_LIMIT = 65536
 
 SafeId = Annotated[int, Field(ge=1, le=9007199254740991)]
+Inconclusive = Literal['block', 'allow']
 
 
 class ProfileRoutingBody(BaseModel):
@@ -27,7 +30,10 @@ class ProfileRoutingBody(BaseModel):
 class ProfileCreateBody(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     name: str = Field(min_length=1, max_length=100)
+    # The engines of the starting "every file" rule, and what an inconclusive
+    # result becomes. Both are explicit: a new profile has no hidden default.
     engine_ids: list[SafeId] = Field(min_length=1, max_length=100)
+    inconclusive: Inconclusive
 
 
 class ProfileCreated(BaseModel):
@@ -48,8 +54,8 @@ class ProfileDefaultBody(ProfileFence):
     expected_default_profile_id: SafeId | None
 
 
-class ProfilePolicyBody(ProfileFence):
-    policy: ProfilePolicy
+class ProfileRulesBody(ProfileFence):
+    rules: RulesPolicy
 
 
 class ProfileEngineChoice(BaseModel):
@@ -57,6 +63,8 @@ class ProfileEngineChoice(BaseModel):
     display_name: str
     adapter_key: str
     enabled: bool
+    # An antivirus or other detection engine; the rest are light checks.
+    detection: bool
     # Why API and ICAP files never reach this engine, shown where it is chosen.
     excluded_reason: str | None = None
 
@@ -69,13 +77,20 @@ class ProfileSummary(BaseModel):
     engine_ids: list[int]
     incomplete: bool
     management_revision: int
-    # None with policy_invalid when the stored policy cannot be read; the editor
-    # then refuses to save over it from a guessed starting point.
-    policy: ProfilePolicy | None
-    policy_invalid: bool
-    # What happens to this profile's files, combined with server and gateway
-    # settings; None while the stored policy cannot be read.
-    outcome: ProfileOutcome | None = None
+    # None with rules_invalid when the stored rules cannot be read, or the profile
+    # predates rules and could not be converted; the editor then starts empty
+    # instead of guessing.
+    rules: RulesPolicy | None
+    rules_invalid: bool
+
+
+class GatewayLimits(BaseModel):
+    """What an ICAP gateway bound to this client decides before any rule runs."""
+    port: int
+    fail_closed: bool
+    # None from a gateway older than these fields; 0 bytes means no limit.
+    max_bytes: int | None = None
+    wait_seconds: int | None = None
 
 
 class ClientProfiles(BaseModel):
@@ -86,6 +101,60 @@ class ClientProfiles(BaseModel):
     engines_incomplete: bool
     next_after: int | None
     default_profile_id: int | None
+    # The server's upload limit (0: none) and the client's gateways: the only
+    # settings outside the profile, shown read-only beside the rules.
+    upload_cap_bytes: int = 0
+    gateways: list[GatewayLimits] = Field(default_factory=list)
+
+
+def _detection(adapter_key: str) -> bool:
+    try:
+        return adapter_definition(adapter_key).detection
+    except KeyError:
+        return False
+
+
+def engine_choice(row) -> ProfileEngineChoice:
+    adapter_key, enabled = str(row['adapter_key']), bool(row['enabled'])
+    return ProfileEngineChoice(id=int(row['id']), display_name=str(row['display_name']), adapter_key=adapter_key,
+                               enabled=enabled, detection=_detection(adapter_key),
+                               excluded_reason=engine_eligibility(adapter_key, enabled)[1])
+
+
+def check_rule_engines(connection, rules: RulesPolicy) -> None:
+    """Every engine a rule names must exist and run for API and ICAP files, and fit its action."""
+    ids = rules.engine_ids()
+    placeholders = ', '.join('?' for _ in ids)
+    rows = {int(row['id']): row for row in connection.execute(
+        f'SELECT id, display_name, adapter_key, enabled FROM engine_instances WHERE id IN ({placeholders})',
+        tuple(ids)).fetchall()}
+    missing = [str(engine) for engine in ids if engine not in rows]
+    if missing:
+        raise HTTPException(422, f"Engine #{', #'.join(missing)} no longer exists. Refresh and choose again.")
+    for engine_id, row in rows.items():
+        eligible, reason = engine_eligibility(str(row['adapter_key']), bool(row['enabled']))
+        if not eligible:
+            raise HTTPException(422, f"{row['display_name']}: {reason}")
+    for number, rule in enumerate(rules.rules, start=1):
+        detection = [engine for engine in rule.engines if _detection(str(rows[engine]['adapter_key']))]
+        if rule.action == 'scan' and not detection:
+            raise HTTPException(422, f'Rule {number}: Scan needs at least one antivirus or other detection engine; '
+                                     'use Light check for File Type, Hash List or Static Metadata alone.')
+        if rule.action == 'light' and detection:
+            raise HTTPException(422, f'Rule {number}: a Light check runs only File Type, Hash List or Static Metadata.')
+
+
+def starting_rules(connection, engine_ids: list[int], inconclusive: str) -> RulesPolicy:
+    """A new profile's one rule: every file goes to the chosen engines."""
+    ids = sorted(set(engine_ids))
+    placeholders = ', '.join('?' for _ in ids)
+    keys = [str(row['adapter_key']) for row in connection.execute(
+        f'SELECT adapter_key FROM engine_instances WHERE id IN ({placeholders})', tuple(ids)).fetchall()]
+    rule = (Rule(action='scan', engines=ids, archive='whole') if any(_detection(key) for key in keys)
+            else Rule(action='light', engines=ids))
+    rules = RulesPolicy(version=2, rules=[rule], inconclusive=inconclusive)
+    check_rule_engines(connection, rules)
+    return rules
 
 
 def page(client_id: int, after: int | None) -> ClientProfiles:
@@ -106,17 +175,16 @@ def page(client_id: int, after: int | None) -> ClientProfiles:
             FROM scan_profiles WHERE service_client_id = ? AND deleted_at IS NULL ''' +
             ('AND id > ? ' if after is not None else '') + 'ORDER BY id LIMIT 21',
             (client_id, *((after,) if after is not None else ()))).fetchall()
-        # Read in the same snapshot as the profiles, so the summary never mixes
-        # a policy with gateway or limit settings from another moment.
         settings = {str(row['key']): str(row['value']) for row in connection.execute(
             'SELECT key, value FROM app_settings WHERE key LIKE ? OR key = ? ORDER BY key LIMIT 65',
             (ICAP_SETTING_PREFIX + '%', scan_policy.SETTING_PREFIX + 'upload_max_bytes')).fetchall()}
         upload_cap = scan_policy.resolve_raw('upload_max_bytes', settings.pop(scan_policy.SETTING_PREFIX + 'upload_max_bytes', None))
         now = time.time()
-        gateways = [gateway for gateway in icap_gateways(settings, now)
+        gateways = [GatewayLimits(port=int(gateway.get('port') or 0), fail_closed=bool(gateway.get('fail_closed', True)),
+                                  max_bytes=gateway.get('max_bytes'), wait_seconds=gateway.get('wait_seconds'))
+                    for gateway in icap_gateways(settings, now)
                     if now - int(gateway['at']) < ICAP_FORGOTTEN_SECONDS
                     and str(gateway.get('client_key', '')).lower() == str(client['client_key']).lower()]
-        engines_by_id = {int(row['id']): row for row in choices[:100]}
         items = []
         for row in rows[:20]:
             assigned = connection.execute('SELECT engine_instance_id FROM scan_profile_engines WHERE scan_profile_id = ? ORDER BY engine_instance_id LIMIT 101', (row['id'],)).fetchall()
@@ -124,25 +192,27 @@ def page(client_id: int, after: int | None) -> ClientProfiles:
             values['incomplete'] = bool(values['incomplete']) or len(assigned) > 100
             raw_policy, oversized = values.pop('policy_json'), bool(values.pop('policy_oversized'))
             try:
-                values['policy'] = None if oversized else parse_profile_policy(raw_policy)
+                values['rules'] = None if oversized or not is_rules_policy(raw_policy) else parse_rules_policy(raw_policy)
             except (ValueError, TypeError):
-                values['policy'] = None
-            values['policy_invalid'] = values['policy'] is None
-            engine_ids = [item['engine_instance_id'] for item in assigned[:100]]
-            if values['policy'] is not None:
-                values['outcome'] = describe(values['policy'], [engines_by_id[i] for i in engine_ids if i in engines_by_id],
-                                             is_default=bool(values['is_default']), gateways=gateways, upload_cap=upload_cap)
-            items.append(ProfileSummary(**values, engine_ids=engine_ids))
+                values['rules'] = None
+            values['rules_invalid'] = values['rules'] is None and not client['managed']
+            items.append(ProfileSummary(**values, engine_ids=[item['engine_instance_id'] for item in assigned[:100]]))
     return ClientProfiles(client_id=client_id, managed=client['managed'], items=items,
-        engines=[ProfileEngineChoice(**dict(row), excluded_reason=engine_eligibility(str(row['adapter_key']), bool(row['enabled']))[1])
-                 for row in choices[:100]], engines_incomplete=len(choices) > 100,
+        engines=[engine_choice(row) for row in choices[:100]], engines_incomplete=len(choices) > 100,
         next_after=rows[19]['id'] if len(rows) > 20 else None,
-        default_profile_id=None if default is None else default['id'])
+        default_profile_id=None if default is None else default['id'],
+        upload_cap_bytes=upload_cap, gateways=gateways)
 
 
 def save(client_id: int, profile_id: int, body: ProfileRoutingBody):
     if len(set(body.engine_ids)) != len(body.engine_ids) or len(set(body.expected_engine_ids)) != len(body.expected_engine_ids):
         raise HTTPException(422, 'Engine IDs must be unique.')
+    with db.connect() as connection:
+        stored = connection.execute('SELECT policy_json FROM scan_profiles WHERE id = ? AND service_client_id = ?',
+                                    (profile_id, client_id)).fetchone()
+    if stored is not None and is_rules_policy(stored['policy_json']):
+        # A rule profile's engines are the union of its rules' engines.
+        raise HTTPException(409, "This profile chooses engines per rule; edit its rules instead.")
     try:
         db.set_scan_profile_engines(profile_id, body.engine_ids, client_id=client_id,
             expected_engine_ids=body.expected_engine_ids, expected_revision=body.expected_revision,
@@ -155,9 +225,11 @@ def create(client_id: int, body: ProfileCreateBody) -> ProfileCreated:
     name = body.name.strip()
     if not name or len(set(body.engine_ids)) != len(body.engine_ids):
         raise HTTPException(422, 'Supply a nonblank profile name and unique engine IDs.')
+    with db.connect() as connection:
+        rules = starting_rules(connection, body.engine_ids, body.inconclusive)
     try:
-        profile_id = db.create_scan_profile(client_id, name, engine_instance_ids=body.engine_ids,
-            managed_guard=True, lock_timeout_ms=write_lock_timeout_ms())
+        profile_id = db.create_scan_profile(client_id, name, engine_instance_ids=rules.engine_ids(),
+            policy_json=rules_policy_json(rules), managed_guard=True, lock_timeout_ms=write_lock_timeout_ms())
     except db.IntegrityViolation as exc:
         raise HTTPException(409, 'That profile name is already reserved for this client, including deleted profiles.') from exc
     except ValueError as exc:
@@ -213,8 +285,8 @@ def manage(client_id: int, profile_id: int, body: ProfileFence, operation: str) 
         raise HTTPException(409, str(exc)) from exc
 
 
-def save_policy(client_id: int, profile_id: int, body: ProfilePolicyBody) -> None:
-    """Replace one profile's policy. Accepted scans keep the policy they were frozen with."""
+def save_rules(client_id: int, profile_id: int, body: ProfileRulesBody) -> None:
+    """Replace one profile's rules and its engine set. Accepted scans keep what they were routed with."""
     try:
         with db.profile_write_transaction(client_id, write_lock_timeout_ms()) as (connection, client):
             if client['client_key'] == 'legacy-default':
@@ -224,8 +296,15 @@ def save_policy(client_id: int, profile_id: int, body: ProfilePolicyBody) -> Non
                 (' FOR UPDATE' if db.using_postgres() else ''), (profile_id, client_id)).fetchone()
             if profile is None or profile['management_revision'] != body.expected_revision:
                 raise ValueError('Profile is missing or changed. Refresh before continuing.')
+            check_rule_engines(connection, body.rules)
             connection.execute('''UPDATE scan_profiles SET policy_json = ?,
                 management_revision = management_revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?''',
-                (profile_policy_json(body.policy), profile_id))
+                (rules_policy_json(body.rules), profile_id))
+            # The profile's engine set is every engine a rule names: routing, readiness
+            # and hash lookups read it, and intake narrows it to the matched rule.
+            connection.execute('DELETE FROM scan_profile_engines WHERE scan_profile_id = ?', (profile_id,))
+            for engine_id in body.rules.engine_ids():
+                connection.execute('''INSERT INTO scan_profile_engines (scan_profile_id, engine_instance_id, required)
+                    VALUES (?, ?, ?)''', (profile_id, engine_id, db.db_bool(True)))
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc

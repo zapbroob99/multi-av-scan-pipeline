@@ -521,19 +521,36 @@ pending age; pre-scan failures are `failed` rows without a scan, read newest-fir
 `idx_deferred_scan_status_seek`. Bound rejections to 50 and failures to 20. Store and show error
 text through `redact_paths`: absolute paths never reach the browser.
 
-Profile scan policy (`app/services/profile_policy.py`) gives every client independent rules: size
-limit, content-family allowlist/denylist, masquerade, violation action (scan and block, or reject
-at intake) and review handling. Every field defaults to inherit, so an empty policy must change
-nothing. It is frozen into the routing snapshot; intake judges the stored sample once from a 4 KiB
-header (shared `content_types.classify`) in `enqueue_scan_from_stored_sample` and the deferred
-worker, recording scan-and-block violations as the scan snapshot's `intake_policy`; the shared
-`scan_decision` applies it. A policy may only make a decision stricter and never produces an
-allow; archive members do not inherit the container's intake verdict; an unreadable recorded
-policy withholds allow (`profile_policy_invalid`). Rejections create no scan: API 413/415, ICAP
-block whatever the fail mode (`policy_rejected` counter and event), deferred submission failed
-permanently. Deployment upload/ICAP limits stay the ceiling. Browser writes are admin/CSRF, fenced
-by `management_revision`; `legacy-default` stays read-only; the console never edits a guessed
-policy over an unreadable one.
+Profile rules (`app/services/profile_rules.py`, see `docs/architecture/PROFILE_RULES.md`) are how
+every integration profile decides: an ordered list where a file takes the first rule it matches
+(size range, content families, disguised extension) and one action: Scan with chosen engines,
+Light check (File Type, Hash List, Static Metadata only), Allow without scanning, or Block. The last
+rule matches every other file and "when the result is not conclusive" (Block or Allow labelled Not
+fully scanned) is chosen explicitly: nothing is inherited, so `MASP_ICAP_BLOCK_ARCHIVES` and
+`MASP_ICAP_BLOCK_ON_REVIEW` do not apply to a rule profile and rule profiles never answer review.
+Only the server upload ceiling and an ICAP gateway's own size limit, wait and fail mode act before
+the rules; the profile screen shows them read-only. Intake (`apply_intake_policy`) evaluates the
+rules once from the stored size and 4 KiB header and freezes `rule`, the narrowed `engines` and all
+`profile_engines` in the routing snapshot; `profile_rules.narrow` gives intake only that rule's
+engines. Block and Allow without scanning create a scan record completed at intake with no engine
+jobs (`rule_action`, risk NULL; Block is not allowed `rule_block`), cannot be retried and open no
+archive. Archive members are routed again by their own size and type (`route_member`). Light check
+that finds nothing allows labelled Light check only; a detection always blocks. A profile's engine
+set (`scan_profile_engines`) is the union of its rules' engines, written with the rules; the
+engine-routing write is refused for rule profiles. Saving checks every rule's engines (exist, run
+for API/ICAP, Scan includes a detection engine, Light check none). Startup converts each
+integration profile still in the previous format once (`convert_profiles_to_rules`,
+compare-and-set; gateway-dependent behaviour fixed at the value the gateway used); `legacy-default`
+keeps the previous format and its engines follow the deployment. Scans accepted under the previous
+format keep the previous decision logic below; a snapshot is never reinterpreted.
+Previous format (legacy-default and old snapshots): profile scan policy (`app/services/profile_policy.py`)
+had size limit, content-family allowlist/denylist, masquerade, violation action and review handling,
+each defaulting to inherit; it may only make a decision stricter; archive members do not inherit
+the container's intake verdict; an unreadable recorded policy withholds allow
+(`profile_policy_invalid`). Rejections create no scan: API 413/415, ICAP block whatever the fail
+mode, deferred submission failed permanently. Browser writes are admin/CSRF, fenced by
+`management_revision`; `legacy-default` stays read-only; the console never edits guessed rules
+over unreadable ones.
 Profile `archive_handling` (`app/services/archive_inspection.py`) is `inherit`, `inspect` or
 `scan_members`. Both non-inherit modes open the archive once at intake with the shared bounded
 extractor (limits counted across all nesting levels) and record `archive_inspection` in the scan
@@ -583,16 +600,10 @@ a fixed service list. Behind the TLS proxy the app trusts forwarded headers only
 `FORWARDED_ALLOW_IPS` (compose maps `MASP_FORWARDED_ALLOW_IPS`); the same-origin CSRF check and
 HTTPS-only worker control depend on it.
 
-What happens to a client's files. `app/services/profile_outcome.py` is the one place that combines
-a profile's file rules and engines with the server upload limit and each bound ICAP gateway's
-settings into operator sentences (API and ICAP side by side) on every profile card. It is pure
-(reads nothing, decides nothing a scan uses); `profile_admin.page` feeds it in the profiles'
-repeatable snapshot. The gateway reports `block_archives`, `max_bytes` (0: no limit) and
-`wait_seconds` in its activity record; a field a gateway did not report, or a client without a
-reporting gateway, is "unknown", never assumed. Only the default profile serves ICAP. Engine
-eligibility for API/ICAP (`engine_eligibility`) lives there too and is shared with client
-readiness, so the reason an engine is left out reads the same everywhere. When intake, the
-decision or the gateway changes behaviour, change this wording with it.
+The ICAP gateway reports `block_archives`, `max_bytes` (0: no limit) and `wait_seconds` in its
+activity record; a field a gateway did not report is "not reported", never assumed. Engine
+eligibility for API/ICAP (`profile_rules.engine_eligibility`) is shared by the rule editor, rule
+saves and client readiness, so the reason an engine is left out reads the same everywhere.
 
 Operations visibility. `app/services/health_read.py` is the one place that judges the scan chain;
 engine states come from the Engines screen's `engine_payload` so the two screens never disagree.

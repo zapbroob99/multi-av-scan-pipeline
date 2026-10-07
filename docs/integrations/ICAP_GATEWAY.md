@@ -105,15 +105,15 @@ makes every request fail; a fail-closed gateway then blocks every upload, and
 the health check reports it as critical. The client's Setup tab names any
 gateway reporting under another key.
 
-The bound client's default profile also carries that client's scan policy
-(Service Clients > Scan profiles > File rules; the profile card's "What happens to files"
-table combines them with this gateway's own settings): a size limit, accepted
-content families, disguised files and what to do with files that could not be
-fully assessed. A profile set to block those overrides
-`MASP_ICAP_BLOCK_ON_REVIEW` for its client; left at the deployment behaviour,
-the environment setting applies. Content the profile rejects without scanning is
-answered with a block whatever the fail mode, creates no scan, and is counted as
-"Rejected by policy" with an event on System > ICAP and SIEM.
+The bound client's default profile decides with its rules (Service Clients >
+Scan profiles; see `docs/architecture/PROFILE_RULES.md`): which engines scan which
+files, what is blocked, and what an inconclusive result becomes. A rule profile
+never answers review, so `MASP_ICAP_BLOCK_ON_REVIEW` and `MASP_ICAP_BLOCK_ARCHIVES`
+apply only to the managed `legacy-default` client. What stays with the gateway is
+what acts before any rule: its size limit (`MASP_ICAP_MAX_BYTES`), its wait and its
+fail mode; the gateway reports them and the profile screen shows them. A file a
+rule blocks is listed as Not allowed in the API Ledger and answered with a block
+whatever the fail mode.
 
 ## Running it
 
@@ -158,11 +158,11 @@ is a fail-closed `200` block within `MASP_ICAP_WAIT_SECONDS`.
   `400 Bad Request`. All responses (including these) carry an `ISTag`.
 - ICAP archive uploads create a batch like REST archive uploads, but the
   `/api/v1/batches` endpoints are REST-scoped; inspect ICAP archives via the
-  API Ledger. With `MASP_ICAP_BLOCK_ARCHIVES=1` (the default) an archive is
-  recorded as not allowed and blocked whatever the engines say, unless the
-  client's profile sets archive handling (Service Clients > Scan profiles > File rules > Archive handling;
-  see "Archives" in `docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md`).
-  `scan_members` makes ICAP wait for every member within
+  API Ledger. A rule profile says how archives are treated (scan as one file,
+  open and check, open and scan every file inside, or block them with a type
+  rule). `MASP_ICAP_BLOCK_ARCHIVES=1` (the default) refuses archives only for the
+  managed `legacy-default` client, which has no rules.
+  Scanning every file inside makes ICAP wait for every member within
   `MASP_ICAP_WAIT_SECONDS`, so raise it for clients that send large archives.
   Office Open XML (docx, xlsx, pptx and macro
   variants) and OpenDocument files are ZIP containers but are scanned as one
