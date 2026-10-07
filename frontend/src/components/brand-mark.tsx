@@ -1,7 +1,7 @@
 /**
- * The MASP mark drawn inline so it follows the active theme. The favicon keeps
- * its fixed dark tile for browser tabs; inside the console a dark square on the
- * light theme reads as a hole, so tile and glyph colours come from CSS tokens.
+ * The MASP mark drawn inline so it follows the active theme: tile and glyph
+ * colours come from CSS tokens. public/favicon.svg is the same mark with the dark
+ * theme's colours fixed, since a browser tab cannot read the console's tokens.
  */
 export function BrandMark({ size, label }: { size: number; label?: string }) {
   return <svg className="brand-mark" width={size} height={size} viewBox="0 0 64 64"
