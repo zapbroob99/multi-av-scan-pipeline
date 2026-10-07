@@ -1,7 +1,7 @@
 # MASP session handoff
 
-Updated: 2026-10-07, pilot.15 (not-allowed outcome) packaged and its upgrade/rollback
-rehearsed on `feat/archive-handling`; pilot.14 runs on the intranet. This is a
+Updated: 2026-10-07, pilot.16 (profile rules) packaged and its upgrade/rollback rehearsed
+on `feat/archive-handling`; the user installed pilot.15 on the intranet. This is a
 workspace checkpoint, not evidence of a deployment.
 
 ## Start here
@@ -246,26 +246,38 @@ disposable PostgreSQL; frontend 201, e2e 39):
 The five pre-existing staged files and the private untracked pilot follow-up
 document remain untouched.
 
-**Pilot.15 packaged and rehearsed, 2026-10-07.** Bundle from the clean commit
-`d4ebac6`; image built from the extracted bundle. `dist/masp-pilot-0.1.0-pilot.15.zip`
-SHA-256 `7d8d90980e8b96be845c02b6d0e7c44b93a7910e39b7879316b0428d7876d4ee`;
-`dist/masp-pilot-0.1.0-pilot.15-image.tar` SHA-256
-`b07f02f7863f0009dba35da8da80034f3b8ebbc12c41cc52da51bc20438746ed`. Same driver
-method as pilot.14 (project `masp-rehearse`, `/rehearse` roots), script in
-`dist/rehearsal-upgrade15/rehearse.sh`. Fresh pilot.14 with `fil` bound to ICAP
-reproduced the bug (clean and encrypted ZIP: "malware detected", ledger info).
-`upgrade.sh --dry-run` changed only `MASP_IMAGE` (plus the fresh install's
-`./rules` move); `upgrade.sh` with the image removed from the host first: 9/9,
-verify passed, `scan_jobs.not_allowed` and `idx_scan_jobs_not_allowed` added, every
-scan kept with a null code. Inherited handling: ZIPs blocked with "archive files
-are not accepted", ledger `archive_refused`, the not-allowed filter listed only
-them, the bell only EICAR. `fil` on `inspect`: clean ZIP allowed, encrypted ZIP
-blocked "could not be fully checked" (`archive_encrypted`), EICAR "malware
-detected", DOCX allowed throughout. Rollback restored pilot.14 (verify passed,
-column gone) and upgrading again passed. The upgrade log was lost in teardown;
-results above are from the run's output. Project, volumes, network, driver and
-`/rehearse` removed; live `masp` untouched. Operator steps (Turkish):
-`kilavuz/PILOT_15_DURUM.md`. Not deployed; no push or merge.
+**Pilot.15 deployed by the user (2026-10-07), then the settings were reworked for pilot.16.**
+The user found the settings screens hard to follow. Round one (`21d1207`, plain names,
+controls and save flow) stays. Round two (`e3ffb2c`, a per-profile "what happens" table) was
+rejected by the user as still confusing and replaced by **profile rules** (`6097eeb`, see
+`docs/architecture/PROFILE_RULES.md`): an ordered list per profile, first match wins (size
+range, type, disguised extension -> Scan with chosen engines, Light check, Allow without
+scanning, Block), explicit last rule and explicit inconclusive choice, no inherited server or
+gateway settings. Decisions made with the user: light check that finds nothing is allowed and
+labelled; existing profiles convert automatically at startup; profiles decide everything
+(`MASP_ICAP_BLOCK_ARCHIVES`/`_ON_REVIEW` only for `legacy-default`); "Allow without scanning"
+exists; Block does not scan (a "scan, then block" option can come later if wanted); folder
+scanning's archive default stays "hold for the full tier". `59a0d63` fixed the ICAP message for
+a rule block (found in the rehearsal). Verification: backend 1147 SQLite OK, related modules
+157 on disposable PostgreSQL OK, frontend 203, e2e 39/39, build and contracts clean.
+
+**Pilot.16 packaged and rehearsed, 2026-10-07.** Bundle from `59a0d63`;
+`dist/masp-pilot-0.1.0-pilot.16.zip` SHA-256
+`41396d406c924f1f9498c42c9067b46ad619af36815809c3a2610f3749055d3c`,
+`dist/masp-pilot-0.1.0-pilot.16-image.tar` SHA-256
+`d84c79b856d8c4ac45ee3a14fce8223a7537be96c4da082f00b58dd786f720a3`. Same driver method
+(`dist/rehearsal-upgrade16/rehearse.sh`, log beside it). Fresh pilot.15 with `fil` (empty
+policy, ICAP-bound): zips refused as before. Dry run changed only `MASP_IMAGE` (plus the fresh
+install's `./rules` move); upgrade 9/9 with the image removed from the host first. `fil` was
+converted to "archive -> Block; every other file -> Scan (Static Metadata, ClamAV, YARA)",
+inconclusive Block, because the pilot compose sets `MASP_ICAP_BLOCK_ON_REVIEW=1`;
+`legacy-default` kept `{}`. ICAP after conversion: same outcomes, block body "files like this
+are not accepted". After an admin rule set (large -> Light check File Type + Hash List,
+archive -> Scan + open and check, else Scan): clean zip allowed, encrypted zip blocked as
+`archive_encrypted`, a 2 MiB file got only the two light engines and "Allow (light check
+only)", EICAR blocked. Rollback restored pilot.15 (verify passed, `fil` back to `{}`), and
+upgrading again passed. Project, volumes, driver and `/rehearse` removed; live `masp`
+untouched. Operator steps (Turkish): `kilavuz/PILOT_16_DURUM.md`. Not deployed; no push or merge.
 
 **`1fdf768` Hash List engine.** Decisions made with the user: one global list
 (not per engine instance), and an allowlist match is informational only — it
@@ -373,7 +385,9 @@ folders live in git-ignored `kilavuz/` and `dist/`.
 **Releases in `dist/` (git-ignored), each a bundle zip plus the MASP image alone,
 both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
-- `0.1.0-pilot.15` (commit `d4ebac6`): pilot.14 plus the not-allowed outcome and
+- `0.1.0-pilot.16` (commit `59a0d63`): profile rules, plain settings screens. Rehearsed
+  15 -> 16 (conversion, rules, rollback, re-upgrade), passed.
+- `0.1.0-pilot.15` (commit `d4ebac6`, deployed on the intranet 2026-10-07): pilot.14 plus the not-allowed outcome and
   ICAP block bodies that name the reason. Rehearsed 14 -> 15, rollback passed.
 - `0.1.0-pilot.14` (commit `27fcc4f`, deployed on the intranet 2026-10-06): archive
   handling, notification bell. Rehearsed 13 -> 14, rollback passed.
