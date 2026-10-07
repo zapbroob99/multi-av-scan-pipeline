@@ -61,7 +61,7 @@ describe('Hash list', () => {
     await waitFor(() => expect(bodyOf(fetcher, 'POST')).toEqual({ list_kind: 'allow', hashes: [B], note: 'Signed installer' }))
     const status = await screen.findByText(/already listed and left unchanged/)
     expect(status.closest('[role=status]')).toHaveTextContent('on the blocklist')
-  })
+  }, 15000) // types two full digests key by key; slow when the machine is busy
 
   it('refuses malformed input without sending it', async () => {
     const fetcher = mount()
