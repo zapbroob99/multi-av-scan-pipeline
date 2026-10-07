@@ -539,9 +539,16 @@ inspected archive under `scan_members` gets an `extract_all` batch (intake-set, 
 requested; a deferred request keeps its own `archive_mode` for retry comparison); the worker then
 registers members without waiting for a detection. `scan_assessment.archive_decision` allows only
 when the container and every member allow and the registered member count reaches the inspected
-count; an unscanned member blocks. These modes replace `MASP_ICAP_BLOCK_ARCHIVES` for that client:
+count; an unscanned member blocks. These modes lift `MASP_ICAP_BLOCK_ARCHIVES` for that client:
 the one policy setting that lifts a block, exchanged for a decision that still blocks what MASP
-could not check. Reports, exports, print views and public status/results now share that archive
+could not check.
+Not allowed is one outcome with one path (see "Not allowed" in
+`SERVICE_CLIENTS_AND_SCAN_PROFILES.md`): every admission rule, including the ICAP gateway's
+`MASP_ICAP_BLOCK_ARCHIVES` handed to intake as `refuse_archives`, is a violation recorded by
+`apply_intake_policy`; `profile_policy.NOT_ALLOWED` maps each kind to the code stored on
+`scan_jobs.not_allowed`, the label and the ICAP message. Never add a refusal rule anywhere else (the
+gateway applies none after the scan), never let not allowed raise recorded risk, count as a
+detection or reach the bell, and keep `policy.not_allowed` SIEM events behind `siem_not_allowed_events`. Reports, exports, print views and public status/results now share that archive
 decision through `archive_assessment.py`, in the caller's repeatable snapshot. Engine rows and
 recorded risk remain per-file. Running members keep `result_ready` false and the report polling;
 `/result` returns 409. Verify exact batch/member source/client ownership and rooted ancestry;
@@ -618,9 +625,14 @@ first, the first multipart part, or a URL segment that has an extension); the na
 client-supplied, reduced to a bounded bare name that keeps its extension, and decides nothing.
 Office Open XML and OpenDocument files are ZIP containers but never archives
 (`archive_extractor.is_office_document`): an archive becomes a batch, and an ICAP gateway's
-`MASP_ICAP_BLOCK_ARCHIVES` blocks every batch, so treating them as archives refused every modern
+`MASP_ICAP_BLOCK_ARCHIVES` refuses every archive, so treating them as archives refused every modern
 Office file the engines had cleared (found on the intranet pilot). A document-shaped ZIP carrying a
 program or script entry stays an archive.
+The ICAP block body is what the refused end user sees: it names the kind of reason through
+`server.decision_message` (the `NOT_ALLOWED` message for a refused file, `MESSAGE_*` otherwise), and
+says "malware detected" only for the `malware_detected` decision. Every block once said "malware detected", so a clean archive refused
+by `MASP_ICAP_BLOCK_ARCHIVES` read as a detection while the ledger showed No detection (found on the
+intranet pilot). Never put engine names, members or settings in that body.
 A gateway bound to the wrong client (`MASP_ICAP_SERVICE_CLIENT_KEY` not reaching the icap
 container) silently files scans under `legacy-default`. `health_read.icap_binding` resolves each
 gateway's key the way `identity_for_service_client_key` does (a test keeps the two in agreement):

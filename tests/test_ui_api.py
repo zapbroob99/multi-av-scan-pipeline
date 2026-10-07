@@ -712,7 +712,8 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual((result.completed, result.active_online_nodes), (1, 0))
 
     def test_scan_policy_auth_validation_and_no_partial_invalid_save(self):
-        body = {'api_max_wait_seconds': '20', 'api_retry_after_seconds': '3', 'upload_max_bytes': ''}
+        body = {'api_max_wait_seconds': '20', 'api_retry_after_seconds': '3', 'upload_max_bytes': '',
+                'siem_not_allowed_events': ''}
         self.assertEqual(self.request('/scan-policy', session=False)[0], 401)
         for options, expected in (({'session': False}, 401), ({'csrf': False}, 403)):
             self.assertEqual(self.request('/scan-policy', 'PUT', body, **options)[0], expected)
@@ -726,7 +727,7 @@ class BrowserApiTests(unittest.TestCase):
             connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
         for change in ({'api_retry_after_seconds': '0'}, {'upload_max_bytes': str(5 * 1024**3 + 1)},
                        {'api_max_wait_seconds': True}, {'api_max_wait_seconds': '1.5'},
-                       {'upload_max_bytes': '1' * 129}, {'command': 'no'}):
+                       {'upload_max_bytes': '1' * 129}, {'siem_not_allowed_events': '2'}, {'command': 'no'}):
             self.assertEqual(self.request('/scan-policy', 'PUT', body | change)[0], 422)
             self.assertIsNone(db.get_setting('scan_policy.api_max_wait_seconds'))
         self.assertEqual(self.request('/scan-policy', 'PUT', {})[0], 422)
@@ -738,16 +739,20 @@ class BrowserApiTests(unittest.TestCase):
         status, result, headers = self.request('/scan-policy')
         self.assertEqual(status, 200)
         self.assertEqual(headers[b'cache-control'], b'no-store')
-        self.assertEqual(len(result['fields']), 3)
+        self.assertEqual([field['key'] for field in result['fields']],
+                         ['api_max_wait_seconds', 'api_retry_after_seconds', 'upload_max_bytes', 'siem_not_allowed_events'])
         self.assertEqual(result['fields'][0]['value'], scan_policy.resolve_int('api_max_wait_seconds'))
         self.assertEqual(result['fields'][0]['value'], 300)
         self.assertNotIn('PRIVATE_TOKEN', json.dumps(result))
-        body = {'api_max_wait_seconds': '0', 'api_retry_after_seconds': '30', 'upload_max_bytes': str(5 * 1024**3)}
+        body = {'api_max_wait_seconds': '0', 'api_retry_after_seconds': '30', 'upload_max_bytes': str(5 * 1024**3),
+                'siem_not_allowed_events': '1'}
         self.assertEqual(self.request('/scan-policy', 'PUT', body)[0], 204)
         self.assertEqual(scan_policy.resolve_int('upload_max_bytes'), 5 * 1024**3)
+        # The same stored key the completing scan reads for SIEM events.
+        self.assertEqual(db.get_setting(db.SIEM_NOT_ALLOWED_SETTING), '1')
         self.assertEqual(self.request('/scan-policy', 'PUT', {key: '' for key in body})[0], 204)
         result = self.request('/scan-policy')[1]
-        self.assertEqual([field['value'] for field in result['fields']], [25, 2, 4096])
+        self.assertEqual([field['value'] for field in result['fields']], [25, 2, 4096, 0])
         self.assertEqual(result['fields'][0]['source'], 'environment (MASP_API_MAX_WAIT_SECONDS)')
 
     def test_scan_policy_oversized_stored_value_fails_closed(self):
@@ -760,7 +765,8 @@ class BrowserApiTests(unittest.TestCase):
             connection.execute('''CREATE TRIGGER reject_policy BEFORE INSERT ON app_settings
                 WHEN NEW.key = 'scan_policy.api_retry_after_seconds'
                 BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END''')
-        body = scan_policy_admin.ScanPolicyBody(api_max_wait_seconds='30', api_retry_after_seconds='3', upload_max_bytes='100')
+        body = scan_policy_admin.ScanPolicyBody(api_max_wait_seconds='30', api_retry_after_seconds='3', upload_max_bytes='100',
+                                                siem_not_allowed_events='')
         with self.assertRaises(db.IntegrityViolation):
             scan_policy_admin.save(body)
         self.assertEqual(db.get_setting('scan_policy.api_max_wait_seconds'), '10')

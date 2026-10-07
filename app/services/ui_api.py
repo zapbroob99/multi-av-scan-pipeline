@@ -199,7 +199,7 @@ def browser_api_ledger(limit: int = Query(default=20, ge=1, le=100),
     q: str = Query(default='', max_length=200),
     source: Literal['all', 'api', 'icap'] = 'all',
     status: Literal['all', 'active', 'queued', 'running', 'finalizing', 'completed', 'partial', 'failed', 'skipped'] = 'all',
-    risk: Literal['all', 'pending', 'info', 'metadata_only', 'low', 'medium', 'high', 'critical'] = 'all',
+    risk: Literal['all', 'pending', 'info', 'metadata_only', 'low', 'medium', 'high', 'critical', 'not_allowed'] = 'all',
     client_id: int | None = Query(default=None, ge=1, le=9007199254740991), unassigned: bool = False,
 ):
     if client_id is not None and unassigned:

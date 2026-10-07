@@ -11,6 +11,7 @@ from app.services.scan_assessment import detection_summary, required_engine_cove
 from app.services.archive_assessment import ArchiveDecisionUnavailable
 from app.services.service_clients import required_detection_engine_names, parse_profile_snapshot
 from app.services.browser_db_budget import apply_read_budget
+from app.services.profile_policy import not_allowed_by_code
 
 MAX_ENGINES = 256
 POLICY_LIMIT = 65536
@@ -80,6 +81,9 @@ class ScanReport(BaseModel):
     decision: DecisionSummary | None
     warning: str | None
     engines: list[EngineSummary]
+    # Refused by the client's rules at intake (not malware): code and label.
+    not_allowed: str | None = None
+    not_allowed_label: str | None = None
 
 
 class TechnicalDetails(BaseModel):
@@ -170,6 +174,7 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
             j.created_at, j.started_at, j.completed_at, j.failed_at, j.attempt_count,
             SUBSTR(j.last_error, 1, 2048) AS last_error, j.batch_id, j.parent_scan_id,
             j.scan_role, NULL AS relative_path, j.service_client_id, j.scan_profile_id,
+            SUBSTR(j.not_allowed, 1, 64) AS not_allowed,
             SUBSTR(j.profile_snapshot_json, 1, ?) AS profile_snapshot_json,
             SUBSTR(s.original_filename, 1, 512) AS original_filename,
             '' AS stored_filename, '' AS storage_path, s.content_type, s.size_bytes, s.md5, s.sha1, s.sha256
@@ -178,6 +183,7 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
         if row is None:
             raise HTTPException(404, 'Automation scan not found.' if automation else 'Manual scan not found.')
         scan = db.row_to_scan_record(row)
+        refused = not_allowed_by_code(row['not_allowed'])
         if len(scan.profile_snapshot_json) > SNAPSHOT_LIMIT:
             raise HTTPException(413, 'Large routing snapshot: this report exceeds the browser reader limit.')
         job_rows = connection.execute('''SELECT id, scan_job_id, engine_instance_id, engine_key, engine_name,
@@ -243,7 +249,8 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
         coverage_basis=coverage_basis,
         decision=DecisionSummary(**decision_payload) if decision_payload else None,
         warning=decision_warning or (None if policy_complete else 'Decision unavailable: policy details exceed the compact reader limit or are invalid. Review each engine\'s recorded details and output.'),
-        engines=summaries)
+        engines=summaries, not_allowed=refused.code if refused else None,
+        not_allowed_label=refused.label if refused else None)
 
 
 def technical_details(scan_id: int, result_id: int, *, automation: bool = False) -> TechnicalDetails:

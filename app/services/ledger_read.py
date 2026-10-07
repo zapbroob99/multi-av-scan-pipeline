@@ -2,6 +2,7 @@
 from pydantic import BaseModel
 from app import database as db
 from app.services.browser_db_budget import apply_read_budget
+from app.services.profile_policy import not_allowed_by_code
 
 
 class LedgerScan(BaseModel):
@@ -21,6 +22,9 @@ class LedgerScan(BaseModel):
     risk_score: int | None
     created_at: str
     unavailable_engines: int | None
+    # Refused by the client's rules at intake (not malware): code and label.
+    not_allowed: str | None = None
+    not_allowed_label: str | None = None
 
 
 class LedgerPage(BaseModel):
@@ -46,7 +50,9 @@ def page(*, limit: int, before: int | None, query: str, source: str, status: str
     elif status != 'all':
         conditions.append('j.status = ?')
         values.append(status)
-    if risk != 'all':
+    if risk == 'not_allowed':
+        conditions.append('j.not_allowed IS NOT NULL')
+    elif risk != 'all':
         conditions.append('j.verdict = ?')
         values.append(risk)
     if query.strip():
@@ -59,7 +65,7 @@ def page(*, limit: int, before: int | None, query: str, source: str, status: str
         rows = connection.execute(f"""
             SELECT j.id, j.attempt_count, COALESCE((SELECT MAX(ej.id) FROM scan_engine_jobs ej
                     WHERE ej.scan_job_id = j.id), 0) AS job_revision, SUBSTR(s.original_filename, 1, 512) AS filename,
-                j.unavailable_engines,
+                j.unavailable_engines, SUBSTR(j.not_allowed, 1, 64) AS not_allowed,
                 SUBSTR(s.sha256, 1, 64) AS sha256, s.size_bytes,
                 SUBSTR(j.case_name, 1, 128) AS case_name, j.source,
                 j.service_client_id, SUBSTR(c.display_name, 1, 100) AS client_name,
@@ -68,7 +74,11 @@ def page(*, limit: int, before: int | None, query: str, source: str, status: str
             LEFT JOIN service_clients c ON c.id = j.service_client_id
             WHERE {' AND '.join(conditions)} ORDER BY j.id DESC LIMIT ?
         """, (*values, limit + 1)).fetchall()
-    items = [LedgerScan(**{**dict(row), 'created_at': str(row['created_at'])}) for row in rows[:limit]]
+    items = []
+    for row in rows[:limit]:
+        entry = not_allowed_by_code(row['not_allowed'])
+        items.append(LedgerScan(**{**dict(row), 'created_at': str(row['created_at']),
+                                   'not_allowed_label': entry.label if entry else None}))
     return LedgerPage(items=items, next_before=items[-1].id if len(rows) > limit else None)
 
 

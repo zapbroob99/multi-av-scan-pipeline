@@ -20,7 +20,7 @@ from app.icap import protocol
 from app.icap.config import IcapConfig, load_icap_config
 from app.services.ingest import UploadTooLargeError, store_bytes
 from app.services.decisions import ScanDecision
-from app.services.profile_policy import PolicyRejectedError, archive_handling
+from app.services.profile_policy import NOT_ALLOWED, PolicyRejectedError, archive_handling, not_allowed
 from app.services.scan_intake import (
     enqueue_scan_from_stored_sample,
     scan_is_terminal,
@@ -259,43 +259,71 @@ def client_accepts_204(head: protocol.IcapHead) -> bool:
     return "preview" in head.headers
 
 
-def scan_archive_handling(scan) -> str:
-    """The client's recorded archive handling for this scan ("inherit" if unknown)."""
+def _snapshot(scan) -> dict:
     try:
-        snapshot = json.loads(getattr(scan, "profile_snapshot_json", None) or "{}")
+        value = json.loads(getattr(scan, "profile_snapshot_json", None) or "{}")
     except (TypeError, json.JSONDecodeError):
-        return "inherit"
-    return archive_handling(snapshot) if isinstance(snapshot, dict) else "inherit"
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def judges_every_member(scan) -> bool:
     return (scan is not None and scan.batch_id is not None and getattr(scan, "scan_role", "") == "container"
-            and scan_archive_handling(scan) == "scan_members")
+            and archive_handling(_snapshot(scan)) == "scan_members")
 
 
-def resolve_icap_action(scan, config: IcapConfig, decision: ScanDecision | None = None) -> tuple[str, str]:
-    """Map a (possibly unfinished) scan to 'allow' or 'block', and why it blocks."""
+# What the person whose upload or download was refused sees. It names the kind
+# of reason only: "malware detected" is said only when an engine detected
+# something. A file the client's rules refuse is told its NOT_ALLOWED message,
+# from the same table the ledger and the report label it with.
+MESSAGE_MALWARE = "Blocked by MASP: malware detected."
+MESSAGE_ARCHIVE_MEMBER = "Blocked by MASP: a file inside the archive was blocked."
+MESSAGE_ARCHIVE_UNSCANNED = "Blocked by MASP: the archive could not be fully checked."
+MESSAGE_NOT_ASSESSED = "Blocked by MASP: the file could not be fully scanned."
+MESSAGE_NOT_FINISHED = "Blocked by MASP: the scan did not finish in time."
+MESSAGE_NOT_SCANNED = "Blocked by MASP: the file could not be scanned."
+MESSAGE_UNREADABLE = "Blocked by MASP: the transfer could not be read completely."
+MESSAGE_TOO_LARGE = NOT_ALLOWED["size"].message
+
+_DECISION_MESSAGES = {
+    "malware_detected": MESSAGE_MALWARE,
+    "archive_member_blocked": MESSAGE_ARCHIVE_MEMBER,
+    "archive_incomplete": MESSAGE_ARCHIVE_UNSCANNED,
+    "archive_member_unscanned": MESSAGE_ARCHIVE_UNSCANNED,
+}
+_NOT_ALLOWED_POLICIES = {"profile_content_policy", "profile_archive_policy"}
+
+
+def decision_message(decision: ScanDecision, scan=None) -> str:
+    """The end-user message for a block decision; anything not malware is said as such."""
+    if decision.policy in _NOT_ALLOWED_POLICIES:
+        entry = not_allowed(_snapshot(scan))
+        if entry is not None:
+            return entry.message
+    return _DECISION_MESSAGES.get(decision.policy, MESSAGE_NOT_ASSESSED)
+
+
+def resolve_icap_action(scan, config: IcapConfig, decision: ScanDecision | None = None) -> tuple[str, str, str]:
+    """Map a (possibly unfinished) scan to 'allow' or 'block', the operator's reason
+    and the end user's message.
+
+    The gateway adds no rule of its own here: MASP_ICAP_BLOCK_ARCHIVES is applied
+    at intake as a not-allowed violation, so the scan's decision already holds it.
+    """
     fail_action = "block" if config.fail_closed else "allow"
     if scan is None or not scan_is_terminal(scan):
-        return fail_action, "Blocked: scan did not finish within the wait window"
-    if config.block_archives and scan.batch_id is not None and scan_archive_handling(scan) == "inherit":
-        # Without an archive policy on the client's profile, a clean result for
-        # an archive is the engines' word on content they may not have seen
-        # (encrypted members, their own limits), so the archive is refused
-        # outright. A profile that inspects or scans archives lifts this.
-        log("archive upload rejected (block_archives)")
-        return "block", "Blocked: archive upload (MASP_ICAP_BLOCK_ARCHIVES), whatever the scan decided"
+        return fail_action, "Blocked: scan did not finish within the wait window", MESSAGE_NOT_FINISHED
     if decision is None:
         decision = resolve_scan_decision(scan)
     if decision.action == "wait":
-        return fail_action, "Blocked: archive members did not finish within the wait window"
-    archive_rule = decision.policy.startswith("archive_") or decision.policy == "profile_archive_policy"
-    reason = f"Blocked: {decision.reason}" if archive_rule else "Blocked by scan decision"
+        return fail_action, "Blocked: archive members did not finish within the wait window", MESSAGE_NOT_FINISHED
+    explained = (decision.policy.startswith("archive_") or decision.policy in _NOT_ALLOWED_POLICIES)
+    reason = f"Blocked: {decision.reason}" if explained else "Blocked by scan decision"
     if decision.action == "block":
-        return "block", reason
+        return "block", reason, decision_message(decision, scan)
     if decision.action == "review" and config.block_on_review:
-        return "block", reason
-    return "allow", ""
+        return "block", reason, MESSAGE_NOT_ASSESSED
+    return "allow", "", ""
 
 
 async def scan_and_decide(
@@ -303,10 +331,10 @@ async def scan_and_decide(
     content_type: str,
     data: bytes,
     config: IcapConfig,
-) -> str:
-    """Store, scan, wait, and return 'allow' or 'block'. Never raises."""
+) -> tuple[str, str]:
+    """Store, scan, wait, and return ('allow' or 'block', end-user message). Never raises."""
     if not data:
-        return "allow"  # nothing to scan
+        return "allow", ""  # nothing to scan
     try:
         stored_sample = store_bytes(
             filename, content_type, data, max_size_bytes=config.max_bytes
@@ -315,7 +343,7 @@ async def scan_and_decide(
         log(f"{filename}: over size cap -> {'block' if config.fail_closed else 'allow'}")
         activity.count("fail_actions")
         activity.event("fail_action", f"Upload over the size cap -> {'block' if config.fail_closed else 'allow'}")
-        return "block" if config.fail_closed else "allow"
+        return ("block", MESSAGE_TOO_LARGE) if config.fail_closed else ("allow", "")
 
     try:
         loop = asyncio.get_running_loop()
@@ -334,6 +362,7 @@ async def scan_and_decide(
             service_client_id=identity.client.id,
             scan_profile_id=identity.profile.id,
             profile_snapshot_json=profile_snapshot_json(identity, engines),
+            refuse_archives=config.block_archives,
         )
         scan = await wait_for_terminal_scan(scan.id, config.wait_seconds)
         decision = None
@@ -345,24 +374,24 @@ async def scan_and_decide(
                 action="wait", label="Wait", tone="neutral", confidence="low",
                 policy="archive_members_in_progress", reason="Archive members are still being scanned.",
                 reasons=["Archive members are still being scanned."])
-        action, reason = resolve_icap_action(scan, config, decision)
+        action, reason, message = resolve_icap_action(scan, config, decision)
         log(f"{filename} (scan {stored_sample.sha256[:12]}): {action}")
         activity.count("allowed" if action == "allow" else "blocked")
         if action == "block":
             activity.event("blocked", reason, scan_id=scan.id if scan else None)
-        return action
+        return action, message
     except PolicyRejectedError as exc:
         # A decision, not a failure: the client's profile refuses this content,
         # so it is blocked whatever the fail mode, and no scan was created.
         log(f"{filename}: rejected by profile policy ({exc.kind}) -> block")
         activity.count("policy_rejected")
         activity.event("policy_rejected", f"{filename}: {exc.reason}")
-        return "block"
+        return "block", exc.not_allowed.message
     except Exception as exc:  # noqa: BLE001 - fail-closed on any orchestration error
         log(f"{filename}: scan error {exc!r} -> {'block' if config.fail_closed else 'allow'}")
         activity.count("errors")
         activity.event("error", f"Scan error {exc!r} -> {'block' if config.fail_closed else 'allow'}")
-        return "block" if config.fail_closed else "allow"
+        return ("block", MESSAGE_NOT_SCANNED) if config.fail_closed else ("allow", "")
 
 
 async def respond_fail_action(
@@ -384,7 +413,7 @@ async def respond_fail_action(
     if action == "allow" and client_accepts_204(head):
         writer.write(protocol.build_no_content())
     else:
-        writer.write(protocol.build_block_response())
+        writer.write(protocol.build_block_response(message=MESSAGE_UNREADABLE))
     await writer.drain()
 
 
@@ -444,7 +473,7 @@ async def handle_modification(
     # multipart part); without one the method keeps naming it as before.
     named, content_type = protocol.encapsulated_file_info(http_header, data)
     filename = named or f"icap_{head.method.lower()}.bin"
-    action = await scan_and_decide(filename, content_type or "application/octet-stream", data, config)
+    action, message = await scan_and_decide(filename, content_type or "application/octet-stream", data, config)
 
     if action == "allow":
         if client_accepts_204(head):
@@ -455,7 +484,7 @@ async def handle_modification(
                 protocol.build_unmodified_response(head.encapsulated, http_header, data)
             )
     else:
-        writer.write(protocol.build_block_response())
+        writer.write(protocol.build_block_response(message=message or MESSAGE_NOT_SCANNED))
     await writer.drain()
     return True
 

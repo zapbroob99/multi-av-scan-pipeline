@@ -617,6 +617,8 @@ def init_sqlite_db() -> None:
         ensure_column(connection, "scan_jobs", "finalize_lease_expires_at", "INTEGER")
         ensure_column(connection, "scan_jobs", "archive_member_ordinal", "INTEGER")
         ensure_column(connection, "scan_jobs", "unavailable_engines", "INTEGER")
+        # Why intake refused the file (profile_policy.NOT_ALLOWED code); NULL when allowed.
+        ensure_column(connection, "scan_jobs", "not_allowed", "TEXT")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
@@ -670,6 +672,9 @@ def init_sqlite_db() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_scan_jobs_detection_feed ON scan_jobs (completed_at, id) "
             "WHERE status = 'completed' AND verdict IN ('high', 'critical')"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_jobs_not_allowed ON scan_jobs (id) WHERE not_allowed IS NOT NULL"
         )
         connection.execute(
             """
@@ -1060,6 +1065,8 @@ def init_postgres_db() -> None:
         ensure_column(connection, "scan_jobs", "finalize_lease_expires_at", "INTEGER")
         ensure_column(connection, "scan_jobs", "archive_member_ordinal", "INTEGER")
         ensure_column(connection, "scan_jobs", "unavailable_engines", "INTEGER")
+        # Why intake refused the file (profile_policy.NOT_ALLOWED code); NULL when allowed.
+        ensure_column(connection, "scan_jobs", "not_allowed", "TEXT")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
@@ -1113,6 +1120,9 @@ def init_postgres_db() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_scan_jobs_detection_feed ON scan_jobs (completed_at, id) "
             "WHERE status = 'completed' AND verdict IN ('high', 'critical')"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_jobs_not_allowed ON scan_jobs (id) WHERE not_allowed IS NOT NULL"
         )
         connection.execute(
             """
@@ -3048,6 +3058,7 @@ def complete_deferred_scan_intake(
     archive_format: str | None,
     profile_snapshot_json: str | None = None,
     archive_mode: str | None = None,
+    not_allowed: str | None = None,
 ) -> int | None:
     """Atomically create the scan and fence-link it to its deferred request.
 
@@ -3113,6 +3124,7 @@ def complete_deferred_scan_intake(
             service_client_id=request.service_client_id,
             scan_profile_id=request.scan_profile_id,
             profile_snapshot_json=snapshot,
+            not_allowed=not_allowed,
         )
         _insert_engine_jobs(connection, scan_id, engines)
         cursor = connection.execute(
@@ -4354,6 +4366,7 @@ def _insert_scan_job(
     service_client_id: int | None = None,
     scan_profile_id: int | None = None,
     profile_snapshot_json: str = "{}",
+    not_allowed: str | None = None,
 ) -> int:
     cursor = connection.execute(
         f"""
@@ -4374,11 +4387,12 @@ def _insert_scan_job(
             service_client_id,
             scan_profile_id,
             profile_snapshot_json,
+            not_allowed,
             started_at,
             completed_at
         )
         VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
             CASE
                 WHEN ? IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
                 ELSE NULL
@@ -4403,6 +4417,7 @@ def _insert_scan_job(
             service_client_id,
             scan_profile_id,
             profile_snapshot_json,
+            not_allowed,
             status,
         ),
     )
@@ -4908,6 +4923,7 @@ def create_scan_intake(
     service_client_id: int | None = None,
     scan_profile_id: int | None = None,
     profile_snapshot_json: str = "{}",
+    not_allowed: str | None = None,
 ) -> int:
     """Atomically create the sample, optional archive batch, scan job, and its
     engine jobs in ONE transaction. Either the whole scan is persisted or nothing
@@ -4958,6 +4974,7 @@ def create_scan_intake(
             service_client_id=service_client_id,
             scan_profile_id=scan_profile_id,
             profile_snapshot_json=profile_snapshot_json,
+            not_allowed=not_allowed,
         )
         _insert_engine_jobs(connection, scan_id, engines)
     return scan_id
@@ -6189,18 +6206,34 @@ def _settle_deferred_submission(connection: Any, scan_id: int, status: str) -> N
     )
 
 
+# scan_policy's siem_not_allowed_events: the database override, else the
+# environment, read here with the completing transaction's own connection.
+SIEM_NOT_ALLOWED_SETTING = "scan_policy.siem_not_allowed_events"
+
+
+def _siem_reports_not_allowed(connection: Any) -> bool:
+    row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (SIEM_NOT_ALLOWED_SETTING,)).fetchone()
+    raw = str(row_value(row, "value") or "").strip() if row is not None else ""
+    return (raw or os.getenv("MASP_SIEM_NOT_ALLOWED_EVENTS", "").strip()) == "1"
+
+
 def _enqueue_scan_notification_if_requested(
     connection: Any,
     scan_id: int,
     verdict: str,
     risk_score: int | None,
 ) -> None:
-    """Write a security event in the same transaction as scan completion."""
-    if verdict not in {"high", "critical"}:
-        return
+    """Write a security event in the same transaction as scan completion.
+
+    A detection is ``malware.detected``. A file intake refused (not allowed) but
+    no engine detected is ``policy.not_allowed``, sent only when the
+    siem_not_allowed_events scan policy setting is on. Both go only where the
+    submission asked for security events.
+    """
+    detected = verdict in {"high", "critical"}
     scan = connection.execute(
         """
-        SELECT scan_jobs.service_client_id, scan_jobs.profile_snapshot_json,
+        SELECT scan_jobs.service_client_id, scan_jobs.profile_snapshot_json, scan_jobs.not_allowed,
                samples.original_filename, samples.size_bytes, samples.sha256
         FROM scan_jobs
         JOIN samples ON samples.id = scan_jobs.sample_id
@@ -6216,6 +6249,11 @@ def _enqueue_scan_notification_if_requested(
         return
     delivery = snapshot.get("delivery") if isinstance(snapshot, dict) else None
     if not isinstance(delivery, dict) or delivery.get("mode") != "security_events_only":
+        return
+    code = row_value(scan, "not_allowed")
+    if not detected:
+        if code and _siem_reports_not_allowed(connection):
+            _enqueue_not_allowed_event(connection, scan_id, scan, snapshot, delivery, str(code))
         return
     detections = []
     for result in connection.execute(
@@ -6264,6 +6302,38 @@ def _enqueue_scan_notification_if_requested(
             payload["idempotency_key"],
             json.dumps(payload, separators=(",", ":"), sort_keys=True),
         ),
+    )
+
+
+def _enqueue_not_allowed_event(connection: Any, scan_id: int, scan: Any, snapshot: dict,
+                               delivery: dict, code: str) -> None:
+    intake = snapshot.get("intake_policy")
+    violations = intake.get("violations") if isinstance(intake, dict) else []
+    reasons = [str(item.get("detail"))[:512] for item in violations or [] if isinstance(item, dict)][:20]
+    service_client = snapshot.get("service_client")
+    payload = {
+        "schema_version": 1,
+        "event_type": "policy.not_allowed",
+        "idempotency_key": f"scan:{scan_id}:policy.not_allowed",
+        "scan_id": scan_id,
+        "client": service_client if isinstance(service_client, dict) else {},
+        "client_request_id": delivery.get("client_request_id"),
+        "filename": str(row_value(scan, "original_filename")),
+        "size_bytes": int(row_value(scan, "size_bytes")),
+        "sha256": str(row_value(scan, "sha256")),
+        "not_allowed": code,
+        "reasons": reasons,
+    }
+    connection.execute(
+        """
+        INSERT INTO notification_outbox (
+            scan_job_id, service_client_id, event_type,
+            idempotency_key, payload_json
+        ) VALUES (?, ?, 'policy.not_allowed', ?, ?)
+        ON CONFLICT(idempotency_key) DO NOTHING
+        """,
+        (scan_id, int(row_value(scan, "service_client_id")), payload["idempotency_key"],
+         json.dumps(payload, separators=(",", ":"), sort_keys=True)),
     )
 
 

@@ -1,4 +1,4 @@
-import { ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
+import { Ban, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
 
 const ALERT_LEVELS = new Set(['high', 'critical'])
 const REVIEW_LEVELS = new Set(['medium', 'low'])
@@ -42,6 +42,13 @@ export function RiskBadge({ level, score, pending = false, failed = false, unava
     <strong>{RISK_LABELS[normalized] || normalized || 'unknown'}</strong>
     <span className="risk-badge-score">{score} / 100</span>
   </span>
+}
+
+/** A file the client's rules refused at intake. Shown beside the recorded risk,
+ * never instead of it: not allowed is a policy outcome, not a malware detection. */
+export function NotAllowedBadge({ label }: { label: string }) {
+  return <span className="risk-badge risk-badge-refused" title="The client's rules refused this file. This is not a malware detection.">
+    <Ban size={14} aria-hidden="true" /><strong>Not allowed</strong><span className="risk-badge-score">{label}</span></span>
 }
 
 /** True when a row should be called out in the list itself, not only in a cell. */

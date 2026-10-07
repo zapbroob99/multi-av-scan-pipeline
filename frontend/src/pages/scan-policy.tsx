@@ -21,11 +21,11 @@ export default function ScanPolicy({ session }: { session: Session }) {
   function review(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
-    setConfirmation({ api_max_wait_seconds: String(form.get('api_max_wait_seconds') || ''),
-      api_retry_after_seconds: String(form.get('api_retry_after_seconds') || ''), upload_max_bytes: String(form.get('upload_max_bytes') || '') })
+    // Every field the server lists is sent; the strict body names each one.
+    setConfirmation(Object.fromEntries((policy.data?.fields ?? []).map(field => [field.key, String(form.get(field.key) || '')])) as Values)
   }
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>Scan policy</h1>
-    <p className="muted">Operational limits for REST scan requests and file intake.</p></div>
+    <p className="muted">Operational limits for REST scan requests and file intake, and which outcomes reach SIEM.</p></div>
     <Button variant="secondary" disabled={busy} onClick={async () => { save.reset(); const result = await policy.refetch();
       if (!result.error) { setNeedsRefresh(false); setVersion(value => value + 1) } }}>Reload policy</Button></div>
     <nav className="report-actions"><Link to="/system/overview">System overview</Link></nav>
@@ -37,7 +37,7 @@ export default function ScanPolicy({ session }: { session: Session }) {
     {save.error && <p role="alert" className="error"><ErrorMessage message={save.error.message || ''} /> The request may have reached the server. Reload and check the values before another save; this request will not be replayed.</p>}
     {needsRefresh && <p>Reload policy before editing again.</p>}
     {!needsRefresh && !policy.error && policy.data && <form key={version} className="settings-panel" onSubmit={review} aria-label="Scan policy settings">
-      <div className="settings-panel-header"><div><h2>Operational limits</h2><p>Blank uses the environment or built-in default shown in the field.</p></div></div>
+      <div className="settings-panel-header"><div><h2>Operational settings</h2><p>Blank uses the environment or built-in default shown in the field.</p></div></div>
       <fieldset disabled={busy}><div className="settings-panel-body">{policy.data.fields.map(field => <div className="setting-row" key={field.key}>
         <div className="setting-label"><label htmlFor={`policy-${field.key}`}>{field.label}{field.unit && ` (${field.unit})`}</label>
           <p>{field.help}</p></div>
@@ -45,10 +45,10 @@ export default function ScanPolicy({ session }: { session: Session }) {
           defaultValue={field.override_raw} placeholder={`Default: ${field.default}`} />
           <p className="setting-effective">Effective <strong>{field.value.toLocaleString()}</strong><span className="tag">{field.source}</span></p></div>
       </div>)}</div>
-      <div className="settings-panel-footer"><p>Saving replaces all three overrides; the last successful save wins.</p><Button type="submit">Review policy changes</Button></div></fieldset>
+      <div className="settings-panel-footer"><p>Saving replaces every override; the last successful save wins.</p><Button type="submit">Review policy changes</Button></div></fieldset>
     </form>}
     <Dialog open={confirmation !== null} onOpenChange={open => { if (!open && !save.isPending) setConfirmation(null) }} title="Save scan policy?"
-      description="Apply these three overrides together. Blank entries revert to the environment or built-in default.">
+      description="Apply these overrides together. Blank entries revert to the environment or built-in default.">
       <dl className="report-metadata">{policy.data?.fields.map(field => <div key={field.key}><dt>{field.label}</dt>
         <dd>{confirmation?.[field.key as keyof Values] || 'Clear override'}</dd></div>)}</dl>
       <div className="report-actions"><Button variant="secondary" disabled={save.isPending} onClick={() => setConfirmation(null)}>Cancel</Button>

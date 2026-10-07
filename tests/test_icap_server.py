@@ -1,7 +1,8 @@
 import asyncio
+import json
 import unittest
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.icap import protocol, server
 from app.icap.config import IcapConfig
@@ -83,7 +84,8 @@ def null_body_reqmod() -> bytes:
     )
 
 
-def run_handler(message: bytes, config: IcapConfig, *, decision_action="allow", terminal=True, store_error=None, batch_id=None):
+def run_handler(message: bytes, config: IcapConfig, *, decision_action="allow", terminal=True, store_error=None, batch_id=None,
+                decision_policy=None, violation_kind=None, enqueue=None):
     writer = FakeWriter()
     stored = StoredSample(
         original_filename="icap.bin",
@@ -96,12 +98,14 @@ def run_handler(message: bytes, config: IcapConfig, *, decision_action="allow", 
         sha256="ab" * 32,
     )
     scan = FakeScan(status="completed" if terminal else "running", batch_id=batch_id)
+    if violation_kind:
+        scan.profile_snapshot_json = json.dumps({"intake_policy": {"violations": [{"kind": violation_kind, "detail": "d"}]}})
     decision = ScanDecision(
         action=decision_action,
         label="x",
         tone="neutral",
         confidence="high",
-        policy="test",
+        policy=decision_policy or ("malware_detected" if decision_action == "block" else "test"),
         reason="test",
         reasons=[],
     )
@@ -113,8 +117,10 @@ def run_handler(message: bytes, config: IcapConfig, *, decision_action="allow", 
         reader = await _make_reader(message)
         await server.handle_connection(reader, writer, config)
 
+    enqueue = enqueue or MagicMock()
+    enqueue.return_value = scan
     with store_mock, patch.object(
-        server, "enqueue_scan_from_stored_sample", return_value=scan
+        server, "enqueue_scan_from_stored_sample", new=enqueue
     ), patch.object(
         server, "wait_for_terminal_scan", new=AsyncMock(return_value=scan)
     ), patch.object(
@@ -167,6 +173,27 @@ class IcapServerTests(unittest.TestCase):
         out, _ = run_handler(reqmod_message(b"evil"), self.config, decision_action="block")
         self.assertTrue(out.startswith(b"ICAP/1.0 200 OK\r\n"))
         self.assertIn(b"HTTP/1.1 403 Forbidden", out)
+        self.assertIn(b"Blocked by MASP: malware detected.", out)
+
+    def test_only_a_detection_is_called_malware(self) -> None:
+        # The end user's message names the kind of reason; a rule, an unassessed
+        # file or a scan that did not finish is never reported as malware.
+        cases = [
+            (dict(decision_action="block", decision_policy="profile_archive_policy", violation_kind="archive_encrypted"),
+             b"the archive could not be fully checked"),
+            (dict(decision_action="block", decision_policy="archive_member_blocked"), b"a file inside the archive"),
+            (dict(decision_action="block", decision_policy="profile_content_policy", violation_kind="type"),
+             b"type of file is not accepted"),
+            (dict(decision_action="block", decision_policy="profile_review_block"), b"could not be fully scanned"),
+            (dict(terminal=False), b"did not finish in time"),
+        ]
+        for kwargs, expected in cases:
+            with self.subTest(kwargs=kwargs):
+                out, _ = run_handler(reqmod_message(b"x"), self.config, **kwargs)
+                self.assertIn(expected, out)
+                self.assertNotIn(b"malware", out)
+        out, _ = run_handler(reqmod_message(b"maybe"), IcapConfig(block_on_review=True), decision_action="review")
+        self.assertIn(b"could not be fully scanned", out)
 
     def test_incomplete_scan_fails_closed(self) -> None:
         out, _ = run_handler(reqmod_message(b"slow"), self.config, terminal=False)
@@ -250,7 +277,7 @@ class IcapServerTests(unittest.TestCase):
         self.assertIn(b"ISTag:", out)
 
     def _stored_name(self, message: bytes) -> tuple[str, str]:
-        decide = AsyncMock(return_value="allow")
+        decide = AsyncMock(return_value=("allow", ""))
 
         async def _run() -> None:
             reader = await _make_reader(message)
@@ -347,45 +374,32 @@ class IcapSourceAddressDiagnosticsTests(unittest.TestCase):
 
 
 class IcapArchiveGateTests(unittest.TestCase):
-    """Archive/container uploads are rejected on the ICAP path by default."""
+    """MASP_ICAP_BLOCK_ARCHIVES is handed to intake, which records the refusal on
+    the scan; the gateway adds no rule of its own, so it answers what the scan
+    decided and the report and ledger say the same."""
 
-    def test_archive_upload_is_blocked_even_when_clean(self) -> None:
-        out, _ = run_handler(
-            reqmod_message(b"PK-archive"),
-            IcapConfig(),
-            decision_action="allow",
-            batch_id=7,
-        )
-        self.assertTrue(out.startswith(b"ICAP/1.0 200 OK\r\n"))
-        self.assertIn(b"403 Forbidden", out)
+    def test_the_gateway_hands_its_archive_rule_to_intake(self) -> None:
+        for block_archives in (True, False):
+            with self.subTest(block_archives=block_archives):
+                enqueue = MagicMock()
+                run_handler(reqmod_message(b"PK-archive"), IcapConfig(block_archives=block_archives),
+                            batch_id=7, enqueue=enqueue)
+                self.assertIs(enqueue.call_args.kwargs["refuse_archives"], block_archives)
 
-    def test_the_event_names_the_archive_rule_not_the_scan(self) -> None:
-        # The console shows the scan's own allow; the event must say why ICAP blocked.
+    def test_a_refused_archive_is_blocked_and_said_as_such(self) -> None:
         from app.icap import activity
         recorder = activity.IcapActivity(IcapConfig())
         with patch.object(activity, "ACTIVITY", recorder):
-            run_handler(reqmod_message(b"PK-archive"), IcapConfig(), decision_action="allow", batch_id=7)
-            run_handler(reqmod_message(b"plain"), IcapConfig(), decision_action="block", batch_id=None)
-        details = [event["detail"] for event in recorder.events]
-        self.assertEqual(details, ["Blocked by scan decision",
-                                   "Blocked: archive upload (MASP_ICAP_BLOCK_ARCHIVES), whatever the scan decided"])
+            out, _ = run_handler(reqmod_message(b"PK-archive"), IcapConfig(), decision_action="block",
+                                 decision_policy="profile_archive_policy", violation_kind="archive_refused", batch_id=7)
+        self.assertIn(b"403 Forbidden", out)
+        self.assertIn(b"Blocked by MASP: archive files are not accepted.", out)
+        self.assertNotIn(b"malware", out)
+        self.assertEqual(recorder.events[0]["detail"], "Blocked: test")
 
-    def test_non_archive_upload_still_allowed(self) -> None:
-        out, _ = run_handler(
-            reqmod_message(b"plain"),
-            IcapConfig(),
-            decision_action="allow",
-            batch_id=None,
-        )
-        self.assertTrue(out.startswith(b"ICAP/1.0 204 No Content\r\n"))
-
-    def test_archive_gate_can_be_disabled(self) -> None:
-        out, _ = run_handler(
-            reqmod_message(b"PK-archive"),
-            IcapConfig(block_archives=False),
-            decision_action="allow",
-            batch_id=7,
-        )
+    def test_an_archive_the_scan_allows_is_allowed(self) -> None:
+        # Nothing at the gateway overrides the decision any more.
+        out, _ = run_handler(reqmod_message(b"PK-archive"), IcapConfig(), decision_action="allow", batch_id=7)
         self.assertTrue(out.startswith(b"ICAP/1.0 204 No Content\r\n"))
 
 
@@ -426,6 +440,7 @@ class IcapBodyHardeningTests(unittest.TestCase):
         out, writer = run_raw(message, self.config)
         self.assertTrue(out.startswith(b"ICAP/1.0 200 OK\r\n"))
         self.assertIn(b"403 Forbidden", out)
+        self.assertIn(b"the transfer could not be read completely", out)
         self.assertTrue(writer.closed)
 
     def test_invalid_chunk_size_fails_closed(self) -> None:

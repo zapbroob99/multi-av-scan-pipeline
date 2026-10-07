@@ -284,6 +284,9 @@ label.check-row { flex-direction: row; align-items: center; gap: 9px; font-weigh
 .risk-badge-unscored { background: transparent; color: var(--text-3); }
 .risk-badge-clear { color: var(--ok); background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 30%, var(--line)); }
 .risk-badge-clear strong { text-transform: none; letter-spacing: 0; font-size: 11.5px; }
+.risk-badge-refused { color: var(--crit); background: var(--surface); border-color: color-mix(in srgb, var(--crit) 55%, var(--line)); }
+.risk-cell { display: flex; flex-wrap: wrap; gap: 4px; }
+.report-not-allowed { margin: 0 0 6px; }
 .risk-high { color: var(--crit); }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
 .tags span { font-size: 11px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 2px; color: var(--text-2); background: var(--surface-2); }

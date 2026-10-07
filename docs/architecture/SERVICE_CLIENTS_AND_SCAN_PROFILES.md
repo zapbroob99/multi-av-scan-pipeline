@@ -134,7 +134,7 @@ that (`app/services/archive_inspection.py`):
 
 | Value | Intake | Engines | ICAP |
 |---|---|---|---|
-| `inherit` | Nothing extra | The archive as one file; members only after a detection (`lazy_extract_on_detection`) | `MASP_ICAP_BLOCK_ARCHIVES` (default on) blocks every archive |
+| `inherit` | Nothing extra; through an ICAP gateway with `MASP_ICAP_BLOCK_ARCHIVES` (default on) the archive is recorded as not allowed (`archive_refused`) | The archive as one file; members only after a detection (`lazy_extract_on_detection`) | Blocked as not allowed |
 | `inspect` | MASP opens the archive with its bounded extractor and judges every member | As `inherit` | The scan's decision |
 | `scan_members` | As `inspect` | Also every member, at every nesting level (`extract_all` batch) | The archive's decision over all members, inside `MASP_ICAP_WAIT_SECONDS` |
 
@@ -192,6 +192,35 @@ is 1000 scans; size `MASP_ICAP_WAIT_SECONDS` and the worker capacity for that.
 These modes lift the ICAP blanket block for this client only. That is the one
 setting that relaxes something, deliberately: the blanket block is exchanged for
 a decision that still blocks whatever MASP could not check.
+
+### Not allowed
+
+A file a client's rules refuse is **not allowed**, a third outcome beside a
+malware detection and a file that could not be assessed. Every rule that can
+refuse a file at admission runs in one place, `profile_policy.apply_intake_policy`:
+the profile's size limit, content rule and masquerade check, archive inspection,
+and an ICAP gateway's `MASP_ICAP_BLOCK_ARCHIVES` (handed to intake as
+`refuse_archives`; the gateway itself adds no rule after the scan). Each
+violation kind maps to one entry of `profile_policy.NOT_ALLOWED`: the short code
+stored on `scan_jobs.not_allowed`, the operator's label and the message an ICAP
+end user is shown. The first violation names the outcome; all are kept in the
+scan's `intake_policy`.
+
+| Where | What it shows |
+|---|---|
+| Decision | `block`, policy `profile_content_policy` or `profile_archive_policy`, reason "Not allowed: ..." |
+| API ledger | A "Not allowed" badge with the label beside the recorded risk; the risk filter has "Not allowed (client rules)" |
+| Scan report | The same badge above the decision |
+| ICAP | The entry's message ("archive files are not accepted", "the archive could not be fully checked", ...) |
+| Recorded risk, detections, notification bell | Unchanged: not allowed is not malware |
+| SIEM | `policy.not_allowed`, only when the Scan policy setting "SIEM: not-allowed files" (`siem_not_allowed_events`, environment `MASP_SIEM_NOT_ALLOWED_EVENTS`) is 1, and only where `malware.detected` would go (submissions that request security events). A detection is always `malware.detected` instead |
+
+`violation_action: reject` still refuses without a scan record: the API answers
+413/415, ICAP blocks with the entry's message, nothing reaches the ledger. Keep
+the default scan-and-block where refused files must be visible. A code written by
+a newer release reads as the generic `policy` entry, never as allowed. Scans
+accepted before this release have no stored code and show their recorded risk
+only.
 
 ## Connecting a client
 

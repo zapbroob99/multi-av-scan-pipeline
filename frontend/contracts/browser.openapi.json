@@ -3416,6 +3416,28 @@
             "title": "Job Revision",
             "type": "integer"
           },
+          "not_allowed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Allowed"
+          },
+          "not_allowed_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Allowed Label"
+          },
           "risk_level": {
             "title": "Risk Level",
             "type": "string"
@@ -5652,6 +5674,11 @@
             "title": "Api Retry After Seconds",
             "type": "string"
           },
+          "siem_not_allowed_events": {
+            "maxLength": 128,
+            "title": "Siem Not Allowed Events",
+            "type": "string"
+          },
           "upload_max_bytes": {
             "maxLength": 128,
             "title": "Upload Max Bytes",
@@ -5661,7 +5688,8 @@
         "required": [
           "api_max_wait_seconds",
           "api_retry_after_seconds",
-          "upload_max_bytes"
+          "upload_max_bytes",
+          "siem_not_allowed_events"
         ],
         "title": "ScanPolicyBody",
         "type": "object"
@@ -5910,6 +5938,28 @@
               }
             ],
             "title": "Last Error"
+          },
+          "not_allowed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Allowed"
+          },
+          "not_allowed_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Allowed Label"
           },
           "note": {
             "title": "Note",
@@ -7851,7 +7901,8 @@
                 "low",
                 "medium",
                 "high",
-                "critical"
+                "critical",
+                "not_allowed"
               ],
               "title": "Risk",
               "type": "string"

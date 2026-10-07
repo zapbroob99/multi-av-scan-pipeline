@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest'
 import ScanPolicy from './scan-policy'
 
 function mount(fail = false) {
-  const fields = ['api_max_wait_seconds', 'api_retry_after_seconds', 'upload_max_bytes'].map(key => ({ key, label: key, help: 'Help',
+  const fields = ['api_max_wait_seconds', 'api_retry_after_seconds', 'upload_max_bytes', 'siem_not_allowed_events'].map(key => ({ key, label: key, help: 'Help',
     unit: '', minimum: 0, maximum: 5000, default: 0, value: 0, override_raw: '', source: 'default' }))
   const fetcher = vi.fn(async (_url: string, options?: RequestInit) => options?.method === 'PUT'
     ? fail ? new Response(JSON.stringify({ detail: 'Unavailable' }), { status: 503 }) : new Response(null, { status: 204 })
@@ -29,7 +29,7 @@ describe('Scan policy', () => {
     await screen.findByText('Scan policy saved. Reload policy to see the effective values.')
     const writes = fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')
     expect(writes).toHaveLength(1)
-    expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ api_max_wait_seconds: '30', api_retry_after_seconds: '', upload_max_bytes: '' })
+    expect(JSON.parse(String(writes[0][1]?.body))).toEqual({ api_max_wait_seconds: '30', api_retry_after_seconds: '', upload_max_bytes: '', siem_not_allowed_events: '' })
     expect(writes[0][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
     expect(screen.queryByRole('form')).toBeNull()
   })

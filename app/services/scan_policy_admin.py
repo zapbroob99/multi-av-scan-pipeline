@@ -1,4 +1,4 @@
-"""Explicit three-field browser policy projection; no deployment secret reads."""
+"""Explicit browser projection of scan_policy.SPECS; no deployment secret reads."""
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from app import database as db
@@ -11,6 +11,7 @@ class ScanPolicyBody(BaseModel):
     api_max_wait_seconds: str = Field(max_length=128)
     api_retry_after_seconds: str = Field(max_length=128)
     upload_max_bytes: str = Field(max_length=128)
+    siem_not_allowed_events: str = Field(max_length=128)
 
 
 class ScanPolicyField(BaseModel):
@@ -34,8 +35,9 @@ def read() -> ScanPolicySnapshot:
     keys = [scan_policy.SETTING_PREFIX + spec.key for spec in scan_policy.SPECS]
     with db.connect() as connection:
         apply_read_budget(connection)
-        rows = connection.execute('''SELECT key, SUBSTR(value, 1, 129) AS value
-            FROM app_settings WHERE key IN (?, ?, ?)''', tuple(keys)).fetchall()
+        placeholders = ', '.join('?' for _ in keys)
+        rows = connection.execute(f'''SELECT key, SUBSTR(value, 1, 129) AS value
+            FROM app_settings WHERE key IN ({placeholders})''', tuple(keys)).fetchall()
     overrides = {row['key']: row['value'] for row in rows}
     fields = []
     for spec in scan_policy.SPECS:
@@ -57,7 +59,7 @@ def save(body: ScanPolicyBody) -> dict[str, int | None]:
         if error:
             raise HTTPException(422, error)
         resolved[key] = value
-    # Validate all fields first, then commit all three overrides together.
+    # Validate all fields first, then commit every override together.
     with db.connect() as connection:
         apply_read_budget(connection)
         if db.using_postgres():

@@ -43,12 +43,26 @@ The content type comes from the response (RESPMOD) or request (REQMOD) header.
 | Completed, malicious (`block`) | `200` block |
 | Content the client profile does not accept, scanned | `200` block |
 | Content the client profile rejects without scanning, or over the profile's size limit | `200` block, no scan, whatever the fail mode |
-| Archive (zip, 7z, tar; not an Office document), client profile without archive handling | `200` block while `MASP_ICAP_BLOCK_ARCHIVES=1`, even when the scan allows it; the console shows the scan's own decision |
+| Archive (zip, 7z, tar; not an Office document), client profile without archive handling | `200` block while `MASP_ICAP_BLOCK_ARCHIVES=1`: intake records the archive as not allowed, so the report and the ledger say the same |
 | Archive, profile archive handling `inspect` | the scan's decision: blocked when encrypted, damaged, over a limit, an unsupported format (RAR, CAB, ...) or holding a member the profile refuses or the hash blocklist lists |
 | Archive, profile archive handling `scan_members` | the decision over the container and every member; members still running at the end of the wait window follow the fail mode |
 | Did not finish within the wait window | **fail-closed:** `200` block |
 | File over the size cap | **fail-closed:** `200` block |
 | Scan/orchestration error | **fail-closed:** `200` block |
+
+The replacement `403` body tells the person whose transfer was refused what
+kind of reason applied, never more (no engine names, members or settings):
+`malware detected` only when an engine detected something; otherwise "a file
+inside the archive was blocked", the not-allowed messages from
+`profile_policy.NOT_ALLOWED` ("archive files are not accepted", "the archive
+could not be fully checked", "a file inside the archive is not accepted", "this
+type of file is not accepted", "the file is larger than this service accepts"),
+"the file could not be fully scanned" (review blocked), "the scan did not finish
+in time", "the file could not be scanned" or "the transfer could not be read
+completely". Before pilot.15 every
+block said "malware detected", so a client product showing that text for a clean
+archive was reporting the archive rule, not a detection. The operator's reason is
+on System > ICAP and SIEM and in the scan report.
 
 Fail-closed is the default: if MASP cannot get a definitive clean answer, it
 blocks. Set `MASP_ICAP_FAIL_MODE_CLOSED=0` to fail-open (allow on timeout/error)
@@ -66,7 +80,7 @@ instead — the scan still completes in the background and is visible in MASP.
 | `MASP_ICAP_MAX_BYTES` | falls back to `MASP_UPLOAD_MAX_BYTES` | Size cap; over-cap is fail-closed |
 | `MASP_ICAP_FAIL_MODE_CLOSED` | `1` | `1` = block on timeout/error, `0` = allow |
 | `MASP_ICAP_BLOCK_ON_REVIEW` | `0` | `1` = also block uncertain verdicts |
-| `MASP_ICAP_BLOCK_ARCHIVES` | `1` | `1` = block archive uploads for clients whose profile has no archive handling; a profile set to `inspect` or `scan_members` is judged by its own decision instead |
+| `MASP_ICAP_BLOCK_ARCHIVES` | `1` | `1` = archives from clients whose profile has no archive handling are recorded as not allowed at intake and blocked; a profile set to `inspect` or `scan_members` is judged by its own decision instead |
 | `MASP_ICAP_ALLOWED_IPS` | (empty) | Comma-separated client IP allowlist; empty = allow all |
 | `MASP_ICAP_PREVIEW_BYTES` | `0` | Preview size advertised in OPTIONS |
 
@@ -144,8 +158,8 @@ is a fail-closed `200` block within `MASP_ICAP_WAIT_SECONDS`.
 - ICAP archive uploads create a batch like REST archive uploads, but the
   `/api/v1/batches` endpoints are REST-scoped; inspect ICAP archives via the
   API Ledger. With `MASP_ICAP_BLOCK_ARCHIVES=1` (the default) an archive is
-  blocked whatever its scan says, unless the client's profile sets archive
-  handling (Service Clients > Profile routing > Scan policy > Archive handling;
+  recorded as not allowed and blocked whatever the engines say, unless the
+  client's profile sets archive handling (Service Clients > Profile routing > Scan policy > Archive handling;
   see "Archives" in `docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md`).
   `scan_members` makes ICAP wait for every member within
   `MASP_ICAP_WAIT_SECONDS`, so raise it for clients that send large archives.

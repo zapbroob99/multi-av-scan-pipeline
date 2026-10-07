@@ -10,10 +10,10 @@ function ledgerCalls(fetcher: { mock: { calls: unknown[][] } }) {
   return fetcher.mock.calls.filter(([url]) => !String(url).includes('/api-ledger/clients'))
 }
 
-function mount() {
+function mount(extra: object = {}) {
   const fetcher = vi.fn(async (_url: string) => new Response(JSON.stringify({ items: [{ id: 42, filename: '<script>API sample</script>',
     sha256: 'a'.repeat(64), size_bytes: 1024, case_name: 'Case', source: 'icap', service_client_id: 7,
-    client_name: 'Integration', batch_id: 3, status: 'completed', risk_score: 0, risk_level: 'info', created_at: '2026-09-17' }], next_before: 42 })))
+    client_name: 'Integration', batch_id: 3, status: 'completed', risk_score: 0, risk_level: 'info', created_at: '2026-09-17', ...extra }], next_before: 42 })))
   vi.stubGlobal('fetch', fetcher)
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><ApiLedger /></MemoryRouter></QueryClientProvider>)
   return fetcher
@@ -27,6 +27,17 @@ describe('API ledger', () => {
     expect(screen.getByText(/Recorded risk is not a clean verdict/)).toBeVisible()
     expect(screen.getAllByRole('link', { name: 'Report' })[0]).toHaveAttribute('href', '/api-ledger/scans/42')
     expect(screen.getByRole('link', { name: 'Batch' })).toHaveAttribute('href', '/api-ledger/batches/3')
+  })
+  it('shows a refused file as not allowed beside its recorded risk, never as malware', async () => {
+    const fetcher = mount({ not_allowed: 'archive_refused', not_allowed_label: 'Archive' })
+    await screen.findByRole('link', { name: '<script>API sample</script>' })
+    const row = screen.getByRole('link', { name: '<script>API sample</script>' }).closest('tr')!
+    expect(row).toHaveTextContent('No detection')
+    expect(row).toHaveTextContent('Not allowedArchive')
+    expect(row).not.toHaveClass('row-alert')
+    await userEvent.selectOptions(screen.getByLabelText('Recorded risk'), 'not_allowed')
+    await userEvent.click(screen.getByRole('button', { name: 'Apply filters' }))
+    expect(ledgerCalls(fetcher).at(-1)?.[0]).toBe('/api/ui/v1/api-ledger?risk=not_allowed&limit=20')
   })
   it('preserves scoped filters across seek pages and supports unassigned ownership', async () => {
     const fetcher = mount()

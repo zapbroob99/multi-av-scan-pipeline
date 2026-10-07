@@ -34,7 +34,11 @@ def child_presence_statement(rows, *, automation=False, source='manual', client_
     branches: list[str] = []
     params: list[object] = []
     for row in rows:
-        conditions = ["nested.parent_scan_id = ?", "nested.source = ?", "nested.scan_role = 'child'"]
+        # "nested.id > 0" is always true; it engages both columns of
+        # idx_scan_jobs_parent (parent_scan_id, id). Without statistics SQLite
+        # otherwise ties that index with idx_scan_jobs_role_created and picks by
+        # estimated row width, which flips whenever scan_jobs gains a column.
+        conditions = ["nested.parent_scan_id = ?", "nested.id > 0", "nested.source = ?", "nested.scan_role = 'child'"]
         values = [row['id'], row['id'], source]
         if automation:
             conditions.append('nested.service_client_id IS NULL' if client_id is None else 'nested.service_client_id = ?')

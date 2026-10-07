@@ -167,13 +167,14 @@ class ReliabilityPostgresTests(unittest.TestCase):
     def test_browser_scan_policy_atomic_save_and_clear_on_postgres(self):
         from app.services import scan_policy_admin, scan_policy
         db = self.database
-        body = scan_policy_admin.ScanPolicyBody(api_max_wait_seconds='300', api_retry_after_seconds='1', upload_max_bytes=str(5 * 1024**3))
+        body = scan_policy_admin.ScanPolicyBody(api_max_wait_seconds='300', api_retry_after_seconds='1', upload_max_bytes=str(5 * 1024**3),
+                                                siem_not_allowed_events='1')
         scan_policy_admin.save(body)
-        self.assertEqual([field.value for field in scan_policy_admin.read().fields], [300, 1, 5 * 1024**3])
+        self.assertEqual([field.value for field in scan_policy_admin.read().fields], [300, 1, 5 * 1024**3, 1])
         self.assertEqual(scan_policy.resolve_int('upload_max_bytes'), 5 * 1024**3)
         scan_policy_admin.save(scan_policy_admin.ScanPolicyBody(**{key: '' for key in body.model_dump()}))
         self.assertIsNone(db.get_setting('scan_policy.api_max_wait_seconds'))
-        self.assertEqual([field.override_raw for field in scan_policy_admin.read().fields], ['', '', ''])
+        self.assertEqual([field.override_raw for field in scan_policy_admin.read().fields], ['', '', '', ''])
 
     def test_browser_service_client_pages_and_scoped_updates(self):
         from app.services import client_admin

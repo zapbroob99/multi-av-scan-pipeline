@@ -202,7 +202,7 @@ class ProfileManagementTests(unittest.TestCase):
             # A timeout remains fail-closed; this test exercises actual intake,
             # without waiting for or starting a scanner.
             self.assertEqual(asyncio.run(server.scan_and_decide('icap.txt', 'text/plain', b'icap content',
-                IcapConfig(service_client_key='profile-test', wait_seconds=0))), 'block')
+                IcapConfig(service_client_key='profile-test', wait_seconds=0))), ('block', server.MESSAGE_NOT_FINISHED))
         with db.connect() as connection:
             row = connection.execute("SELECT service_client_id, scan_profile_id, profile_snapshot_json FROM scan_jobs WHERE source = 'icap'").fetchone()
         self.assertEqual(row['service_client_id'], self.client)

@@ -24,7 +24,7 @@ from app.services.deferred_storage import (
     configured_backend_keys,
     copy_deferred_source,
 )
-from app.services.profile_policy import PolicyRejectedError, apply_intake_policy
+from app.services.profile_policy import PolicyRejectedError, apply_intake_policy, not_allowed_code
 from app.services.scan_intake import effective_archive_mode
 from app.services.service_clients import engines_for_snapshot_json
 
@@ -101,6 +101,7 @@ def process_next() -> bool:
                 archive_format=archive_format,
                 profile_snapshot_json=snapshot,
                 archive_mode=effective_archive_mode(snapshot, request.archive_mode),
+                not_allowed=not_allowed_code(snapshot),
             )
             if scan_id is None:
                 Path(stored.storage_path).unlink(missing_ok=True)

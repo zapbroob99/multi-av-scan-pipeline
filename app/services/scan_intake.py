@@ -15,7 +15,7 @@ from app.database import count_active_batch_scans, create_scan_intake, get_scan
 from app.models import EngineInstanceRecord, ScanRecord, StoredSample
 from app.services.archive_extractor import EXTRACT_ALL_ARCHIVE_MODE, detect_archive_format
 from app.services.engine_registry import enabled_engines
-from app.services.profile_policy import apply_intake_policy, scans_every_member
+from app.services.profile_policy import apply_intake_policy, not_allowed_code, scans_every_member
 
 
 API_TERMINAL_SCAN_STATUSES = {"completed", "failed"}
@@ -56,6 +56,7 @@ def enqueue_scan_from_stored_sample(
     service_client_id: int | None = None,
     scan_profile_id: int | None = None,
     profile_snapshot_json: str = "{}",
+    refuse_archives: bool = False,
 ) -> ScanRecord:
     """Create a scan job (and archive batch/container when applicable).
 
@@ -78,6 +79,7 @@ def enqueue_scan_from_stored_sample(
             filename=stored_sample.original_filename,
             size=stored_sample.size_bytes,
             storage_path=stored_sample.storage_path,
+            refuse_archives=refuse_archives,
         )
         archive_format = detect_archive_format(stored_sample.storage_path)
         archive_mode = effective_archive_mode(profile_snapshot_json, archive_mode)
@@ -93,6 +95,7 @@ def enqueue_scan_from_stored_sample(
             service_client_id=service_client_id,
             scan_profile_id=scan_profile_id,
             profile_snapshot_json=profile_snapshot_json,
+            not_allowed=not_allowed_code(profile_snapshot_json),
         )
     except Exception:
         # Any failure BEFORE the intake transaction commits (zero engines,

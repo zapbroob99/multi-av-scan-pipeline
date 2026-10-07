@@ -6,6 +6,7 @@ import { request, type ScanReport, type ReportEngine } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { BackLink } from '../components/section-tabs'
 import { Timestamp } from '../components/timestamp'
+import { NotAllowedBadge } from '../components/risk-badge'
 
 export function reportPollInterval(report?: ScanReport) {
   return report && (['queued', 'running', 'finalizing'].includes(report.status) || report.decision?.action === 'wait') ? 3000 : false
@@ -69,7 +70,9 @@ export default function Report({ automation = false }: { automation?: boolean })
     {automation && <p><Link to={`/api-ledger/scans/${scan.id}/status-json`}>Integration status JSON</Link> ? <Link to={`/api-ledger/scans/${scan.id}/result-json`}>Integration result JSON</Link></p>}
     {scan.warning && <p role="alert" className="error">{scan.warning}</p>}
     <section className={`submission-card report-decision decision-${scan.decision?.action || 'unknown'}`} aria-label="Policy decision">
-      <p className="eyebrow">BACKEND POLICY DECISION</p><h2>{scan.decision?.label || 'Decision unavailable'}</h2>
+      <p className="eyebrow">BACKEND POLICY DECISION</p>
+      {scan.not_allowed_label && <p className="report-not-allowed"><NotAllowedBadge label={scan.not_allowed_label} /></p>}
+      <h2>{scan.decision?.label || 'Decision unavailable'}</h2>
       <p>{scan.decision?.reason || 'A reliable decision cannot be shown from the compact report.'}</p>
       {scan.decision && <><small>Policy: {scan.decision.policy} · Confidence: {scan.decision.confidence}</small>
         <ul>{scan.decision.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></>}

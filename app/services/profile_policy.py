@@ -14,9 +14,16 @@ the same classifier and family names as the file_type engine and storage
 protection's light tier.
 
 Archive handling is the one rule that also lifts something: an ICAP gateway
-blocks every archive unless the profile says how archives are judged. Both
+refuses every archive unless the profile says how archives are judged. Both
 modes only make the scan's own decision stricter, so the exchange is a blanket
-block for a decision that still blocks what MASP could not check.
+refusal for a decision that still blocks what MASP could not check.
+
+Everything a file can be refused for at admission is a violation recorded here,
+including that gateway refusal, and every violation kind maps to one entry of
+NOT_ALLOWED: a short code stored on the scan, the operator's label and the
+message an ICAP end user sees. A file that is not allowed is not malware: it is
+blocked, but its recorded risk, detections and malware notifications are left
+to the engines.
 """
 from __future__ import annotations
 
@@ -27,6 +34,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.archive_extractor import detect_archive_format
 from app.services.archive_inspection import inspect_archive
 from app.services.content_types import FAMILIES, classify
 from app.services.decisions import ScanDecision
@@ -74,6 +82,66 @@ class ProfilePolicy(BaseModel):
     archive_handling: Literal["inherit", "inspect", "scan_members"] = "inherit"
 
 
+@dataclass(frozen=True)
+class NotAllowed:
+    code: str
+    label: str
+    # What an ICAP end user is told; it names the kind of reason, never details.
+    message: str
+
+
+_CONTENT = "Blocked by MASP: this type of file is not accepted."
+_ARCHIVE_UNCHECKED = "Blocked by MASP: the archive could not be fully checked."
+_ARCHIVE_MEMBER = "Blocked by MASP: a file inside the archive is not accepted."
+NOT_ALLOWED: dict[str, NotAllowed] = {
+    "size": NotAllowed("too_large", "Too large", "Blocked by MASP: the file is larger than this service accepts."),
+    "type": NotAllowed("content_type", "File type", _CONTENT),
+    "masquerade": NotAllowed("masquerade", "Extension mismatch", _CONTENT),
+    "archive_refused": NotAllowed("archive_refused", "Archive", "Blocked by MASP: archive files are not accepted."),
+    "archive_encrypted": NotAllowed("archive_encrypted", "Encrypted archive", _ARCHIVE_UNCHECKED),
+    "archive_unreadable": NotAllowed("archive_unreadable", "Damaged archive", _ARCHIVE_UNCHECKED),
+    "archive_unsupported": NotAllowed("archive_unsupported", "Unsupported archive", _ARCHIVE_UNCHECKED),
+    "archive_limit": NotAllowed("archive_limit", "Archive over limit", _ARCHIVE_UNCHECKED),
+    "archive_nesting": NotAllowed("archive_nesting", "Nested too deep", _ARCHIVE_UNCHECKED),
+    "member_type": NotAllowed("archive_content", "File type in archive", _ARCHIVE_MEMBER),
+    "member_masquerade": NotAllowed("archive_content", "File type in archive", _ARCHIVE_MEMBER),
+    "member_blocklisted": NotAllowed("blocklisted", "Hash blocklist", _ARCHIVE_MEMBER),
+}
+# A kind this release does not know (written by a newer one) still reads as refused.
+_UNKNOWN = NotAllowed("policy", "Policy", _CONTENT)
+_BY_CODE = {entry.code: entry for entry in [*NOT_ALLOWED.values(), _UNKNOWN]}
+
+
+def not_allowed_for_kind(kind: str) -> NotAllowed:
+    return NOT_ALLOWED.get(kind, _UNKNOWN)
+
+
+def not_allowed_by_code(code: str | None) -> NotAllowed | None:
+    """The table entry for a stored code; None when the scan was not refused."""
+    if not code:
+        return None
+    return _BY_CODE.get(code, _UNKNOWN)
+
+
+def not_allowed(snapshot: dict) -> NotAllowed | None:
+    """Why the scan's own intake refused it, from its frozen snapshot (first violation)."""
+    intake = snapshot.get("intake_policy")
+    violations = intake.get("violations") if isinstance(intake, dict) else None
+    for item in violations or []:
+        if isinstance(item, dict):
+            return not_allowed_for_kind(str(item.get("kind", "")))
+    return None
+
+
+def not_allowed_code(snapshot_json: str) -> str | None:
+    try:
+        snapshot = json.loads(snapshot_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    entry = not_allowed(snapshot) if isinstance(snapshot, dict) else None
+    return entry.code if entry else None
+
+
 def parse_profile_policy(raw: object) -> ProfilePolicy:
     """Parse a stored or submitted policy; raises ValueError on anything invalid."""
     if raw is None or raw == "":
@@ -95,10 +163,12 @@ def is_inherit_only(policy: ProfilePolicy) -> bool:
 class PolicyRejectedError(ValueError):
     """The profile policy refuses this sample at intake; no scan is created."""
 
-    def __init__(self, kind: str, reason: str) -> None:
+    def __init__(self, kind: str, reason: str, violation_kind: str | None = None) -> None:
         super().__init__(reason)
         self.kind = kind
         self.reason = reason
+        # The first violation's kind, for the NOT_ALLOWED entry an end user is shown.
+        self.not_allowed = not_allowed_for_kind(violation_kind or kind)
 
 
 @dataclass(frozen=True)
@@ -163,7 +233,12 @@ def snapshot_policy(snapshot: dict) -> object:
     return profile.get("policy") if isinstance(profile, dict) else None
 
 
-def apply_intake_policy(snapshot_json: str, *, filename: str, size: int, storage_path: str) -> str:
+ARCHIVE_REFUSED_DETAIL = ("Archive files are not accepted through this ICAP gateway "
+                          "(MASP_ICAP_BLOCK_ARCHIVES) unless the client's profile sets archive handling.")
+
+
+def apply_intake_policy(snapshot_json: str, *, filename: str, size: int, storage_path: str,
+                        refuse_archives: bool = False) -> str:
     """Return the snapshot to store with this sample, or raise PolicyRejectedError.
 
     The evaluation is recorded in the scan's own snapshot so the decision can
@@ -171,6 +246,10 @@ def apply_intake_policy(snapshot_json: str, *, filename: str, size: int, storage
     cannot be parsed is stored unchanged; the decision then withholds an allow.
     An archive inspection is recorded as ``archive_inspection`` whatever it
     found, so scan_members can later prove every member was registered.
+
+    ``refuse_archives`` is an ICAP gateway's MASP_ICAP_BLOCK_ARCHIVES: an archive
+    whose profile does not set archive handling is recorded as not allowed, so
+    the gateway, the report and the API all give the same answer.
     """
     try:
         snapshot = json.loads(snapshot_json or "{}")
@@ -181,16 +260,29 @@ def apply_intake_policy(snapshot_json: str, *, filename: str, size: int, storage
     try:
         policy = parse_profile_policy(snapshot_policy(snapshot))
     except ValueError:
-        return snapshot_json
-    if is_inherit_only(policy):
-        return snapshot_json
+        policy = None
+    # An unreadable policy has no archive handling of its own, so the gateway refuses.
+    refusing = refuse_archives and (policy is None or policy.archive_handling == "inherit")
+    refused = ({"kind": "archive_refused", "detail": ARCHIVE_REFUSED_DETAIL}
+               if refusing and detect_archive_format(storage_path) is not None else None)
+    if policy is None or is_inherit_only(policy):
+        if refused is None:
+            return snapshot_json
+        if policy is not None and policy.violation_action == "reject":
+            raise PolicyRejectedError("archive", ARCHIVE_REFUSED_DETAIL, "archive_refused")
+        snapshot["intake_policy"] = {"violations": [refused]}
+        return json.dumps(snapshot, separators=(",", ":"), sort_keys=True)
     inspecting = policy.archive_handling != "inherit"
     needs_header = policy.type_rule or policy.block_masquerade or inspecting
     header = _read_header(storage_path) if needs_header else b""
     evaluation = evaluate_intake(policy, filename=filename, size=size, header=header)
     if evaluation.reject_kind is not None:
-        raise PolicyRejectedError(evaluation.reject_kind, evaluation.reason)
+        raise PolicyRejectedError(evaluation.reject_kind, evaluation.reason, evaluation.violations[0]["kind"])
     violations = list(evaluation.violations)
+    if refused is not None:
+        violations.append(refused)
+        if policy.violation_action == "reject":
+            raise PolicyRejectedError("archive", ARCHIVE_REFUSED_DETAIL, "archive_refused")
     inspection = inspect_archive(
         storage_path, header=header, check_blocklist=_routes_hash_list(snapshot),
         member_check=lambda member_header, member_name: content_violations(
@@ -203,7 +295,7 @@ def apply_intake_policy(snapshot_json: str, *, filename: str, size: int, storage
         # it is always scanned and blocked so the scan records why.
         refused = [item for item in inspection.violations if item["kind"] != "member_blocklisted"]
         if refused and policy.violation_action == "reject":
-            raise PolicyRejectedError("archive", " ".join(str(item["detail"]) for item in refused))
+            raise PolicyRejectedError("archive", " ".join(str(item["detail"]) for item in refused), refused[0]["kind"])
     elif not violations:
         return snapshot_json
     if violations:
@@ -272,11 +364,10 @@ def apply_profile_policy(decision: ScanDecision, snapshot: dict, *, scan_role: s
         if decision.action == "block":
             return replace(decision, reasons=[*decision.reasons, *details])
         kinds = [str(item.get("kind", "")) for item in violations or [] if isinstance(item, dict)]
-        if kinds and all(kind.startswith(("archive_", "member_")) for kind in kinds):
-            return _block(decision, "profile_archive_policy",
-                          "The archive could not be fully checked, or holds content the client's profile does not accept.",
-                          details)
-        return _block(decision, "profile_content_policy", "The client's profile does not accept this content.", details)
+        policy_name = ("profile_archive_policy" if kinds and all(kind.startswith(("archive_", "member_")) for kind in kinds)
+                       else "profile_content_policy")
+        # The first violation is the reason; the rest follow it.
+        return _block(decision, policy_name, f"Not allowed: {details[0]}", details[1:])
     if decision.action == "review" and policy.review_action == "block":
         return _block(decision, "profile_review_block",
                       "The client's profile blocks files that could not be fully assessed.",

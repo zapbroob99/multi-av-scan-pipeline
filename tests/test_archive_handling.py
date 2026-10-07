@@ -182,7 +182,7 @@ class DecisionTests(unittest.TestCase):
         recorded["intake_policy"] = {"violations": [{"kind": "archive_encrypted", "detail": "The archive is encrypted."}]}
         result = apply_profile_policy(allow, recorded, scan_role="container")
         self.assertEqual((result.action, result.policy), ("block", "profile_archive_policy"))
-        self.assertIn("The archive is encrypted.", result.reasons)
+        self.assertEqual(result.reason, "Not allowed: The archive is encrypted.")
 
 
 class IcapGateTests(unittest.TestCase):
@@ -199,19 +199,18 @@ class IcapGateTests(unittest.TestCase):
                                 reason=reason, reasons=[])
         return server.resolve_icap_action(scan, IcapConfig(), decision)
 
-    def test_without_an_archive_policy_every_archive_is_still_blocked(self):
-        self.assertEqual(self.decide(self.scan({}))[0], "block")
-        self.assertEqual(self.decide(self.scan(None))[0], "block")
-        # An unreadable policy keeps the deployment's blanket block.
-        self.assertEqual(self.decide(self.scan({"archive_handling": "sometimes"}))[0], "block")
+    def test_the_gateway_adds_no_rule_after_the_scan(self):
+        # MASP_ICAP_BLOCK_ARCHIVES is recorded at intake; here only the decision counts.
+        self.assertEqual(self.decide(self.scan({}))[0], "allow")
 
     def test_an_archive_policy_lets_the_decision_decide(self):
         for handling in ("inspect", "scan_members"):
             with self.subTest(handling=handling):
-                self.assertEqual(self.decide(self.scan({"archive_handling": handling})), ("allow", ""))
-                action, reason = self.decide(self.scan({"archive_handling": handling}), "block",
-                                             "profile_archive_policy", "The archive could not be fully checked.")
+                self.assertEqual(self.decide(self.scan({"archive_handling": handling})), ("allow", "", ""))
+                action, reason, message = self.decide(self.scan({"archive_handling": handling}), "block",
+                                                      "profile_archive_policy", "The archive could not be fully checked.")
                 self.assertEqual((action, reason), ("block", "Blocked: The archive could not be fully checked."))
+                self.assertNotIn("malware", message)
 
     def test_unfinished_members_follow_the_fail_mode(self):
         from app.icap import server
@@ -520,8 +519,8 @@ class ArchiveHandlingIntegrationTests(_Storage):
             return replace(db.get_scan(scan_id), status="completed", verdict="info", risk_score=0)
         with patch.object(activity, "ACTIVITY", recorder), patch.object(server, "wait_for_terminal_scan", new=finished):
             self.assertEqual(asyncio.run(server.scan_and_decide("secret.zip", "application/zip", encrypted_zip(), config)),
-                             "block")
-        self.assertIn("could not be fully checked", recorder.events[0]["detail"])
+                             ("block", "Blocked by MASP: the archive could not be fully checked."))
+        self.assertIn("Not allowed: The archive is encrypted", recorder.events[0]["detail"])
 
     def test_the_deferred_worker_opens_every_member_under_scan_members(self):
         from app.workers import deferred_intake_worker

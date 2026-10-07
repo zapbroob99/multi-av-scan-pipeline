@@ -84,6 +84,19 @@ SPECS: tuple[PolicySpec, ...] = (
         ),
         unit="bytes",
     ),
+    PolicySpec(
+        key="siem_not_allowed_events",
+        env_var="MASP_SIEM_NOT_ALLOWED_EVENTS",
+        default=0,
+        minimum=0,
+        maximum=1,
+        label="SIEM: not-allowed files",
+        help=(
+            "1 = also send a policy.not_allowed security event when a client's rules refuse a file "
+            "that no engine detected, wherever MASP sends malware.detected (submissions that request "
+            "security events). 0 = only malware is reported. Not shown in the notification bell."
+        ),
+    ),
 )
 
 _SPEC_BY_KEY = {spec.key: spec for spec in SPECS}

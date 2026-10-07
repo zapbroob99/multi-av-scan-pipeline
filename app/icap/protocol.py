@@ -261,7 +261,7 @@ def build_block_response(
     *,
     istag: str = DEFAULT_ISTAG,
     http_status: str = "403 Forbidden",
-    message: str = "Blocked by MASP: malware detected.",
+    message: str = "Blocked by MASP.",
     content_type: str = "text/plain; charset=utf-8",
 ) -> bytes:
     """200 OK carrying a replacement HTTP response that rejects the transfer."""

@@ -2739,6 +2739,10 @@ export interface components {
             id: number;
             /** Job Revision */
             job_revision: number;
+            /** Not Allowed */
+            not_allowed?: string | null;
+            /** Not Allowed Label */
+            not_allowed_label?: string | null;
             /** Risk Level */
             risk_level: string;
             /** Risk Score */
@@ -3479,6 +3483,8 @@ export interface components {
             api_max_wait_seconds: string;
             /** Api Retry After Seconds */
             api_retry_after_seconds: string;
+            /** Siem Not Allowed Events */
+            siem_not_allowed_events: string;
             /** Upload Max Bytes */
             upload_max_bytes: string;
         };
@@ -3569,6 +3575,10 @@ export interface components {
             job_revision?: number;
             /** Last Error */
             last_error: string | null;
+            /** Not Allowed */
+            not_allowed?: string | null;
+            /** Not Allowed Label */
+            not_allowed_label?: string | null;
             /** Note */
             note: string;
             /** Parent Scan Id */
@@ -4382,7 +4392,7 @@ export interface operations {
                 client_id?: number | null;
                 limit?: number;
                 q?: string;
-                risk?: "all" | "pending" | "info" | "metadata_only" | "low" | "medium" | "high" | "critical";
+                risk?: "all" | "pending" | "info" | "metadata_only" | "low" | "medium" | "high" | "critical" | "not_allowed";
                 source?: "all" | "api" | "icap";
                 status?: "all" | "active" | "queued" | "running" | "finalizing" | "completed" | "partial" | "failed" | "skipped";
                 unassigned?: boolean;

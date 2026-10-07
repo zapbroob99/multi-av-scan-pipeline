@@ -142,7 +142,7 @@ class DecisionOverlayTests(unittest.TestCase):
         result = apply_profile_policy(decision("allow"), snapshot({"type_rule": {"mode": "allowlist", "families": ["pdf"]}},
                                                                   self.VIOLATION), scan_role="standalone")
         self.assertEqual((result.action, result.policy), ("block", "profile_content_policy"))
-        self.assertIn(self.VIOLATION[0]["detail"], result.reasons)
+        self.assertEqual(result.reason, "Not allowed: " + self.VIOLATION[0]["detail"])
         # A detection stays the reason; the violation is added beside it.
         detected = apply_profile_policy(decision("block"), snapshot({}, self.VIOLATION), scan_role="standalone")
         self.assertEqual(detected.policy, "malware_detected")
@@ -316,7 +316,8 @@ class ProfilePolicyIntegrationTests(unittest.TestCase):
         recorder = activity.IcapActivity(config)
         with patch("app.services.ingest.SAMPLES_DIR", self.samples), patch.object(activity, "ACTIVITY", recorder), \
              patch.object(server, "wait_for_terminal_scan", new=AsyncMock(return_value=None)):
-            self.assertEqual(asyncio.run(server.scan_and_decide("invoice.pdf", "application/pdf", EXE, config)), "block")
+            self.assertEqual(asyncio.run(server.scan_and_decide("invoice.pdf", "application/pdf", EXE, config)),
+                             ("block", "Blocked by MASP: this type of file is not accepted."))
         self.assertEqual(recorder.counters["policy_rejected"], 1)
         self.assertEqual(recorder.events[0]["kind"], "policy_rejected")
         self.assertIn("Declared .pdf content is actually pe", recorder.events[0]["detail"])
