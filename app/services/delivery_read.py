@@ -41,6 +41,10 @@ class IcapGateway(BaseModel):
     fail_closed: bool
     block_on_review: bool
     allowlist_entries: int
+    # None from a gateway older than these fields: unknown, never assumed.
+    block_archives: bool | None = None
+    max_bytes: int | None = None  # 0: no limit
+    wait_seconds: int | None = None
     started_at: int
     at: int
     age_seconds: int

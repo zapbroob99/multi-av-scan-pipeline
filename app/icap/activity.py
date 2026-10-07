@@ -40,6 +40,11 @@ class IcapActivity:
             "port": config.port,
             "fail_closed": config.fail_closed,
             "block_on_review": config.block_on_review,
+            # What the gateway decides on its own settings, so the console can say
+            # what happens to a client's files instead of naming an env variable.
+            "block_archives": config.block_archives,
+            "max_bytes": config.max_bytes or 0,  # 0: no limit; a missing field means unknown
+            "wait_seconds": config.wait_seconds,
             "allowlist_entries": len(config.allowed_ips),
             "started_at": started,
         }

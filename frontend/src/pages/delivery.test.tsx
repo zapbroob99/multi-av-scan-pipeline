@@ -10,6 +10,7 @@ const VIEW = {
   generated_at: '2026-09-28T07:00:00+00:00',
   gateways: [{ key: 'storage:1344', client_key: 'storage', service_name: 'masp', port: 1344, fail_closed: true, block_on_review: true,
     allowlist_entries: 2, started_at: 1790000000, at: 1790000100, age_seconds: 400, stale: true,
+    block_archives: true, max_bytes: 104857600, wait_seconds: 30,
     counters: { requests: 12, allowed: 10, blocked: 2, fail_actions: 0, errors: 0, connections_rejected: 1 }, last_request_at: 1790000090,
     events: [{ at: 1790000050, kind: 'rejected', detail: 'Connection refused: source is not in MASP_ICAP_ALLOWED_IPS', peer: '10.0.0.9', scan_id: null },
       { at: 1790000040, kind: 'blocked', detail: 'Blocked by scan decision', peer: null, scan_id: 42 }],
@@ -30,6 +31,7 @@ describe('ICAP and SIEM', () => {
     expect(within(events).getByText('Refused source')).toBeInTheDocument()
     expect(within(events).getByText('Source 10.0.0.9')).toBeInTheDocument()
     expect(within(events).getByRole('link', { name: 'Scan #42' })).toHaveAttribute('href', '/api-ledger/scans/42')
+    expect(screen.getByText('Refuses archives unless a profile checks them · size limit 100 MiB · waits up to 30 s')).toBeInTheDocument()
     expect(screen.getByText('SIEM webhook returned HTTP 503.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Retry failed now' }))
     expect(fetcher.mock.calls.filter(([, o]) => o?.method === 'POST')).toHaveLength(0)

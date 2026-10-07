@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
@@ -7,15 +7,21 @@ import ClientProfiles from './client-profiles'
 
 const INHERIT = { max_file_bytes: null, type_rule: null, block_masquerade: false, violation_action: 'scan_and_block', review_action: 'inherit' }
 
-function mount(incomplete = false, fail = false, named = false, policy: object | null = INHERIT) {
+const OUTCOME = { icap: 'no_gateway', icap_ports: [],
+  engines: [{ id: 1, display_name: 'One', runs: true, reason: null }, { id: 9, display_name: 'Lookup', runs: false, reason: 'Paid reputation service.' }],
+  lines: [{ topic: 'archives', label: 'Archives', api: 'Scanned as one file; MASP does not look inside.',
+    icap: 'Unknown: no ICAP gateway reports for this client.', icap_known: false }] }
+
+function mount(incomplete = false, fail = false, named = false, policy: object | null = INHERIT, outcome: object | null = null) {
   const fetcher = vi.fn(async (_url: string, options?: RequestInit) => options?.method && options.method !== 'GET'
     ? fail ? new Response(JSON.stringify({ detail: 'Routing changed' }), { status: 409 })
       : options.method === 'POST' ? new Response(JSON.stringify({ profile_id: 8 }), { status: 201 }) : new Response(null, { status: 204 })
     : new Response(JSON.stringify({ client_id: 3, managed: false, next_after: null, engines_incomplete: incomplete,
       default_profile_id: named ? 6 : 7,
       items: [{ id: 7, name: '<script>Profile</script>', enabled: true, is_default: !named, engine_ids: [1], incomplete: false, management_revision: 4,
-        policy, policy_invalid: policy === null }],
-      engines: [{ id: 1, display_name: 'One', adapter_key: 'static_metadata', enabled: true }, { id: 2, display_name: 'Two', adapter_key: 'clamav', enabled: false }] })))
+        policy, policy_invalid: policy === null, outcome }],
+      engines: [{ id: 1, display_name: 'One', adapter_key: 'static_metadata', enabled: true, excluded_reason: null },
+        { id: 2, display_name: 'Two', adapter_key: 'clamav', enabled: false, excluded_reason: 'Engine instance is disabled.' }] })))
   vi.stubGlobal('fetch', fetcher)
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/service-clients/3/profiles']}><Routes>
     <Route path="/service-clients/:clientId/profiles" element={<ClientProfiles session={{ user: { id: 1, username: 'admin', role: 'admin' }, csrf_token: 'csrf' }} />} />
@@ -83,6 +89,27 @@ describe('Profile scan policy', () => {
     await screen.findByText('File rules saved.')
     const write = fetcher.mock.calls.find(([, options]) => options?.method === 'PUT')
     expect(JSON.parse(String(write?.[1]?.body)).policy).toEqual({ ...INHERIT, archive_handling: 'scan_members' })
+  })
+})
+
+describe('What happens to files', () => {
+  it('shows running and left-out engines and marks ICAP answers nobody reported as unknown', async () => {
+    mount(false, false, false, INHERIT, OUTCOME)
+    const section = await screen.findByRole('region', { name: 'What happens to files under <script>Profile</script>' })
+    expect(section).toHaveTextContent('Scanned by One.')
+    expect(section).toHaveTextContent('Lookup is left out: Paid reputation service.')
+    expect(section).toHaveTextContent('No ICAP gateway reports for this client')
+    const cell = within(section).getByText('Unknown: no ICAP gateway reports for this client.')
+    expect(cell).toHaveClass('outcome-unknown')
+    expect(within(section).getByRole('columnheader', { name: 'ICAP gateway' })).toBeInTheDocument()
+    // The reason is shown where the engine is chosen, too.
+    expect(screen.getByRole('checkbox', { name: /Two.*not used for API or ICAP files: Engine instance is disabled/ })).toBeInTheDocument()
+  })
+  it('leaves the ICAP column out for a profile the gateway never uses', async () => {
+    mount(false, false, false, INHERIT, { ...OUTCOME, icap: 'not_default' })
+    const section = await screen.findByRole('region', { name: /What happens to files/ })
+    expect(within(section).queryByRole('columnheader', { name: /ICAP/ })).toBeNull()
+    expect(section).toHaveTextContent('only the API column applies here')
   })
 })
 

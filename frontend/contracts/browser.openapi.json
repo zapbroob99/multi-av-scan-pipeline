@@ -2084,6 +2084,41 @@
         "title": "EngineMetricPage",
         "type": "object"
       },
+      "EngineOutcome": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "runs",
+          "reason"
+        ],
+        "title": "EngineOutcome",
+        "type": "object"
+      },
       "EnginePayload": {
         "properties": {
           "adapter_key": {
@@ -2962,6 +2997,17 @@
             ],
             "title": "Binding Detail"
           },
+          "block_archives": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Archives"
+          },
           "block_on_review": {
             "title": "Block On Review",
             "type": "boolean"
@@ -3025,6 +3071,17 @@
             ],
             "title": "Last Request At"
           },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Bytes"
+          },
           "port": {
             "title": "Port",
             "type": "integer"
@@ -3040,6 +3097,17 @@
           "started_at": {
             "title": "Started At",
             "type": "integer"
+          },
+          "wait_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Seconds"
           }
         },
         "required": [
@@ -4313,6 +4381,46 @@
         "title": "ObjectPage",
         "type": "object"
       },
+      "Outcome": {
+        "properties": {
+          "api": {
+            "title": "Api",
+            "type": "string"
+          },
+          "icap": {
+            "title": "Icap",
+            "type": "string"
+          },
+          "icap_known": {
+            "title": "Icap Known",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "topic": {
+            "enum": [
+              "size",
+              "content",
+              "archives",
+              "unassessed",
+              "unfinished"
+            ],
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "label",
+          "api",
+          "icap",
+          "icap_known"
+        ],
+        "title": "Outcome",
+        "type": "object"
+      },
       "PassSummary": {
         "properties": {
           "finished_at": {
@@ -5021,6 +5129,17 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "excluded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excluded Reason"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -5049,6 +5168,48 @@
           "expected_revision"
         ],
         "title": "ProfileFence",
+        "type": "object"
+      },
+      "ProfileOutcome": {
+        "properties": {
+          "engines": {
+            "items": {
+              "$ref": "#/components/schemas/EngineOutcome"
+            },
+            "title": "Engines",
+            "type": "array"
+          },
+          "icap": {
+            "enum": [
+              "gateway",
+              "no_gateway",
+              "not_default"
+            ],
+            "title": "Icap",
+            "type": "string"
+          },
+          "icap_ports": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Icap Ports",
+            "type": "array"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/Outcome"
+            },
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "required": [
+          "engines",
+          "icap",
+          "icap_ports",
+          "lines"
+        ],
+        "title": "ProfileOutcome",
         "type": "object"
       },
       "ProfilePolicy": {
@@ -5211,6 +5372,16 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "policy": {
             "anyOf": [

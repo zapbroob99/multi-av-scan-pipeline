@@ -27,7 +27,7 @@ const READY = {
   engines: [
     { id: 1, display_name: 'Metadata', adapter_key: 'static_metadata', enabled: true, eligible: true, excluded_reason: null },
     { id: 2, display_name: 'VirusTotal', adapter_key: 'virustotal', enabled: true, eligible: false,
-      excluded_reason: 'Metered reputation adapter; API and ICAP exclude it before job creation.' },
+      excluded_reason: 'Paid reputation service: used for manual lookups only, never for API or ICAP files.' },
   ],
   eligible_engine_count: 1, active_credential_count: 1,
   scan_endpoint: 'http://masp.local/api/v1/scans',
@@ -63,7 +63,7 @@ describe('Connect a client', () => {
   it('explains why an assigned engine cannot run automation work', async () => {
     mount()
     await screen.findByText('VirusTotal')
-    expect(screen.getByText(/Metered reputation adapter/)).toBeInTheDocument()
+    expect(screen.getByText(/Paid reputation service/)).toBeInTheDocument()
     expect(screen.getByText(/Eligibility is configuration, not health/)).toBeInTheDocument()
   })
 

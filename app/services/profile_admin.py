@@ -4,7 +4,11 @@ import time
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from app import database as db
+from app.icap.activity import SETTING_PREFIX as ICAP_SETTING_PREFIX
+from app.services import scan_policy
 from app.services.browser_db_budget import apply_read_budget, write_lock_timeout_ms
+from app.services.health_read import ICAP_FORGOTTEN_SECONDS, icap_gateways
+from app.services.profile_outcome import ProfileOutcome, describe, engine_eligibility
 from app.services.profile_policy import ProfilePolicy, parse_profile_policy, profile_policy_json
 
 # A valid policy serializes to well under 1 KiB; anything this large is not one.
@@ -53,6 +57,8 @@ class ProfileEngineChoice(BaseModel):
     display_name: str
     adapter_key: str
     enabled: bool
+    # Why API and ICAP files never reach this engine, shown where it is chosen.
+    excluded_reason: str | None = None
 
 
 class ProfileSummary(BaseModel):
@@ -67,6 +73,9 @@ class ProfileSummary(BaseModel):
     # then refuses to save over it from a guessed starting point.
     policy: ProfilePolicy | None
     policy_invalid: bool
+    # What happens to this profile's files, combined with server and gateway
+    # settings; None while the stored policy cannot be read.
+    outcome: ProfileOutcome | None = None
 
 
 class ClientProfiles(BaseModel):
@@ -83,7 +92,8 @@ def page(client_id: int, after: int | None) -> ClientProfiles:
     with db.connect() as connection:
         connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' if db.using_postgres() else 'BEGIN')
         apply_read_budget(connection)
-        client = connection.execute("SELECT client_key = 'legacy-default' AS managed FROM service_clients WHERE id = ?", (client_id,)).fetchone()
+        client = connection.execute("""SELECT client_key = 'legacy-default' AS managed, SUBSTR(client_key, 1, 128) AS client_key
+            FROM service_clients WHERE id = ?""", (client_id,)).fetchone()
         if client is None:
             raise HTTPException(404, 'Service client not found.')
         default = connection.execute('SELECT id FROM scan_profiles WHERE service_client_id = ? AND is_default = ? AND deleted_at IS NULL LIMIT 1',
@@ -96,6 +106,17 @@ def page(client_id: int, after: int | None) -> ClientProfiles:
             FROM scan_profiles WHERE service_client_id = ? AND deleted_at IS NULL ''' +
             ('AND id > ? ' if after is not None else '') + 'ORDER BY id LIMIT 21',
             (client_id, *((after,) if after is not None else ()))).fetchall()
+        # Read in the same snapshot as the profiles, so the summary never mixes
+        # a policy with gateway or limit settings from another moment.
+        settings = {str(row['key']): str(row['value']) for row in connection.execute(
+            'SELECT key, value FROM app_settings WHERE key LIKE ? OR key = ? ORDER BY key LIMIT 65',
+            (ICAP_SETTING_PREFIX + '%', scan_policy.SETTING_PREFIX + 'upload_max_bytes')).fetchall()}
+        upload_cap = scan_policy.resolve_raw('upload_max_bytes', settings.pop(scan_policy.SETTING_PREFIX + 'upload_max_bytes', None))
+        now = time.time()
+        gateways = [gateway for gateway in icap_gateways(settings, now)
+                    if now - int(gateway['at']) < ICAP_FORGOTTEN_SECONDS
+                    and str(gateway.get('client_key', '')).lower() == str(client['client_key']).lower()]
+        engines_by_id = {int(row['id']): row for row in choices[:100]}
         items = []
         for row in rows[:20]:
             assigned = connection.execute('SELECT engine_instance_id FROM scan_profile_engines WHERE scan_profile_id = ? ORDER BY engine_instance_id LIMIT 101', (row['id'],)).fetchall()
@@ -107,9 +128,14 @@ def page(client_id: int, after: int | None) -> ClientProfiles:
             except (ValueError, TypeError):
                 values['policy'] = None
             values['policy_invalid'] = values['policy'] is None
-            items.append(ProfileSummary(**values, engine_ids=[item['engine_instance_id'] for item in assigned[:100]]))
+            engine_ids = [item['engine_instance_id'] for item in assigned[:100]]
+            if values['policy'] is not None:
+                values['outcome'] = describe(values['policy'], [engines_by_id[i] for i in engine_ids if i in engines_by_id],
+                                             is_default=bool(values['is_default']), gateways=gateways, upload_cap=upload_cap)
+            items.append(ProfileSummary(**values, engine_ids=engine_ids))
     return ClientProfiles(client_id=client_id, managed=client['managed'], items=items,
-        engines=[ProfileEngineChoice(**dict(row)) for row in choices[:100]], engines_incomplete=len(choices) > 100,
+        engines=[ProfileEngineChoice(**dict(row), excluded_reason=engine_eligibility(str(row['adapter_key']), bool(row['enabled']))[1])
+                 for row in choices[:100]], engines_incomplete=len(choices) > 100,
         next_after=rows[19]['id'] if len(rows) > 20 else None,
         default_profile_id=None if default is None else default['id'])
 

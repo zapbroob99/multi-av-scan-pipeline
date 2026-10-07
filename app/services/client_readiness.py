@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from app import database as db
 from app.services.browser_db_budget import apply_read_budget
-from app.services.engine_registry import adapter_capabilities, engine_allowed_for_source
+from app.services.profile_outcome import engine_eligibility
 from app.icap.activity import SETTING_PREFIX as ICAP_SETTING_PREFIX
 from app.services.deferred_storage import backend_allowed_for_client
 from app.services.health_read import ICAP_FORGOTTEN_SECONDS, ICAP_STALE_SECONDS, age_text, icap_gateways
@@ -84,22 +84,6 @@ class ClientReadiness(BaseModel):
     generated_at: str
 
 
-def _engine_eligibility(adapter_key: str, enabled: bool) -> tuple[bool, str | None]:
-    try:
-        capabilities = adapter_capabilities(adapter_key)
-    except KeyError:
-        return False, 'Adapter is not registered in this deployment.'
-    if not enabled:
-        return False, 'Engine instance is disabled.'
-    if capabilities.consumes_external_quota:
-        # Automation never spends a metered external service. This is an
-        # adapter-level rule, so the engine can stay assigned for manual use.
-        return False, 'Metered reputation adapter; API and ICAP exclude it before job creation.'
-    if not (capabilities.supports_file_upload or capabilities.supports_file_hash_scan):
-        return False, 'Adapter cannot accept a submitted file.'
-    return True, None
-
-
 def readiness(client_id: int, base_url: str) -> ClientReadiness:
     root = base_url.rstrip('/')
     with db.connect() as connection:
@@ -134,7 +118,7 @@ def readiness(client_id: int, base_url: str) -> ClientReadiness:
 
     engines: list[AssignedEngine] = []
     for row in rows[:100]:
-        eligible, reason = _engine_eligibility(str(row['adapter_key']), bool(row['enabled']))
+        eligible, reason = engine_eligibility(str(row['adapter_key']), bool(row['enabled']))
         engines.append(AssignedEngine(id=int(row['id']), display_name=str(row['display_name']),
                                       adapter_key=str(row['adapter_key']), enabled=bool(row['enabled']),
                                       eligible=eligible, excluded_reason=reason))

@@ -583,6 +583,17 @@ a fixed service list. Behind the TLS proxy the app trusts forwarded headers only
 `FORWARDED_ALLOW_IPS` (compose maps `MASP_FORWARDED_ALLOW_IPS`); the same-origin CSRF check and
 HTTPS-only worker control depend on it.
 
+What happens to a client's files. `app/services/profile_outcome.py` is the one place that combines
+a profile's file rules and engines with the server upload limit and each bound ICAP gateway's
+settings into operator sentences (API and ICAP side by side) on every profile card. It is pure
+(reads nothing, decides nothing a scan uses); `profile_admin.page` feeds it in the profiles'
+repeatable snapshot. The gateway reports `block_archives`, `max_bytes` (0: no limit) and
+`wait_seconds` in its activity record; a field a gateway did not report, or a client without a
+reporting gateway, is "unknown", never assumed. Only the default profile serves ICAP. Engine
+eligibility for API/ICAP (`engine_eligibility`) lives there too and is shared with client
+readiness, so the reason an engine is left out reads the same everywhere. When intake, the
+decision or the gateway changes behaviour, change this wording with it.
+
 Operations visibility. `app/services/health_read.py` is the one place that judges the scan chain;
 engine states come from the Engines screen's `engine_payload` so the two screens never disagree.
 Parts that are not deployed are `inactive` and never raise the overall state; a missing signal is

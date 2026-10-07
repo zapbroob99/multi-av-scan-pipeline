@@ -12,6 +12,7 @@ import { ClientWorkspace, useClientPanelGuard } from '../components/client-works
 import { PolicySummary, ProfilePolicyEditor, policySummary, type ProfilePolicy } from '../components/profile-policy'
 
 type Profile = components['schemas']['ProfileSummary']
+type Outcome = components['schemas']['ProfileOutcome']
 type Choice = components['schemas']['ProfileEngineChoice']
 type Change = { kind: 'engines'; profile_id: number; engine_ids: number[]; expected_engine_ids: number[]; expected_revision: number }
   | { kind: 'create'; name: string; engine_ids: number[] }
@@ -23,6 +24,29 @@ type Change = { kind: 'engines'; profile_id: number; engine_ids: number[]; expec
 const SAVED: Record<Change['kind'], string> = {
   engines: 'Engines saved.', policy: 'File rules saved.', create: 'Profile created.',
   update: 'Profile saved.', default: 'Default profile changed.', delete: 'Profile deleted.',
+}
+
+/** What happens to this profile's files over the API and over ICAP, as the server computed it. */
+function ProfileOutcomeTable({ name, outcome }: { name: string; outcome: Outcome }) {
+  const running = outcome.engines.filter(engine => engine.runs)
+  const left = outcome.engines.filter(engine => !engine.runs)
+  const icapHeading = outcome.icap === 'gateway' ? `ICAP gateway (port ${outcome.icap_ports.join(', ')})` : 'ICAP gateway'
+  return <section className="profile-outcome" aria-label={`What happens to files under ${name}`}>
+    <h3>What happens to files</h3>
+    <p className={running.length ? 'client-note' : 'client-note outcome-unknown'}>{running.length
+      ? <>Scanned by {running.map(engine => engine.display_name).join(', ')}.</>
+      : <>No assigned engine can scan API or ICAP files.</>}</p>
+    {left.length > 0 && <ul className="outcome-left-out">{left.map(engine => <li key={engine.id}><strong>{engine.display_name}</strong> is left out: {engine.reason}</li>)}</ul>}
+    {outcome.icap === 'not_default' && <p className="muted client-note">ICAP gateways use the default profile, so only the API column applies here.</p>}
+    {outcome.icap === 'no_gateway' && <p className="muted client-note">No ICAP gateway reports for this client, so ICAP answers that depend on the gateway are unknown.</p>}
+    <div className="history-table-wrap"><table className="outcome-table">
+      <thead><tr><th scope="col">When</th><th scope="col">API</th>{outcome.icap !== 'not_default' && <th scope="col">{icapHeading}</th>}</tr></thead>
+      <tbody>{outcome.lines.map(line => <tr key={line.topic}>
+        <th scope="row">{line.label}</th>
+        <td data-label="API">{line.api}</td>
+        {outcome.icap !== 'not_default' && <td data-label="ICAP" className={line.icap_known ? undefined : 'outcome-unknown'}>{line.icap}</td>}
+      </tr>)}</tbody></table></div>
+  </section>
 }
 
 function ProfileCard({ profile, engines, disabled, review, edit, editPolicy, defaultId }: { profile: Profile; engines: Choice[]; disabled: boolean; review: (value: Change) => void; edit: () => void; editPolicy: () => void; defaultId: number | null }) {
@@ -38,12 +62,13 @@ function ProfileCard({ profile, engines, disabled, review, edit, editPolicy, def
     <section className="profile-policy" aria-label={`File rules for ${profile.name}`}><div className="client-section-heading"><h3>File rules</h3>
       <Button variant="secondary" disabled={disabled} onClick={editPolicy}>Edit rules</Button></div>
       <PolicySummary policy={profile.policy} invalid={profile.policy_invalid} /></section>
+    {profile.outcome && <ProfileOutcomeTable name={profile.name} outcome={profile.outcome} />}
     {(profile.incomplete || missing) && <p role="alert">Routing metadata is incomplete. Refresh to try again; saving is disabled so a partial list is never saved.</p>}
     <fieldset disabled={disabled || profile.incomplete || missing}><legend>Engines</legend>
       <p className="muted client-note">Every selected engine scans each file this profile accepts.</p>
       <div className="client-engine-options">{engines.map(engine => <label className="client-engine-option" key={engine.id}><input type="checkbox" checked={selected.includes(engine.id)}
         onChange={event => setSelected(current => event.target.checked ? [...current, engine.id] : current.filter(id => id !== engine.id))} />
-        <Cpu size={18} aria-hidden="true" /><span><strong>{engine.display_name}</strong><small>{engine.adapter_key}{engine.enabled ? '' : ' · disabled'}</small></span></label>)}</div>
+        <Cpu size={18} aria-hidden="true" /><span><strong>{engine.display_name}</strong><small>{engine.adapter_key}{engine.excluded_reason ? ` · not used for API or ICAP files: ${engine.excluded_reason}` : ''}</small></span></label>)}</div>
       <div className="client-form-footer"><span className="muted">{selected.length} selected{changed ? ' · not saved' : ''}</span><Button disabled={!selected.length || !changed} onClick={() => review({ kind: 'engines', profile_id: profile.id, engine_ids: selected, expected_engine_ids: profile.engine_ids, expected_revision: profile.management_revision })}>Review engine changes</Button></div>
     </fieldset></article>
 }

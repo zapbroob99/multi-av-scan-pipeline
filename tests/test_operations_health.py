@@ -372,6 +372,8 @@ class IcapActivityTests(unittest.TestCase):
         snapshot = json.loads(recorder.snapshot(now=NOW + 60))
         self.assertEqual(recorder.key, 'icap_gateway_status:storage:1344')
         self.assertEqual((snapshot['at'], snapshot['allowlist_entries'], snapshot['fail_closed']), (NOW + 60, 1, True))
+        # The gateway's own decisions, so a profile summary can state them; 0 is "no size limit".
+        self.assertEqual((snapshot['block_archives'], snapshot['max_bytes'], snapshot['wait_seconds']), (True, 0, 30))
         self.assertEqual(len(snapshot['events']), activity.EVENT_LIMIT)
         self.assertEqual(snapshot['events'][0]['at'], NOW + activity.EVENT_LIMIT + 4)   # newest first
         self.assertNotIn('/srv/masp', json.dumps(snapshot))

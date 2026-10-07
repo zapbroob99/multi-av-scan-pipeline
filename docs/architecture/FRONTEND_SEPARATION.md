@@ -2026,7 +2026,12 @@ no decision, routing or policy semantics changed.
   "Connected" (nothing tests reachability). Folder scanning's full tier is marked
   "not available yet" and cannot be newly chosen; archives held for it say so.
 
-Round two (planned): a per-profile "what happens" summary — engines that will run and
-those left out with the reason, plus archive, refused content, size and engine failure
-outcomes — using gateway settings the ICAP status record will report, and "unknown"
-when no gateway has reported.
+Round two: every profile card carries "What happens to files", a server-built table
+(`ProfileSummary.outcome`, `app/services/profile_outcome.py`) with the engines that scan the
+files, those left out and why, and one row per situation (large files, file types, archives, an
+engine fails, no verdict in time) for the API and, on the default profile, the ICAP gateway.
+React renders the sentences and calculates nothing. Cells the server marks `icap_known: false`
+are shown in the warning colour; a named profile has no ICAP column. Engine choices carry
+`excluded_reason`, shown next to the checkbox. The ICAP and SIEM screen shows the gateway's
+reported archive, size and wait settings ("Not reported by this gateway version" for older
+records). On a phone the table stacks one situation per block.

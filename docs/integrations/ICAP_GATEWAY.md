@@ -106,7 +106,8 @@ the health check reports it as critical. The client's Setup tab names any
 gateway reporting under another key.
 
 The bound client's default profile also carries that client's scan policy
-(Service Clients > Scan profiles > File rules): a size limit, accepted
+(Service Clients > Scan profiles > File rules; the profile card's "What happens to files"
+table combines them with this gateway's own settings): a size limit, accepted
 content families, disguised files and what to do with files that could not be
 fully assessed. A profile set to block those overrides
 `MASP_ICAP_BLOCK_ON_REVIEW` for its client; left at the deployment behaviour,

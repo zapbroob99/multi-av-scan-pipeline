@@ -8,6 +8,9 @@ test('admin edits engines and file rules for a profile; analyst is denied', asyn
   await page.getByRole('button', { name: 'Manage Acceptance integration' }).click()
   await page.getByRole('tab', { name: 'Scan profiles' }).click()
   await expect(page.getByRole('heading', { name: 'Acceptance routing' })).toBeVisible()
+  const outcome = page.getByRole('region', { name: 'What happens to files under Acceptance routing' })
+  await expect(outcome).toContainText('Scanned by Static Metadata.')
+  await expect(outcome.getByRole('row', { name: /^Archives/ })).toContainText('Scanned as one file')
   const checkbox = page.getByRole('checkbox', { name: /Static Metadata/ })
   const review = page.getByRole('button', { name: 'Review engine changes' })
   // Nothing to review until the selection differs from what is saved, and never an empty selection.
@@ -32,6 +35,8 @@ test('admin edits engines and file rules for a profile; analyst is denied', asyn
   await expect(page.getByText('File rules saved.')).toBeVisible()
   const rules = page.getByRole('region', { name: 'File rules for Acceptance routing' })
   await expect(rules).toContainText('Archives are opened and checked')
+  // The summary is recomputed by the fresh read after the save.
+  await expect(outcome.getByRole('row', { name: /^Archives/ })).toContainText('opened by MASP')
   await page.getByRole('button', { name: 'Edit rules' }).click()
   await archives.selectOption('inherit')
   await page.getByRole('button', { name: 'Review rules' }).click()

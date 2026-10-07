@@ -971,7 +971,7 @@ class BrowserApiTests(unittest.TestCase):
         self.assertIsNone(db.get_service_client_by_key('new-client'))
         options = self.request('/service-clients/create-options')[1]
         self.assertFalse(options['incomplete'])
-        self.assertEqual(set(options['engines'][0]), {'id', 'display_name', 'adapter_key', 'enabled'})
+        self.assertEqual(set(options['engines'][0]), {'id', 'display_name', 'adapter_key', 'enabled', 'excluded_reason'})
         with db.connect() as connection:
             connection.execute('UPDATE users SET role = ? WHERE id = ?', ('analyst', self.user_id))
         for path, payload in routes:
@@ -1645,7 +1645,7 @@ class BrowserApiTests(unittest.TestCase):
         payload = self.request(f'/service-clients/{client}/readiness')[1]
         reasons = {engine['adapter_key']: engine['excluded_reason'] for engine in payload['engines']}
         self.assertIn('disabled', reasons['static_metadata'].lower())
-        self.assertIn('Metered', reasons['virustotal'])
+        self.assertIn('Paid reputation service', reasons['virustotal'])
         self.assertEqual(payload['eligible_engine_count'], 0)
         self.assertFalse(next(c for c in payload['checks'] if c['key'] == 'eligible_engines')['passed'])
 

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { request, type Session } from '../lib/api'
 import type { components } from '../lib/api.generated'
 import { formatTimestamp } from '../lib/utils'
+import { formatBytes } from '../lib/storage'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { ErrorMessage } from '../components/error-message'
@@ -39,6 +40,15 @@ function BindingNotice({ gateway }: { gateway: Gateway }) {
   return null
 }
 
+/** Settings the gateway applies on its own; a gateway older than these fields reports none of them. */
+function gatewayRules(gateway: Gateway) {
+  if (gateway.block_archives == null && gateway.max_bytes == null && gateway.wait_seconds == null) return 'Not reported by this gateway version'
+  const archives = gateway.block_archives == null ? 'archives unknown' : gateway.block_archives ? 'refuses archives unless a profile checks them' : 'scans archives as one file'
+  const size = gateway.max_bytes == null ? 'size limit unknown' : gateway.max_bytes ? `size limit ${formatBytes(gateway.max_bytes)}` : 'no size limit'
+  const wait = gateway.wait_seconds == null ? 'wait unknown' : `waits up to ${gateway.wait_seconds} s`
+  return `${archives[0].toUpperCase()}${archives.slice(1)} · ${size} · ${wait}`
+}
+
 function GatewayCard({ gateway }: { gateway: Gateway }) {
   return <article className="submission-card" aria-label={`ICAP gateway ${gateway.client_key}`}>
     <div className="delivery-card-heading"><h2>ICAP gateway · {gateway.client_name || gateway.client_key}</h2>
@@ -49,6 +59,7 @@ function GatewayCard({ gateway }: { gateway: Gateway }) {
       <dt>Files scans under</dt><dd><ClientBinding gateway={gateway} /></dd>
       <dt>Service</dt><dd><code>{gateway.service_name}</code> on port {gateway.port}</dd>
       <dt>Policy</dt><dd>{gateway.fail_closed ? 'Fail-closed' : 'Fail-open'}{gateway.block_on_review ? ', review blocks' : ''} · allowlist {gateway.allowlist_entries || 'empty (firewall only)'}</dd>
+      <dt>Gateway rules</dt><dd>{gatewayRules(gateway)}</dd>
       <dt>Running since</dt><dd><Timestamp value={gateway.started_at} /></dd>
       <dt>Last request</dt><dd>{gateway.last_request_at ? formatTimestamp(gateway.last_request_at) : 'None since start'}</dd>
     </dl>

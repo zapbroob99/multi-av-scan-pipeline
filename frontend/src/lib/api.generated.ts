@@ -2299,6 +2299,17 @@ export interface components {
             /** Next After */
             next_after: number | null;
         };
+        /** EngineOutcome */
+        EngineOutcome: {
+            /** Display Name */
+            display_name: string;
+            /** Id */
+            id: number;
+            /** Reason */
+            reason: string | null;
+            /** Runs */
+            runs: boolean;
+        };
         /** EnginePayload */
         EnginePayload: {
             /** Adapter Key */
@@ -2595,6 +2606,8 @@ export interface components {
             binding: "client" | "legacy_default" | "unresolved";
             /** Binding Detail */
             binding_detail?: string | null;
+            /** Block Archives */
+            block_archives?: boolean | null;
             /** Block On Review */
             block_on_review: boolean;
             /** Client Id */
@@ -2615,6 +2628,8 @@ export interface components {
             key: string;
             /** Last Request At */
             last_request_at: number | null;
+            /** Max Bytes */
+            max_bytes?: number | null;
             /** Port */
             port: number;
             /** Service Name */
@@ -2623,6 +2638,8 @@ export interface components {
             stale: boolean;
             /** Started At */
             started_at: number;
+            /** Wait Seconds */
+            wait_seconds?: number | null;
         };
         /** InstanceEnabled */
         InstanceEnabled: {
@@ -3024,6 +3041,22 @@ export interface components {
             /** Next Before */
             next_before: number | null;
         };
+        /** Outcome */
+        Outcome: {
+            /** Api */
+            api: string;
+            /** Icap */
+            icap: string;
+            /** Icap Known */
+            icap_known: boolean;
+            /** Label */
+            label: string;
+            /**
+             * Topic
+             * @enum {string}
+             */
+            topic: "size" | "content" | "archives" | "unassessed" | "unfinished";
+        };
         /** PassSummary */
         PassSummary: {
             /** Finished At */
@@ -3259,6 +3292,8 @@ export interface components {
             display_name: string;
             /** Enabled */
             enabled: boolean;
+            /** Excluded Reason */
+            excluded_reason?: string | null;
             /** Id */
             id: number;
         };
@@ -3266,6 +3301,20 @@ export interface components {
         ProfileFence: {
             /** Expected Revision */
             expected_revision: number;
+        };
+        /** ProfileOutcome */
+        ProfileOutcome: {
+            /** Engines */
+            engines: components["schemas"]["EngineOutcome"][];
+            /**
+             * Icap
+             * @enum {string}
+             */
+            icap: "gateway" | "no_gateway" | "not_default";
+            /** Icap Ports */
+            icap_ports: number[];
+            /** Lines */
+            lines: components["schemas"]["Outcome"][];
         };
         /** ProfilePolicy */
         ProfilePolicy: {
@@ -3327,6 +3376,7 @@ export interface components {
             management_revision: number;
             /** Name */
             name: string;
+            outcome?: components["schemas"]["ProfileOutcome"] | null;
             policy: components["schemas"]["ProfilePolicy"] | null;
             /** Policy Invalid */
             policy_invalid: boolean;
