@@ -10,7 +10,7 @@ export function ClientNavigation({ clientId }: { clientId: number | string }) {
     <Link className="client-back" to="/service-clients"><ArrowLeft size={15} aria-hidden="true" />All service clients</Link>
     <div className="client-tabs">
       <NavLink to={`/service-clients/${clientId}/setup`}><Cable size={16} aria-hidden="true" />Connection</NavLink>
-      <NavLink to={`/service-clients/${clientId}/profiles`}><GitBranch size={16} aria-hidden="true" />Profile routing</NavLink>
+      <NavLink to={`/service-clients/${clientId}/profiles`}><GitBranch size={16} aria-hidden="true" />Scan profiles</NavLink>
       <NavLink to={`/service-clients/${clientId}/storage`}><Database size={16} aria-hidden="true" />Storage</NavLink>
       <NavLink to={`/service-clients/${clientId}/credentials`}><KeyRound size={16} aria-hidden="true" />Credentials</NavLink>
     </div>

@@ -3490,6 +3490,8 @@ export interface components {
         };
         /** ScanPolicyField */
         ScanPolicyField: {
+            /** Control */
+            control: string;
             /** Default */
             default: number;
             /** Help */

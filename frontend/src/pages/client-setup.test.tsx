@@ -56,7 +56,7 @@ describe('Connect a client', () => {
     expect(screen.getByText('MASP_ICAP_SERVICE_CLIENT_KEY=drive-gateway')).toBeInTheDocument()
     expect(screen.getByText('Authorization: Bearer <api token>')).toBeInTheDocument()
     expect(screen.getByText(/Ready through REST API\. This does not prove the other system can reach MASP/)).toBeInTheDocument()
-    expect(screen.getByRole('listitem', { name: 'REST API connection' })).toHaveTextContent('Connected')
+    expect(screen.getByRole('listitem', { name: 'REST API connection' })).toHaveTextContent('Configured')
     expect(screen.getByRole('listitem', { name: 'ICAP gateway connection' })).toHaveTextContent('Not used')
   })
 

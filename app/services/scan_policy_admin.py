@@ -19,6 +19,7 @@ class ScanPolicyField(BaseModel):
     label: str
     help: str
     unit: str
+    control: str
     minimum: int
     maximum: int
     default: int
@@ -46,7 +47,7 @@ def read() -> ScanPolicySnapshot:
             raise HTTPException(409, 'Stored scan policy exceeds the browser field limit. Correct the server setting before editing.')
         source = ('database override' if raw.strip() else
                   f'environment ({spec.env_var})' if scan_policy.env_value(spec.key) else 'default')
-        fields.append(ScanPolicyField(key=spec.key, label=spec.label, help=spec.help, unit=spec.unit,
+        fields.append(ScanPolicyField(key=spec.key, label=spec.label, help=spec.help, unit=spec.unit, control=spec.control,
             minimum=spec.minimum, maximum=spec.maximum, default=spec.default,
             value=scan_policy.resolve_raw(spec.key, raw), override_raw=raw.strip(), source=source))
     return ScanPolicySnapshot(fields=fields)

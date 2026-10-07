@@ -76,7 +76,7 @@ snapshot; service-client totals stay admin-only.
 Admin `/console/service-clients` now lists integration clients with bounded pages
 and confirms display-name and enabled-state changes. The managed `legacy-default`
 client remains read-only. Clicking a client opens a large dialog with Settings,
-Connection, Profile routing, Storage and Credentials tabs. Profile routing supports multiple
+Connection, Scan profiles, Storage and Credentials tabs. Scan profiles supports multiple
 named profiles, create/rename/disable/delete and default selection, with confirmed
 engine assignments and stale-edit protection. Client creation
 and credential add/list/revoke now stay in React too. Tokens are supplied by the
@@ -93,8 +93,8 @@ scan deletion now stay in React. Summary/full JSON/CSV downloads are available
 to analysts and admins. Integration payload views and bulk-action parity
 is tracked before legacy UI removal.
 
-Admin `/console/scan-policy` now edits API wait time, retry-after interval and the
-upload policy cap. Changes use shared backend validation and one atomic save;
+Admin `/console/scan-policy` ("System limits & notifications") now edits API wait
+time, poll interval, the upload cap (in MiB) and whether not-allowed files reach SIEM. Changes use shared backend validation and one atomic save;
 blank fields restore environment/default behavior. Deployment HTTP limits still
 apply when the upload policy cap is zero. `/console/hash-scan` now provides manual
 SHA-256 reputation lookup for analysts/admins, using existing provider quotas and

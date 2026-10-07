@@ -30,7 +30,7 @@ export function WorkspaceNavigation({ admin }: { admin: boolean }) {
         <NavLink to="/system/overview" className={() => `nav-item${location.pathname.startsWith('/system') || location.pathname.startsWith('/engines') ? ' active' : ''}`}>
           <Server size={18} />System</NavLink>
       </div><div className="nav-group"><p className="nav-label">Administration</p>
-        <NavLink className="nav-item" to="/scan-policy"><SlidersHorizontal size={18} />Scan policy</NavLink>
+        <NavLink className="nav-item" to="/scan-policy"><SlidersHorizontal size={18} />Limits &amp; notifications</NavLink>
         <NavLink className="nav-item" to="/users"><Users size={18} />Users</NavLink>
         <NavLink className="nav-item" to="/audit"><ScrollText size={18} />Audit</NavLink>
       </div></>}

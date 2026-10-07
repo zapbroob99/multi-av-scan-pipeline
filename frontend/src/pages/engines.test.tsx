@@ -82,6 +82,34 @@ describe('Engine console', () => {
     expect(document.querySelector('.health-detail img')).toBeNull()
   })
 
+  it('shows field help outside the label, readable choices and sizes', () => {
+    const sized: Adapter = { ...adapter, fields: [adapter.fields[0],
+      { key: 'timeout_seconds', label: 'Timeout (seconds)', field_type: 'number', required: true, default: '60', secret: false, help_text: 'A scan that takes longer is recorded as failed.', choices: [] },
+      { key: 'max_file_size_bytes', label: 'Largest file to scan (bytes)', field_type: 'number', required: true, default: '0', secret: false, help_text: 'ClamAV skips larger files.', choices: [] }] }
+    render(<ConfigFields adapter={sized} values={{ mode: 'clamd', max_file_size_bytes: '52428800' }} onChange={() => {}} />)
+    expect(screen.getByLabelText('Timeout (seconds)')).toHaveAccessibleDescription('A scan that takes longer is recorded as failed.')
+    expect(screen.getByLabelText('Largest file to scan (bytes)')).toHaveAccessibleDescription('ClamAV skips larger files. = 50 MiB')
+    expect(screen.getByRole('option', { name: 'clamd service (network)' })).toHaveValue('clamd')
+  })
+
+  it('asks before moving an engine to another worker pool', async () => {
+    const data = { ...makeInventory(), pools: [{ id: 3, name: 'Windows', enabled: true }] }
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === 'PUT' ? new Response(null, { status: 204 }) : new Response(JSON.stringify(data)))
+    mount(fetcher)
+    await userEvent.selectOptions(await screen.findByLabelText('Worker pool for ClamAV Istanbul'), '3')
+    const puts = () => fetcher.mock.calls.filter(([, init]) => init?.method === 'PUT')
+    expect(puts()).toHaveLength(0)
+    expect(screen.getByRole('dialog')).toHaveTextContent('ClamAV Istanbul will run on the Windows pool only.')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(puts()).toHaveLength(0)
+    await userEvent.selectOptions(screen.getByLabelText('Worker pool for ClamAV Istanbul'), '3')
+    await userEvent.click(screen.getByRole('button', { name: 'Change worker pool' }))
+    await screen.findByText('Worker pool saved. Health will be checked again.')
+    expect(puts()).toHaveLength(1)
+    expect(JSON.parse(String(puts()[0][1]?.body))).toEqual({ pool_id: 3 })
+  })
+
   it('uses slower polling when no check is in flight', () => {
     const data = makeInventory()
     expect(pollInterval(data)).toBe(30000)

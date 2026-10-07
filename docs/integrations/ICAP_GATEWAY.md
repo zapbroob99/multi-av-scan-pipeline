@@ -106,7 +106,7 @@ the health check reports it as critical. The client's Setup tab names any
 gateway reporting under another key.
 
 The bound client's default profile also carries that client's scan policy
-(Service Clients > Profile routing > Scan policy): a size limit, accepted
+(Service Clients > Scan profiles > File rules): a size limit, accepted
 content families, disguised files and what to do with files that could not be
 fully assessed. A profile set to block those overrides
 `MASP_ICAP_BLOCK_ON_REVIEW` for its client; left at the deployment behaviour,
@@ -159,7 +159,7 @@ is a fail-closed `200` block within `MASP_ICAP_WAIT_SECONDS`.
   `/api/v1/batches` endpoints are REST-scoped; inspect ICAP archives via the
   API Ledger. With `MASP_ICAP_BLOCK_ARCHIVES=1` (the default) an archive is
   recorded as not allowed and blocked whatever the engines say, unless the
-  client's profile sets archive handling (Service Clients > Profile routing > Scan policy > Archive handling;
+  client's profile sets archive handling (Service Clients > Scan profiles > File rules > Archive handling;
   see "Archives" in `docs/architecture/SERVICE_CLIENTS_AND_SCAN_PROFILES.md`).
   `scan_members` makes ICAP wait for every member within
   `MASP_ICAP_WAIT_SECONDS`, so raise it for clients that send large archives.

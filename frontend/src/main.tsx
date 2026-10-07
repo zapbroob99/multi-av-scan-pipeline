@@ -65,7 +65,7 @@ const client = new QueryClient({ defaultOptions: {
 
 const SECTIONS: [string, string, string][] = [
   ['/account', 'Personal', 'Account'], ['/about', 'Personal', 'About'], ['/audit', 'Administration', 'Audit trail'],
-  ['/users', 'Administration', 'Users'], ['/scan-policy', 'Administration', 'Scan policy'],
+  ['/users', 'Administration', 'Users'], ['/scan-policy', 'Administration', 'Limits & notifications'],
   ['/api-ledger', 'Integrations', 'API ledger'], ['/service-clients', 'Integrations', 'Service clients'],
   ['/storage', 'Operations', 'Folder scanning'], ['/hash-scan', 'Operations', 'Hash lookup'],
   ['/engines/hash-list', 'Infrastructure', 'Hash list'], ['/engines', 'Infrastructure', 'Engines'], ['/system', 'Infrastructure', 'System'],

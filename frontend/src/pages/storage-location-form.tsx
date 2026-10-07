@@ -143,14 +143,15 @@ export default function StorageLocationForm({ session }: { session: Session }) {
       <h2>Tiers</h2>
       <label>Default tier<select value={defaultTier} onChange={e => setDefaultTier(e.target.value as 'full' | 'light')}>
         <option value="light">Light: type policy and hash list, no antivirus</option>
-        <option value="full">Full: antivirus scan (not available yet; files wait)</option></select></label>
+        <option value="full" disabled={defaultTier !== 'full'}>Full: antivirus scan (not available yet; files wait)</option></select></label>
+      {defaultTier === 'full' && <p className="notice error" role="alert">The full tier is not available yet: files sent to it wait and are not scanned until it exists. Choose Light.</p>}
       <fieldset><legend>Tier rules (first match wins; sizes in MiB, blank for no bound; pattern matches the path under the prefix)</legend>
         {rules.map((rule, index) => <div key={index} className="history-filters">
           <label>Pattern<input value={rule.pattern} maxLength={256} onChange={e => updateRule(index, { pattern: e.target.value })} /></label>
           <label>From MiB<input value={rule.min} inputMode="decimal" onChange={e => updateRule(index, { min: e.target.value })} /></label>
           <label>Up to MiB<input value={rule.max} inputMode="decimal" onChange={e => updateRule(index, { max: e.target.value })} /></label>
           <label>Tier<select value={rule.tier} onChange={e => updateRule(index, { tier: e.target.value as 'full' | 'light' })}>
-            <option value="light">light</option><option value="full">full</option></select></label>
+            <option value="light">Light</option><option value="full" disabled={rule.tier !== 'full'}>Full (not available yet)</option></select></label>
           <Button type="button" variant="secondary" aria-label={`Remove rule ${index + 1}`} onClick={() => setRules(rules.filter((_, position) => position !== index))}>Remove</Button>
         </div>)}
         <Button type="button" variant="secondary" disabled={rules.length >= 50} onClick={() => setRules([...rules, { pattern: '*', min: '', max: '', tier: 'light' }])}>Add rule</Button>
@@ -166,8 +167,9 @@ export default function StorageLocationForm({ session }: { session: Session }) {
       </fieldset>
       <p className="muted">Scripts have no reliable magic bytes: they are recognized by extension and by a <code>#!</code> header only.</p>
       <label>Archives<select value={archiveAction} onChange={e => setArchiveAction(e.target.value as 'full' | 'allow' | 'detect')}>
-        <option value="full">Send to the full tier (a header cannot show what an archive holds)</option>
+        <option value="full">Hold for the full tier (not available yet; archives wait)</option>
         <option value="allow">Allow</option><option value="detect">Detect</option></select></label>
+      {archiveAction === 'full' && <p className="muted">Archives wait until the full tier exists. Choose Allow or Detect to decide them now.</p>}
       <label className="check-row"><input type="checkbox" checked={hashEnabled} onChange={e => setHashEnabled(e.target.checked)} /> Check SHA-256 against the hash list</label>
       <label>Hash files up to (GiB)<input value={hashMaxGib} inputMode="decimal" disabled={!hashEnabled} onChange={e => setHashMaxGib(e.target.value)} /></label>
       <p className="muted">Hashing reads the whole file. Larger files get the header check only, and the inventory records that no hash was computed.</p>

@@ -63,7 +63,7 @@ authorization/regression tests, responsive browser verification and documentatio
 | System — deferred intake | Admin-only read of the manifest worker's last recorded cycle (stale/failed flagged), deferred queue counts and oldest waiting age, bounded manifest rejections and pre-scan failures with paths redacted. New screen; no legacy equivalent. |
 | System — retention | Admin-only bounded preview and confirmed deletion across all sources; age and state fences, active/child/shared-sample/outbox protections, per-record outcomes. No recursive deletion. |
 | System — remaining parity | Engine pool assignment is already in React Engines. Engine metrics now include last-result time. Deployment-sized fleet/read validation remains. |
-| Scan policy | `/console/scan-policy` implements admin-only reads and confirmed atomic updates of the three operational limits with shared backend validation/resolution. |
+| System limits & notifications | `/console/scan-policy` implements admin-only reads and confirmed atomic updates of the operational limits and the not-allowed SIEM switch with shared backend validation/resolution. |
 | Hash lookup | `/console/hash-scan` provides analyst/admin explicit manual lookup, backend decisions, quota-aware adapters and bounded result summaries, now with legacy provider detail: a bounded provider status, verdict counts, last analysis date, cache source, duration, an HTTPS report link and operator guidance. Free-text provider reasons and policy configuration stay omitted. |
 | Integration administration | `/console/service-clients` lists clients and opens a tabbed settings dialog. Named-profile create/edit/disable/delete/default selection, fenced engine assignments, atomic client creation and credential add/list/scoped revocation are implemented. Tokens are supplied by the admin and never returned. `/console/service-clients/{id}/setup` reports coherent configuration readiness and connection details. `/console/service-clients/{id}/storage` manages bounded logical backend/prefix grants with explicit environment inheritance, deny-all and stale-edit protection; roots remain deployment-managed. |
 | Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Automation printable reports and oversized engine-output downloads reuse the manual readers under automation scope. A batch contract larger than the inline view downloads in full, up to the same 5000 members the integration API serves. Remaining: final legacy-action parity; preserve ownership and manual-history isolation. |
@@ -81,7 +81,7 @@ Migration does not promote engine support or waive security/performance acceptan
 ### Client administration presentation (2026-09-22)
 
 The client directory uses compact rows with enabled/managed badges. Selecting a row
-opens a large dialog with Settings, Connection, Profile routing, Storage and Credentials tabs.
+opens a large dialog with Settings, Connection, Scan profiles, Storage and Credentials tabs.
 Keyboard tab navigation, focus return and mobile/light/dark layouts are supported.
 Panels load on first selection and remain mounted until close to preserve mutation
 outcomes and explicit refresh requirements. Credentials clear their token input when
@@ -1997,3 +1997,36 @@ is `wait`, including a completed container awaiting members. Invalid/oversized
 member policy suppresses the report/export decision with a warning and refuses
 complete-contract previews. No member raw output or findings are hydrated.
 See the archive section in SERVICE_CLIENTS_AND_SCAN_PROFILES.md for read bounds.
+
+### Settings usability pass (pilot.16, 2026-10-07)
+
+Two independent reviews of the settings screens agreed that they were safe but assumed
+knowledge of MASP's internals. Round one changes wording, controls and save flow only;
+no decision, routing or policy semantics changed.
+
+- Names: the Administration screen is "System limits & notifications" (route unchanged);
+  the client tab is "Scan profiles", each profile showing its "File rules" and "Engines".
+  Two different things were both called "Scan policy" before.
+- Controls follow the value: `PolicySpec.control` (`number`, `size`, `switch`) makes the
+  upload cap a MiB field and the SIEM setting an On/Off/Not set here choice. A blank
+  field names what it falls back to; the server's own value is only known while nothing
+  is set here, so the text says "server setting, else default" otherwise.
+- File rule choices are short ("Server setting", "Check archives (recommended)"); the
+  explanation below follows the selected option and sits outside the label
+  (`aria-describedby`). The editor replaces its profile card instead of repeating it.
+- Engine forms show `EngineConfigField.help_text`, readable labels and choice wording
+  (stored keys unchanged) and restate byte fields in MiB. Changing an engine's worker
+  pool is confirmed like every other write.
+- Confirmations name what changes: engine additions/removals by name, renames as
+  before → after, file rules as their summary.
+- A successful save is followed by one fresh read, so the screen shows what is now in
+  effect without a manual refresh. A failed or uncertain write still hides the editor
+  and requires an explicit refresh; nothing is replayed.
+- Honest states: a client connection method that is set up reads "Configured", not
+  "Connected" (nothing tests reachability). Folder scanning's full tier is marked
+  "not available yet" and cannot be newly chosen; archives held for it say so.
+
+Round two (planned): a per-profile "what happens" summary — engines that will run and
+those left out with the reason, plus archive, refused content, size and engine failure
+outcomes — using gateway settings the ICAP status record will report, and "unknown"
+when no gateway has reported.

@@ -19,7 +19,7 @@ type Values = components['schemas']['ServiceClientUpdate']
 const tabs = [
   { key: 'settings', label: 'Settings', icon: Settings2 },
   { key: 'setup', label: 'Connection', icon: Cable },
-  { key: 'profiles', label: 'Profile routing', icon: GitBranch },
+  { key: 'profiles', label: 'Scan profiles', icon: GitBranch },
   { key: 'storage', label: 'Storage', icon: Database },
   { key: 'credentials', label: 'Credentials', icon: KeyRound },
 ] as const

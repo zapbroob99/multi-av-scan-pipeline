@@ -1160,7 +1160,8 @@ def catalog():
         fields = [asdict(field) for field in definition.config_fields]
         if definition.key == "clamav":
             fields.insert(0, {"key": "mode", "label": "Connection mode", "field_type": "text",
-                              "default": "clamd", "secret": False, "help_text": "Choose explicitly."})
+                              "default": "clamd", "secret": False,
+                              "help_text": "clamd: the ClamAV service over the network (normal). Command line: clamscan on the worker."})
         for field in fields:
             field["choices"] = CHOICES.get(field["key"],
                 ["true", "false"] if field["field_type"] == "checkbox" else [])

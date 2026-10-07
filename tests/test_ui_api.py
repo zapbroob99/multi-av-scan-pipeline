@@ -741,6 +741,8 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual(headers[b'cache-control'], b'no-store')
         self.assertEqual([field['key'] for field in result['fields']],
                          ['api_max_wait_seconds', 'api_retry_after_seconds', 'upload_max_bytes', 'siem_not_allowed_events'])
+        # The console edits sizes in MiB and the SIEM setting as on/off; stored values stay bytes and 0/1.
+        self.assertEqual([field['control'] for field in result['fields']], ['number', 'number', 'size', 'switch'])
         self.assertEqual(result['fields'][0]['value'], scan_policy.resolve_int('api_max_wait_seconds'))
         self.assertEqual(result['fields'][0]['value'], 300)
         self.assertNotIn('PRIVATE_TOKEN', json.dumps(result))

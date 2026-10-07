@@ -235,13 +235,20 @@ active/child/shared-sample/outbox protections. Commit each record separately and
 report deletion/file-cleanup outcomes. Never auto-replay uncertain requests or
 infer recursive deletion. No raw engine data is read for previews. ID pagination
 and PostgreSQL read budgets do not waive deployment-scale acceptance.
-Admin `/console/scan-policy` reads only the three operational policy overrides and
-saves them through strict, CSRF-protected JSON. Reuse `scan_policy.validate` and
+Admin `/console/scan-policy` (titled "System limits & notifications"; the per-client
+file rules live under Scan profiles) reads only the operational policy overrides and
+saves them through strict, CSRF-protected JSON. Each `PolicySpec.control` tells the
+console how to edit it (`number`, `size` edited in MiB, `switch` as on/off/not set). Reuse `scan_policy.validate` and
 `resolve_raw`; validate every field before one atomic save. Blank removes an
 override; upload policy zero does not remove the deployment HTTP body ceiling.
 Reads must surface database errors rather than presenting fallback defaults as a
 successful administrative read. No automatic save retries. Concurrent editing is
 last-save-wins; policy environment values can differ between deployed processes.
+A successful settings, profile, engine-routing or file-rule save is followed by one
+fresh read (never a second write), so the next edit starts from current revisions;
+a failed or uncertain write still requires an explicit refresh. Engine field help
+comes from `EngineConfigField.help_text` and is shown outside the label; choice
+values keep their stored keys and only their display text is translated.
 `/console/hash-scan` supports analyst/admin manual SHA-256 reputation lookup.
 GET options never probes providers; POST authenticates and checks CSRF before
 parsing, uses manual-source engine selection and existing quota-aware adapters,
@@ -256,7 +263,7 @@ strict admin/CSRF checks and identity-specific updates. Truncated metadata must 
 be silently saved by the UI. Client enabled state does not prove valid profile or
 credential configuration; edits do not rewrite accepted routing snapshots.
 The client list uses compact clickable rows opening a large dialog with Settings,
-Connection, Profile routing, Storage and Credentials tabs; standalone deep links remain.
+Connection, Scan profiles, Storage and Credentials tabs; standalone deep links remain.
 Load panels on first selection and keep visited panels mounted until dialog close
 so tab changes preserve write outcomes and explicit refresh requirements. Lock
 outer dismissal/tab changes during confirmations and writes. Clear credential

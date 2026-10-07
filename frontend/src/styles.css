@@ -203,6 +203,10 @@ legend { font-size: 13px; font-weight: 600; color: var(--text); }
 .search svg { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
 .search input { padding-left: 32px; }
 label.check-row { flex-direction: row; align-items: center; gap: 9px; font-weight: 400; }
+/* A control whose help sits outside its label (aria-describedby), so the accessible name stays exact. */
+.field-with-help { margin-bottom: 16px; }
+.field-with-help > label { margin-bottom: 6px; }
+.field-help { display: block; font-size: 12px; line-height: 1.45; color: var(--text-2); }
 .check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 18px; border: 0; padding: 0; margin: 0 0 8px; }
 .check-grid legend { font-size: 12.5px; font-weight: 500; margin-bottom: 8px; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }

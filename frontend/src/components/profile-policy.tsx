@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useId, useState, type FormEvent, type ReactNode } from 'react'
 import type { components } from '../lib/api.generated'
 import { FAMILY_LABELS, formatBytes } from '../lib/storage'
 import { Button } from './ui/button'
@@ -6,9 +6,28 @@ import { Button } from './ui/button'
 export type ProfilePolicy = components['schemas']['ProfilePolicy']
 type TypeMode = 'none' | 'allowlist' | 'denylist'
 type ArchiveHandling = NonNullable<ProfilePolicy['archive_handling']>
+type ViolationAction = NonNullable<ProfilePolicy['violation_action']>
+type ReviewAction = NonNullable<ProfilePolicy['review_action']>
 
 const FAMILIES = Object.keys(FAMILY_LABELS)
 const MIB = 1024 * 1024
+
+const ARCHIVE_HELP: Record<ArchiveHandling, string> = {
+  inherit: 'The server decides. An ICAP gateway set to refuse archives (MASP_ICAP_BLOCK_ARCHIVES) blocks every zip, 7z and tar as Not allowed; '
+    + 'otherwise, and over the API, an archive is scanned as one file.',
+  inspect: 'Engines scan the archive as one file, and MASP opens it to block what they cannot see: encrypted, damaged or oversized archives, '
+    + 'formats MASP cannot open (RAR, CAB, single-file gzip), and files inside that these rules refuse or the hash blocklist lists.',
+  scan_members: 'Like checking, and every file inside is also scanned by this profile\'s engines. Slower: an ICAP gateway waits up to '
+    + 'MASP_ICAP_WAIT_SECONDS for all of them, then follows its fail mode.',
+}
+const VIOLATION_HELP: Record<ViolationAction, string> = {
+  scan_and_block: 'The engines still scan the file and the result is recorded; the file is blocked and listed as Not allowed.',
+  reject: 'Faster, but no scan record is kept: an ICAP gateway blocks the file and the API answers 415.',
+}
+const REVIEW_HELP: Record<ReviewAction, string> = {
+  inherit: 'The decision stays "review": an ICAP gateway follows its own setting (MASP_ICAP_BLOCK_ON_REVIEW) and the API returns review.',
+  block: 'Safer, but while an engine is down every file from this client is blocked.',
+}
 
 /** One line per rule that differs from inheriting the deployment's behaviour. */
 export function policySummary(policy: ProfilePolicy): string[] {
@@ -28,10 +47,16 @@ export function policySummary(policy: ProfilePolicy): string[] {
 }
 
 export function PolicySummary({ policy, invalid }: { policy: ProfilePolicy | null; invalid: boolean }) {
-  if (invalid || !policy) return <p role="alert">The stored policy cannot be read. Scans under it are not allowed automatically until a new policy is saved.</p>
+  if (invalid || !policy) return <p role="alert">The stored rules cannot be read. Files under them are not allowed automatically until new rules are saved.</p>
   const lines = policySummary(policy)
-  if (!lines.length) return <p className="muted client-note">No rules of its own: the deployment's limits and review handling apply.</p>
+  if (!lines.length) return <p className="muted client-note">No rules of its own: the server's limits and review handling apply.</p>
   return <ul className="profile-policy-summary">{lines.map(line => <li key={line}>{line}</li>)}</ul>
+}
+
+/** A control with its help text outside the label, so the accessible name stays exact. */
+function Field({ label, help, children }: { label: string; help: ReactNode; children: (describedBy: string) => ReactNode }) {
+  const id = useId()
+  return <div className="field-with-help"><label>{label}{children(id)}</label><small id={id} className="field-help">{help}</small></div>
 }
 
 export function ProfilePolicyEditor({ name, policy, invalid, disabled, onCancel, onReview }: {
@@ -43,10 +68,11 @@ export function ProfilePolicyEditor({ name, policy, invalid, disabled, onCancel,
   const [typeMode, setTypeMode] = useState<TypeMode>(start.type_rule?.mode ?? 'none')
   const [families, setFamilies] = useState<string[]>(start.type_rule?.families ?? ['executable', 'script'])
   const [masquerade, setMasquerade] = useState(start.block_masquerade ?? false)
-  const [violation, setViolation] = useState(start.violation_action ?? 'scan_and_block')
-  const [review, setReview] = useState(start.review_action ?? 'inherit')
+  const [violation, setViolation] = useState<ViolationAction>(start.violation_action ?? 'scan_and_block')
+  const [review, setReview] = useState<ReviewAction>(start.review_action ?? 'inherit')
   const [archives, setArchives] = useState<ArchiveHandling>(start.archive_handling ?? 'inherit')
   const [error, setError] = useState('')
+  const masqueradeHelp = useId()
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -71,38 +97,35 @@ export function ProfilePolicyEditor({ name, policy, invalid, disabled, onCancel,
 
   const contentRules = typeMode !== 'none' || masquerade || archives !== 'inherit'
   return <form className="submission-card" onSubmit={submit}><fieldset disabled={disabled}>
-    <legend className="client-form-title">Scan policy for {name}</legend>
-    <p className="muted client-note">Applies to scans this profile accepts from now on. Accepted scans keep the policy they were accepted under.
-      A policy can only make a decision stricter; it never allows what the engines would not.</p>
-    {invalid && <p role="alert">The stored policy cannot be read. Saving replaces it with the policy below.</p>}
-    <label>Largest accepted file (MiB)<input inputMode="decimal" value={sizeMib} placeholder="Deployment limit" onChange={event => setSizeMib(event.target.value)} />
-      <small className="muted">Blank: only the deployment's upload and ICAP limits apply. Larger files are rejected without scanning (ICAP blocks them, the API answers 413).</small></label>
-    <label>Content rule<select value={typeMode} onChange={event => setTypeMode(event.target.value as TypeMode)}>
-      <option value="none">None: every content family is accepted</option>
-      <option value="denylist">Denylist: the families below are not accepted</option>
-      <option value="allowlist">Allowlist: only the families below are accepted</option></select>
-      <small className="muted">Judged from the file's first bytes, not its name. Plain text and CSV have no signature and count as unrecognized.</small></label>
+    <legend className="client-form-title">File rules for {name}</legend>
+    <p className="muted client-note">Applies to files accepted from now on. Rules only make a decision stricter; they never allow what the engines would block.</p>
+    {invalid && <p role="alert">The stored rules cannot be read. Saving replaces them with the rules below.</p>}
+    <Field label="Largest accepted file (MiB)" help="Blank: only the server's upload and ICAP limits apply. Larger files are refused without scanning.">
+      {id => <input inputMode="decimal" value={sizeMib} placeholder="Server limit" aria-describedby={id} onChange={event => setSizeMib(event.target.value)} />}</Field>
+    <Field label="Content rule" help="Judged from the file's first bytes, not its name. Plain text and CSV have no signature and count as unrecognized.">
+      {id => <select value={typeMode} aria-describedby={id} onChange={event => setTypeMode(event.target.value as TypeMode)}>
+        <option value="none">No content rule</option>
+        <option value="denylist">Refuse these types</option>
+        <option value="allowlist">Accept only these types</option></select>}</Field>
     {typeMode !== 'none' && <fieldset className="check-grid"><legend>Content families</legend>
       {FAMILIES.map(family => <label key={family} className="check-row"><input type="checkbox" checked={families.includes(family)}
         onChange={event => setFamilies(event.target.checked ? [...families, family] : families.filter(item => item !== family))} /> {FAMILY_LABELS[family]}</label>)}</fieldset>}
-    <label className="check-row"><input type="checkbox" checked={masquerade} onChange={event => setMasquerade(event.target.checked)} />
-      Do not accept files whose extension contradicts their content (for example an executable named report.pdf)</label>
-    <label>Archive handling (zip, 7z, tar)<select value={archives} onChange={event => setArchives(event.target.value as ArchiveHandling)}>
-      <option value="inherit">Deployment behaviour: an ICAP gateway blocks every archive, the API scans it as one file</option>
-      <option value="inspect">Check them: engines scan the archive, MASP opens it to block what they could not see</option>
-      <option value="scan_members">Scan every file inside: each member is also scanned by this profile's engines</option></select>
-      <small className="muted">Checking blocks encrypted, damaged or oversized archives, formats MASP cannot open (RAR, CAB, single-file gzip)
-        and members that the content rule above does not accept or the hash blocklist lists. Scanning every file inside takes longer:
-        an ICAP gateway waits for all members within MASP_ICAP_WAIT_SECONDS and blocks or allows by its fail mode when they do not finish.</small></label>
-    {contentRules && <label>When content is not accepted<select value={violation} onChange={event => setViolation(event.target.value as typeof violation)}>
-      <option value="scan_and_block">Scan it and block it: engine results are recorded</option>
-      <option value="reject">Reject it without scanning: faster, no scan record (ICAP blocks, the API answers 415)</option></select></label>}
-    <label>Files that could not be fully assessed<select value={review} onChange={event => setReview(event.target.value as typeof review)}>
-      <option value="inherit">Deployment behaviour: the decision stays review</option>
-      <option value="block">Block them</option></select>
-      <small className="muted">An engine that failed or timed out leaves a file unassessed. Blocking is safer; while an engine is down, every file from this client is blocked.
-        With the deployment behaviour, an ICAP gateway follows MASP_ICAP_BLOCK_ON_REVIEW and the API returns review.</small></label>
+    <div className="field-with-help"><label className="check-row"><input type="checkbox" checked={masquerade} aria-describedby={masqueradeHelp} onChange={event => setMasquerade(event.target.checked)} />
+      Refuse files whose extension contradicts their content</label><small id={masqueradeHelp} className="field-help">For example a program named report.pdf.</small></div>
+    <Field label="Archive handling (zip, 7z, tar)" help={ARCHIVE_HELP[archives]}>
+      {id => <select value={archives} aria-describedby={id} onChange={event => setArchives(event.target.value as ArchiveHandling)}>
+        <option value="inherit">Server setting</option>
+        <option value="inspect">Check archives (recommended)</option>
+        <option value="scan_members">Scan every file inside</option></select>}</Field>
+    {contentRules && <Field label="When content is not accepted" help={VIOLATION_HELP[violation]}>
+      {id => <select value={violation} aria-describedby={id} onChange={event => setViolation(event.target.value as ViolationAction)}>
+        <option value="scan_and_block">Scan and block (recommended)</option>
+        <option value="reject">Refuse without scanning</option></select>}</Field>}
+    <Field label="Files that could not be fully assessed" help={<>An engine that failed or timed out leaves a file unassessed. {REVIEW_HELP[review]}</>}>
+      {id => <select value={review} aria-describedby={id} onChange={event => setReview(event.target.value as ReviewAction)}>
+        <option value="inherit">Server setting</option>
+        <option value="block">Block them</option></select>}</Field>
     {error && <p role="alert" className="error">{error}</p>}
-    <div className="client-form-footer"><Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button><Button type="submit">Review policy</Button></div>
+    <div className="client-form-footer"><Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button><Button type="submit">Review rules</Button></div>
   </fieldset></form>
 }

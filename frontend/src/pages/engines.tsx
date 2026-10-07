@@ -7,6 +7,28 @@ import { request, pollInterval, type Adapter, type Engine, type Health, type Ses
 import { Button } from '../components/ui/button'
 import { EngineIcon } from '../components/engine-icon'
 import { Dialog } from '../components/ui/dialog'
+import { formatBytes } from '../lib/storage'
+
+/** Operator wording for stored choice values; the value sent to the server stays the key. */
+const CHOICE_LABELS: Record<string, Record<string, string>> = {
+  mode: { clamd: 'clamd service (network)', cli: 'Command line (clamscan)' },
+  execution_mode: { powershell: 'PowerShell', mpcmdrun: 'MpCmdRun.exe' },
+  default_scan_type: { custom: 'Custom: the submitted file', quick: 'Quick', full: 'Full' },
+  mismatch_action: { report: 'Report: record a finding only', detect: 'Detect: mark the file detected' },
+}
+const BOOLEAN_LABELS: Record<string, string> = { true: 'Yes', false: 'No' }
+
+function choiceLabel(field: string, value: string) {
+  return CHOICE_LABELS[field]?.[value] ?? BOOLEAN_LABELS[value] ?? value
+}
+
+/** A byte count typed into a number field, restated in readable units. */
+function byteHint(key: string, raw: string | undefined) {
+  if (!key.endsWith('_bytes') || !raw?.trim()) return ''
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value < 0) return ''
+  return value === 0 ? '= no limit' : `= ${formatBytes(value)}`
+}
 
 export function ConfigFields({ adapter, values, onChange, editing = false }: {
   adapter: Adapter; values: Record<string, string>; onChange: (key: string, value: string) => void; editing?: boolean
@@ -16,16 +38,21 @@ export function ConfigFields({ adapter, values, onChange, editing = false }: {
     if (['host', 'port'].includes(field.key)) return values.mode === 'clamd'
     if (field.key === 'command') return values.mode === 'cli'
     return true
-  }).map(field => <label key={field.key}>
-    {field.label}{field.secret && editing && <small>Leave blank to keep the saved key</small>}
-    {field.choices.length ? <select value={values[field.key] || ''} required onChange={e => onChange(field.key, e.target.value)}>
-      <option value="">Select {field.label}</option>
-      {field.choices.map(value => <option key={value} value={value}>{value}</option>)}
-    </select> : <input type={field.secret ? 'password' : field.field_type === 'number' ? 'number' : 'text'}
-      value={values[field.key] || ''} placeholder={field.default} required={!(field.secret && editing)}
-      autoComplete={field.secret ? 'new-password' : 'off'} maxLength={4096}
-      onChange={e => onChange(field.key, e.target.value)} />}
-  </label>)}</div>
+  }).map(field => {
+    const helpId = `engine-field-${field.key}-help`
+    const help = [field.secret && editing ? 'Leave blank to keep the saved key.' : field.help_text, byteHint(field.key, values[field.key])].filter(Boolean).join(' ')
+    // Help sits outside the label so the control's accessible name stays exactly the field label.
+    return <div className="field-with-help" key={field.key}><label>
+      {field.label}
+      {field.choices.length ? <select value={values[field.key] || ''} required aria-describedby={help ? helpId : undefined} onChange={e => onChange(field.key, e.target.value)}>
+        <option value="">Choose…</option>
+        {field.choices.map(value => <option key={value} value={value}>{choiceLabel(field.key, value)}</option>)}
+      </select> : <input type={field.secret ? 'password' : field.field_type === 'number' ? 'number' : 'text'}
+        value={values[field.key] || ''} placeholder={field.default} required={!(field.secret && editing)}
+        autoComplete={field.secret ? 'new-password' : 'off'} maxLength={4096} aria-describedby={help ? helpId : undefined}
+        onChange={e => onChange(field.key, e.target.value)} />}
+    </label>{help && <small id={helpId} className="field-help">{help}</small>}</div>
+  })}</div>
 }
 
 function RuleManager({ engine, session }: { engine: Engine; session: Session }) {
@@ -77,6 +104,7 @@ export default function Engines({ session }: { session: Session }) {
   const [editing, setEditing] = useState<Engine | null>(null)
   const [deleting, setDeleting] = useState<Engine | null>(null)
   const [rulesEngine, setRulesEngine] = useState<Engine | null>(null)
+  const [placement, setPlacement] = useState<{ engine: Engine; poolId: number | null } | null>(null)
   const [adapterKey, setAdapterKey] = useState('')
   const [name, setName] = useState('')
   const [config, setConfig] = useState<Record<string, string>>({})
@@ -152,8 +180,8 @@ export default function Engines({ session }: { session: Session }) {
         <div className="card-heading"><div className="engine-icon"><EngineIcon adapterKey={engine.adapter_key} /></div><div><h2>{engine.display_name}</h2><p className="muted">{adapter.label} <span>· #{engine.id}</span></p></div><span className={`health-pill health-${health.state}`}>{health.state}</span></div>
         <div className="tags"><span>{adapter.support_state}</span><span>{adapter.capabilities.deployment}</span>{adapter.capabilities.consumes_external_quota && <span>External quota · manual only</span>}</div>
         <p className="health-detail">{health.detail}</p><p className="checked-at">{health.checked_at ? `Last checked ${formatTimestamp(health.checked_at)}` : BUILT_IN_ADAPTERS.has(engine.adapter_key) ? 'Built-in analyzer; no connection check required.' : 'No verified check timestamp'}</p>
-        <label className="placement">Worker pool<select aria-label={`Worker pool for ${engine.display_name}`} disabled={mutation.isPending} value={engine.pool_id ?? ''} onChange={e => void perform(() => request('/api/ui/v1/engines/{instance_id}/placement', 'put', { params: { instance_id: engine.id }, csrf, body: { pool_id: e.target.value ? Number(e.target.value) : null } }), 'Worker placement saved. Health will be checked again.')}>
-          <option value="">Unbound · adapter-compatible workers</option>{inventory.pools.map(pool => <option value={pool.id} key={pool.id}>{pool.name}{pool.enabled ? '' : ' (disabled)'}</option>)}
+        <label className="placement">Worker pool<select aria-label={`Worker pool for ${engine.display_name}`} disabled={mutation.isPending} value={engine.pool_id ?? ''} onChange={e => setPlacement({ engine, poolId: e.target.value ? Number(e.target.value) : null })}>
+          <option value="">Any worker that runs this engine</option>{inventory.pools.map(pool => <option value={pool.id} key={pool.id}>{pool.name}{pool.enabled ? '' : ' (disabled)'}</option>)}
         </select></label>
         <div className="card-actions"><Button variant="secondary" disabled={mutation.isPending || !engine.enabled} onClick={() => void check(engine, adapter)}><FlaskConical size={16} />Test connection</Button>
           <Button variant="secondary" disabled={mutation.isPending} onClick={() => edit(engine)} aria-label={`Settings for ${engine.display_name}`}><Settings2 size={16} />Settings</Button>
@@ -177,6 +205,12 @@ export default function Engines({ session }: { session: Session }) {
       <p>Remove <strong>{deleting?.display_name}</strong>?</p><div className="dialog-actions"><Button variant="secondary" onClick={() => setDeleting(null)}>Cancel</Button><Button variant="destructive" disabled={mutation.isPending} onClick={async () => {
         if (deleting && await perform(() => request('/api/ui/v1/engines/{instance_id}', 'delete', { params: { instance_id: deleting.id }, csrf }), 'Engine deployment removed.')) setDeleting(null)
       }}>Remove deployment</Button></div>
+    </Dialog>
+    <Dialog open={!!placement} onOpenChange={open => { if (!open && !mutation.isPending) setPlacement(null) }} title="Change worker pool?"
+      description={placement ? `${placement.engine.display_name} will run on ${placement.poolId === null ? 'any worker that runs this engine' : `the ${inventory.pools.find(pool => pool.id === placement.poolId)?.name ?? `pool #${placement.poolId}`} pool only`}. Its health is checked again.` : ''}>
+      <div className="dialog-actions"><Button variant="secondary" disabled={mutation.isPending} onClick={() => setPlacement(null)}>Cancel</Button><Button disabled={mutation.isPending} onClick={async () => {
+        if (placement && await perform(() => request('/api/ui/v1/engines/{instance_id}/placement', 'put', { params: { instance_id: placement.engine.id }, csrf, body: { pool_id: placement.poolId } }), 'Worker pool saved. Health will be checked again.')) setPlacement(null)
+      }}>{mutation.isPending ? 'Saving…' : 'Change worker pool'}</Button></div>
     </Dialog>
     <Dialog open={!!rulesEngine} onOpenChange={open => { if (!open) setRulesEngine(null) }} title="YARA rules" description="Manage the local rule files for this configured YARA instance.">{rulesEngine && <RuleManager engine={rulesEngine} session={session} />}</Dialog>
   </section>

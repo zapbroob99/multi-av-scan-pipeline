@@ -38,6 +38,9 @@ class PolicySpec:
     label: str
     help: str
     unit: str = ""
+    # How the console edits it: "number", "size" (bytes, edited in MiB) or
+    # "switch" (0 off, 1 on).
+    control: str = "number"
 
 
 # 5 GiB upper bound on the upload cap is a sanity ceiling, not a product limit;
@@ -51,10 +54,10 @@ SPECS: tuple[PolicySpec, ...] = (
         default=15,
         minimum=0,
         maximum=300,
-        label="API max wait",
+        label="API wait for a result",
         help=(
-            "How long POST /api/v1/scans may hold the connection for a "
-            "synchronous verdict before returning 202 Accepted. 0 = always async."
+            "How long an API upload waits for the finished verdict before answering "
+            "\"accepted, ask again later\". 0 = always answer at once."
         ),
         unit="seconds",
     ),
@@ -64,11 +67,8 @@ SPECS: tuple[PolicySpec, ...] = (
         default=2,
         minimum=1,
         maximum=30,
-        label="API retry-after",
-        help=(
-            "Recommended client poll interval returned (Retry-After header and "
-            "recommended_poll_seconds) while a scan is still running."
-        ),
+        label="API poll interval",
+        help="How often API clients are told to ask again while a scan is still running.",
         unit="seconds",
     ),
     PolicySpec(
@@ -77,12 +77,13 @@ SPECS: tuple[PolicySpec, ...] = (
         default=0,
         minimum=0,
         maximum=_MAX_UPLOAD_CEILING,
-        label="Upload size cap",
+        label="Largest upload",
         help=(
-            "Reject API/UI uploads larger than this with HTTP 413. 0 = unlimited. "
-            "Does not change the ICAP gateway cap (MASP_ICAP_MAX_BYTES)."
+            "Largest file the API and the console accept. 0 = no limit here; the server's "
+            "request size limit still applies. The ICAP gateway has its own limit."
         ),
         unit="bytes",
+        control="size",
     ),
     PolicySpec(
         key="siem_not_allowed_events",
@@ -90,12 +91,13 @@ SPECS: tuple[PolicySpec, ...] = (
         default=0,
         minimum=0,
         maximum=1,
-        label="SIEM: not-allowed files",
+        label="Send not-allowed files to SIEM",
         help=(
-            "1 = also send a policy.not_allowed security event when a client's rules refuse a file "
-            "that no engine detected, wherever MASP sends malware.detected (submissions that request "
-            "security events). 0 = only malware is reported. Not shown in the notification bell."
+            "Also send an event when a client's rules refuse a file that no engine detected, "
+            "wherever malware detections are sent. Off: only malware is reported. "
+            "Not-allowed files never appear in the notification bell."
         ),
+        control="switch",
     ),
 )
 

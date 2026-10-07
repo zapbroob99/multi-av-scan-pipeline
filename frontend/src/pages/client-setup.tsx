@@ -41,7 +41,7 @@ export default function ClientSetup() {
           {check.passed ? <CheckCircle2 size={18} aria-hidden="true" /> : <CircleAlert size={18} aria-hidden="true" />}
           <div><strong>{check.label}</strong><span className="muted">{check.detail}</span>
             {!check.passed && <ClientPanelLink clientId={clientId} tab={check.key === 'client_enabled' ? 'settings' : 'profiles'}>
-              {check.key === 'client_enabled' ? 'Review client settings' : 'Review profile routing'}<ArrowRight size={12} aria-hidden="true" /></ClientPanelLink>}</div>
+              {check.key === 'client_enabled' ? 'Review client settings' : 'Review scan profiles'}<ArrowRight size={12} aria-hidden="true" /></ClientPanelLink>}</div>
           <span className="client-check-status">{check.passed ? 'Ready' : 'Action needed'}</span></li>)}</ul>
         <h3 className="client-methods-title">Connection methods</h3>
         <p className="muted client-note">A client needs at least one. Methods it does not use can stay unset.</p>
@@ -49,7 +49,7 @@ export default function ClientSetup() {
           className={`client-method ${method.ready ? 'is-ready' : method.in_use ? 'is-broken' : 'is-unused'}`}>
           <div className="client-method-heading"><strong>{method.label}</strong>
             <span className={`tag tag-dot ${method.ready ? 'tag-positive' : method.in_use ? 'tag-danger' : ''}`}>
-              {method.ready ? 'Connected' : method.in_use ? 'Needs attention' : 'Not used'}</span></div>
+              {method.ready ? 'Configured' : method.in_use ? 'Needs attention' : 'Not used'}</span></div>
           <p className="muted">{method.summary}</p>
           {(method.in_use || method.key === 'api') && <ul className="client-method-checks">{method.checks.map(check =>
             <li key={check.key} className={check.passed ? 'client-check-pass' : 'client-check-fail'}>

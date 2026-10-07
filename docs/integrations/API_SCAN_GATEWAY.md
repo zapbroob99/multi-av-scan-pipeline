@@ -18,7 +18,7 @@ current default, or select an enabled profile belonging to that client:
 | `POST /api/v1/deferred-scans` | JSON integer `"profile_id": 12` |
 | `GET /api/v1/hashes/{sha256}` | Query `?profile_id=12` |
 
-Use the actual ID shown in the client's **Profile routing** tab. Profile IDs are
+Use the actual ID shown in the client's **Scan profiles** tab. Profile IDs are
 positive integers; malformed values return `422`. Unavailable, disabled, deleted
 or foreign profiles return the same `404`, before upload sample storage or deferred
 admission. Compatibility environment/settings tokens cannot select a profile.

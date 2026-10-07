@@ -5696,6 +5696,10 @@
       },
       "ScanPolicyField": {
         "properties": {
+          "control": {
+            "title": "Control",
+            "type": "string"
+          },
           "default": {
             "title": "Default",
             "type": "integer"
@@ -5742,6 +5746,7 @@
           "label",
           "help",
           "unit",
+          "control",
           "minimum",
           "maximum",
           "default",

@@ -43,7 +43,7 @@ credentials before relying on per-client isolation.
 
 ## Named profile management and selection
 
-Open a client from the Service Clients list, then its **Profile routing** tab.
+Open a client from the Service Clients list, then its **Scan profiles** tab.
 Admins can create, rename, enable/disable and delete named profiles, replace
 their engine assignments, and select the default. Standalone
 `/console/service-clients/{id}/profiles` remains available. The current default
@@ -88,8 +88,8 @@ fallback; the setup screen still reports the missing explicit default.
 ## Profile scan policy
 
 Each profile carries its own scan policy, so every client can have independent
-rules. It is edited per profile under **Service Clients > Profile routing >
-Scan policy** (`PUT /api/ui/v1/service-clients/{id}/profiles/{profile_id}/policy`,
+rules. It is edited per profile under **Service Clients > Scan profiles >
+File rules** (`PUT /api/ui/v1/service-clients/{id}/profiles/{profile_id}/policy`,
 admin and CSRF, fenced by the profile's `management_revision`; the managed
 `legacy-default` client stays read-only).
 
@@ -213,7 +213,7 @@ scan's `intake_policy`.
 | Scan report | The same badge above the decision |
 | ICAP | The entry's message ("archive files are not accepted", "the archive could not be fully checked", ...) |
 | Recorded risk, detections, notification bell | Unchanged: not allowed is not malware |
-| SIEM | `policy.not_allowed`, only when the Scan policy setting "SIEM: not-allowed files" (`siem_not_allowed_events`, environment `MASP_SIEM_NOT_ALLOWED_EVENTS`) is 1, and only where `malware.detected` would go (submissions that request security events). A detection is always `malware.detected` instead |
+| SIEM | `policy.not_allowed`, only when the setting "Send not-allowed files to SIEM" under System limits & notifications (`siem_not_allowed_events`, environment `MASP_SIEM_NOT_ALLOWED_EVENTS`) is on, and only where `malware.detected` would go (submissions that request security events). A detection is always `malware.detected` instead |
 
 `violation_action: reject` still refuses without a scan record: the API answers
 413/415, ICAP blocks with the entry's message, nothing reaches the ledger. Keep
