@@ -1,7 +1,7 @@
 # MASP session handoff
 
-Updated: 2026-10-06, pilot.14 packaged and release-container archive checks passed
-on `feat/archive-handling`. This is a
+Updated: 2026-10-07, pilot.15 (not-allowed outcome) packaged and its upgrade/rollback
+rehearsed on `feat/archive-handling`; pilot.14 runs on the intranet. This is a
 workspace checkpoint, not evidence of a deployment.
 
 ## Start here
@@ -30,13 +30,14 @@ must handle zips somehow"). See "Archives" in
 "advert-like"), the expected 401 no longer shows as a red error on the sign-in
 page, and a notification bell replaced the top bar health pill (recent detections
 for everyone, failing health checks for admins, per-user read and clear markers; see
-"Notification bell" in `FRONTEND_SEPARATION.md`). Packaged as pilot.14 and
-rehearsed in an isolated release container; not deployed. Merging it also brings the unmerged redesign along.
+"Notification bell" in `FRONTEND_SEPARATION.md`). Packaged as pilot.14, deployed on
+the intranet on 2026-10-06; its follow-up (the not-allowed outcome) is pilot.15,
+packaged and rehearsed but not deployed. Merging it also brings the unmerged redesign along.
 
 **Redesign branch: `experiment/ui-redesign`** (created 2026-10-02 from
 `feat/frontend-separation-hardening` at `4b1a8da`; that branch has not moved, so
 merging is a fast-forward). It holds the console redesign `4349311`, which the
-user reviewed and approved on 2026-10-05 ("beÄŸendim"), plus this handoff. It is
+user reviewed and approved on 2026-10-05 ("beğendim"), plus this handoff. It is
 not merged into `feat/frontend-separation-hardening` yet: ask the user before
 merging, and remember the deployed pilot.13 predates it. Going back to the old
 look is `git switch feat/frontend-separation-hardening`.
@@ -169,7 +170,7 @@ decision, previews fail, API returns 503 and ICAP blocks. Admission: 5000 member
 raw output/findings. Added profile/archive policy values missing from the public
 API schema. Packaged in pilot.14; release-container ICAP checks passed below.
 Deployment,
-upgrade/rollback rehearsal and capacity acceptance remain open.
+capacity acceptance remains open (upgrade/rollback rehearsal passed, below).
 
 **Verification recovered on 2026-10-06.** The interrupted session's final full
 backend run finished on 2026-10-05: 1113 tests, OK, 179 environment/platform
@@ -207,17 +208,67 @@ Evidence and test harnesses: ignored `dist/rehearsal-pilot14/`.
 The disposable project containers, network and database/signature volumes were
 removed after evidence was saved. The release image and artifacts remain.
 
-Shipped Linux install/upgrade/rollback script rehearsal is NOT complete.
-Automatic approval review rejected the proposed helper-container Docker socket
-mount because it grants broad host-Docker control. Explicit user approval was
-requested and is still pending; do not repeat that mechanism without approval.
-Native Compose scanning proceeded without any socket mount. Existing MASP
-containers were untouched. No remote deployment, push or branch merge occurred.
+**Upgrade/rollback rehearsal passed, 2026-10-06** (the user approved the Docker
+socket mount for it). An `ubuntu:24.04` driver with the host socket and `/rehearse`
+ran only compose project `masp-rehearse` (ports 18100/11344) with
+`MASP_INSTALL_ROOT=/rehearse/opt`, `MASP_DATA_ROOT=/rehearse/srv`. Fresh pilot.13
+install, a `fil` client bound to ICAP and traffic (13 verify passed); then
+`upgrade.sh --dry-run` (only `MASP_IMAGE` and `./rules` moving to the data root),
+`upgrade.sh` with the pilot.14 image removed from the host first so the tar load
+ran: 9/9 steps, verify passed, every scan and `fil` kept, notification columns and
+`idx_scan_jobs_detection_feed` added. ICAP after upgrade: clean ZIP still blocked
+with inherited handling; with `fil` set to `inspect` clean ZIP allowed, encrypted
+ZIP and EICAR blocked; the bell listed pre-upgrade detections. The printed
+rollback restored pilot.13 (verify passed, columns gone, data as backed up), and
+upgrading again after the rollback passed. Driver script and log:
+`dist/rehearsal-upgrade14/`. Project, volumes, driver and `/rehearse` removed;
+the live `masp` stack was untouched. Operator steps (Turkish):
+`kilavuz/PILOT_14_DURUM.md`. Not deployed; no push or merge.
+
+**Pilot.14 is deployed on the intranet (user, 2026-10-06).** First report from
+it: a clean ZIP blocked over ICAP showed "malware detected" in the client product
+while the ledger said No detection; `fil` was still on inherited archive handling,
+so `MASP_ICAP_BLOCK_ARCHIVES` refused it. Fixed for pilot.15 in `78aa58a`
+(favicon), `92e9046` (not allowed) and `d4ebac6` (release name), all tests passing
+(backend 1123 SQLite; related modules plus `test_reliability_postgres` on
+disposable PostgreSQL; frontend 201, e2e 39):
+- ICAP block bodies name the kind of reason; "malware detected" only for a detection.
+- **Not allowed** (see that section in `SERVICE_CLIENTS_AND_SCAN_PROFILES.md`),
+  agreed with the user as one mechanism: every admission rule, the gateway archive
+  rule included, is an intake violation; `profile_policy.NOT_ALLOWED` gives code,
+  label and ICAP message; `scan_jobs.not_allowed` feeds a ledger badge/filter and
+  the report. Not in the bell (user's choice); SIEM `policy.not_allowed` only when
+  the new Scan policy setting is on. The gateway no longer applies its own rule.
+- Adding a `scan_jobs` column flipped SQLite's index choice for the archive child
+  presence probe (no statistics: a cost tie decided by row width); the probe now
+  carries `nested.id > 0` so it always uses `idx_scan_jobs_parent`.
+- Favicon and mobile theme colour now match the redesign's mark.
 The five pre-existing staged files and the private untracked pilot follow-up
 document remain untouched.
 
+**Pilot.15 packaged and rehearsed, 2026-10-07.** Bundle from the clean commit
+`d4ebac6`; image built from the extracted bundle. `dist/masp-pilot-0.1.0-pilot.15.zip`
+SHA-256 `7d8d90980e8b96be845c02b6d0e7c44b93a7910e39b7879316b0428d7876d4ee`;
+`dist/masp-pilot-0.1.0-pilot.15-image.tar` SHA-256
+`b07f02f7863f0009dba35da8da80034f3b8ebbc12c41cc52da51bc20438746ed`. Same driver
+method as pilot.14 (project `masp-rehearse`, `/rehearse` roots), script in
+`dist/rehearsal-upgrade15/rehearse.sh`. Fresh pilot.14 with `fil` bound to ICAP
+reproduced the bug (clean and encrypted ZIP: "malware detected", ledger info).
+`upgrade.sh --dry-run` changed only `MASP_IMAGE` (plus the fresh install's
+`./rules` move); `upgrade.sh` with the image removed from the host first: 9/9,
+verify passed, `scan_jobs.not_allowed` and `idx_scan_jobs_not_allowed` added, every
+scan kept with a null code. Inherited handling: ZIPs blocked with "archive files
+are not accepted", ledger `archive_refused`, the not-allowed filter listed only
+them, the bell only EICAR. `fil` on `inspect`: clean ZIP allowed, encrypted ZIP
+blocked "could not be fully checked" (`archive_encrypted`), EICAR "malware
+detected", DOCX allowed throughout. Rollback restored pilot.14 (verify passed,
+column gone) and upgrading again passed. The upgrade log was lost in teardown;
+results above are from the run's output. Project, volumes, network, driver and
+`/rehearse` removed; live `masp` untouched. Operator steps (Turkish):
+`kilavuz/PILOT_15_DURUM.md`. Not deployed; no push or merge.
+
 **`1fdf768` Hash List engine.** Decisions made with the user: one global list
-(not per engine instance), and an allowlist match is informational only â€” it
+(not per engine instance), and an allowlist match is informational only — it
 never suppresses another engine or produces an allow decision. The adapter
 compares the MASP-computed SHA-256 (never a client value), reads no sample bytes,
 is `detection=False` so "not listed" is never coverage, and reports a failed
@@ -228,7 +279,7 @@ had no Engines-page setup branch (creation always failed) and no default worker
 key list included it. Existing deployments with an explicit
 `MASP_WORKER_ENGINE_KEYS` in their `.env` must add `file_type,hash_list`
 themselves; an admin must also create the Hash List engine and assign it to
-profiles â€” nothing is seeded.
+profiles — nothing is seeded.
 
 **`ce94ace` deferred intake visibility.** Closes the gate the manifest intake
 commit left open. The manifest worker now records each cycle and the
@@ -322,7 +373,11 @@ folders live in git-ignored `kilavuz/` and `dist/`.
 **Releases in `dist/` (git-ignored), each a bundle zip plus the MASP image alone,
 both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
-- `0.1.0-pilot.13` (commit `e5a6ab8`, deployed on the intranet): pilot.12 plus
+- `0.1.0-pilot.15` (commit `d4ebac6`): pilot.14 plus the not-allowed outcome and
+  ICAP block bodies that name the reason. Rehearsed 14 -> 15, rollback passed.
+- `0.1.0-pilot.14` (commit `27fcc4f`, deployed on the intranet 2026-10-06): archive
+  handling, notification bell. Rehearsed 13 -> 14, rollback passed.
+- `0.1.0-pilot.13` (commit `e5a6ab8`): pilot.12 plus
   the Office fix. Rehearsed 12 -> 13: docx/xlsx blocked on 12 (reproduced) and
   allowed on 13, a plain zip still blocked, rollback passed.
 - `0.1.0-pilot.12` (commit `a8f60de`): pilot.11 plus per-client scan policy.
