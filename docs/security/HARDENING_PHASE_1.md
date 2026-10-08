@@ -133,3 +133,24 @@ protections across legacy and React. Browser actions additionally fence the disp
 management revision, and the actor role is rechecked under the write lock. All app
 processes must be upgraded together for these guarantees; mixed old/new writers
 are not covered. LDAP shadow removal does not disable the directory account.
+
+## Review fixes and supply-chain baseline (2026-10-08)
+
+A product security review found two decision-correctness bugs, both fixed: a light check
+whose Hash List failed was allowed as "light check only" (every check a profile rule names
+must now complete, otherwise the result is inconclusive), and ClamAV signature health showed
+only the newest report among several workers (every recent report is now judged).
+
+Added in the same round:
+
+- Sign-in throttling per username and per source address, enforced before any password or
+  directory check (see `app/services/login_throttle.py`). It slows guessing; it is not MFA.
+- Engine and signature versions recorded on each ClamAV, Defender and YARA result.
+- `requirements-lock.txt` installed with `--require-hashes`, every base image pinned by
+  digest, an OS package list in the image and a CycloneDX SBOM in the release bundle.
+
+Still open from the review: MFA/SSO (only where the institution requires it), signed
+release bundles (checksums detect damage, not who produced a bundle), forwarding the audit
+trail to a system the database administrator cannot edit, archive extraction in a separate
+process with CPU, memory and time limits, per-client intake quotas, and a measured detection
+and false-positive evaluation (EICAR proves integration, not detection quality).

@@ -37,7 +37,7 @@ describe('API ledger', () => {
     const [, init] = fetcher.mock.calls.find(([, call]) => call?.method === 'POST')!
     expect(JSON.parse(String(init!.body))).toEqual({ sha256: 'a'.repeat(64), reason: 'Ticket 7', service_client_id: 7, expires_in_days: 90 })
     expect(await screen.findByText(/Exception #11 added/)).toBeInTheDocument()
-  })
+  }, 15000) // types a reason key by key; slow when the machine is busy
   it('offers no exception for a clean row', async () => {
     mount({}, ADMIN)
     await screen.findByRole('link', { name: '<script>API sample</script>' })

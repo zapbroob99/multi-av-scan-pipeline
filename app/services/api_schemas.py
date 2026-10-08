@@ -188,7 +188,9 @@ class ScanSummaryPayload(ContractModel):
     filename: str
     status: str
     verdict: str
-    risk_score: int | None
+    risk_score: int | None = Field(description=(
+        "What the engines recorded for this one file, from 0 to 100. Not a probability that the file is "
+        "malicious and not a decision: it excludes the profile's rules and exceptions. Route on decision."))
     created_at: str
     started_at: str | None
     completed_at: str | None

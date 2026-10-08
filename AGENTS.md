@@ -648,12 +648,28 @@ also dropped when a gateway on the same port started after its last report (the 
 to another client key, not stopped); without that, rebinding raised a week of false critical health. ClamAV health reports
 the program and signature version and the signature date from clamd `VERSION`; every worker's
 report of an enabled ClamAV instance checked within the last week is judged on its own and the
-oldest is shown with its node, so a current database never hides an old one elsewhere. The support bundle
+oldest is shown with its node, so a current database never hides an old one elsewhere.
+Each engine result names what produced it: a completed clamd scan asks clamd `VERSION` right after
+the scan (engine and signature database version, database date in details; a failed query never
+changes the scan's outcome), Defender results carry the engine and signature versions its pre-scan
+health check read, and YARA records its rule set as file count plus a content fingerprint (never
+the rules path, which reaches reports). The console report shows them per engine.
+Sign-in throttling (`app/services/login_throttle.py`): five failures for one username in 15 minutes
+lock that username for 15 minutes, twenty from one address lock the address. The check runs before
+any password or directory check and answers unknown usernames identically (429 with Retry-After);
+a success clears only its username's count. Usernames are stored as SHA-256 only. Counts live in
+`login_attempts`, shared by every app process. The support bundle
 is a POST so every export is audited; it excludes secret-named settings, credentialed URLs, engine
 configuration, sample content, filenames, hashes and console users' addresses.
 
-Release packaging: the pilot bundle must contain everything the Dockerfile copies, including the
-console build inputs under `frontend/`, and `install.sh` must reject every public placeholder that
+Release packaging: the image installs only `requirements-lock.txt` (exact versions with hashes,
+`pip install --require-hashes`); `requirements.txt` stays the readable list of direct dependencies
+and `tests/test_release_dependencies.py` fails when they drift (regenerate the lock as its header
+says, then rebuild and rehearse). Every Dockerfile `FROM` is pinned by digest, the image writes its
+OS packages to `/app/os-packages.txt`, and the bundle carries `sbom.cdx.json` (CycloneDX 1.5 from
+`tools/generate_sbom.py`: locked Python packages, the console's runtime npm packages, base and
+service images by digest; no timestamp, so packaging stays reproducible). The pilot bundle must
+contain everything the Dockerfile copies, including the console build inputs under `frontend/`, and `install.sh` must reject every public placeholder that
 would weaken a deployment (`CHANGE_ME*` secrets, enrollment token, encryption key).
 Deployments without internet access are first-class: `clamav.env` (optional, git-ignored, read
 only by the clamav container) selects an internal signature mirror, a proxy or no freshclam, and

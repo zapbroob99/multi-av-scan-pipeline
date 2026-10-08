@@ -402,12 +402,39 @@ The `decision` object is the automation-friendly outcome:
 - `block`: one or more engines detected malicious content, or risk is high
 - `review`: result is partial, metadata-only, failed, or elevated but not blocking
 
-A client's profile can make the outcome stricter, never looser. When it does,
-`decision.policy` says why: `profile_content_policy` (the profile does not accept
-this content; set to scan and block), `profile_review_block` (the profile blocks
-what could not be fully assessed) or `profile_policy_invalid` (the recorded
-policy could not be read, so an allow is withheld). The policy is frozen when
-the scan is accepted.
+A decision states what MASP did with this file: which rule of the client's
+profile it matched, which engines and checks ran, which did not complete, and the
+action that follows. It is not a statement that the file is safe: `allow` means
+the checks the profile chose found nothing (or that an administrator allowed the
+file), and the checks a profile chooses can be deliberately narrow.
+
+Several different outcomes share `action: allow`. Read `decision.policy` when your
+workflow should treat them differently:
+
+- `clean_full_coverage`: every required antivirus engine completed and none detected.
+- `profile_rule_light_check`: the matched rule ran only File Type, Hash List or
+  Static Metadata checks, all completed and found nothing; no antivirus engine ran.
+- `profile_rule_not_scanned`: the matched rule allows the file without scanning it.
+- `profile_inconclusive_allow`: the result was not conclusive (a check failed, did
+  not run, or found something below a detection) and the profile allows such files.
+- `exception_allow`: an administrator added an exception for this exact SHA-256;
+  engines still ran and their results are in the report, but the file is allowed
+  whatever they found.
+
+Blocks also name their reason: `malware_detected`, `profile_rule_block` (the
+matched rule blocks this kind of file), `profile_inconclusive_block` (not
+conclusive, and the profile blocks such files; `decision.reasons` names the checks
+that did not complete), `profile_content_policy`, `profile_archive_policy`,
+`profile_review_block` and `profile_policy_invalid` (the recorded rules could not
+be read, so an allow is withheld). The rule and any exception are frozen when the
+scan is accepted; a later change to the profile or the exception list never
+changes an existing scan's decision.
+
+`scan.risk_score` and `scan.verdict` summarize what the engines recorded for this
+one file (severity and confidence of their results). They are not a measured
+probability that the file is malicious, they do not include the profile's rules
+or exceptions, and a low score is not an allow. Route on `decision`, not on the
+score.
 
 With profile `archive_handling=scan_members`, the container's status/result
 `decision` covers the archive and all inspected members. `archive_full_coverage`
