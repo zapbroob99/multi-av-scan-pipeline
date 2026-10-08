@@ -11,6 +11,9 @@ import sys
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import generate_sbom  # noqa: E402  (a sibling tool, not an installed package)
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT_DIR / "dist"
 
@@ -25,6 +28,7 @@ ROOT_FILES = (
     "NOTICE",
     "docker-compose.pilot.yml",
     "requirements.txt",
+    "requirements-lock.txt",
 )
 # `tests` ships so the PostgreSQL acceptance gate can actually be executed on the
 # pilot host. It is bind-mounted into a throwaway container by
@@ -221,6 +225,8 @@ def main() -> int:
         sort_keys=True,
     ).encode() + b"\n"
     payloads.append(("RELEASE.json", release_metadata))
+    # Inventory of what the image installs, from the same normalized bytes.
+    payloads.append(("sbom.cdx.json", generate_sbom.render(args.version, dict(payloads))))
     manifest = "".join(
         f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in payloads
     ).encode()

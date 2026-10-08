@@ -1,6 +1,6 @@
 # The browser console is built here and served by the application itself, so a
 # deployment needs no separate web server. Node exists only in this stage.
-FROM node:24-alpine AS console
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS console
 WORKDIR /console
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -16,10 +16,15 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends yara \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && dpkg-query -W -f='${Package} ${Version}\n' | sort > /app/os-packages.txt
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Exact versions with hashes (see the header of requirements-lock.txt);
+# requirements.txt only lists the direct dependencies. With the OS package list
+# above, this completes the inventory that sbom.cdx.json in the release bundle
+# gives for Python, the console and the base images.
+COPY requirements-lock.txt .
+RUN pip install --no-cache-dir --require-hashes -r requirements-lock.txt
 
 COPY app ./app
 COPY rules ./rules

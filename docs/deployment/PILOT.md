@@ -153,6 +153,15 @@ The bundle contains application source needed for the image build, the pilot
 compose/env files, rules, verification tools, and this runbook. It never
 contains `.env.pilot`, database contents, samples, or benchmark files.
 
+`sbom.cdx.json` in the bundle is the software bill of materials (CycloneDX 1.5): the
+hash-pinned Python packages the image installs (`requirements-lock.txt`), the
+console's runtime npm packages and every container image by digest. The image's
+operating system packages are listed inside it:
+
+```bash
+docker run --rm --entrypoint cat "$MASP_IMAGE" /app/os-packages.txt
+```
+
 ## Configure
 
 Extract the release under `/opt/masp`, then:
