@@ -2372,6 +2372,8 @@ export interface components {
             detected: boolean;
             /** Duration Ms */
             duration_ms: number | null;
+            /** Engine Version */
+            engine_version?: string | null;
             /** Error */
             error: string | null;
             /** Name */
@@ -2382,6 +2384,8 @@ export interface components {
             result_id: number | null;
             /** Signature */
             signature: string | null;
+            /** Signature Version */
+            signature_version?: string | null;
             /** Status */
             status: string;
         };

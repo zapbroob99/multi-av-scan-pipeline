@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,8 @@ from app.services.sample_paths import resolve_sample_path, sample_path_error
 
 
 ENGINE_NAME = "ClamAV"
+# How long a completed scan waits for clamd to name its signature database.
+VERSION_TIMEOUT_SECONDS = 5
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_CLAMD_PORT = 3310
 DEFAULT_CLAMD_READY_TIMEOUT_SECONDS = 30
@@ -256,7 +259,7 @@ def run_clamav_engine(
 ) -> EngineResultInput:
     config = get_clamav_config(config_override)
     if config["mode"] == "clamd":
-        return run_clamd_scan(
+        result = run_clamd_scan(
             scan,
             str(config["host"]),
             int(config["port"]),
@@ -264,7 +267,35 @@ def run_clamav_engine(
             int(config["ready_timeout_seconds"]),
             float(config["retry_interval_seconds"]),
         )
+        return with_database_version(result, str(config["host"]), int(config["port"]),
+                                     min(int(config["timeout_seconds"]), VERSION_TIMEOUT_SECONDS))
     return run_cli_scan(scan, str(config["command"]), int(config["timeout_seconds"]))
+
+
+def with_database_version(result: EngineResultInput, host: str, port: int, timeout: int) -> EngineResultInput:
+    """Record the clamd engine and signature database that produced a completed result.
+
+    Asked right after the scan, so a later "which signatures judged this file"
+    has an answer. A failed query never changes the scan's own outcome; the
+    result then says the version is unknown.
+    """
+    if result.status != "completed":
+        return result
+    try:
+        version = parse_clamav_version(version_clamd(host, port, timeout))
+    except (OSError, UnicodeError):
+        version = {}
+    try:
+        details = json.loads(result.details_json or "{}")
+    except (TypeError, ValueError):
+        details = {}
+    if not isinstance(details, dict):
+        details = {}
+    details["database"] = ({key: version[key] for key in ("signature_version", "signature_date") if key in version}
+                           or {"error": "clamd did not report its signature database version."})
+    return replace(result, engine_version=version.get("engine_version", result.engine_version),
+                   signature_version=version.get("signature_version"),
+                   details_json=json.dumps(details, sort_keys=True))
 
 
 def run_clamd_scan(

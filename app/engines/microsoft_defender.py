@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -294,12 +295,18 @@ def run_microsoft_defender_engine(
     base_details["scan_command"] = scan_result["command"]
     base_details["scan_returncode"] = scan_result["returncode"]
     base_details["scan_mode"] = "mpcmdrun_custom_disable_remediation"
-    return normalize_mpcmdrun_scan_result(
+    result = normalize_mpcmdrun_scan_result(
         returncode=int(scan_result["returncode"]),
         raw_output=str(scan_result["raw_output"]),
         duration_ms=elapsed_ms(started_at),
         details=base_details,
     )
+    # The versions the health check read before this scan (at most its cache
+    # age old), so the result says which engine and signatures judged the file.
+    known = {key: str(health.get(key)) for key in ("engine_version", "signature_version")
+             if health.get(key) and str(health.get(key)) != "unknown"}
+    return replace(result, engine_version=known.get("engine_version")[:64] if known.get("engine_version") else None,
+                   signature_version=known.get("signature_version")[:64] if known.get("signature_version") else None)
 
 
 def resolve_powershell_path(configured_path: str) -> str | None:

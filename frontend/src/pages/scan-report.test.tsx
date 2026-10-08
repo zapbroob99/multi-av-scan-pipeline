@@ -51,6 +51,10 @@ describe('Scan report', () => {
     await screen.findByRole('heading', { name: 'Block' })
     expect(screen.queryByText('Add an exception for this file')).toBeNull()
   })
+  it('names the engine and signatures that produced each result', async () => {
+    mount({ ...payload, engines: [{ ...payload.engines[0], engine_version: '1.4.2', signature_version: '27771' }] })
+    expect(await screen.findByText('Engine 1.4.2 · Signatures 27771')).toBeInTheDocument()
+  })
   it('marks a file allowed by exception', async () => {
     mount({ ...payload, exception_id: 5, decision: { ...payload.decision!, label: 'Allow (exception)', policy: 'exception_allow' } }, '/scans/42', false, true)
     await screen.findByRole('heading', { name: 'Allow (exception)' })

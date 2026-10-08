@@ -42,6 +42,9 @@ class EngineSummary(BaseModel):
     signature: str | None
     error: str | None
     duration_ms: int | None
+    # The engine and signature database that produced this result, when the adapter recorded them.
+    engine_version: str | None = None
+    signature_version: str | None = None
 
 
 class DecisionSummary(BaseModel):
@@ -193,7 +196,8 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
             attempt_count, NULL AS last_error, created_at, updated_at
             FROM scan_engine_jobs WHERE scan_job_id = ? ORDER BY id LIMIT ?''',
                                       (scan_id, MAX_ENGINES + 1)).fetchall()
-        rows = connection.execute('''SELECT id, scan_job_id, engine_name, NULL AS engine_version, NULL AS signature_version,
+        rows = connection.execute('''SELECT id, scan_job_id, engine_name, SUBSTR(engine_version, 1, 64) AS engine_version,
+            SUBSTR(signature_version, 1, 64) AS signature_version,
             status, detected, SUBSTR(signature, 1, 1024) AS signature, severity, confidence,
             '' AS raw_output, SUBSTR(error_message, 1, 2048) AS error_message, duration_ms,
             created_at, SUBSTR(details_json, 1, ?) AS details_json, '[]' AS findings_json
@@ -234,7 +238,8 @@ def report(scan_id: int, *, automation: bool = False) -> ScanReport:
     required_keys = {name.casefold() for name in required}
     summaries = [EngineSummary(result_id=r.id, name=r.engine_name, required=r.engine_name.casefold() in required_keys,
         status=r.status, detected=r.detected and r.status == 'completed', signature=r.signature,
-        error=r.error_message, duration_ms=r.duration_ms) for r in results]
+        error=r.error_message, duration_ms=r.duration_ms, engine_version=r.engine_version,
+        signature_version=r.signature_version) for r in results]
     seen = {r.engine_name.casefold() for r in results}
     for name in required:
         if name.casefold() not in seen:

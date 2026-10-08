@@ -2179,6 +2179,17 @@
             ],
             "title": "Duration Ms"
           },
+          "engine_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Version"
+          },
           "error": {
             "anyOf": [
               {
@@ -2219,6 +2230,17 @@
               }
             ],
             "title": "Signature"
+          },
+          "signature_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Version"
           },
           "status": {
             "title": "Status",

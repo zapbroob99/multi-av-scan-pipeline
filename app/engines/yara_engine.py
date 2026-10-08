@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -49,6 +50,37 @@ def rule_dir_signature(rules_dir: Path) -> tuple:
                 except OSError:
                     continue
     return tuple(sorted(entries))
+
+
+_rule_set_versions: dict[tuple, str] = {}
+
+
+def rule_set_version(rule_files: list[Path]) -> str | None:
+    """Name the rule set that judged a file: file count and a content fingerprint.
+
+    The same rules give the same value on every worker, and the value carries no
+    path (it reaches reports). Cached by name, size and modification time.
+    """
+    if not rule_files:
+        return None
+    try:
+        key = tuple(sorted((path.name, path.stat().st_size, path.stat().st_mtime_ns) for path in rule_files))
+    except OSError:
+        return None
+    cached = _rule_set_versions.get(key)
+    if cached is not None:
+        return cached
+    digest = hashlib.sha256()
+    try:
+        for path in sorted(rule_files, key=lambda item: item.name):
+            digest.update(path.name.encode("utf-8") + b"\0" + path.read_bytes() + b"\0")
+    except OSError:
+        return None
+    version = f"{len(rule_files)} rule files, set {digest.hexdigest()[:12]}"
+    if len(_rule_set_versions) > 64:
+        _rule_set_versions.clear()
+    _rule_set_versions[key] = version
+    return version
 
 
 def cached_rule_files(rules_dir: Path) -> list[Path]:
@@ -203,7 +235,7 @@ def run_yara_engine(
             raw_output=f"No .yar or .yara files found in {rules_dir}.",
             error_message="YARA rules directory is empty.",
             duration_ms=elapsed_ms(started_at),
-            signature_version=str(rules_dir),
+            signature_version=rule_set_version(rule_files),
             details=yara_details(command, rules_dir, rule_files, scan),
         )
 
@@ -218,7 +250,7 @@ def run_yara_engine(
             raw_output=sample_path_error(scan, sample_path),
             error_message="Stored sample file is missing.",
             duration_ms=elapsed_ms(started_at),
-            signature_version=str(rules_dir),
+            signature_version=rule_set_version(rule_files),
             details=yara_details(command, rules_dir, rule_files, scan),
         )
 
@@ -234,7 +266,7 @@ def run_yara_engine(
             raw_output=str(exc),
             error_message=str(exc),
             duration_ms=elapsed_ms(started_at),
-            signature_version=str(rules_dir),
+            signature_version=rule_set_version(rule_files),
             details=yara_details(
                 command,
                 rules_dir,
@@ -274,7 +306,7 @@ def run_yara_engine(
                     raw_output=str(exc),
                     error_message="YARA could not be executed.",
                     duration_ms=elapsed_ms(started_at),
-                    signature_version=str(rules_dir),
+                    signature_version=rule_set_version(rule_files),
                     details=yara_details(
                         command,
                         rules_dir,
@@ -323,7 +355,7 @@ def run_yara_engine(
             raw_output=raw_output,
             error_message="; ".join(errors) if errors else None,
             duration_ms=elapsed_ms(started_at),
-            signature_version=str(rules_dir),
+            signature_version=rule_set_version(rule_files),
             details=yara_details(
                 command,
                 rules_dir,
@@ -346,7 +378,7 @@ def run_yara_engine(
             raw_output=raw_output,
             error_message="; ".join(errors),
             duration_ms=elapsed_ms(started_at),
-            signature_version=str(rules_dir),
+            signature_version=rule_set_version(rule_files),
             details=yara_details(
                 command,
                 rules_dir,
@@ -367,7 +399,7 @@ def run_yara_engine(
         raw_output=raw_output,
         error_message=None,
         duration_ms=elapsed_ms(started_at),
-        signature_version=str(rules_dir),
+        signature_version=rule_set_version(rule_files),
         details=yara_details(
             command,
             rules_dir,

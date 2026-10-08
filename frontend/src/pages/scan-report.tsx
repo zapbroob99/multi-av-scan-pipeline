@@ -37,6 +37,9 @@ function EngineRow({ scanId, engine, automation }: { scanId: number; engine: Rep
     {engine.signature && <p className="risk-high">Signature: {engine.signature}</p>}
     {engine.error && <p className="error">{engine.error}</p>}
     {engine.duration_ms !== null && <p className="muted">Duration: {engine.duration_ms.toLocaleString()} ms</p>}
+    {(engine.engine_version || engine.signature_version) && <p className="muted">
+      {engine.engine_version && <>Engine {engine.engine_version}</>}{engine.engine_version && engine.signature_version && ' · '}
+      {engine.signature_version && <>Signatures {engine.signature_version}</>}</p>}
     {engine.result_id !== null && <><Button variant="secondary" aria-expanded={open} onClick={() => setOpen(value => !value)}>
       {open ? 'Hide' : 'Show'} technical output for {engine.name}</Button>
       <p><Link to={`${automation ? '/api-ledger' : ''}/scans/${scanId}/results/${engine.result_id}`}>Full output for {engine.name}</Link></p>
