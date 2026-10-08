@@ -1,8 +1,8 @@
 # MASP session handoff
 
-Updated: 2026-10-08, pilot.17 (profile rules, folder rules, exceptions, two decision fixes)
-packaged and its 15 -> 17 upgrade/rollback rehearsed on `feat/archive-handling`, which is
-pushed to origin (the user authorized pushing work without institutional data). The intranet
+Updated: 2026-10-08, pilot.18 (everything in pilot.17 plus the hardening round) packaged and
+its 15 -> 18 upgrade/rollback rehearsed on `feat/archive-handling`; the user will install
+pilot.18 directly, skipping pilot.16 and pilot.17. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet
 runs pilot.15 as far as known; pilot.16 was never confirmed installed. This is a workspace
 checkpoint, not evidence of a deployment.
 
@@ -263,7 +263,32 @@ scanning's archive default stays "hold for the full tier". `59a0d63` fixed the I
 a rule block (found in the rehearsal). Verification: backend 1147 SQLite OK, related modules
 157 on disposable PostgreSQL OK, frontend 203, e2e 39/39, build and contracts clean.
 
-**Pilot.17, 2026-10-08.** On top of pilot.16:
+**Pilot.18, 2026-10-08: the hardening round agreed after the review.**
+- Sign-in throttling (`e2868b7`, `app/services/login_throttle.py`): per username (5 in 15 min)
+  and per address (20), checked before any password or directory check.
+- Engine and signature versions on each result (`80b0d83`): clamd `VERSION` after a completed
+  scan, Defender's pre-scan health versions, YARA rule-set fingerprint instead of its path;
+  shown per engine in the console report.
+- `requirements-lock.txt` with hashes, installed with `--require-hashes`, pinned to the set the
+  pilot.17 image ran; node base image pinned by digest; `/app/os-packages.txt` in the image;
+  `sbom.cdx.json` in the bundle (`46826fe`, `tools/generate_sbom.py`).
+- Integration guide: every allow/block policy and a risk-score disclaimer (`5d753a1`).
+Bundle from `dbbc3a1`: `dist/masp-pilot-0.1.0-pilot.18.zip` SHA-256
+`1011fe3683fa72fd3f326ece35fd117e9dcfbecd32908dc7144fbf483030b38e`, image tar SHA-256
+`0a10c06b2db4b132d0b9501987f35d6e9cb91d8063cb17ba52a4775778d1a95b`. Rehearsal
+(`dist/rehearsal-upgrade18/`): fresh pilot.15 + `fil`; dry run only `MASP_IMAGE` (+ fresh
+install's rules dir); upgrade 9/9 with the image loaded from the tar; probes as pilot.17;
+five bad sign-ins 401 then 429 (Retry-After 900); a ClamAV result recorded engine 1.5.2 and
+database 28045 with its date; SBOM 76 components, 92 OS packages, 798 lock hashes; rules and
+the EICAR exception as pilot.17; rollback to 15 and re-upgrade passed; teardown clean.
+Verification: backend 1187 SQLite OK, 511 related tests on disposable PostgreSQL OK (UI API
+included), frontend 215, e2e 40/40, build and contracts clean. Operator steps:
+`kilavuz/PILOT_18_DURUM.md` (includes the one-line unlock for a locked-out admin).
+Still open from the review: MFA/SSO if required, signed bundles, audit forwarding, archive
+extraction in a resource-limited separate process, per-client quotas, a detection/false
+positive evaluation.
+
+**Pilot.17, 2026-10-08 (superseded by pilot.18, never handed over for install).** On top of pilot.16:
 - Folder scanning follows profile rules (`de48245`); folders are added on the client's
   Storage tab. See "Folders follow profile rules" in `STORAGE_PROTECTION.md`.
 - Exceptions (`17ad93e`, `5c4e89e`), requested by the user ("if an exception is added it
@@ -419,7 +444,9 @@ folders live in git-ignored `kilavuz/` and `dist/`.
 **Releases in `dist/` (git-ignored), each a bundle zip plus the MASP image alone,
 both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
-- `0.1.0-pilot.17` (commit `a19985a`): pilot.16 plus folder rules, exceptions and the
+- `0.1.0-pilot.18` (commit `dbbc3a1`): pilot.17 plus sign-in throttling, per-result
+  versions, hash-locked dependencies and SBOM. Rehearsed 15 -> 18, passed. The one to install.
+- `0.1.0-pilot.17` (commit `a19985a`, superseded): pilot.16 plus folder rules, exceptions and the
   light-check/signature-health fixes. Rehearsed 15 -> 17 (conversion, rules, exception,
   rollback, re-upgrade), passed.
 - `0.1.0-pilot.16` (commit `59a0d63`): profile rules, plain settings screens. Rehearsed
