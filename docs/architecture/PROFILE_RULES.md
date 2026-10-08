@@ -122,8 +122,9 @@ it, why, and for how long.
   allows a file.
 
 Administrators manage exceptions on System > Exceptions (`/console/engines/exceptions`);
-a blocked or review report offers "Add an exception for this file" with the digest and the
-client filled in, and the ledger and report badge an excepted scan. Folder-scanning
+a flagged API ledger row ("Add exception") and a blocked or review report ("Add an
+exception for this file") open the same dialog with the file and its client filled in, and
+the ledger and report badge an excepted scan. Folder-scanning
 findings are not covered by exceptions yet.
 
 ## Upgrading existing profiles

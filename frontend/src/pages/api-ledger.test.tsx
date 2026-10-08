@@ -1,25 +1,58 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import ApiLedger from './api-ledger'
+import type { Session } from '../lib/api'
+
+const ADMIN = { csrf_token: 'csrf', user: { id: 1, username: 'admin', role: 'admin' } } as unknown as Session
 
 /** History reads and writes; the client filter's name list is a separate read. */
 function ledgerCalls(fetcher: { mock: { calls: unknown[][] } }) {
   return fetcher.mock.calls.filter(([url]) => !String(url).includes('/api-ledger/clients'))
 }
 
-function mount(extra: object = {}) {
-  const fetcher = vi.fn(async (_url: string) => new Response(JSON.stringify({ items: [{ id: 42, filename: '<script>API sample</script>',
+function mount(extra: object = {}, session?: Session) {
+  const fetcher = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST' ? new Response(JSON.stringify({ id: 11 }), { status: 201 })
+    : new Response(JSON.stringify({ items: [{ id: 42, filename: '<script>API sample</script>',
     sha256: 'a'.repeat(64), size_bytes: 1024, case_name: 'Case', source: 'icap', service_client_id: 7,
     client_name: 'Integration', batch_id: 3, status: 'completed', risk_score: 0, risk_level: 'info', created_at: '2026-09-17', ...extra }], next_before: 42 })))
   vi.stubGlobal('fetch', fetcher)
-  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><ApiLedger /></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><ApiLedger session={session} /></MemoryRouter></QueryClientProvider>)
   return fetcher
 }
 
 describe('API ledger', () => {
+  it('lets administrators add an exception from a flagged row, scoped to its client by default', async () => {
+    const fetcher = mount({ risk_level: 'critical', risk_score: 90 }, ADMIN)
+    await userEvent.click(await screen.findByRole('button', { name: 'Add exception for scan 42' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('a'.repeat(64))
+    expect(within(dialog).getByLabelText('Applies to')).toHaveDisplayValue('Only #7 Integration')
+    await userEvent.selectOptions(within(dialog).getByLabelText('Expires'), '90')
+    await userEvent.type(within(dialog).getByLabelText('Reason'), 'Ticket 7')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add exception' }))
+    await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true))
+    const [, init] = fetcher.mock.calls.find(([, call]) => call?.method === 'POST')!
+    expect(JSON.parse(String(init!.body))).toEqual({ sha256: 'a'.repeat(64), reason: 'Ticket 7', service_client_id: 7, expires_in_days: 90 })
+    expect(await screen.findByText(/Exception #11 added/)).toBeInTheDocument()
+  })
+  it('offers no exception for a clean row', async () => {
+    mount({}, ADMIN)
+    await screen.findByRole('link', { name: '<script>API sample</script>' })
+    expect(screen.queryByRole('button', { name: /Add exception/ })).toBeNull()
+  })
+  it('offers no exception once one let the file through', async () => {
+    mount({ risk_level: 'critical', risk_score: 90, exception_id: 4 }, ADMIN)
+    await screen.findByRole('link', { name: '<script>API sample</script>' })
+    expect(screen.queryByRole('button', { name: /Add exception/ })).toBeNull()
+  })
+  it('offers analysts no exception', async () => {
+    mount({ risk_level: 'critical', risk_score: 90 })
+    await screen.findByRole('link', { name: '<script>API sample</script>' })
+    expect(screen.queryByRole('button', { name: /Add exception/ })).toBeNull()
+  })
   it('renders inert previews with honest risk labels and compatible report links', async () => {
     mount()
     await screen.findByRole('link', { name: '<script>API sample</script>' })

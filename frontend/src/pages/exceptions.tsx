@@ -7,13 +7,13 @@ import type { components } from '../lib/api.generated'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Timestamp } from '../components/timestamp'
+import { EXPIRY } from '../components/exception-dialog'
 
 type Item = components['schemas']['ExceptionItem']
 type Draft = components['schemas']['ExceptionCreate']
 
 const SHA256 = /^[0-9a-f]{64}$/
 const STATES = ['active', 'expired', 'revoked', 'all'] as const
-const EXPIRY: [string, string][] = [['', 'Never (until revoked)'], ['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['365', '1 year']]
 const STATE_LABELS: Record<string, string> = { active: 'Active', expired: 'Expired', revoked: 'Revoked' }
 
 function scopeLabel(item: Pick<Item, 'client_id' | 'client_name'>) {

@@ -430,6 +430,9 @@ excepted container's decision ignores its members. Scans accepted earlier are ne
 and revocation does not change scans already allowed. Writes are admin/CSRF, confirmed, audited
 (`exception.create`, `exception.revoke`) and never replayed. The hash list's allowlist stays
 informational and is not an exception. Folder-scanning findings are not covered yet.
+Administrators add one in place from a flagged ledger row (high/critical/medium risk, not allowed or
+Block rule, finished, no exception yet) or a Block/Review report through the shared
+`ExceptionDialog`: file and client prefilled, client scope by default, reason required, one POST.
 `/console/scans/{id}/print` and the automation twin render a bounded printable report for
 analysts and admins. Reuse the full-export snapshot loader and shared payload builder so the
 printed decision, coverage, findings and engine rows come from one repeatable read; React

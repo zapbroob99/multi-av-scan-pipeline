@@ -1839,9 +1839,15 @@ required reason of at most 500 characters and an optional expiry of 1 to 3650 da
 unknown client is a 404. POST `/api/ui/v1/exceptions/{id}/revoke` answers 204, or 409
 when the exception is missing or already revoked. Both writes are admin/CSRF-checked,
 audited (`exception.create`, `exception.revoke`), confirmed in a dialog and never
-replayed. A report whose decision is Block or Review offers administrators "Add an
-exception for this file", opening the form with `?add=<sha256>` (and `&client=<id>` for
-an integration scan); those parameters only prefill the form. The ledger and the report
+replayed. Administrators can also add one where the file was seen, through the shared
+`components/exception-dialog.tsx`: an "Add exception" action on API ledger rows that are
+finished, have no exception and were flagged (high, critical or medium recorded risk, not
+allowed, or a Block rule), and "Add an exception for this file" on a report whose decision
+is Block or Review. The dialog names the file and digest, scopes the exception to the
+scan's client by default (all clients for a manual scan), requires a reason and sends one
+POST when the administrator presses Add exception; the outcome is a receipt, the scan keeps
+its decision. The Exceptions page also accepts `?add=<sha256>&client=<id>` to prefill its
+form; those parameters never reach the list query. The ledger and the report
 show an "Exception #id" badge beside the recorded risk, and the ledger no longer
 highlights an excepted row as an alert.
 

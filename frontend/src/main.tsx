@@ -161,7 +161,7 @@ function App() {
         <Route path="/audit" element={session.data.user.role === 'admin' ? <Audit /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/dashboard" element={<Dashboard session={session.data} />} />
         <Route path="/scans/new" element={<NewScan session={session.data} />} />
-        <Route path="/api-ledger/scans/:scanId" element={<Report key={location.pathname} automation admin={session.data.user.role === 'admin'} />} />
+        <Route path="/api-ledger/scans/:scanId" element={<Report key={location.pathname} automation session={session.data} />} />
         <Route path="/api-ledger/scans/:scanId/results/:resultId" element={<EngineOutput key={location.pathname} automation />} />
         <Route path="/api-ledger/scans/:scanId/status-json" element={<AutomationResult key={location.pathname} status />} />
         <Route path="/api-ledger/scans/:scanId/result-json" element={<AutomationResult key={location.pathname} />} />
@@ -178,7 +178,7 @@ function App() {
         <Route path="/storage/locations/new" element={<StorageLocationForm key={location.pathname} session={session.data} />} />
         <Route path="/storage/locations/:locationId/edit" element={<StorageLocationForm key={location.pathname} session={session.data} />} />
         <Route path="/storage/locations/:locationId" element={<StorageLocation key={location.pathname} session={session.data} />} />
-        <Route path="/scans/:scanId" element={<Report admin={session.data.user.role === 'admin'} />} />
+        <Route path="/scans/:scanId" element={<Report session={session.data} />} />
         <Route path="/scans/:scanId/results/:resultId" element={<EngineOutput />} />
         <Route path="/scans/:scanId/manage" element={<ScanManagement key={location.pathname} session={session.data} />} />
         <Route path="/scans/:scanId/print" element={<ScanPrint key={location.pathname} />} />

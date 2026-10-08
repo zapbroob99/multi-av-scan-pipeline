@@ -2,11 +2,12 @@ import { ErrorMessage } from '../components/error-message'
 import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { request, type ScanReport, type ReportEngine } from '../lib/api'
+import { request, type ScanReport, type ReportEngine, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { BackLink } from '../components/section-tabs'
 import { Timestamp } from '../components/timestamp'
 import { ExceptionBadge, NotAllowedBadge, RuleBadge } from '../components/risk-badge'
+import { ExceptionDialog, type ExceptionTarget } from '../components/exception-dialog'
 
 export function reportPollInterval(report?: ScanReport) {
   return report && (['queued', 'running', 'finalizing'].includes(report.status) || report.decision?.action === 'wait') ? 3000 : false
@@ -43,15 +44,10 @@ function EngineRow({ scanId, engine, automation }: { scanId: number; engine: Rep
   </article>
 }
 
-/** Where an administrator adds an exception for this exact file, with its
- * digest and (for an integration scan) its client filled in. */
-export function exceptionLink(scan: Pick<ScanReport, 'sha256' | 'service_client_id'>, automation: boolean) {
-  const query = new URLSearchParams({ add: scan.sha256 })
-  if (automation && scan.service_client_id !== null && scan.service_client_id !== undefined) query.set('client', String(scan.service_client_id))
-  return `/engines/exceptions?${query.toString()}`
-}
-
-export default function Report({ automation = false, admin = false }: { automation?: boolean; admin?: boolean }) {
+export default function Report({ automation = false, session }: { automation?: boolean; session?: Session }) {
+  const admin = session?.user.role === 'admin'
+  const [exceptionFor, setExceptionFor] = useState<ExceptionTarget | null>(null)
+  const [exceptionAdded, setExceptionAdded] = useState('')
   const { scanId = '' } = useParams()
   const [searchParams] = useSearchParams()
   const justAccepted = searchParams.get('accepted') === '1'
@@ -86,9 +82,11 @@ export default function Report({ automation = false, admin = false }: { automati
       {scan.decision && <><small>Policy: {scan.decision.policy} · Confidence: {scan.decision.confidence}</small>
         <ul>{scan.decision.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></>}
       {scan.exception_id != null && admin && <p><Link to={`/engines/exceptions?state=all&q=${scan.sha256}`}>Review or revoke exception #{scan.exception_id}</Link></p>}
-      {admin && scan.exception_id == null && scan.decision && ['block', 'review'].includes(scan.decision.action) && <p className="muted">
-        A known false positive? <Link to={exceptionLink(scan, automation)}>Add an exception for this file</Link>. It applies to this exact
-        SHA-256 when it is sent again; this scan keeps its decision.</p>}
+      {admin && scan.exception_id == null && scan.decision && ['block', 'review'].includes(scan.decision.action) && !exceptionAdded && <p className="muted">
+        A known false positive? <Button variant="secondary" className="link-button" onClick={() => setExceptionFor({ sha256: scan.sha256,
+          filename: scan.filename, clientId: automation ? scan.service_client_id ?? null : null })}>Add an exception for this file</Button>.
+        It applies to this exact SHA-256 when it is sent again; this scan keeps its decision.</p>}
+      {exceptionAdded && <p role="status" className="notice">{exceptionAdded}</p>}
     </section>
     {scan.batch_id !== null && <p className="callout">The risk, coverage and engine results below describe this file.
       When the profile scans every archive member, the policy decision also includes those members.</p>}
@@ -106,6 +104,8 @@ export default function Report({ automation = false, admin = false }: { automati
     <div className="report-engines">{scan.engines.map(engine => <EngineRow key={`${scan.attempt_count}-${engine.result_id ?? engine.name}`} scanId={scan.id} engine={engine} automation={automation} />)}</div>
     {scan.engines.length === 0 && <p className="empty">No engine results recorded yet.</p>}
     {scan.batch_id !== null && <p className="callout"><Link to={`${automation ? '/api-ledger' : ''}/batches/${scan.batch_id}`}>Open batch overview</Link> · <Link to={`${automation ? "/api-ledger" : ""}/scans/${scan.id}/children`}>Browse registered direct children</Link></p>}
+    {session && <ExceptionDialog target={exceptionFor} session={session} onClose={() => setExceptionFor(null)}
+      onAdded={id => { setExceptionFor(null); setExceptionAdded(`Exception #${id} added. The next copy of this file is allowed; this scan keeps its decision.`) }} />}
     <p className="callout"><Link to={`${automation ? '/api-ledger' : ''}/scans/${scan.id}/manage`}>{automation ? 'Scan management' : 'Exports and scan management'}</Link>
       {scan.parent_scan_id && <> · <Link to={`${automation ? '/api-ledger' : ''}/scans/${scan.parent_scan_id}`}>Parent scan</Link></>}</p>
   </section>

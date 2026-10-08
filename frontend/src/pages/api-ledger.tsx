@@ -8,10 +8,19 @@ import { Dialog } from '../components/ui/dialog'
 import { Button } from '../components/ui/button'
 import { SelectAllCheckbox } from '../components/select-all'
 import { Timestamp } from '../components/timestamp'
+import { ExceptionDialog, type ExceptionTarget } from '../components/exception-dialog'
 
 type Candidate = { scan_id: number; attempt: number; job_revision: number }
 
 const ACTIVE = ['queued', 'running', 'finalizing']
+
+type Row = { status: string; risk_level: string; not_allowed_label?: string | null; rule_action?: string | null; exception_id?: number | null }
+
+/** A finished row that something stopped or flagged, and no exception let through yet. */
+export function offersException(scan: Row) {
+  if (ACTIVE.includes(scan.status) || scan.exception_id != null) return false
+  return isAlertRisk(scan.risk_level) || scan.risk_level === 'medium' || Boolean(scan.not_allowed_label) || scan.rule_action === 'block'
+}
 
 export default function ApiLedger({ session }: { session?: Session }) {
   const [selected, setSelected] = useState<number[]>([])
@@ -22,6 +31,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
   const [receipt, setReceipt] = useState('')
   const [error, setError] = useState('')
   const admin = session?.user.role === 'admin'
+  const [exceptionFor, setExceptionFor] = useState<ExceptionTarget | null>(null)
   const [params, setParams] = useSearchParams()
   const query = new URLSearchParams(params)
   query.set('limit', '20')
@@ -125,11 +135,16 @@ export default function ApiLedger({ session }: { session?: Session }) {
             <ExceptionBadge id={scan.exception_id} /></div></td>
           <td><small><Timestamp value={scan.created_at} /></small></td>
           <td className="cell-actions"><Link to={`/api-ledger/scans/${scan.id}`}>Report</Link>
-            {scan.batch_id !== null && <Link to={`/api-ledger/batches/${scan.batch_id}`}>Batch</Link>}</td>
+            {scan.batch_id !== null && <Link to={`/api-ledger/batches/${scan.batch_id}`}>Batch</Link>}
+            {admin && offersException(scan) && <Button variant="secondary" className="link-button" disabled={locked}
+              aria-label={`Add exception for scan ${scan.id}`} onClick={() => { setReceipt(''); setExceptionFor({
+                sha256: scan.sha256, filename: scan.filename, clientId: scan.service_client_id, clientName: scan.client_name }) }}>Add exception</Button>}</td>
         </tr>)}</tbody></table></div>}
       {Boolean(params.get('before') || scans.data.next_before) && <div className="history-pagination"><Button variant="secondary" disabled={locked || scans.isFetching || !params.get('before')} onClick={() => paginate()}>Newest scans</Button>
         <Button variant="secondary" disabled={locked || scans.isFetching || !scans.data.next_before} onClick={() => paginate(scans.data!.next_before!)}>Older scans</Button></div>}
     </>}
+    {session && <ExceptionDialog target={exceptionFor} session={session} onClose={() => setExceptionFor(null)}
+      onAdded={(id, target) => { setExceptionFor(null); setReceipt(`Exception #${id} added for ${target.filename}. The next copy of this file is allowed; recorded scans keep their decisions.`) }} />}
     <Dialog open={draft !== null} onOpenChange={open => { if (!open && !busy) setDraft(null) }} title="Delete selected automation scans?"
       description="Only these records will be checked and deleted individually. Active scans, registered parents, shared samples and pending notifications remain protected. This does not delete batches recursively.">
       <p>Scan IDs: {draft?.map(row => row.scan_id).join(', ')}</p>

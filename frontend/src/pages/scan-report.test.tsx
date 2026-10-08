@@ -1,10 +1,10 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import Report, { reportPollInterval } from './scan-report'
-import type { ScanReport } from '../lib/api'
+import type { ScanReport, Session } from '../lib/api'
 
 const payload: ScanReport = { id: 42, filename: 'safe.bin', sha256: 'a'.repeat(64), size_bytes: 12,
   case_name: 'Case A', note: '', status: 'completed', risk_score: 0, risk_level: 'info', attempt_count: 1,
@@ -13,24 +13,38 @@ const payload: ScanReport = { id: 42, filename: 'safe.bin', sha256: 'a'.repeat(6
   decision: { action: 'allow', label: 'Allow', tone: 'success', confidence: 'high', policy: 'clean_full_coverage', reason: 'Full coverage completed.', reasons: [] },
   engines: [{ result_id: 7, name: 'AV', required: true, status: 'completed', detected: false, signature: null, error: null, duration_ms: 10 }] }
 
+const ADMIN = { csrf_token: 'csrf', user: { id: 1, username: 'admin', role: 'admin' } } as unknown as Session
+
 function mount(report = payload, path = '/scans/42', automation = false, admin = false) {
-  const fetcher = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/results/') ? {
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => init?.method === 'POST' ? new Response(JSON.stringify({ id: 9 }), { status: 201 })
+    : new Response(JSON.stringify(url.includes('/results/') ? {
     result_id: 7, raw_output: '<script>alert(1)</script>', details_json: '{}', findings_json: '[]', truncated: ['raw_output'],
   } : report)))
   vi.stubGlobal('fetch', fetcher)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Routes>
-    <Route path="/scans/:scanId" element={<Report automation={automation} admin={admin} />} /></Routes></MemoryRouter></QueryClientProvider>)
+    <Route path="/scans/:scanId" element={<Report automation={automation} session={admin ? ADMIN : undefined} />} /></Routes></MemoryRouter></QueryClientProvider>)
   return fetcher
 }
 
 describe('Scan report', () => {
-  it('offers administrators an exception for a blocked file, with its digest and client', async () => {
+  it('lets administrators add an exception for a blocked file from the report', async () => {
     const blocked = { ...payload, source: 'icap', service_client_id: 3,
       decision: { ...payload.decision!, action: 'block', label: 'Block', policy: 'detected' } }
-    mount(blocked, '/scans/42', true, true)
-    const link = await screen.findByRole('link', { name: 'Add an exception for this file' })
-    expect(link).toHaveAttribute('href', `/engines/exceptions?add=${'a'.repeat(64)}&client=3`)
+    const fetcher = mount(blocked, '/scans/42', true, true)
+    await userEvent.click(await screen.findByRole('button', { name: 'Add an exception for this file' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByLabelText('Applies to')).toHaveValue('client')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add exception' }))
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('A reason is required.')
+    await userEvent.type(within(dialog).getByLabelText('Reason'), 'Vendor build')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add exception' }))
+    await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true))
+    const [url, init] = fetcher.mock.calls.find(([, call]) => call?.method === 'POST')!
+    expect(url).toBe('/api/ui/v1/exceptions')
+    expect(JSON.parse(String(init!.body))).toEqual({ sha256: 'a'.repeat(64), reason: 'Vendor build', service_client_id: 3, expires_in_days: null })
+    expect(await screen.findByText(/Exception #9 added/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add an exception for this file' })).toBeNull()
   })
   it('never offers an exception to analysts', async () => {
     mount({ ...payload, decision: { ...payload.decision!, action: 'block', label: 'Block' } })
