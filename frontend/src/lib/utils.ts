@@ -27,6 +27,32 @@ function zoneLabel(date: Date) {
   return `UTC${offset > 0 ? '+' : '-'}${minutes % 60 ? `${pad(hours)}:${pad(minutes % 60)}` : hours}`
 }
 
+/** The browser's current offset, as the history lists label their times. */
+export function currentZoneLabel() { return zoneLabel(new Date()) }
+
+const DAY = /^(\d{4})-(\d{2})-(\d{2})$/
+
+/** The start of a calendar day ("2026-10-08") in the browser's time zone, as a
+ * UTC instant; `nextDay` gives the start of the following day instead. */
+export function localDayStart(day: string, nextDay = false): string | null {
+  const match = DAY.exec(day)
+  if (!match) return null
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + (nextDay ? 1 : 0))
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+/** A list page's API query: its URL filters, with the "from"/"to" days (both
+ * included) turned into the API's created_after (inclusive) and created_before
+ * (exclusive) instants. */
+export function withDateWindow(params: URLSearchParams) {
+  const query = new URLSearchParams(params)
+  const after = localDayStart(query.get('from') || ''), before = localDayStart(query.get('to') || '', true)
+  query.delete('from'); query.delete('to')
+  if (after) query.set('created_after', after)
+  if (before) query.set('created_before', before)
+  return query
+}
+
 /** Operator timestamps in the browser's time zone, always labelled with their offset so none is ambiguous. */
 export function formatTimestamp(value: string | number | null | undefined) {
   const time = validTime(value)

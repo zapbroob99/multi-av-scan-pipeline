@@ -25,7 +25,7 @@ from app.services import system_read
 from app.services import retention_admin
 from app.services import scan_policy, scan_policy_admin
 from app.services import hash_console
-from app.services import audit_read, about_read
+from app.services import audit_read, about_read, ledger_read
 from app.services import login_throttle
 
 
@@ -1004,6 +1004,32 @@ class BrowserApiTests(unittest.TestCase):
         self.assertNotIn(child, ids('/api-ledger'))
         self.assertEqual(ids('/dashboard/scans'), [manual])
         self.assertEqual(self.request(f'/scans/{api}')[0], 404)
+
+    def test_history_lists_filter_by_a_creation_window_in_the_operators_zone(self):
+        # 2026-10-08 in UTC+03:00 is 2026-10-07 21:00 to 2026-10-08 21:00 UTC: start
+        # inclusive, end exclusive.
+        stamps = ('2026-10-07 20:59:59', '2026-10-07 21:00:00', '2026-10-08 12:00:00', '2026-10-08 21:00:00')
+        ledger = [self.create_scan(f'ledger-{index}.bin', source='api') for index in range(4)]
+        manual = [self.create_scan(f'manual-{index}.bin') for index in range(4)]
+        audit = [self.audit_event(request_id=f'window-{index}') for index in range(4)]
+        with db.connect() as connection:
+            for index, stamp in enumerate(stamps):
+                connection.execute('UPDATE scan_jobs SET created_at = ? WHERE id IN (?, ?)', (stamp, ledger[index], manual[index]))
+                connection.execute('UPDATE audit_events SET created_at = ? WHERE id = ?', (stamp, audit[index]))
+        window = 'created_after=2026-10-08T00:00:00%2B03:00&created_before=2026-10-09T00:00:00%2B03:00'
+        ids = lambda path: [row['id'] for row in self.request(path)[1]['items']]
+        self.assertEqual(ids(f'/api-ledger?{window}'), [ledger[2], ledger[1]])
+        self.assertEqual(ids(f'/dashboard/scans?{window}'), [manual[2], manual[1]])
+        self.assertEqual(ids(f'/audit?{window}&q=window-'), [audit[2], audit[1]])
+        # One side alone, combined with other filters and the cursor.
+        self.assertEqual(ids('/api-ledger?created_after=2026-10-08T12:00:00Z'), [ledger[3], ledger[2]])
+        self.assertEqual(ids('/api-ledger?created_before=2026-10-07T21:00:00Z&source=api'), [ledger[0]])
+        self.assertEqual(ids(f'/api-ledger?{window}&before={ledger[2]}'), [ledger[1]])
+        for invalid in ('created_after=2026-10-09T00:00:00Z&created_before=2026-10-08T00:00:00Z',
+                        'created_after=2026-10-08T00:00:00', 'created_after=yesterday'):
+            for path in ('/api-ledger', '/dashboard/scans', '/audit'):
+                with self.subTest(path=path, query=invalid):
+                    self.assertEqual(self.request(f'{path}?{invalid}')[0], 422)
 
     def test_ledger_projection_literal_search_no_engine_hydration(self):
         client = db.create_service_client('ledger-long', 'x' * 300)
@@ -3270,6 +3296,26 @@ class BrowserReadPostgresTests(unittest.TestCase):
         self.assertEqual([row.id for row in audit_read.page(limit=10, before=None, query='ops%team', outcome='all').items], [big])
         self.assertEqual([row.id for row in audit_read.page(limit=10, before=None, query='%', outcome='all').items], [big])
         self.assertEqual([row.id for row in audit_read.page(limit=10, before=None, query='', outcome='denied').items], [nulls])
+
+    def test_creation_windows_compare_in_utc_on_timestamptz(self):
+        from datetime import datetime, timezone, timedelta
+        ids = [self.event(request_id=f'pg-window-{index}') for index in range(3)]
+        sample = db.create_sample(StoredSample('pg.bin', 'pg.bin', '/private/pg', 'application/octet-stream', 1,
+                                               'a' * 32, 'b' * 40, 'c' * 64))
+        scans = [db.create_scan_job(sample, 'Case', 'normal', '', source='icap') for _ in range(3)]
+        stamps = ('2026-10-07 20:59:59+00', '2026-10-07 21:00:00+00', '2026-10-08 21:00:00+00')
+        with db.connect() as connection:
+            for index, stamp in enumerate(stamps):
+                connection.execute('UPDATE audit_events SET created_at = ? WHERE id = ?', (stamp, ids[index]))
+                connection.execute('UPDATE scan_jobs SET created_at = ? WHERE id = ?', (stamp, scans[index]))
+        zone = timezone(timedelta(hours=3))
+        after, before = datetime(2026, 10, 8, tzinfo=zone), datetime(2026, 10, 9, tzinfo=zone)
+        audit = audit_read.page(limit=10, before=None, query='pg-window', outcome='all',
+                                created_after=after, created_before=before)
+        self.assertEqual([row.id for row in audit.items], [ids[1]])
+        ledger = ledger_read.page(limit=10, before=None, query='', source='all', status='all', risk='all',
+                                  client_id=None, unassigned=False, created_after=after, created_before=before)
+        self.assertEqual([row.id for row in ledger.items], [scans[1]])
 
     def test_audit_read_honours_the_statement_budget(self):
         self.event()

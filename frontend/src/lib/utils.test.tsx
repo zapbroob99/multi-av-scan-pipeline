@@ -1,7 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { formatTimestamp, formatUtcTimestamp, heartbeatLabel, sinceRecorded } from './utils'
+import { formatTimestamp, formatUtcTimestamp, heartbeatLabel, localDayStart, sinceRecorded, withDateWindow } from './utils'
 import { Timestamp } from '../components/timestamp'
+
+describe('Date windows', () => {
+  it('turns inclusive local days into an inclusive start and an exclusive end', () => {
+    expect(localDayStart('2026-10-08')).toBe('2026-10-08T00:00:00.000Z')
+    expect(localDayStart('2026-10-31', true)).toBe('2026-11-01T00:00:00.000Z')
+    for (const value of ['', '08.10.2026', '2026-10-8', 'yesterday']) expect(localDayStart(value)).toBeNull()
+    const query = withDateWindow(new URLSearchParams('q=a&from=2026-10-08&to=2026-10-08&before=9'))
+    expect(query.toString()).toBe('q=a&before=9&created_after=2026-10-08T00%3A00%3A00.000Z&created_before=2026-10-09T00%3A00%3A00.000Z')
+    expect(withDateWindow(new URLSearchParams('to=2026-10-08')).get('created_after')).toBeNull()
+  })
+})
 
 describe('Recorded times', () => {
   it('normalizes database UTC, offset timestamps and epoch seconds to the same instant', () => {

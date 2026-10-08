@@ -31,4 +31,18 @@ test('analyst browses API/ICAP history, filters ownership and uses seek paginati
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   expect((await page.getByRole('checkbox').boundingBox())!.width).toBeLessThanOrEqual(20)
   await page.screenshot({ path: '../artifacts/console-e2e/api-ledger-mobile.png', fullPage: true })
+  await page.setViewportSize({ width: 1280, height: 800 })
+
+  // Whole days in the browser's zone: a window with no scans is empty, today shows them.
+  await page.getByRole('button', { name: 'Reset filters' }).click()
+  await page.getByLabel('From', { exact: true }).fill('2001-01-01')
+  await page.getByLabel('To', { exact: true }).fill('2001-01-02')
+  await page.getByRole('button', { name: 'Apply filters' }).click()
+  await expect(page).toHaveURL(/from=2001-01-01&to=2001-01-02/)
+  await expect(page.getByText('No automation scans match these filters.')).toBeVisible()
+  const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })
+  await page.getByLabel('From', { exact: true }).fill(today)
+  await page.getByLabel('To', { exact: true }).fill(today)
+  await page.getByRole('button', { name: 'Apply filters' }).click()
+  await expect(page.getByRole('link', { name: 'ledger-21.bin', exact: true })).toBeVisible()
 })

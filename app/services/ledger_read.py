@@ -1,6 +1,10 @@
 """Bounded operator history for API/ICAP scans; no integration bearer access."""
+from datetime import datetime
+
 from pydantic import BaseModel
+
 from app import database as db
+from app.services import date_range
 from app.services.browser_db_budget import apply_read_budget
 from app.services.profile_policy import not_allowed_by_code
 
@@ -37,9 +41,13 @@ class LedgerPage(BaseModel):
 
 
 def page(*, limit: int, before: int | None, query: str, source: str, status: str,
-         risk: str, client_id: int | None, unassigned: bool) -> LedgerPage:
+         risk: str, client_id: int | None, unassigned: bool,
+         created_after: datetime | None = None, created_before: datetime | None = None) -> LedgerPage:
     conditions = ["j.source IN ('api', 'icap')", "j.scan_role != 'child'"]
     values: list[object] = []
+    window, window_values = date_range.conditions('j.created_at', created_after, created_before)
+    conditions.extend(window)
+    values.extend(window_values)
     for expression, value in (('j.id < ?', before), ('j.service_client_id = ?', client_id)):
         if value is not None:
             conditions.append(expression)

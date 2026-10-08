@@ -2071,3 +2071,16 @@ upload limit, each bound gateway's size limit, wait and fail mode) are shown rea
 ledger and report add Light check only and Not scanned badges (`rule_action`). Creating a
 profile or a client asks for its engines and the inconclusive choice and starts with one
 rule.
+
+## Date filters on the history lists (pilot.19, 2026-10-08)
+
+The API ledger, Dashboard and Audit trail filters gained "From" and "To" days. They are whole
+days in the browser's time zone, both included, labelled with the zone ("Whole days in your
+time zone (UTC+3), both included"), the same zone the lists show their times in. The URL keeps
+the plain days so a filtered view can be bookmarked; the request carries `created_after`
+(start of the From day, inclusive) and `created_before` (start of the day after To, exclusive)
+as instants. The server rejects a window without an offset or with the start not before the
+end (422, shown as the list error), and the window combines with search, status, risk, client,
+source and the keyset cursor. Validation: Python route and PostgreSQL reader tests, frontend
+unit tests for the conversion, and an Edge workflow that finds an empty past window and today's
+scans.

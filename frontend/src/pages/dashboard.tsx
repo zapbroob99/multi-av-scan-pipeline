@@ -9,6 +9,8 @@ import { SelectAllCheckbox } from '../components/select-all'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Timestamp } from '../components/timestamp'
+import { DateRangeFields } from '../components/date-range-fields'
+import { withDateWindow } from '../lib/utils'
 
 export function historyPollInterval(before: string) { return before ? false : 20000 }
 
@@ -23,7 +25,9 @@ export default function Dashboard({ session }: { session: Session }) {
   const q = params.get('q') || '', status = params.get('status') || 'all', risk = params.get('risk') || 'all'
   const detection = params.get('detection') || 'all'
   const before = params.get('before') || ''
-  const query = new URLSearchParams({ q, status, risk, detection, limit: '20', ...(before ? { before } : {}) }).toString()
+  const from = params.get('from') || '', to = params.get('to') || ''
+  const query = withDateWindow(new URLSearchParams({ q, status, risk, detection, limit: '20', ...(before ? { before } : {}),
+    ...(from ? { from } : {}), ...(to ? { to } : {}) })).toString()
   const summary = useQuery({ queryKey: ['dashboard', 'summary'],
     queryFn: ({ signal }) => request('/api/ui/v1/dashboard/summary', 'get', { signal }),
     refetchInterval: 30000, refetchIntervalInBackground: false })
@@ -52,7 +56,7 @@ export default function Dashboard({ session }: { session: Session }) {
   function filter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget), next = new URLSearchParams()
-    for (const key of ['q', 'status', 'risk', 'detection']) {
+    for (const key of ['q', 'status', 'risk', 'detection', 'from', 'to']) {
       const value = String(form.get(key) || '').trim()
       if (value && value !== 'all') next.set(key, value)
     }
@@ -97,6 +101,7 @@ export default function Dashboard({ session }: { session: Session }) {
         <option value="detected">An engine reported a detection</option>
         <option value="undetected">Finished, no engine reported a detection</option>
       </select></label>
+      <DateRangeFields params={params} idPrefix="dashboard" />
       <Button variant="secondary">Apply filters</Button>
       <Button type="button" variant="secondary" onClick={() => setParams({})}>Reset</Button>
     </form>

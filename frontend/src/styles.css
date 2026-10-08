@@ -332,6 +332,7 @@ tr.row-alert > td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
 .history-filters { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; padding: 12px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); }
 .history-filters label { margin: 0; }
 .history-filters .search { flex: 1; min-width: 200px; }
+.history-filters .date-range-help { flex-basis: 100%; order: 1; margin: -4px 0 0; }
 .history-pagination > div { display: flex; gap: 8px; }
 .history-footnote { margin-top: 20px; color: var(--text-3); }
 

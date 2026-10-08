@@ -720,7 +720,13 @@ never a health state, because a deployment may use it on purpose. `verify.sh` re
 inside the icap container, warns on `legacy-default` and stops on an unresolved key.
 
 Console timestamps render in the browser's time zone with an explicit offset label (`UTC` at zero)
-and the stored UTC value on hover (`Timestamp`); never print an unlabelled local time. Vitest and
+and the stored UTC value on hover (`Timestamp`); never print an unlabelled local time.
+The API ledger, Dashboard and Audit lists filter by creation date: the URL keeps whole local days
+(`from`/`to`, both included), `withDateWindow` sends `created_after` (inclusive) and
+`created_before` (exclusive) instants with an offset, and `app/services/date_range.py` rejects
+naive or reversed windows (422) and compares in UTC in each database's own form (SQLite text
+without a suffix, PostgreSQL with `+00:00`). The windows ride the existing `created_at` indexes
+and combine with every other filter and the ID cursor. Vitest and
 Playwright pin the zone to UTC.
 
 The repository is public. Never commit an institution's name, logo, host names, addresses or

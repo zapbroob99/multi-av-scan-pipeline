@@ -38,6 +38,17 @@ describe('API ledger', () => {
     expect(JSON.parse(String(init!.body))).toEqual({ sha256: 'a'.repeat(64), reason: 'Ticket 7', service_client_id: 7, expires_in_days: 90 })
     expect(await screen.findByText(/Exception #11 added/)).toBeInTheDocument()
   }, 15000) // types a reason key by key; slow when the machine is busy
+  it('filters by whole days and keeps them in the address', async () => {
+    const fetcher = mount()
+    await screen.findByRole('link', { name: '<script>API sample</script>' })
+    expect(screen.getByText(/Whole days in your time zone \(UTC\), both included/)).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('From'), '2026-10-01')
+    await userEvent.type(screen.getByLabelText('To'), '2026-10-08')
+    await userEvent.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await waitFor(() => expect(ledgerCalls(fetcher).at(-1)?.[0]).toBe(
+      '/api/ui/v1/api-ledger?created_after=2026-10-01T00%3A00%3A00.000Z&created_before=2026-10-09T00%3A00%3A00.000Z&limit=20'))
+    expect(screen.getByLabelText('From')).toHaveValue('2026-10-01')
+  })
   it('offers no exception for a clean row', async () => {
     mount({}, ADMIN)
     await screen.findByRole('link', { name: '<script>API sample</script>' })

@@ -6,6 +6,7 @@ import time
 from pydantic import BaseModel
 
 from app import database as db
+from app.services import date_range
 from app.services.browser_db_budget import apply_read_budget
 
 
@@ -70,9 +71,13 @@ def summary() -> DashboardSummary:
 
 
 def scan_page(*, limit: int, before: int | None, query: str, status: str, risk: str,
-              detection: str = 'all') -> ScanPage:
+              detection: str = 'all', created_after: datetime | None = None,
+              created_before: datetime | None = None) -> ScanPage:
     conditions = ["j.source = 'manual'", "j.scan_role != 'child'"]
     params: list[object] = []
+    window, window_values = date_range.conditions('j.created_at', created_after, created_before)
+    conditions.extend(window)
+    params.extend(window_values)
     if before is not None:
         conditions.append('j.id < ?')
         params.append(before)

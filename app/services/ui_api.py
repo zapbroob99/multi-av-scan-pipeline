@@ -3,6 +3,7 @@
 from dataclasses import asdict
 import hashlib
 import hmac
+from datetime import datetime
 import json
 import time
 from typing import Literal
@@ -17,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from app import database as db
 from app.services import auth
 from app.services import login_throttle
+from app.services import date_range
 from app.services import dashboard_read
 from app.services import scan_report_read
 from app.services import archive_read
@@ -203,11 +205,14 @@ def browser_api_ledger(limit: int = Query(default=20, ge=1, le=100),
     status: Literal['all', 'active', 'queued', 'running', 'finalizing', 'completed', 'partial', 'failed', 'skipped'] = 'all',
     risk: Literal['all', 'pending', 'info', 'metadata_only', 'low', 'medium', 'high', 'critical', 'not_allowed'] = 'all',
     client_id: int | None = Query(default=None, ge=1, le=9007199254740991), unassigned: bool = False,
+    created_after: datetime | None = None, created_before: datetime | None = None,
 ):
     if client_id is not None and unassigned:
         raise HTTPException(422, 'Choose either a client ID or unassigned records.')
+    created_after, created_before = date_range.validated(created_after, created_before)
     return ledger_read.page(limit=limit, before=before, query=q, source=source, status=status,
-                            risk=risk, client_id=client_id, unassigned=unassigned)
+                            risk=risk, client_id=client_id, unassigned=unassigned,
+                            created_after=created_after, created_before=created_before)
 
 
 @router.get('/api-ledger/clients', response_model=ledger_read.LedgerClients)
@@ -367,8 +372,11 @@ def automation_result_output(scan_id: int = Path(ge=1, le=9007199254740991),
 def browser_audit(limit: int = Query(default=20, ge=1, le=100),
                   before: int | None = Query(default=None, ge=1, le=9007199254740991),
                   q: str = Query(default='', max_length=200),
-                  outcome: Literal['all', 'success', 'failure', 'denied'] = 'all'):
-    return audit_read.page(limit=limit, before=before, query=q, outcome=outcome)
+                  outcome: Literal['all', 'success', 'failure', 'denied'] = 'all',
+                  created_after: datetime | None = None, created_before: datetime | None = None):
+    created_after, created_before = date_range.validated(created_after, created_before)
+    return audit_read.page(limit=limit, before=before, query=q, outcome=outcome,
+                           created_after=created_after, created_before=created_before)
 
 
 @router.get('/system/intake', response_model=intake_read.IntakeOverview)
@@ -646,9 +654,13 @@ def dashboard_scans(
     status: Literal["all", "active", "queued", "running", "finalizing", "completed", "partial", "failed"] = "all",
     risk: Literal["all", "pending", "info", "metadata_only", "low", "medium", "high", "critical"] = "all",
     detection: Literal["all", "detected", "undetected"] = "all",
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
 ):
+    created_after, created_before = date_range.validated(created_after, created_before)
     return dashboard_read.scan_page(limit=limit, before=before, query=q, status=status, risk=risk,
-                                    detection=detection)
+                                    detection=detection, created_after=created_after,
+                                    created_before=created_before)
 
 
 class StrictBody(BaseModel):

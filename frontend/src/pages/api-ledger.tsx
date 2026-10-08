@@ -8,6 +8,8 @@ import { Dialog } from '../components/ui/dialog'
 import { Button } from '../components/ui/button'
 import { SelectAllCheckbox } from '../components/select-all'
 import { Timestamp } from '../components/timestamp'
+import { DateRangeFields } from '../components/date-range-fields'
+import { withDateWindow } from '../lib/utils'
 import { ExceptionDialog, type ExceptionTarget } from '../components/exception-dialog'
 
 type Candidate = { scan_id: number; attempt: number; job_revision: number }
@@ -33,7 +35,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
   const admin = session?.user.role === 'admin'
   const [exceptionFor, setExceptionFor] = useState<ExceptionTarget | null>(null)
   const [params, setParams] = useSearchParams()
-  const query = new URLSearchParams(params)
+  const query = withDateWindow(params)
   query.set('limit', '20')
   const scans = useQuery({ queryKey: ['api-ledger', query.toString()],
     queryFn: ({ signal }) => request('/api/ui/v1/api-ledger', 'get', { query, signal }),
@@ -65,7 +67,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
     event.preventDefault()
     if (locked) return
     const form = new FormData(event.currentTarget), next = new URLSearchParams()
-    for (const key of ['q', 'source', 'status', 'risk', 'client_id']) {
+    for (const key of ['q', 'source', 'status', 'risk', 'client_id', 'from', 'to']) {
       const value = String(form.get(key) || '').trim()
       if (value && value !== 'all') next.set(key, value)
     }
@@ -104,6 +106,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
           <option value={params.get('client_id')!}>Client #{params.get('client_id')}</option>}
       </select></label>
       <label><input name="unassigned" type="checkbox" defaultChecked={params.get('unassigned') === 'true'} /> Unassigned only (overrides client)</label>
+      <DateRangeFields params={params} idPrefix="ledger" />
       <Button type="submit" disabled={scans.isFetching}>Apply filters</Button><Button type="button" variant="secondary" onClick={() => setParams({})}>Reset filters</Button>
     </fieldset></form>
     {scans.isPending && <p role="status">Loading automation history…</p>}

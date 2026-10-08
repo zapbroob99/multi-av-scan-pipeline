@@ -1,7 +1,10 @@
 """Admin-only bounded audit history. Append-only table; no update or delete."""
+from datetime import datetime
+
 from pydantic import BaseModel
 
 from app import database as db
+from app.services import date_range
 from app.services.browser_db_budget import apply_read_budget
 
 
@@ -29,9 +32,9 @@ class AuditPage(BaseModel):
     next_before: int | None
 
 
-def page(*, limit: int, before: int | None, query: str, outcome: str) -> AuditPage:
-    conditions: list[str] = []
-    values: list[object] = []
+def page(*, limit: int, before: int | None, query: str, outcome: str,
+         created_after: datetime | None = None, created_before: datetime | None = None) -> AuditPage:
+    conditions, values = date_range.conditions('created_at', created_after, created_before)
     if before is not None:
         conditions.append('id < ?')
         values.append(before)

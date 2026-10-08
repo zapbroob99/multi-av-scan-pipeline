@@ -5,6 +5,8 @@ import { useQuery } from '@tanstack/react-query'
 import { request } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { Timestamp } from '../components/timestamp'
+import { DateRangeFields } from '../components/date-range-fields'
+import { withDateWindow } from '../lib/utils'
 
 const OUTCOMES = ['all', 'success', 'failure', 'denied'] as const
 const OUTCOME_TAG: Record<string, string> = { success: 'tag-positive', failure: 'tag-warning', denied: 'tag-danger' }
@@ -25,7 +27,7 @@ export function prettyDetails(details: string, truncated: boolean) {
 
 export default function Audit() {
   const [params, setParams] = useSearchParams()
-  const query = new URLSearchParams(params)
+  const query = withDateWindow(params)
   query.set('limit', '20')
   const events = useQuery({ queryKey: ['audit', query.toString()],
     queryFn: ({ signal }) => request('/api/ui/v1/audit', 'get', { query, signal }),
@@ -33,7 +35,7 @@ export default function Audit() {
   function filter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget), next = new URLSearchParams()
-    for (const key of ['q', 'outcome']) {
+    for (const key of ['q', 'outcome', 'from', 'to']) {
       const value = String(form.get(key) || '').trim()
       if (value && value !== 'all') next.set(key, value)
     }
@@ -54,6 +56,7 @@ export default function Audit() {
       <label>Actor, action, target or request ID<input name="q" maxLength={200} defaultValue={params.get('q') || ''} /></label>
       <label>Outcome<select name="outcome" defaultValue={params.get('outcome') || 'all'}>
         {OUTCOMES.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+      <DateRangeFields params={params} idPrefix="audit" />
       <Button type="submit" disabled={events.isFetching}>Apply filters</Button>
       <Button type="button" variant="secondary" onClick={() => setParams({})}>Reset filters</Button>
     </fieldset><p className="muted">Search matches the text exactly; <code>%</code> and <code>_</code> are literal characters, not wildcards.</p></form>

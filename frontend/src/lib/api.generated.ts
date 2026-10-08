@@ -4484,6 +4484,8 @@ export interface operations {
             query?: {
                 before?: number | null;
                 client_id?: number | null;
+                created_after?: string | null;
+                created_before?: string | null;
                 limit?: number;
                 q?: string;
                 risk?: "all" | "pending" | "info" | "metadata_only" | "low" | "medium" | "high" | "critical" | "not_allowed";
@@ -6121,6 +6123,8 @@ export interface operations {
         parameters: {
             query?: {
                 before?: number | null;
+                created_after?: string | null;
+                created_before?: string | null;
                 limit?: number;
                 outcome?: "all" | "success" | "failure" | "denied";
                 q?: string;
@@ -6316,6 +6320,8 @@ export interface operations {
         parameters: {
             query?: {
                 before?: number | null;
+                created_after?: string | null;
+                created_before?: string | null;
                 detection?: "all" | "detected" | "undetected";
                 limit?: number;
                 q?: string;
