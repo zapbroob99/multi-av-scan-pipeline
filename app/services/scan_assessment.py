@@ -12,6 +12,7 @@ from app.database import list_engine_results
 from app.models import EngineResultRecord, ScanRecord
 from app.services.decisions import ScanDecision, decide_scan_action
 from app.services.engine_registry import detection_engine_names
+from app.services import profile_rules
 from app.services.profile_policy import apply_profile_policy, archive_handling
 from app.services.scan_exceptions import apply_exception
 from app.services.scoring import calculate_risk
@@ -202,7 +203,9 @@ def scan_decision(
     # The client's frozen profile policy can only make this stricter; an
     # administrator's exception for this exact file then allows it regardless.
     snapshot = parse_profile_snapshot(scan)
-    return apply_exception(apply_profile_policy(decision, snapshot, scan_role=scan.scan_role), snapshot)
+    unfinished = profile_rules.unfinished_checks(snapshot, engine_results)
+    return apply_exception(apply_profile_policy(decision, snapshot, scan_role=scan.scan_role,
+                                                unfinished=unfinished), snapshot)
 
 
 def resolve_scan_decision(scan: ScanRecord) -> ScanDecision:

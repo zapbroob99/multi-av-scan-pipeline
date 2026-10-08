@@ -47,6 +47,12 @@ DecisionPolicy = Literal[
     "archive_member_review",
     "archive_full_coverage",
     "archive_unassessed",
+    "profile_rule_block",
+    "profile_rule_not_scanned",
+    "profile_rule_light_check",
+    "profile_inconclusive_block",
+    "profile_inconclusive_allow",
+    "exception_allow",
 ]
 
 

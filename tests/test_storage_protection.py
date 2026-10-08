@@ -290,6 +290,19 @@ class StorageCycleTests(StorageCycleCase):
         self.assertEqual([row["kind"] for row in self.findings()], ["hash_block"])
         self.assertEqual(self.objects()["data/report.pdf"]["hash_list_kind"], "block")
 
+    def test_a_failed_hash_list_read_never_records_a_passed_light_check(self) -> None:
+        self.write("data/report.pdf", PDF)
+        location = self.location()
+        self.cycle(location)
+        with patch.object(inventory, "hash_list_kinds", side_effect=RuntimeError("database unavailable")),                 self.assertRaises(RuntimeError):
+            self.cycle(location, 61)
+        row = self.objects()["data/report.pdf"]
+        self.assertNotIn(row["state"], {"light_passed", "light_detected"})
+        self.assertFalse(self.last_cycle(location)["ok"])
+        # The object stays due and is judged once the list can be read again.
+        self.cycle(location, 62)
+        self.assertEqual(self.objects()["data/report.pdf"]["state"], "light_passed")
+
     def test_a_light_rule_without_the_hash_list_does_not_hash(self) -> None:
         self.rules({"when": {"larger_than_bytes": 10}, "action": "light", "engines": [self.file_type]},
                    {"action": "light", "engines": [self.file_type, self.hash_list]})

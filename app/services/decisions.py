@@ -63,20 +63,6 @@ def decide_scan_action(
             ],
         )
 
-    if detection_engines == 0:
-        return ScanDecision(
-            action="review",
-            label="Review",
-            tone="warning",
-            confidence="low",
-            policy="metadata_only",
-            reason="No detection engines were available for this scan.",
-            reasons=[
-                "No detection engines were available for this scan.",
-                "Metadata-only scans should not be automatically allowed.",
-            ],
-        )
-
     if unavailable_engines:
         return ScanDecision(
             action="review",
@@ -116,6 +102,22 @@ def decide_scan_action(
             reasons=[
                 f"Risk score is {risk_score}/100 with verdict {verdict}.",
                 "Manual review is recommended before allowing the file.",
+            ],
+        )
+
+    # After the policy and risk signals: a check that found something must not
+    # read as "no detection engine ran and nothing was found".
+    if detection_engines == 0:
+        return ScanDecision(
+            action="review",
+            label="Review",
+            tone="warning",
+            confidence="low",
+            policy="metadata_only",
+            reason="No detection engines were available for this scan.",
+            reasons=[
+                "No detection engines were available for this scan.",
+                "Metadata-only scans should not be automatically allowed.",
             ],
         )
 

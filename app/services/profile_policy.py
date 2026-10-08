@@ -409,7 +409,8 @@ def _block(decision: ScanDecision, policy: str, reason: str, extra: list[str]) -
                         reason=reason, reasons=[reason, *extra])
 
 
-def apply_profile_policy(decision: ScanDecision, snapshot: dict, *, scan_role: str) -> ScanDecision:
+def apply_profile_policy(decision: ScanDecision, snapshot: dict, *, scan_role: str,
+                         unfinished: list[str] | None = None) -> ScanDecision:
     """Make a computed decision as strict as the scan's frozen profile policy."""
     raw = snapshot_policy(snapshot)
     if raw in (None, {}) and "intake_policy" not in snapshot:
@@ -423,7 +424,7 @@ def apply_profile_policy(decision: ScanDecision, snapshot: dict, *, scan_role: s
             rules = None
         if rules is not None and profile_rules.snapshot_rule(snapshot) is not None:
             # Each rule scan, archive members included, carries its own evaluation.
-            return profile_rules.apply_rules_decision(decision, snapshot, rules)
+            return profile_rules.apply_rules_decision(decision, snapshot, rules, unfinished)
         if decision.action == "block":
             return decision
         return ScanDecision(action="review", label="Review", tone="warning", confidence="low",

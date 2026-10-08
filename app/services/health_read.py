@@ -157,14 +157,35 @@ def engines_check(engines: list[EngineState]) -> HealthCheck:
                        summary=f'{len(active)} enabled engine(s) healthy.')
 
 
-def signatures_check(engines: list[EngineState], records: list, now: float) -> HealthCheck:
+def _signature_state(age: float) -> State:
+    return ('critical' if age >= SIGNATURE_CRITICAL_SECONDS
+            else 'warning' if age >= SIGNATURE_WARNING_SECONDS else 'ok')
+
+
+def signatures_check(engines: list[EngineState], records: list, now: float,
+                     enabled_ids: set[int] | None = None) -> HealthCheck:
+    """Judge every worker's ClamAV database and report the oldest.
+
+    Each worker node reports the database of each ClamAV instance it runs, and
+    every report is judged on its own: a node with a current database must never
+    hide one still scanning with an old one. Only reports from enabled instances
+    checked within the critical window count, so a retired node's last report
+    does not raise a permanent alarm (a node that stopped checking is the engine
+    check's concern).
+    """
     link = '/engines'
     clamav = [e for e in engines if e.adapter_key == 'clamav' and e.state != 'disabled']
     if not clamav:
         return HealthCheck(key='signatures', label='ClamAV signatures', state='inactive', link=link,
                            summary='No ClamAV engine is enabled.')
-    newest: tuple[datetime, str] | None = None
+    reports: list[tuple[float, str, str]] = []
     for record in records:
+        instance = getattr(record, 'engine_instance_id', None)
+        if enabled_ids is not None and instance not in enabled_ids:
+            continue
+        checked = getattr(record, 'last_checked_at', None)
+        if checked is not None and now - int(checked) > SIGNATURE_CRITICAL_SECONDS:
+            continue
         try:
             details = json.loads(record.details_json or '{}')
         except (TypeError, ValueError):
@@ -175,17 +196,24 @@ def signatures_check(engines: list[EngineState], records: list, now: float) -> H
         if not isinstance(probe, dict):
             continue
         signed = _when(probe.get('signature_date'))
-        if signed and (newest is None or signed > newest[0]):
-            newest = (signed, str(probe.get('signature_version') or '?'))
-    if newest is None:
+        if signed:
+            reports.append((now - signed.timestamp(), str(probe.get('signature_version') or '?'),
+                            str(getattr(record, 'node_id', '') or '')))
+    if not reports:
         return HealthCheck(key='signatures', label='ClamAV signatures', state='unknown', link=link,
                            summary='No worker has reported the signature version yet.',
                            detail='Workers report it with their engine health check. Request a check on the Engines screen.')
-    age = now - newest[0].timestamp()
-    state: State = ('critical' if age >= SIGNATURE_CRITICAL_SECONDS
-                    else 'warning' if age >= SIGNATURE_WARNING_SECONDS else 'ok')
-    return HealthCheck(key='signatures', label='ClamAV signatures', state=state, link=link,
-                       summary=f'Database {newest[1]}, published {age_text(age)} ago.',
+    age, version, node = max(reports)
+    state = _signature_state(age)
+    behind = [report for report in reports if _signature_state(report[0]) != 'ok']
+    if len(reports) == 1:
+        summary = f'Database {version}, published {age_text(age)} ago.'
+    elif not behind:
+        summary = f'{len(reports)} reports current; the oldest is database {version}, published {age_text(age)} ago.'
+    else:
+        summary = (f'{len(behind)} of {len(reports)} reports out of date; the oldest is database {version}'
+                   f'{f" on {node}" if node else ""}, published {age_text(age)} ago.')
+    return HealthCheck(key='signatures', label='ClamAV signatures', state=state, link=link, summary=summary,
                        detail=None if state == 'ok' else
                        'Signature updates are not arriving. Check the clamav container log and its access to the update mirror.')
 
@@ -480,7 +508,8 @@ def report(engines: list[EngineState], *, now: float | None = None) -> HealthRep
         workers_check(status),
         queue_check(queued, oldest_age, reason),
         engines_check(engines),
-        signatures_check(engines, records, current),
+        signatures_check(engines, records, current, enabled_ids={
+            instance.id for instance in db.list_engine_instances() if instance.adapter_key == 'clamav' and instance.enabled}),
         storage_check(),
         *intake_checks(overview),
         storage_protection,

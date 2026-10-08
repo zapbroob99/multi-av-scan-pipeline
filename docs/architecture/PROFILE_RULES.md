@@ -94,6 +94,16 @@ allowed: Blocked by rule N; the ledger and report badge Light check only, Not sc
 and Blocked by rule, and show incomplete coverage as before.
 Recorded risk stays per file and is never raised by a rule.
 
+A rule's checks must all complete. Antivirus coverage counts only detection engines, so
+File Type, Hash List and Static Metadata are checked separately: if any engine the matched
+rule names failed, was skipped or has no result, the result is not conclusive and the
+profile's choice applies (Block, or Allow labelled Not fully scanned), with the unfinished
+checks named in the reasons. A Hash List that could not be read is not a hash that is not
+listed. A light check that found something (a disguised file below the detection level) is
+not conclusive either; only a complete light check that found nothing allows labelled
+Light check only. The same decision reaches the API, the ICAP gateway, the report and the
+public result contract, whose policy list names every rule and exception outcome.
+
 Scans accepted under the previous policy format keep their previous decision logic: a
 snapshot is never reinterpreted.
 

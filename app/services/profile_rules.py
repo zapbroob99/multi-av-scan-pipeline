@@ -309,8 +309,46 @@ def _allow(policy: str, label: str, reason: str, extra: list[str]) -> ScanDecisi
                         reason=reason, reasons=[reason, *extra])
 
 
-def apply_rules_decision(decision: ScanDecision, snapshot: dict, policy: RulesPolicy) -> ScanDecision:
-    """Turn a computed decision into a rule profile's explicit block or allow."""
+def unfinished_checks(snapshot: dict, results: list) -> list[str]:
+    """The checks the matched rule chose that did not complete, as "<name> <status>".
+
+    Antivirus coverage counts only detection engines; this covers every engine
+    the rule names, File Type and Hash List included. A check that did not run
+    is not a check that found nothing.
+    """
+    rule = snapshot_rule(snapshot)
+    if rule is None or rule.get("action") not in ("scan", "light"):
+        return []
+    by_name = {str(result.engine_name).lower(): result for result in results}
+    unfinished = []
+    for entry in snapshot.get("engines") or []:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name = str(entry["name"])
+        result = by_name.get(name.lower())
+        if result is None:
+            unfinished.append(f"{name} missing")
+        elif result.status != "completed":
+            unfinished.append(f"{name} {result.status}")
+    return unfinished
+
+
+def _inconclusive(policy: RulesPolicy, decision: ScanDecision, why: str) -> ScanDecision:
+    if policy.inconclusive == "block":
+        return _block(decision, "profile_inconclusive_block",
+                      "The result is not conclusive, and this client's profile blocks such files.", [why])
+    return _allow("profile_inconclusive_allow", "Allow (not fully scanned)",
+                  "The result is not conclusive; this client's profile allows such files.", [why])
+
+
+def apply_rules_decision(decision: ScanDecision, snapshot: dict, policy: RulesPolicy,
+                         unfinished: list[str] | None = None) -> ScanDecision:
+    """Turn a computed decision into a rule profile's explicit block or allow.
+
+    ``unfinished`` lists the rule's checks that did not complete
+    (``unfinished_checks``): any one makes the result inconclusive, so a failed
+    Hash List lookup can never become "Allow (light check only)".
+    """
     rule = snapshot_rule(snapshot)
     if decision.action == "wait":
         return decision
@@ -332,15 +370,13 @@ def apply_rules_decision(decision: ScanDecision, snapshot: dict, policy: RulesPo
     if action == "allow":
         return _allow("profile_rule_not_scanned", "Allow (not scanned)",
                       f"Allowed without scanning by rule {number} ({rule.get('condition')}).", [])
+    if unfinished:
+        return _inconclusive(policy, decision, f"Not every check of rule {number} completed: {', '.join(unfinished)}.")
     if action == "light" and decision.policy == "metadata_only":
         return _allow("profile_rule_light_check", "Allow (light check only)",
                       f"Light check only (rule {number}): no antivirus engine ran, and the checks found nothing.", [])
     if decision.action == "review" or decision.policy in INCONCLUSIVE:
-        if policy.inconclusive == "block":
-            return _block(decision, "profile_inconclusive_block",
-                          "The result is not conclusive, and this client's profile blocks such files.", [decision.reason])
-        return _allow("profile_inconclusive_allow", "Allow (not fully scanned)",
-                      "The result is not conclusive; this client's profile allows such files.", [decision.reason])
+        return _inconclusive(policy, decision, decision.reason)
     return decision
 
 

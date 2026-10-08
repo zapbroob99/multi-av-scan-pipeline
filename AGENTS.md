@@ -561,7 +561,12 @@ rules once from the stored size and 4 KiB header and freezes `rule`, the narrowe
 engines. Block and Allow without scanning create a scan record completed at intake with no engine
 jobs (`rule_action`, risk NULL; Block is not allowed `rule_block`), cannot be retried and open no
 archive. Archive members are routed again by their own size and type (`route_member`). Light check
-that finds nothing allows labelled Light check only; a detection always blocks. A profile's engine
+that finds nothing allows labelled Light check only; a detection always blocks. Every check the
+matched rule names must complete (`profile_rules.unfinished_checks`, File Type and Hash List
+included, not only detection engines): a failed, skipped or missing one makes the result
+inconclusive, so a failed Hash List lookup is never "found nothing". `decide_scan_action` judges
+policy and risk signals before `metadata_only`, so a light check's medium finding is inconclusive
+too. Every decision policy the code produces must be in `api_schemas.DecisionPolicy`. A profile's engine
 set (`scan_profile_engines`) is the union of its rules' engines, written with the rules; the
 engine-routing write is refused for rule profiles. Saving checks every rule's engines (exist, run
 for API/ICAP, Scan includes a detection engine, Light check none). Startup converts each
@@ -641,7 +646,9 @@ notable events in memory (allowed requests are only counted) and writes them eve
 block or fail a request, and records silent for a week are treated as removed. A silent record is
 also dropped when a gateway on the same port started after its last report (the gateway was rebound
 to another client key, not stopped); without that, rebinding raised a week of false critical health. ClamAV health reports
-the program and signature version and the signature date from clamd `VERSION`. The support bundle
+the program and signature version and the signature date from clamd `VERSION`; every worker's
+report of an enabled ClamAV instance checked within the last week is judged on its own and the
+oldest is shown with its node, so a current database never hides an old one elsewhere. The support bundle
 is a POST so every export is audited; it excludes secret-named settings, credentialed URLs, engine
 configuration, sample content, filenames, hashes and console users' addresses.
 

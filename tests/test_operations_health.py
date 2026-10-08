@@ -73,22 +73,37 @@ class HealthRuleTests(unittest.TestCase):
         self.assertEqual(health_read.engines_check([engine('YARA', 'pending', 'yara')]).state, 'warning')
         self.assertEqual(health_read.engines_check([engine('ClamAV', 'healthy')]).state, 'ok')
 
-    def test_signature_age_comes_from_the_newest_clamav_report(self):
-        def record(adapter, date, version='27771'):
+    def test_signature_age_judges_every_clamav_report_and_shows_the_oldest(self):
+        day = 86400
+
+        def stamp(age):
+            return time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime(NOW - age))
+
+        def record(adapter, date, version='27771', node='linux-1', instance=1, checked=NOW):
             probe = {'signature_date': date, 'signature_version': version} if date else {}
-            return SimpleNamespace(details_json=json.dumps({'adapter_key': adapter, 'probe': probe}))
+            return SimpleNamespace(details_json=json.dumps({'adapter_key': adapter, 'probe': probe}),
+                                   node_id=node, engine_instance_id=instance, last_checked_at=checked)
         clamav = [engine('ClamAV', 'healthy')]
         self.assertEqual(health_read.signatures_check([], [], NOW).state, 'inactive')
         self.assertEqual(health_read.signatures_check(clamav, [record('clamav', None)], NOW).state, 'unknown')
-        day = 86400
         fresh = health_read.signatures_check(clamav, [
-            record('clamav', '2026-09-01T00:00:00+00:00', '27000'),
-            record('clamav', time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime(NOW - day)), '27771'),
-            record('yara', time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime(NOW)), '9')], NOW)
+            record('clamav', stamp(day), '27771'),
+            record('yara', stamp(0), '9', instance=2)], NOW)
         self.assertEqual((fresh.state, fresh.summary), ('ok', 'Database 27771, published 24 h ago.'))
-        old = health_read.signatures_check(clamav, [record('clamav', time.strftime(
-            '%Y-%m-%dT%H:%M:%S+00:00', time.gmtime(NOW - 8 * day)))], NOW)
-        self.assertEqual(old.state, 'critical')
+        self.assertEqual(health_read.signatures_check(clamav, [record('clamav', stamp(8 * day))], NOW).state, 'critical')
+        # A current database on one node never hides an old one on another.
+        mixed = health_read.signatures_check(clamav, [
+            record('clamav', stamp(30 * day), '27000', node='linux-2'),
+            record('clamav', stamp(day), '27771', node='linux-1')], NOW, enabled_ids={1})
+        self.assertEqual(mixed.state, 'critical')
+        self.assertEqual(mixed.summary, '1 of 2 reports out of date; the oldest is database 27000 on linux-2, published 30 d ago.')
+        both = health_read.signatures_check(clamav, [
+            record('clamav', stamp(day), node='linux-2'), record('clamav', stamp(2 * 3600), node='linux-1')], NOW)
+        self.assertEqual((both.state, both.summary), ('ok', '2 reports current; the oldest is database 27771, published 24 h ago.'))
+        # A disabled instance or a node that stopped checking a week ago is not judged here.
+        retired = [record('clamav', stamp(30 * day), node='old', checked=NOW - 8 * day),
+                   record('clamav', stamp(30 * day), instance=9), record('clamav', stamp(day))]
+        self.assertEqual(health_read.signatures_check(clamav, retired, NOW, enabled_ids={1}).state, 'ok')
 
     def test_storage_thresholds(self):
         gib = 1024 ** 3
