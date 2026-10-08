@@ -1,8 +1,8 @@
 # MASP session handoff
 
-Updated: 2026-10-08, pilot.19 (pilot.18 plus date filters on the ledger, dashboard and audit
-lists) packaged and its 15 -> 19 upgrade/rollback rehearsed on `feat/archive-handling`; the user
-will install pilot.19 directly, skipping pilot.16, .17 and .18. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet
+Updated: 2026-10-08, pilot.20 (pilot.19 plus ClamAV "could not scan" reporting) packaged and its
+15 -> 20 upgrade/rollback rehearsed on `feat/archive-handling`; the user will install pilot.20
+directly, skipping pilot.16 to .19. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet
 runs pilot.15 as far as known; pilot.16 was never confirmed installed. This is a workspace
 checkpoint, not evidence of a deployment.
 
@@ -263,7 +263,22 @@ scanning's archive default stays "hold for the full tier". `59a0d63` fixed the I
 a rule block (found in the rehearsal). Verification: backend 1147 SQLite OK, related modules
 157 on disposable PostgreSQL OK, frontend 203, e2e 39/39, build and contracts clean.
 
-**Pilot.19, 2026-10-08: date filters** (`e802625`, requested by the user). From/To days on the
+**Pilot.20, 2026-10-08: ClamAV "could not scan" is no longer clean** (`6c18339`). The user asked
+for the industry standard and little complexity. Verified against the pinned clamd: with default
+options it answers OK for an encrypted zip and for a small zip expanding past MaxScanSize. All
+compose files now set `AlertExceedsMax` and `AlertEncrypted` (vendor gateways' "block unscannable
+/ encrypted" setting; Sophos made blocking the default in 2019); the adapter records
+`Heuristics.Limits.Exceeded.*`/`Heuristics.Encrypted.*` as skipped, so the profile's inconclusive
+choice applies. Password-protected PDFs are included (inconclusive for `fil`, exceptions exist).
+Bundle from `7fdddb5`: zip SHA-256
+`fa0c3d28536eda7fcd4708eb65878aa4d974ae4056cc7f97144db7f182bdfa7f`, image tar SHA-256
+`249f3306c553c7ea5602959e5887d1c8ee4b4a5243da936279dc34a81af116a9`. Rehearsal
+(`dist/rehearsal-upgrade20/`): every pilot.19 check plus clamd showing both options and, with a
+rule scanning archives whole with ClamAV, clean zip allowed, encrypted zip and an 80 MB-expanding
+zip blocked "could not be fully scanned" (ClamAV skipped, scan failed); rollback and re-upgrade
+passed. Backend 1193 SQLite OK. Operator steps: `kilavuz/PILOT_20_DURUM.md`.
+
+**Pilot.19, 2026-10-08 (superseded by pilot.20): date filters** (`e802625`, requested by the user). From/To days on the
 API ledger, Dashboard and Audit filters, whole days in the browser's zone, both included, kept in
 the URL; sent as `created_after`/`created_before` instants and checked by
 `app/services/date_range.py`. Bundle from `712ba67`: zip SHA-256
@@ -455,8 +470,9 @@ folders live in git-ignored `kilavuz/` and `dist/`.
 **Releases in `dist/` (git-ignored), each a bundle zip plus the MASP image alone,
 both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
-- `0.1.0-pilot.19` (commit `712ba67`): pilot.18 plus date filters. Rehearsed 15 -> 19, passed.
-  The one to install.
+- `0.1.0-pilot.20` (commit `7fdddb5`): pilot.19 plus ClamAV unscannable reporting. Rehearsed
+  15 -> 20, passed. The one to install.
+- `0.1.0-pilot.19` (commit `712ba67`, superseded): pilot.18 plus date filters.
 - `0.1.0-pilot.18` (commit `dbbc3a1`, superseded): pilot.17 plus sign-in throttling,
   per-result versions, hash-locked dependencies and SBOM. Rehearsed 15 -> 18, passed.
 - `0.1.0-pilot.17` (commit `a19985a`, superseded): pilot.16 plus folder rules, exceptions and the
