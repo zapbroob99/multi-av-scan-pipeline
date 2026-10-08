@@ -328,6 +328,8 @@ services:
       CLAMD_CONF_StreamMaxLength: 512M
       CLAMD_CONF_MaxFileSize: 512M
       CLAMD_CONF_MaxScanSize: 512M
+      CLAMD_CONF_AlertExceedsMax: "yes"
+      CLAMD_CONF_AlertEncrypted: "yes"
     ports:
       - "127.0.0.1:3310:3310"
     volumes:

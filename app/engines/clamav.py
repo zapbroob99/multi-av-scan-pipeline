@@ -420,6 +420,10 @@ def run_clamd_scan(
             ),
         )
 
+    if raw_response.endswith(" FOUND") and unscannable_kind(signature):
+        return unscannable_result(signature, raw_response, started_at, "clamd", clamav_details(
+            "clamd", scan, host=host, port=port, timeout=timeout, response=raw_response))
+
     if raw_response.endswith(" FOUND"):
         return build_result(
             status="completed",
@@ -626,6 +630,10 @@ def run_cli_scan(scan: ScanRecord, command: str, timeout: int) -> EngineResultIn
             ),
         )
 
+    if completed.returncode == 1 and unscannable_kind(signature):
+        return unscannable_result(signature, raw_output, started_at, "clamscan", clamav_details(
+            "cli", scan, command=command, timeout=timeout, returncode=completed.returncode, output=raw_output))
+
     if completed.returncode == 1:
         return build_result(
             status="completed",
@@ -789,6 +797,44 @@ def parse_clamav_version(text: str) -> dict[str, str]:
         except ValueError:
             pass
     return result
+
+
+# ClamAV's names for "could not scan all of this file", reported because clamd
+# runs with AlertExceedsMax and AlertEncrypted (see the compose files). Without
+# those options ClamAV answers OK for an archive it scanned only in part or could
+# not open, so "not scanned" read as "clean". They are not malware
+# identifications: ClamAV reports them only when no real signature matched
+# (HeuristicScanPrecedence stays at its default, no), so the result is recorded
+# as skipped, the scan's coverage is incomplete and the client's profile decides
+# what an inconclusive file gets, as the gateways of other vendors let an
+# administrator decide for unscannable and encrypted content.
+UNSCANNABLE = (("Heuristics.Limits.Exceeded", "limit"), ("Heuristics.Encrypted", "encrypted"))
+
+
+def unscannable_kind(signature: str | None) -> str | None:
+    for prefix, kind in UNSCANNABLE:
+        if signature and signature.startswith(prefix):
+            return kind
+    return None
+
+
+def unscannable_result(signature: str, raw_output: str, started_at: float, engine_version: str,
+                       details: dict[str, object]) -> EngineResultInput:
+    kind = unscannable_kind(signature)
+    reason = ("ClamAV could not scan all of this file: it exceeds a scan limit" if kind == "limit"
+              else "ClamAV could not scan this file: its content is encrypted")
+    return build_result(
+        status="skipped",
+        detected=False,
+        signature=None,
+        severity="info",
+        confidence=0,
+        raw_output=raw_output,
+        error_message=f"{reason} ({signature}).",
+        duration_ms=elapsed_ms(started_at),
+        engine_version=engine_version,
+        details={**details, "unscannable": kind, "clamav_signature": signature},
+    )
 
 
 def parse_signature(raw_output: str) -> str | None:

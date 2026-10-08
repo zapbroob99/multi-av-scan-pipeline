@@ -302,6 +302,11 @@ services:
       CLAMD_CONF_StreamMaxLength: ${MASP_CLAMD_STREAM_MAX_LENGTH:-64M}
       CLAMD_CONF_MaxFileSize: ${MASP_CLAMD_MAX_FILE_SIZE:-64M}
       CLAMD_CONF_MaxScanSize: ${MASP_CLAMD_MAX_SCAN_SIZE:-64M}
+      # Report what could not be scanned instead of answering OK: a limit hit
+      # inside an archive, or encrypted archives and PDFs. MASP records these as
+      # "ClamAV did not complete" and the client's profile decides.
+      CLAMD_CONF_AlertExceedsMax: "yes"
+      CLAMD_CONF_AlertEncrypted: "yes"
     # Signature updates on networks without direct internet access: an internal
     # mirror, a proxy, or no freshclam at all. See clamav.env.example.
     env_file:

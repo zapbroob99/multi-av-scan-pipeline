@@ -154,3 +154,18 @@ release bundles (checksums detect damage, not who produced a bundle), forwarding
 trail to a system the database administrator cannot edit, archive extraction in a separate
 process with CPU, memory and time limits, per-client intake quotas, and a measured detection
 and false-positive evaluation (EICAR proves integration, not detection quality).
+
+## ClamAV "could not scan" is no longer "clean" (2026-10-08)
+
+By default clamd answers OK when it stops inside an archive at a scan limit (MaxScanSize,
+MaxFileSize, MaxRecursion) or cannot open encrypted content, so a 20 MB zip that expands past
+64 MB, or any password-protected zip, was recorded as "No detection" when a profile rule scanned
+archives whole with ClamAV. Verified against the pinned clamd image: both returned `stream: OK`.
+All compose files now set `AlertExceedsMax` and `AlertEncrypted` (what other gateways call
+blocking "unscannable" and "encrypted" content), and the adapter records the resulting
+`Heuristics.Limits.Exceeded.*` / `Heuristics.Encrypted.*` as a skipped result, not malware. The
+client's profile then decides what an inconclusive file gets (Block or Allow, labelled). With the
+options on, the same clamd reported `Heuristics.Encrypted.Zip` and
+`Heuristics.Limits.Exceeded.MaxScanSize`, and still reported `Eicar-Test-Signature` for an
+archive holding EICAR next to 80 MB of padding. Password-protected PDFs are included: they are
+now inconclusive rather than clean; an exception allows a specific one.

@@ -167,6 +167,43 @@ class ClamAVSizeLimitResultTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
 
 
+class ClamAVUnscannableTests(unittest.TestCase):
+    """With AlertExceedsMax and AlertEncrypted, clamd names what it could not scan."""
+
+    def scan(self, response: str):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sample_path = Path(temp_dir) / "s.zip"
+            sample_path.write_bytes(b"x")
+            with patch("app.engines.clamav.scan_with_clamd_when_ready", return_value=response):
+                return run_clamd_scan(scan_record(sample_path), host="clamav", port=3310, timeout=180,
+                                      ready_timeout=30, retry_interval=1.0)
+
+    def test_an_archive_over_a_scan_limit_is_not_clean_and_not_malware(self) -> None:
+        result = self.scan("stream: Heuristics.Limits.Exceeded.MaxScanSize FOUND")
+        self.assertEqual((result.status, result.detected, result.signature), ("skipped", False, None))
+        self.assertIn("exceeds a scan limit (Heuristics.Limits.Exceeded.MaxScanSize)", result.error_message)
+        self.assertIn('"unscannable": "limit"', result.details_json)
+
+    def test_encrypted_content_is_not_clean_and_not_malware(self) -> None:
+        result = self.scan("stream: Heuristics.Encrypted.Zip FOUND")
+        self.assertEqual((result.status, result.detected), ("skipped", False))
+        self.assertIn("its content is encrypted (Heuristics.Encrypted.Zip)", result.error_message)
+
+    def test_a_real_signature_is_still_a_detection(self) -> None:
+        result = self.scan("stream: Eicar-Test-Signature FOUND")
+        self.assertEqual((result.status, result.detected, result.signature), ("completed", True, "Eicar-Test-Signature"))
+        # Other heuristics stay detections; only the two "could not scan" families change.
+        self.assertTrue(self.scan("stream: Heuristics.Phishing.Email.SpoofedDomain FOUND").detected)
+
+    def test_the_pilot_and_production_clamd_report_what_they_could_not_scan(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        for name in ("docker-compose.pilot.yml", "docker-compose.prod.yml", "docker-compose.yml"):
+            text = (root / name).read_text(encoding="utf-8")
+            with self.subTest(compose=name):
+                self.assertIn('CLAMD_CONF_AlertExceedsMax: "yes"', text)
+                self.assertIn('CLAMD_CONF_AlertEncrypted: "yes"', text)
+
+
 class ClamAVRetryTests(unittest.TestCase):
     def test_connection_refused_is_retryable(self) -> None:
         self.assertTrue(

@@ -118,6 +118,13 @@ arbitrary command parsers.
 - Workers may use the HTTPS control API without database credentials or shared
   sample storage; direct database/shared-filesystem workers remain compatible.
 - ClamAV normally uses clamd TCP. Defender executes locally on a Windows worker.
+  Every compose file runs clamd with `AlertExceedsMax` and `AlertEncrypted`: without them clamd
+  answers OK for an archive it scanned only in part (MaxScanSize/MaxFileSize/MaxRecursion inside
+  it) or could not open (encrypted archives and PDFs), so "not scanned" read as clean. The adapter
+  records `Heuristics.Limits.Exceeded.*` and `Heuristics.Encrypted.*` as a skipped result
+  ("ClamAV could not scan..."), never a detection; coverage is then incomplete and the profile's
+  inconclusive choice decides. Keep `HeuristicScanPrecedence` at its default (no) so a real
+  signature in the same file is still reported instead.
 - API and ICAP submissions exclude adapters with `consumes_external_quota`.
 - API integrations resolve to a service client and its default or explicitly
   selected own enabled scan profile. ICAP processes bind to a client's default

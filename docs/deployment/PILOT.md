@@ -16,6 +16,11 @@
 
 ## Upgrade notes
 
+From pilot.20, clamd reports archives it could not fully scan (a scan limit inside the archive)
+and encrypted archives and PDFs instead of answering OK. MASP records them as "ClamAV could not
+scan", not as malware, and the client's profile decides: a profile whose inconclusive choice is
+Block now blocks password-protected zips and PDFs that were previously allowed as clean.
+
 - Rebuild the image and run every API, worker and intake process at the same
   version. Storage grants, user-management locks and fenced scan finalization
   assume no mixed old/new writers.
