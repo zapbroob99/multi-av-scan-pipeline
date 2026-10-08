@@ -1,8 +1,10 @@
 # MASP session handoff
 
-Updated: 2026-10-07, pilot.16 (profile rules) packaged and its upgrade/rollback rehearsed
-on `feat/archive-handling`; the user installed pilot.15 on the intranet. This is a
-workspace checkpoint, not evidence of a deployment.
+Updated: 2026-10-08, pilot.17 (profile rules, folder rules, exceptions, two decision fixes)
+packaged and its 15 -> 17 upgrade/rollback rehearsed on `feat/archive-handling`, which is
+pushed to origin (the user authorized pushing work without institutional data). The intranet
+runs pilot.15 as far as known; pilot.16 was never confirmed installed. This is a workspace
+checkpoint, not evidence of a deployment.
 
 ## Start here
 
@@ -261,6 +263,38 @@ scanning's archive default stays "hold for the full tier". `59a0d63` fixed the I
 a rule block (found in the rehearsal). Verification: backend 1147 SQLite OK, related modules
 157 on disposable PostgreSQL OK, frontend 203, e2e 39/39, build and contracts clean.
 
+**Pilot.17, 2026-10-08.** On top of pilot.16:
+- Folder scanning follows profile rules (`de48245`); folders are added on the client's
+  Storage tab. See "Folders follow profile rules" in `STORAGE_PROTECTION.md`.
+- Exceptions (`17ad93e`, `5c4e89e`), requested by the user ("if an exception is added it
+  suppresses every detection"): per-SHA-256, reason, client or global scope, expiry,
+  revoke; frozen at intake; decision `exception_allow`; no bell or SIEM event. Added from
+  System > Exceptions, a flagged ledger row or a blocked report. See "Exceptions" in
+  `PROFILE_RULES.md`. Folder findings are not covered yet.
+- A second agent's product security review (operator copy in `kilavuz/`, not tracked) found
+  two bugs, both confirmed and fixed in `9f84110`: a light check whose Hash List failed was
+  allowed as "light check only" (every check a rule names must now complete, otherwise the
+  result is inconclusive), and ClamAV signature health showed only the newest report (every
+  recent report of an enabled instance is now judged). Fixing it also exposed that the public
+  `DecisionPolicy` list lacked every rule/exception policy, so the console's result-JSON
+  preview failed for rule profiles; fixed in the same commit.
+- The user agreed the review's order: decision correctness (done), then a small hardening
+  round (login throttling, hashed dependency lock + SBOM, engine/signature version recorded
+  per result, a public note that the risk score is not a probability), then archive-parser
+  resource limits/isolation and per-client quotas; signed releases and MFA/SSO only if the
+  institution asks.
+Bundle from `a19985a`: `dist/masp-pilot-0.1.0-pilot.17.zip` SHA-256
+`ac4e384f1fc7277f3c77cdf4ed3c349c2639a97af27471ce82ff5b4962c56b74`, image tar SHA-256
+`c743aeb5159912e92970d1135451f2ccf2504a3ad7b9efdda7d5715387d1b012`. Rehearsal
+(`dist/rehearsal-upgrade17/`, log beside it) from a fresh pilot.15 with `fil`: dry run changed
+only `MASP_IMAGE` (plus the fresh install's rules directory); upgrade 9/9; `fil` converted as in
+pilot.16; sample rules gave the pilot.16 outcomes; an exception for EICAR on `fil` let it
+through with `exception_allow`, the ClamAV detection kept, no bell entry, no outbox row;
+rollback to 15 passed; re-upgrade passed; teardown left nothing. Verification: backend 1174
+SQLite OK, 329 related tests on disposable PostgreSQL OK, frontend 214, e2e 40/40 (ledger
+exception flow covered by unit tests only), build and contracts clean. Operator steps:
+`kilavuz/PILOT_17_DURUM.md`.
+
 **Pilot.16 packaged and rehearsed, 2026-10-07.** Bundle from `59a0d63`;
 `dist/masp-pilot-0.1.0-pilot.16.zip` SHA-256
 `41396d406c924f1f9498c42c9067b46ad619af36815809c3a2610f3749055d3c`,
@@ -385,6 +419,9 @@ folders live in git-ignored `kilavuz/` and `dist/`.
 **Releases in `dist/` (git-ignored), each a bundle zip plus the MASP image alone,
 both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
+- `0.1.0-pilot.17` (commit `a19985a`): pilot.16 plus folder rules, exceptions and the
+  light-check/signature-health fixes. Rehearsed 15 -> 17 (conversion, rules, exception,
+  rollback, re-upgrade), passed.
 - `0.1.0-pilot.16` (commit `59a0d63`): profile rules, plain settings screens. Rehearsed
   15 -> 16 (conversion, rules, rollback, re-upgrade), passed.
 - `0.1.0-pilot.15` (commit `d4ebac6`, deployed on the intranet 2026-10-07): pilot.14 plus the not-allowed outcome and
