@@ -727,6 +727,8 @@ def init_sqlite_db() -> None:
         ensure_hash_list_schema(connection)
         from app.services import scan_exceptions
         scan_exceptions.ensure_schema(connection)
+        from app.services import login_throttle
+        login_throttle.ensure_schema(connection)
         ensure_storage_protection_schema(connection)
         connection.execute(
             """
@@ -1186,6 +1188,8 @@ def init_postgres_db() -> None:
         ensure_hash_list_schema(connection)
         from app.services import scan_exceptions
         scan_exceptions.ensure_schema(connection)
+        from app.services import login_throttle
+        login_throttle.ensure_schema(connection)
         ensure_storage_protection_schema(connection)
         connection.execute(
             """

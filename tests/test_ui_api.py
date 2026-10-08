@@ -26,6 +26,7 @@ from app.services import retention_admin
 from app.services import scan_policy, scan_policy_admin
 from app.services import hash_console
 from app.services import audit_read, about_read
+from app.services import login_throttle
 
 
 class BrowserApiTests(unittest.TestCase):
@@ -3047,6 +3048,49 @@ class BrowserApiTests(unittest.TestCase):
         self.assertNotIn('session_token', body)
         self.assertEqual(self.request('/session/logout', 'POST')[0], 204)
         self.assertEqual(self.request('/session')[0], 401)
+
+    def login(self, username, password='wrong-password'):
+        return self.request('/session/login', 'POST', {'username': username, 'password': password}, session=False, csrf=False)
+
+    def test_repeated_failures_lock_the_username_before_any_password_check(self):
+        for _ in range(login_throttle.USER_FAILURES):
+            self.assertEqual(self.login('browser-admin')[0], 401)
+        with patch.object(auth, 'authenticate', wraps=auth.authenticate) as checked:
+            status, body, headers = self.login('BROWSER-ADMIN', 'test-password')
+        self.assertEqual(status, 429)
+        self.assertIn('Too many failed sign-in attempts. Try again in 15 minutes.', body['detail'])
+        self.assertLessEqual(int(headers[b'retry-after']), login_throttle.LOCK_SECONDS)
+        # Neither the password nor a directory is consulted while locked.
+        checked.assert_not_called()
+        # An unknown username is answered exactly the same way.
+        for _ in range(login_throttle.USER_FAILURES):
+            self.assertEqual(self.login('nobody-here')[0], 401)
+        self.assertEqual(self.login('nobody-here')[0], 429)
+        with db.connect() as connection:
+            connection.execute("UPDATE login_attempts SET locked_until = 0")
+            stored = [row['key_hash'] for row in connection.execute('SELECT key_hash FROM login_attempts').fetchall()]
+        self.assertFalse(any('browser-admin' in key or 'nobody' in key for key in stored))
+        self.assertEqual(self.login('browser-admin', 'test-password')[0], 200)
+        with db.connect() as connection:
+            scopes = sorted(row['scope'] for row in connection.execute('SELECT scope FROM login_attempts').fetchall())
+        # The success cleared its username; the other username and the address keep counting.
+        self.assertEqual(scopes, ['address', 'user'])
+
+    def test_one_address_guessing_many_usernames_is_locked(self):
+        for index in range(login_throttle.ADDRESS_FAILURES):
+            self.assertEqual(self.login(f'guess-{index}')[0], 401)
+        self.assertEqual(self.login('browser-admin', 'test-password')[0], 429)
+
+    def test_failures_older_than_the_window_start_a_new_count(self):
+        now = 1_790_000_000
+        for offset in range(login_throttle.USER_FAILURES - 1):
+            login_throttle.record_failure('someone', None, now + offset)
+        later = now + login_throttle.WINDOW_SECONDS + 10
+        login_throttle.record_failure('someone', None, later)
+        self.assertEqual(login_throttle.locked_for('someone', None, later), 0)
+        for offset in range(1, login_throttle.USER_FAILURES):
+            login_throttle.record_failure('someone', None, later + offset)
+        self.assertEqual(login_throttle.locked_for('someone', None, later + 5), login_throttle.LOCK_SECONDS - 1)
 
     def test_json_body_is_bounded_even_without_content_length(self):
         status, _, _ = self.request('/engines', 'POST', chunks=[b'{' + b'x' * 100000, b'x' * 100000])

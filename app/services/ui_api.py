@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import database as db
 from app.services import auth
+from app.services import login_throttle
 from app.services import dashboard_read
 from app.services import scan_report_read
 from app.services import archive_read
@@ -1162,9 +1163,17 @@ def login_options():
 
 @router.post("/session/login", response_model=SessionPayload)
 def sign_in(request: Request, body: LoginBody, response: Response):
+    address = request.client.host if request.client is not None else None
+    # Checked before any password or directory check; the answer does not
+    # depend on whether the username exists.
+    wait = login_throttle.locked_for(body.username, address)
+    if wait:
+        raise HTTPException(429, login_throttle.message(wait), headers={"Retry-After": str(wait)})
     result = auth.login(body.username, body.password)
     if result is None:
+        login_throttle.record_failure(body.username, address)
         raise HTTPException(401, "Invalid username or password.")
+    login_throttle.record_success(body.username)
     set_audit_context(request, action="auth.login", actor=result.user,
                       target_type="user", target_id=result.user.id)
     response.set_cookie(auth.SESSION_COOKIE, result.session_token, httponly=True,
