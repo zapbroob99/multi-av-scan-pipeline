@@ -1,8 +1,8 @@
 # MASP session handoff
 
-Updated: 2026-10-08, pilot.18 (everything in pilot.17 plus the hardening round) packaged and
-its 15 -> 18 upgrade/rollback rehearsed on `feat/archive-handling`; the user will install
-pilot.18 directly, skipping pilot.16 and pilot.17. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet
+Updated: 2026-10-08, pilot.19 (pilot.18 plus date filters on the ledger, dashboard and audit
+lists) packaged and its 15 -> 19 upgrade/rollback rehearsed on `feat/archive-handling`; the user
+will install pilot.19 directly, skipping pilot.16, .17 and .18. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet
 runs pilot.15 as far as known; pilot.16 was never confirmed installed. This is a workspace
 checkpoint, not evidence of a deployment.
 
@@ -263,7 +263,18 @@ scanning's archive default stays "hold for the full tier". `59a0d63` fixed the I
 a rule block (found in the rehearsal). Verification: backend 1147 SQLite OK, related modules
 157 on disposable PostgreSQL OK, frontend 203, e2e 39/39, build and contracts clean.
 
-**Pilot.18, 2026-10-08: the hardening round agreed after the review.**
+**Pilot.19, 2026-10-08: date filters** (`e802625`, requested by the user). From/To days on the
+API ledger, Dashboard and Audit filters, whole days in the browser's zone, both included, kept in
+the URL; sent as `created_after`/`created_before` instants and checked by
+`app/services/date_range.py`. Bundle from `712ba67`: zip SHA-256
+`aebd5952c7a530755ecebac7be68d017bc732a0160ada2af08b06d6a532f65fa`, image tar SHA-256
+`fc327eb2f5df865f61f7a78c7c5be3a1804003fb3a613aba5467893f2f83351d`. Rehearsal
+(`dist/rehearsal-upgrade19/`) repeated every pilot.18 check and added a PostgreSQL window check
+(last day 20 scans, 2001 none, audit 6); rollback and re-upgrade passed. Verification: backend
+1189 SQLite OK, PostgreSQL browser readers OK, frontend 217, e2e 40/40. Operator steps:
+`kilavuz/PILOT_19_DURUM.md` (pilot.17 and .18 notes are marked "not to be installed").
+
+**Pilot.18, 2026-10-08 (superseded by pilot.19): the hardening round agreed after the review.**
 - Sign-in throttling (`e2868b7`, `app/services/login_throttle.py`): per username (5 in 15 min)
   and per address (20), checked before any password or directory check.
 - Engine and signature versions on each result (`80b0d83`): clamd `VERSION` after a completed
@@ -444,8 +455,10 @@ folders live in git-ignored `kilavuz/` and `dist/`.
 **Releases in `dist/` (git-ignored), each a bundle zip plus the MASP image alone,
 both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
-- `0.1.0-pilot.18` (commit `dbbc3a1`): pilot.17 plus sign-in throttling, per-result
-  versions, hash-locked dependencies and SBOM. Rehearsed 15 -> 18, passed. The one to install.
+- `0.1.0-pilot.19` (commit `712ba67`): pilot.18 plus date filters. Rehearsed 15 -> 19, passed.
+  The one to install.
+- `0.1.0-pilot.18` (commit `dbbc3a1`, superseded): pilot.17 plus sign-in throttling,
+  per-result versions, hash-locked dependencies and SBOM. Rehearsed 15 -> 18, passed.
 - `0.1.0-pilot.17` (commit `a19985a`, superseded): pilot.16 plus folder rules, exceptions and the
   light-check/signature-health fixes. Rehearsed 15 -> 17 (conversion, rules, exception,
   rollback, re-upgrade), passed.
