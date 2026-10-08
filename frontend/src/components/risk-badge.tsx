@@ -1,4 +1,4 @@
-import { Ban, ScanLine, ShieldAlert, ShieldCheck, ShieldOff, ShieldQuestion } from 'lucide-react'
+import { Ban, BadgeCheck, ScanLine, ShieldAlert, ShieldCheck, ShieldOff, ShieldQuestion } from 'lucide-react'
 
 const ALERT_LEVELS = new Set(['high', 'critical'])
 const REVIEW_LEVELS = new Set(['medium', 'low'])
@@ -59,6 +59,14 @@ export function RuleBadge({ action }: { action: string | null | undefined }) {
   if (action === 'allow') return <span className="risk-badge risk-badge-review" title="A profile rule allowed this file without scanning it.">
     <ShieldOff size={14} aria-hidden="true" /><strong>Not scanned</strong></span>
   return null
+}
+
+/** An administrator's exception let this exact file through. Shown beside the
+ * recorded risk, never instead of it: the engines' findings stay as evidence. */
+export function ExceptionBadge({ id }: { id: number | null | undefined }) {
+  if (id === null || id === undefined) return null
+  return <span className="risk-badge risk-badge-review" title={`Allowed by exception #${id}. Engine results are kept as evidence; no detection alert was raised.`}>
+    <BadgeCheck size={14} aria-hidden="true" /><strong>Exception</strong><span className="risk-badge-score">#{id}</span></span>
 }
 
 /** True when a row should be called out in the list itself, not only in a cell. */

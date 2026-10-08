@@ -6,7 +6,7 @@ import { request, type ScanReport, type ReportEngine } from '../lib/api'
 import { Button } from '../components/ui/button'
 import { BackLink } from '../components/section-tabs'
 import { Timestamp } from '../components/timestamp'
-import { NotAllowedBadge, RuleBadge } from '../components/risk-badge'
+import { ExceptionBadge, NotAllowedBadge, RuleBadge } from '../components/risk-badge'
 
 export function reportPollInterval(report?: ScanReport) {
   return report && (['queued', 'running', 'finalizing'].includes(report.status) || report.decision?.action === 'wait') ? 3000 : false
@@ -43,7 +43,15 @@ function EngineRow({ scanId, engine, automation }: { scanId: number; engine: Rep
   </article>
 }
 
-export default function Report({ automation = false }: { automation?: boolean }) {
+/** Where an administrator adds an exception for this exact file, with its
+ * digest and (for an integration scan) its client filled in. */
+export function exceptionLink(scan: Pick<ScanReport, 'sha256' | 'service_client_id'>, automation: boolean) {
+  const query = new URLSearchParams({ add: scan.sha256 })
+  if (automation && scan.service_client_id !== null && scan.service_client_id !== undefined) query.set('client', String(scan.service_client_id))
+  return `/engines/exceptions?${query.toString()}`
+}
+
+export default function Report({ automation = false, admin = false }: { automation?: boolean; admin?: boolean }) {
   const { scanId = '' } = useParams()
   const [searchParams] = useSearchParams()
   const justAccepted = searchParams.get('accepted') === '1'
@@ -71,12 +79,16 @@ export default function Report({ automation = false }: { automation?: boolean })
     {scan.warning && <p role="alert" className="error">{scan.warning}</p>}
     <section className={`submission-card report-decision decision-${scan.decision?.action || 'unknown'}`} aria-label="Policy decision">
       <p className="eyebrow">BACKEND POLICY DECISION</p>
-      {(scan.not_allowed_label || scan.rule_action === 'light' || scan.rule_action === 'allow') && <p className="report-not-allowed">
-        {scan.not_allowed_label && <NotAllowedBadge label={scan.not_allowed_label} />}<RuleBadge action={scan.rule_action} /></p>}
+      {(scan.not_allowed_label || scan.rule_action === 'light' || scan.rule_action === 'allow' || scan.exception_id != null) && <p className="report-not-allowed">
+        {scan.not_allowed_label && <NotAllowedBadge label={scan.not_allowed_label} />}<RuleBadge action={scan.rule_action} /><ExceptionBadge id={scan.exception_id} /></p>}
       <h2>{scan.decision?.label || 'Decision unavailable'}</h2>
       <p>{scan.decision?.reason || 'A reliable decision cannot be shown from the compact report.'}</p>
       {scan.decision && <><small>Policy: {scan.decision.policy} · Confidence: {scan.decision.confidence}</small>
         <ul>{scan.decision.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul></>}
+      {scan.exception_id != null && admin && <p><Link to={`/engines/exceptions?state=all&q=${scan.sha256}`}>Review or revoke exception #{scan.exception_id}</Link></p>}
+      {admin && scan.exception_id == null && scan.decision && ['block', 'review'].includes(scan.decision.action) && <p className="muted">
+        A known false positive? <Link to={exceptionLink(scan, automation)}>Add an exception for this file</Link>. It applies to this exact
+        SHA-256 when it is sent again; this scan keeps its decision.</p>}
     </section>
     {scan.batch_id !== null && <p className="callout">The risk, coverage and engine results below describe this file.
       When the profile scans every archive member, the policy decision also includes those members.</p>}

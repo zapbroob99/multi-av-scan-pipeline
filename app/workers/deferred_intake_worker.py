@@ -27,6 +27,7 @@ from app.services.deferred_storage import (
 from app.services.profile_policy import PolicyRejectedError, apply_intake_policy, not_allowed_code
 from app.services.scan_intake import effective_archive_mode
 from app.services import profile_rules
+from app.services.scan_exceptions import attach as attach_exception
 from app.services.service_clients import engines_for_snapshot_json
 
 
@@ -86,8 +87,10 @@ def process_next() -> bool:
                     "Deferred routing snapshot has no available engine instances."
                 )
             stored = copy_deferred_source(request)
+            snapshot, exception_id = attach_exception(request.profile_snapshot_json, sha256=stored.sha256,
+                                                      client_id=request.service_client_id)
             try:
-                snapshot = apply_intake_policy(request.profile_snapshot_json, filename=stored.original_filename,
+                snapshot = apply_intake_policy(snapshot, filename=stored.original_filename,
                                                size=stored.size_bytes, storage_path=stored.storage_path)
             except PolicyRejectedError as exc:
                 # Retrying cannot change the content, so this is final.
@@ -106,8 +109,9 @@ def process_next() -> bool:
                 archive_format=archive_format,
                 profile_snapshot_json=snapshot,
                 archive_mode=effective_archive_mode(snapshot, request.archive_mode),
-                not_allowed=not_allowed_code(snapshot),
+                not_allowed=None if exception_id else not_allowed_code(snapshot),
                 rule_action=rule_action,
+                exception_id=exception_id,
             )
             if scan_id is None:
                 Path(stored.storage_path).unlink(missing_ok=True)

@@ -699,6 +699,9 @@ def init_sqlite_db() -> None:
         # The action of the profile rule the file matched (profile_rules); NULL
         # for scans accepted under the previous policy format or without a profile.
         ensure_column(connection, "scan_jobs", "rule_action", "TEXT")
+        # The exception (scan_exceptions.id) frozen at intake that lets this file
+        # through; such a scan raises no detection notification.
+        ensure_column(connection, "scan_jobs", "exception_id", "BIGINT")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
@@ -722,6 +725,8 @@ def init_sqlite_db() -> None:
         migrate_engine_instances_for_multiple_instances(connection)
         ensure_service_client_schema(connection)
         ensure_hash_list_schema(connection)
+        from app.services import scan_exceptions
+        scan_exceptions.ensure_schema(connection)
         ensure_storage_protection_schema(connection)
         connection.execute(
             """
@@ -755,6 +760,9 @@ def init_sqlite_db() -> None:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_scan_jobs_not_allowed ON scan_jobs (id) WHERE not_allowed IS NOT NULL"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_jobs_exception ON scan_jobs (exception_id) WHERE exception_id IS NOT NULL"
         )
         connection.execute(
             """
@@ -1150,6 +1158,9 @@ def init_postgres_db() -> None:
         # The action of the profile rule the file matched (profile_rules); NULL
         # for scans accepted under the previous policy format or without a profile.
         ensure_column(connection, "scan_jobs", "rule_action", "TEXT")
+        # The exception (scan_exceptions.id) frozen at intake that lets this file
+        # through; such a scan raises no detection notification.
+        ensure_column(connection, "scan_jobs", "exception_id", "BIGINT")
         ensure_column(connection, "engine_results", "details_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(connection, "engine_results", "findings_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(connection, "scan_engine_jobs", "worker_node_id", "TEXT")
@@ -1173,6 +1184,8 @@ def init_postgres_db() -> None:
         migrate_engine_instances_for_multiple_instances(connection)
         ensure_service_client_schema(connection)
         ensure_hash_list_schema(connection)
+        from app.services import scan_exceptions
+        scan_exceptions.ensure_schema(connection)
         ensure_storage_protection_schema(connection)
         connection.execute(
             """
@@ -1206,6 +1219,9 @@ def init_postgres_db() -> None:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_scan_jobs_not_allowed ON scan_jobs (id) WHERE not_allowed IS NOT NULL"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_jobs_exception ON scan_jobs (exception_id) WHERE exception_id IS NOT NULL"
         )
         connection.execute(
             """
@@ -3144,6 +3160,7 @@ def complete_deferred_scan_intake(
     archive_mode: str | None = None,
     not_allowed: str | None = None,
     rule_action: str | None = None,
+    exception_id: int | None = None,
 ) -> int | None:
     """Atomically create the scan and fence-link it to its deferred request.
 
@@ -3210,6 +3227,7 @@ def complete_deferred_scan_intake(
             profile_snapshot_json=snapshot,
             not_allowed=not_allowed,
             rule_action=rule_action,
+            exception_id=exception_id,
             **settled,
         )
         _insert_engine_jobs(connection, scan_id, engines)
@@ -4457,6 +4475,7 @@ def _insert_scan_job(
     profile_snapshot_json: str = "{}",
     not_allowed: str | None = None,
     rule_action: str | None = None,
+    exception_id: int | None = None,
 ) -> int:
     cursor = connection.execute(
         f"""
@@ -4479,11 +4498,12 @@ def _insert_scan_job(
             profile_snapshot_json,
             not_allowed,
             rule_action,
+            exception_id,
             started_at,
             completed_at
         )
         VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
             CASE
                 WHEN ? IN ('completed', 'failed') THEN CURRENT_TIMESTAMP
                 ELSE NULL
@@ -4510,6 +4530,7 @@ def _insert_scan_job(
             profile_snapshot_json,
             not_allowed,
             rule_action,
+            exception_id,
             status,
         ),
     )
@@ -5033,6 +5054,7 @@ def create_scan_intake(
     profile_snapshot_json: str = "{}",
     not_allowed: str | None = None,
     rule_action: str | None = None,
+    exception_id: int | None = None,
 ) -> int:
     """Atomically create the sample, optional archive batch, scan job, and its
     engine jobs in ONE transaction. Either the whole scan is persisted or nothing
@@ -5086,6 +5108,7 @@ def create_scan_intake(
             profile_snapshot_json=profile_snapshot_json,
             not_allowed=not_allowed,
             rule_action=rule_action,
+            exception_id=exception_id,
             **settled,
         )
         _insert_engine_jobs(connection, scan_id, engines)
@@ -5128,6 +5151,7 @@ def create_archive_child(
     profile_snapshot_json: str = "{}",
     not_allowed: str | None = None,
     rule_action: str | None = None,
+    exception_id: int | None = None,
 ) -> int | None:
     """Atomically register one archive member as a child scan, idempotent by its
     ordinal within the parent, and fenced to the parent's finalizer.
@@ -5196,6 +5220,7 @@ def create_archive_child(
                 profile_snapshot_json=profile_snapshot_json,
                 not_allowed=not_allowed,
                 rule_action=rule_action,
+                exception_id=exception_id,
                 **settled,
             )
             _insert_engine_jobs(connection, child_id, engines)
@@ -6357,6 +6382,7 @@ def _enqueue_scan_notification_if_requested(
     scan = connection.execute(
         """
         SELECT scan_jobs.service_client_id, scan_jobs.profile_snapshot_json, scan_jobs.not_allowed,
+               scan_jobs.exception_id,
                samples.original_filename, samples.size_bytes, samples.sha256
         FROM scan_jobs
         JOIN samples ON samples.id = scan_jobs.sample_id
@@ -6365,6 +6391,9 @@ def _enqueue_scan_notification_if_requested(
         (scan_id,),
     ).fetchone()
     if scan is None or row_value(scan, "service_client_id") is None:
+        return
+    if row_value(scan, "exception_id") is not None:
+        # An administrator let this exact file through; it is not an incident.
         return
     try:
         snapshot = json.loads(str(row_value(scan, "profile_snapshot_json") or "{}"))

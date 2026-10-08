@@ -24,7 +24,8 @@ from app.services.browser_db_budget import apply_read_budget
 PAGE_SIZE = 10
 UNREAD_CAP = 99
 DETECTION_VERDICTS = ("high", "critical")
-_DETECTED = "j.status = 'completed' AND j.verdict IN ('high', 'critical')"
+# A file an administrator let through by exception is not an incident.
+_DETECTED = "j.status = 'completed' AND j.verdict IN ('high', 'critical') AND j.exception_id IS NULL"
 
 
 class Detection(BaseModel):

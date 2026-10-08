@@ -19,6 +19,7 @@ export const SYSTEM_TABS: Tab[] = [
   { to: '/system/delivery', label: 'ICAP and SIEM' },
   { to: '/engines', label: 'Engines', end: true },
   { to: '/engines/hash-list', label: 'Hash list' },
+  { to: '/engines/exceptions', label: 'Exceptions' },
 ]
 
 /** Shared frame for every System screen. The strip is rendered once, outside

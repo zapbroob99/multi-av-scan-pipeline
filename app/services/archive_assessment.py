@@ -34,6 +34,9 @@ def read(connection, container, decision: ScanDecision) -> ScanDecision:
         return decision
     apply_read_budget(connection)
     snapshot = _object(container.profile_snapshot_json)
+    if decision.policy == 'exception_allow':
+        # The exception names this archive itself: what is inside does not change it.
+        return decision
     inspection = snapshot.get('archive_inspection')
     expected = inspection.get('members') if isinstance(inspection, dict) else None
     if type(expected) is not int or expected < 0 or inspection.get('violation_total') != 0:

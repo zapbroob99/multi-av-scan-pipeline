@@ -13,6 +13,7 @@ from app.models import EngineResultRecord, ScanRecord
 from app.services.decisions import ScanDecision, decide_scan_action
 from app.services.engine_registry import detection_engine_names
 from app.services.profile_policy import apply_profile_policy, archive_handling
+from app.services.scan_exceptions import apply_exception
 from app.services.scoring import calculate_risk
 from app.services.service_clients import parse_profile_snapshot, required_detection_engine_names
 
@@ -198,8 +199,10 @@ def scan_decision(
         unavailable_engines=coverage_unavailable,
         policy_review_reasons=policy_review_reasons,
     )
-    # The client's frozen profile policy can only make this stricter.
-    return apply_profile_policy(decision, parse_profile_snapshot(scan), scan_role=scan.scan_role)
+    # The client's frozen profile policy can only make this stricter; an
+    # administrator's exception for this exact file then allows it regardless.
+    snapshot = parse_profile_snapshot(scan)
+    return apply_exception(apply_profile_policy(decision, snapshot, scan_role=scan.scan_role), snapshot)
 
 
 def resolve_scan_decision(scan: ScanRecord) -> ScanDecision:

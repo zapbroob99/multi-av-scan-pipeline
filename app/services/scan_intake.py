@@ -17,6 +17,7 @@ from app.services.archive_extractor import EXTRACT_ALL_ARCHIVE_MODE, detect_arch
 from app.services.engine_registry import enabled_engines
 from app.services.profile_policy import apply_intake_policy, not_allowed_code, scans_every_member
 from app.services import profile_rules
+from app.services.scan_exceptions import attach as attach_exception
 
 
 API_TERMINAL_SCAN_STATUSES = {"completed", "failed"}
@@ -73,6 +74,10 @@ def enqueue_scan_from_stored_sample(
                 f"No eligible scan engines are available for source {source!r}; "
                 "intake rejected."
             )
+        # An administrator's exception for this exact file is frozen first, so
+        # the decision allows it whatever the rules and engines find.
+        profile_snapshot_json, exception_id = attach_exception(
+            profile_snapshot_json, sha256=stored_sample.sha256, client_id=service_client_id)
         # Raises PolicyRejectedError when the client's profile refuses the
         # sample outright; the file is discarded below and no scan is created.
         profile_snapshot_json = apply_intake_policy(
@@ -103,8 +108,9 @@ def enqueue_scan_from_stored_sample(
             service_client_id=service_client_id,
             scan_profile_id=scan_profile_id,
             profile_snapshot_json=profile_snapshot_json,
-            not_allowed=not_allowed_code(profile_snapshot_json),
+            not_allowed=None if exception_id else not_allowed_code(profile_snapshot_json),
             rule_action=rule_action,
+            exception_id=exception_id,
         )
     except Exception:
         # Any failure BEFORE the intake transaction commits (zero engines,

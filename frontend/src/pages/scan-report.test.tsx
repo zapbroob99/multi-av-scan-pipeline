@@ -13,18 +13,37 @@ const payload: ScanReport = { id: 42, filename: 'safe.bin', sha256: 'a'.repeat(6
   decision: { action: 'allow', label: 'Allow', tone: 'success', confidence: 'high', policy: 'clean_full_coverage', reason: 'Full coverage completed.', reasons: [] },
   engines: [{ result_id: 7, name: 'AV', required: true, status: 'completed', detected: false, signature: null, error: null, duration_ms: 10 }] }
 
-function mount(report = payload, path = '/scans/42', automation = false) {
+function mount(report = payload, path = '/scans/42', automation = false, admin = false) {
   const fetcher = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('/results/') ? {
     result_id: 7, raw_output: '<script>alert(1)</script>', details_json: '{}', findings_json: '[]', truncated: ['raw_output'],
   } : report)))
   vi.stubGlobal('fetch', fetcher)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Routes>
-    <Route path="/scans/:scanId" element={<Report automation={automation} />} /></Routes></MemoryRouter></QueryClientProvider>)
+    <Route path="/scans/:scanId" element={<Report automation={automation} admin={admin} />} /></Routes></MemoryRouter></QueryClientProvider>)
   return fetcher
 }
 
 describe('Scan report', () => {
+  it('offers administrators an exception for a blocked file, with its digest and client', async () => {
+    const blocked = { ...payload, source: 'icap', service_client_id: 3,
+      decision: { ...payload.decision!, action: 'block', label: 'Block', policy: 'detected' } }
+    mount(blocked, '/scans/42', true, true)
+    const link = await screen.findByRole('link', { name: 'Add an exception for this file' })
+    expect(link).toHaveAttribute('href', `/engines/exceptions?add=${'a'.repeat(64)}&client=3`)
+  })
+  it('never offers an exception to analysts', async () => {
+    mount({ ...payload, decision: { ...payload.decision!, action: 'block', label: 'Block' } })
+    await screen.findByRole('heading', { name: 'Block' })
+    expect(screen.queryByText('Add an exception for this file')).toBeNull()
+  })
+  it('marks a file allowed by exception', async () => {
+    mount({ ...payload, exception_id: 5, decision: { ...payload.decision!, label: 'Allow (exception)', policy: 'exception_allow' } }, '/scans/42', false, true)
+    await screen.findByRole('heading', { name: 'Allow (exception)' })
+    expect(screen.getByTitle(/Allowed by exception #5/)).toHaveTextContent('Exception#5')
+    expect(screen.getByRole('link', { name: 'Review or revoke exception #5' })).toBeInTheDocument()
+    expect(screen.queryByText('Add an exception for this file')).toBeNull()
+  })
   it('uses the server decision and loads technical text only on demand', async () => {
     const fetcher = mount()
     await screen.findByRole('heading', { name: 'Allow' })

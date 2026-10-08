@@ -97,6 +97,35 @@ Recorded risk stays per file and is never raised by a rule.
 Scans accepted under the previous policy format keep their previous decision logic: a
 snapshot is never reinterpreted.
 
+## Exceptions
+
+Rules describe what happens to kinds of files; an exception is for one exact file an
+administrator has confirmed is harmless (a false positive, a tool a user needs). It is kept
+apart from the rules on purpose: the rules stay short, and every exception carries who added
+it, why, and for how long.
+
+- Keyed by the SHA-256 MASP computed itself, never a name, an extension or a digest a client
+  supplied. A reason is required; an expiry is optional; one client or every client and
+  manual scans. A client's own exception is used before one for all clients.
+- Looked up once when a file is accepted and frozen in the routing snapshot (`exception`)
+  and `scan_jobs.exception_id`, like the rule. Scans accepted earlier keep their decision,
+  and revoking an exception does not change scans it already allowed.
+- The rule still routes the file and its engines still run; their results are kept as
+  evidence and recorded risk is unchanged. The decision is Allow (exception)
+  (`exception_allow`) whatever the engines, the rule, the archive check or the policy said:
+  a file a Block rule matches is allowed without scanning.
+- No bell entry, no `malware.detected` and no `policy.not_allowed` SIEM event is raised for
+  an excepted scan: it is not an incident.
+- An archive member never inherits its container's exception; an excepted archive's
+  decision does not depend on its members.
+- The hash list's allowlist is a different thing: an informational finding that never
+  allows a file.
+
+Administrators manage exceptions on System > Exceptions (`/console/engines/exceptions`);
+a blocked or review report offers "Add an exception for this file" with the digest and the
+client filled in, and the ledger and report badge an excepted scan. Folder-scanning
+findings are not covered by exceptions yet.
+
 ## Upgrading existing profiles
 
 Each existing profile becomes the rule list that gives the same behaviour, in this

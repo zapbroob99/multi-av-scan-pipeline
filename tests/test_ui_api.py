@@ -1217,6 +1217,37 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual(self.request('/hash-list/1', 'DELETE')[0], 403)
         self.assertIsNone(db.get_hash_list_entry('a' * 64))
 
+    def test_exceptions_are_admin_only_audited_and_revoked_once(self):
+        body = {'sha256': 'a' * 64, 'reason': 'Vendor installer flagged by ClamAV', 'expires_in_days': 30}
+        self.assertEqual(self.request('/exceptions', session=False)[0], 401)
+        self.assertEqual(self.request('/exceptions', 'POST', body, csrf=False)[0], 403)
+        for invalid in ({'sha256': 'not-a-hash'}, {'reason': ''}, {'expires_in_days': 0}, {'service_client_id': 999999},
+                        {'extra': True}):
+            with self.subTest(invalid=list(invalid)):
+                self.assertIn(self.request('/exceptions', 'POST', body | invalid)[0], (404, 422))
+        with patch.object(ui_api, 'set_audit_context', wraps=ui_api.set_audit_context) as audit:
+            status, created, _ = self.request('/exceptions', 'POST', body)
+            self.assertEqual(status, 201, created)
+            status, page, headers = self.request('/exceptions')
+            self.assertEqual((status, headers[b'cache-control']), (200, b'no-store'))
+            item = page['items'][0]
+            self.assertEqual((item['id'], item['state'], item['client_id'], item['uses'], item['created_by']),
+                             (created['id'], 'active', None, 0, 'browser-admin'))
+            self.assertIsNotNone(item['expires_at'])
+            path = f"/exceptions/{created['id']}/revoke"
+            self.assertEqual(self.request(path, 'POST', csrf=False)[0], 403)
+            self.assertEqual(self.request(path, 'POST')[0], 204)
+            self.assertEqual(self.request(path, 'POST')[0], 409)
+        actions = [call.kwargs.get('action') for call in audit.call_args_list if call.kwargs.get('action')]
+        self.assertEqual(actions, ['exception.create', 'exception.revoke', 'exception.revoke'])
+        self.assertEqual(self.request('/exceptions')[1]['items'], [])
+        self.assertEqual(self.request('/exceptions?state=revoked')[1]['items'][0]['revoked_by'], 'browser-admin')
+        self.assertEqual(self.request('/exceptions?state=deleted')[0], 422)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request('/exceptions')[0], 403)
+        self.assertEqual(self.request('/exceptions', 'POST', body)[0], 403)
+
     def test_hash_list_add_normalizes_dedupes_and_never_reclassifies(self):
         status, added, _ = self.request('/hash-list', 'POST', {
             'list_kind': 'block', 'hashes': [' ' + 'A' * 64, 'a' * 64, 'b' * 64], 'note': 'Incident 14'})

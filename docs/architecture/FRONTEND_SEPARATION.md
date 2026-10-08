@@ -1828,10 +1828,27 @@ asserting that no legacy link remains. Build and contract drift check passed.
 The application image was rebuilt and smoke-tested: `/health` 200,
 `/console/dashboard` 200, `/` 301 to the console Dashboard.
 
+### Exceptions
+
+Admin `/console/engines/exceptions` (System > Exceptions) lists, adds and revokes the
+per-file exceptions described in `PROFILE_RULES.md`. GET `/api/ui/v1/exceptions` returns
+20-row descending ID-keyset pages (at most 100) filtered by state (active by default,
+expired, revoked, all) and a literal SHA-256/reason search; each row carries the number of
+scans it allowed. POST `/api/ui/v1/exceptions` takes the digest, an optional client, a
+required reason of at most 500 characters and an optional expiry of 1 to 3650 days; an
+unknown client is a 404. POST `/api/ui/v1/exceptions/{id}/revoke` answers 204, or 409
+when the exception is missing or already revoked. Both writes are admin/CSRF-checked,
+audited (`exception.create`, `exception.revoke`), confirmed in a dialog and never
+replayed. A report whose decision is Block or Review offers administrators "Add an
+exception for this file", opening the form with `?add=<sha256>` (and `&client=<id>` for
+an integration scan); those parameters only prefill the form. The ledger and the report
+show an "Exception #id" badge beside the recorded risk, and the ledger no longer
+highlights an excepted row as an alert.
+
 ### System navigation
 
 Every System screen (Overview, Worker nodes, Worker pools, Runtime and queue,
-Retention, Deferred intake, ICAP and SIEM, Engines, Hash list) renders inside one admin-only
+Retention, Deferred intake, ICAP and SIEM, Engines, Hash list, Exceptions) renders inside one admin-only
 layout route, `SystemLayout` in `components/section-tabs.tsx`. It draws the tab
 strip once and gives the pages their own `Suspense`, so switching tabs no longer
 redraws the strip at each page's heading height or hides it while a page chunk

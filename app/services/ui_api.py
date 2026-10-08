@@ -38,6 +38,7 @@ from app.services import ledger_read
 from app.services import user_admin
 from app.services import audit_read
 from app.services import hash_list_admin
+from app.services import scan_exceptions
 from app.services import intake_read
 from app.services import intake_admin
 from app.services import health_read
@@ -448,6 +449,37 @@ def browser_remove_hash(request: Request, entry_id: int = Path(ge=1, le=90071992
     set_audit_context(request, action='hash_list.remove', target_type='hash_list_entry',
                       target_id=entry_id, actor=request.state.ui_user)
     hash_list_admin.remove(entry_id)
+
+
+@router.get('/exceptions', response_model=scan_exceptions.ExceptionPage)
+def browser_exceptions(limit: int = Query(default=20, ge=1, le=100),
+                       before: int | None = Query(default=None, ge=1, le=9007199254740991),
+                       state: Literal['all', 'active', 'expired', 'revoked'] = 'active',
+                       q: str = Query(default='', max_length=200)):
+    return scan_exceptions.page(limit=limit, before=before, state=state, query=q)
+
+
+@router.post('/exceptions', response_model=scan_exceptions.ExceptionCreated, status_code=201)
+def browser_add_exception(request: Request, body: scan_exceptions.ExceptionCreate):
+    user = request.state.ui_user
+    set_audit_context(request, action='exception.create', target_type='scan_exception', actor=user,
+                      details={'sha256': body.sha256, 'client_id': body.service_client_id, 'reason': body.reason,
+                               'expires_in_days': body.expires_in_days})
+    try:
+        created = scan_exceptions.create(body, user.username)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    set_audit_context(request, target_id=created)
+    return scan_exceptions.ExceptionCreated(id=created)
+
+
+@router.post('/exceptions/{exception_id}/revoke', status_code=204)
+def browser_revoke_exception(request: Request, exception_id: int = Path(ge=1, le=9007199254740991)):
+    set_audit_context(request, action='exception.revoke', target_type='scan_exception', target_id=exception_id,
+                      actor=request.state.ui_user)
+    if not scan_exceptions.revoke(exception_id, request.state.ui_user.username):
+        raise HTTPException(409, 'The exception is missing or already revoked. Refresh the list.')
+    return Response(status_code=204)
 
 
 @router.get('/storage/overview', response_model=storage_read.StorageOverview)

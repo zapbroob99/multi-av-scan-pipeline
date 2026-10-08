@@ -49,6 +49,7 @@ const ClientStorage = lazy(() => import('./pages/client-storage'))
 const ClientSetup = lazy(() => import('./pages/client-setup'))
 const Audit = lazy(() => import('./pages/audit'))
 const HashList = lazy(() => import('./pages/hash-list'))
+const Exceptions = lazy(() => import('./pages/exceptions'))
 const Intake = lazy(() => import('./pages/intake'))
 const Delivery = lazy(() => import('./pages/delivery'))
 const About = lazy(() => import('./pages/about'))
@@ -68,7 +69,7 @@ const SECTIONS: [string, string, string][] = [
   ['/users', 'Administration', 'Users'], ['/scan-policy', 'Administration', 'Limits & notifications'],
   ['/api-ledger', 'Integrations', 'API ledger'], ['/service-clients', 'Integrations', 'Service clients'],
   ['/storage', 'Operations', 'Folder scanning'], ['/hash-scan', 'Operations', 'Hash lookup'],
-  ['/engines/hash-list', 'Infrastructure', 'Hash list'], ['/engines', 'Infrastructure', 'Engines'], ['/system', 'Infrastructure', 'System'],
+  ['/engines/hash-list', 'Infrastructure', 'Hash list'], ['/engines/exceptions', 'Infrastructure', 'Exceptions'], ['/engines', 'Infrastructure', 'Engines'], ['/system', 'Infrastructure', 'System'],
   ['/scans/new', 'Operations', 'Submit sample'], ['/batches/', 'Operations', 'Batch overview'],
 ]
 
@@ -160,7 +161,7 @@ function App() {
         <Route path="/audit" element={session.data.user.role === 'admin' ? <Audit /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/dashboard" element={<Dashboard session={session.data} />} />
         <Route path="/scans/new" element={<NewScan session={session.data} />} />
-        <Route path="/api-ledger/scans/:scanId" element={<Report key={location.pathname} automation />} />
+        <Route path="/api-ledger/scans/:scanId" element={<Report key={location.pathname} automation admin={session.data.user.role === 'admin'} />} />
         <Route path="/api-ledger/scans/:scanId/results/:resultId" element={<EngineOutput key={location.pathname} automation />} />
         <Route path="/api-ledger/scans/:scanId/status-json" element={<AutomationResult key={location.pathname} status />} />
         <Route path="/api-ledger/scans/:scanId/result-json" element={<AutomationResult key={location.pathname} />} />
@@ -177,7 +178,7 @@ function App() {
         <Route path="/storage/locations/new" element={<StorageLocationForm key={location.pathname} session={session.data} />} />
         <Route path="/storage/locations/:locationId/edit" element={<StorageLocationForm key={location.pathname} session={session.data} />} />
         <Route path="/storage/locations/:locationId" element={<StorageLocation key={location.pathname} session={session.data} />} />
-        <Route path="/scans/:scanId" element={<Report />} />
+        <Route path="/scans/:scanId" element={<Report admin={session.data.user.role === 'admin'} />} />
         <Route path="/scans/:scanId/results/:resultId" element={<EngineOutput />} />
         <Route path="/scans/:scanId/manage" element={<ScanManagement key={location.pathname} session={session.data} />} />
         <Route path="/scans/:scanId/print" element={<ScanPrint key={location.pathname} />} />
@@ -206,6 +207,7 @@ function App() {
           <Route path="/system/overview" element={<SystemOverview session={session.data} />} />
           <Route path="/system" element={<System session={session.data} />} />
           <Route path="/engines/hash-list" element={<HashList session={session.data} />} />
+          <Route path="/engines/exceptions" element={<Exceptions session={session.data} />} />
           <Route path="/engines" element={<Engines session={session.data} />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

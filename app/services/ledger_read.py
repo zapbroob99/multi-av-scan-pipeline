@@ -27,6 +27,8 @@ class LedgerScan(BaseModel):
     not_allowed_label: str | None = None
     # The profile rule's action (scan, light, allow, block); None before rules.
     rule_action: str | None = None
+    # The exception that let this exact file through, when one did.
+    exception_id: int | None = None
 
 
 class LedgerPage(BaseModel):
@@ -67,7 +69,7 @@ def page(*, limit: int, before: int | None, query: str, source: str, status: str
         rows = connection.execute(f"""
             SELECT j.id, j.attempt_count, COALESCE((SELECT MAX(ej.id) FROM scan_engine_jobs ej
                     WHERE ej.scan_job_id = j.id), 0) AS job_revision, SUBSTR(s.original_filename, 1, 512) AS filename,
-                j.unavailable_engines, SUBSTR(j.not_allowed, 1, 64) AS not_allowed, SUBSTR(j.rule_action, 1, 16) AS rule_action,
+                j.unavailable_engines, SUBSTR(j.not_allowed, 1, 64) AS not_allowed, SUBSTR(j.rule_action, 1, 16) AS rule_action, j.exception_id,
                 SUBSTR(s.sha256, 1, 64) AS sha256, s.size_bytes,
                 SUBSTR(j.case_name, 1, 128) AS case_name, j.source,
                 j.service_client_id, SUBSTR(c.display_name, 1, 100) AS client_name,

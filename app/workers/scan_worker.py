@@ -105,6 +105,7 @@ from app.services.service_clients import (
 from app.services.worker_health import run_due_worker_health_checks
 from app.services import profile_rules
 from app.services.profile_policy import not_allowed_code, route_member
+from app.services.scan_exceptions import attach as attach_exception
 
 
 POLL_INTERVAL_SECONDS = float(os.getenv("MASP_WORKER_POLL_SECONDS", "2"))
@@ -1005,6 +1006,11 @@ def maybe_enqueue_lazy_archive_children(
                 snapshot = profile_rules.without_engines(member_snapshot)
                 action = "block"
             child_rule = {"rule_action": action, "not_allowed": not_allowed_code(snapshot)}
+        # An exception names one exact file: a member never inherits its container's.
+        snapshot, exception_id = attach_exception(snapshot, sha256=child_sample.sha256,
+                                                  client_id=getattr(scan, "service_client_id", None))
+        if exception_id is not None:
+            child_rule = {**child_rule, "not_allowed": None, "exception_id": exception_id}
         if (
             getattr(scan, "service_client_id", None) is not None
             or getattr(scan, "scan_profile_id", None) is not None

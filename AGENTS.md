@@ -417,6 +417,19 @@ literal hash prefix or note substring. Additions take an explicit list, at most 
 one note; every digest is validated before one transactional insert. Entries are immutable: moving
 a hash between lists is removal plus a fresh addition. Confirm both writes, never auto-replay them.
 Changes affect engine jobs that run afterwards and never rewrite completed results.
+Exceptions (`app/services/scan_exceptions.py`, admin `/console/engines/exceptions`) let one exact
+file through after an administrator confirms it is harmless. An exception is keyed by the
+MASP-computed SHA-256, needs a reason, applies to one client or to every client and manual scan,
+may expire, and is revoked rather than deleted. It is looked up once at intake and frozen as the
+snapshot's `exception` plus `scan_jobs.exception_id`; a client-scoped one wins over a global one.
+Engines still run and their results stay as evidence (recorded risk is unchanged), but the decision
+is `exception_allow` ("Allow (exception)") over every engine, rule, archive and policy outcome, and
+the scan raises no bell entry, no `malware.detected` and no `policy.not_allowed` event. A Block rule's
+file is allowed without scanning. Archive members never inherit their container's exception; an
+excepted container's decision ignores its members. Scans accepted earlier are never reinterpreted
+and revocation does not change scans already allowed. Writes are admin/CSRF, confirmed, audited
+(`exception.create`, `exception.revoke`) and never replayed. The hash list's allowlist stays
+informational and is not an exception. Folder-scanning findings are not covered yet.
 `/console/scans/{id}/print` and the automation twin render a bounded printable report for
 analysts and admins. Reuse the full-export snapshot loader and shared payload builder so the
 printed decision, coverage, findings and engine rows come from one repeatable read; React

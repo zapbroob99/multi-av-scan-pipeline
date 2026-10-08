@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 
-const TABS = ['Overview', 'Worker nodes', 'Worker pools', 'Runtime and queue', 'Retention', 'Deferred intake', 'Engines', 'Hash list']
+const TABS = ['Overview', 'Worker nodes', 'Worker pools', 'Runtime and queue', 'Retention', 'Deferred intake', 'Engines', 'Hash list', 'Exceptions']
 
 test('the System tab strip stays in place across every tab and Engines lives only under System', async ({ page }) => {
   const errors: string[] = []
