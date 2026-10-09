@@ -64,7 +64,8 @@ authorization/regression tests, responsive browser verification and documentatio
 | System — retention | Admin-only bounded preview and confirmed deletion across all sources; age and state fences, active/child/shared-sample/outbox protections, per-record outcomes. No recursive deletion. |
 | System — remaining parity | Engine pool assignment is already in React Engines. Engine metrics now include last-result time. Deployment-sized fleet/read validation remains. |
 | System limits & notifications | `/console/scan-policy` implements admin-only reads and confirmed atomic updates of the operational limits and the not-allowed SIEM switch with shared backend validation/resolution. |
-| Hash lookup | `/console/hash-scan` provides analyst/admin explicit manual lookup, backend decisions, quota-aware adapters and bounded result summaries, now with legacy provider detail: a bounded provider status, verdict counts, last analysis date, cache source, duration, an HTTPS report link and operator guidance. Free-text provider reasons and policy configuration stay omitted. |
+| File history | `/console/files/{sha256}` (analyst/admin) shows what MASP's own engines recorded about one file: first/last seen, scan and detection counts, the latest outcome with engine and signature versions, hash list and active exceptions, and the 20 newest scans still kept, linked to their reports. Not a verdict; no provider is asked. |
+| Hash lookup | `/console/hash-scan` shows the free local "Seen in MASP" record as soon as a full SHA-256 is entered (prefilled from `?sha256=`), then provides analyst/admin explicit manual lookup through the separate "Ask external engines (uses quota)" button (Enter never spends quota), backend decisions, quota-aware adapters and bounded result summaries, now with legacy provider detail: a bounded provider status, verdict counts, last analysis date, cache source, duration, an HTTPS report link and operator guidance. Free-text provider reasons and policy configuration stay omitted. |
 | Integration administration | `/console/service-clients` lists clients and opens a tabbed settings dialog. Named-profile create/edit/disable/delete/default selection, fenced engine assignments, atomic client creation and credential add/list/scoped revocation are implemented. Tokens are supplied by the admin and never returned. `/console/service-clients/{id}/setup` reports coherent configuration readiness and connection details. `/console/service-clients/{id}/storage` manages bounded logical backend/prefix grants with explicit environment inheritance, deny-all and stale-edit protection; roots remain deployment-managed. |
 | Automation history | React API/ICAP ledger listing, source/client/unassigned/status/risk/text filters and bounded cursor pages implemented. Automation reports/technical output, batch overview and protected single deletion implemented. Summary/full JSON/CSV exports implemented. Single terminal result JSON preview implemented. Single status JSON preview implemented. Small-batch status/result JSON implemented. Automation direct-child navigation implemented. Confirmed admin bulk deletion implemented. Automation printable reports and oversized engine-output downloads reuse the manual readers under automation scope. A batch contract larger than the inline view downloads in full, up to the same 5000 members the integration API serves. Remaining: final legacy-action parity; preserve ownership and manual-history isolation. |
 | Users and account | Bounded inventory, confirmed local creation, administrative role/password edit and deletion, and own-account password change implemented. Shared last-admin/session protections and stale revision fences; LDAP shadow deletion does not disable directory access. Final cutover/deployment acceptance remains. |
@@ -2127,3 +2128,31 @@ phone layout and the reduced-motion still. The same run exposed a pre-existing r
 submission workflow (the acceptance card and the report share wording, so the test could open
 the phone menu before the report arrived and closed it); the test now waits for the report.
 
+## File history (2026-10-09)
+
+The institution's own memory of a file, beside (never inside) external reputation.
+`app/services/file_history.py` keeps one `file_history` row per SHA-256, updated in
+`_settle_scan_outcome`'s transaction for every settled scan (completed, failed, decided by a
+rule at intake, archive members included): first/last seen, scan and detection counts, last
+detection time and the latest outcome with each engine's result and engine/signature versions.
+A retry of the file's latest scan replaces the outcome without counting the file again. The row
+holds no file name, client or sample content and survives retention and scan deletion; the scans
+themselves follow their own retention. Startup carries existing scans in once, when the table is
+empty (`backfill`). Versions that look like paths are dropped.
+
+Isolation from external reputation: results of adapters with `supports_hash_lookup` or
+`consumes_external_quota` (VirusTotal today) are excluded by registry capability, not by name.
+When a manual scan also ran such an engine, the outcome kept here is scored again from the local
+results with the shared `calculate_risk`; a scan that only a provider answered does not make the
+file seen. Nothing here feeds a reputation decision, and provider answers are never stored here.
+
+GET `/api/ui/v1/files/{sha256}` is analyst-readable like the dashboards, reads under the shared
+budget and returns the facts, hash list state, active exceptions and the 20 newest kept scans
+(file names and client names appear only here, to operators). The report's SHA-256 links to it.
+Hash lookup reads it first, for free, as "Seen in MASP"; the provider call is a separate
+explicit button and Enter in the field spends no quota. The integration API's
+`GET /api/v1/hashes/{sha256}` adds the same facts as `masp_history` (without names or clients)
+beside `decision`, which still comes only from the hash engines.
+
+Not yet built: reusing a recent local result to skip a rescan (needs a policy decision about
+signature age) and rescanning stored samples after signature updates.

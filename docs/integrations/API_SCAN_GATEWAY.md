@@ -152,6 +152,31 @@ curl -fsS \
   "https://masp.example/api/v1/hashes/275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f"
 ```
 
+A successful response also carries `masp_history`: what this MASP deployment's own engines
+recorded about the file, for every client (no file name, client, path or content):
+
+```json
+"masp_history": {
+  "seen": true,
+  "first_seen_at": "2026-09-20T10:00:00Z",
+  "last_seen_at": "2026-10-08T07:12:40Z",
+  "scan_count": 3,
+  "detected_count": 1,
+  "last_detected_at": "2026-09-20T10:00:04Z",
+  "last_status": "completed",
+  "last_verdict": "info",
+  "last_engines": [{"engine_name": "ClamAV", "status": "completed", "detected": false,
+                    "signature": null, "engine_version": "1.4.2", "signature_version": "27771"}],
+  "note": "Recorded by this MASP deployment at the times shown; not a current verdict."
+}
+```
+
+It is history, not a decision: `decision` still comes only from the hash engines in `results`,
+and a later signature update can change what the engines would say. External reputation results
+(VirusTotal) are never part of it. `seen: false` means only that no scan of this SHA-256 has
+settled here. The history survives scan retention and deletion. A `503` (no eligible hash
+engine) carries no `masp_history`.
+
 With VirusTotal as the only hash adapter, the automation response is:
 
 ```json

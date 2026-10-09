@@ -40,6 +40,7 @@ const SystemOverview = lazy(() => import('./pages/system-overview'))
 const Retention = lazy(() => import('./pages/retention'))
 const ScanPolicy = lazy(() => import('./pages/scan-policy'))
 const HashScan = lazy(() => import('./pages/hash-scan'))
+const FileHistory = lazy(() => import('./pages/file-history'))
 const AutomationManagement = lazy(() => import('./pages/automation-management'))
 const ApiLedger = lazy(() => import('./pages/api-ledger'))
 const ServiceClients = lazy(() => import('./pages/service-clients'))
@@ -70,7 +71,7 @@ const SECTIONS: [string, string, string][] = [
   ['/account', 'Personal', 'Account'], ['/about', 'Personal', 'About'], ['/audit', 'Administration', 'Audit trail'],
   ['/users', 'Administration', 'Users'], ['/scan-policy', 'Administration', 'Limits & notifications'],
   ['/api-ledger', 'Integrations', 'API ledger'], ['/service-clients', 'Integrations', 'Service clients'],
-  ['/storage', 'Operations', 'Folder scanning'], ['/hash-scan', 'Operations', 'Hash lookup'],
+  ['/storage', 'Operations', 'Folder scanning'], ['/hash-scan', 'Operations', 'Hash lookup'], ['/files/', 'Operations', 'File history'],
   ['/engines/hash-list', 'Infrastructure', 'Hash list'], ['/engines/exceptions', 'Infrastructure', 'Exceptions'], ['/engines', 'Infrastructure', 'Engines'], ['/system', 'Infrastructure', 'System'],
   ['/scans/new', 'Operations', 'Submit sample'], ['/batches/', 'Operations', 'Batch overview'],
 ]
@@ -180,6 +181,7 @@ function App() {
         <Route path="/api-ledger/batches/:batchId" element={<BatchOverview key={location.pathname} automation />} />
         <Route path="/api-ledger" element={<ApiLedger session={session.data} />} />
         <Route path="/hash-scan" element={<HashScan session={session.data} />} />
+        <Route path="/files/:sha256" element={<FileHistory key={location.pathname} session={session.data} />} />
         <Route element={<StorageLayout />}>
           <Route path="/storage" element={<Storage session={session.data} />} />
           <Route path="/storage/findings" element={<StorageFindings />} />

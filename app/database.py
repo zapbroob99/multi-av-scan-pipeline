@@ -729,6 +729,9 @@ def init_sqlite_db() -> None:
         scan_exceptions.ensure_schema(connection)
         from app.services import login_throttle
         login_throttle.ensure_schema(connection)
+        from app.services import file_history
+        file_history.ensure_schema(connection)
+        file_history.backfill(connection)
         ensure_storage_protection_schema(connection)
         connection.execute(
             """
@@ -1190,6 +1193,9 @@ def init_postgres_db() -> None:
         scan_exceptions.ensure_schema(connection)
         from app.services import login_throttle
         login_throttle.ensure_schema(connection)
+        from app.services import file_history
+        file_history.ensure_schema(connection)
+        file_history.backfill(connection)
         ensure_storage_protection_schema(connection)
         connection.execute(
             """
@@ -6340,6 +6346,9 @@ _FAIL_FINISHED_SCAN_SQL = """
 
 def _settle_scan_outcome(connection: Any, scan_id: int, verdict: str, risk_score: int | None,
                          *, failed: bool) -> None:
+    # The file's own history (file_history) is part of settling, in this transaction.
+    from app.services import file_history
+    file_history.record(connection, scan_id)
     if failed:
         _settle_deferred_submission(connection, scan_id, "failed")
         return

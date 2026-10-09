@@ -161,6 +161,18 @@ file still carries partner naming. Do not `git add` it.
 
 ## Current work
 
+**File history, 2026-10-09 (after pilot.21, not packaged).** The user asked whether MASP could
+answer hash questions from its own scans the way VirusTotal does, kept isolated from the
+VirusTotal lookup. Phases 1+2 are built: `file_history` (one row per SHA-256, updated when a scan
+settles, survives retention, no names/clients), `/console/files/{sha256}`, a free "Seen in MASP"
+card first on Hash lookup with the provider call as a separate "Ask external engines (uses
+quota)" button, a File history link beside the report's SHA-256, and `masp_history` on
+`GET /api/v1/hashes/{sha256}`. External-reputation adapters (by capability) are excluded and a
+mixed scan is re-scored from local results. Verified: backend 1215 SQLite OK, PostgreSQL
+settlement/history suites 118 OK, frontend 233 unit tests, e2e 44/44. Not built (needs a user decision): reusing
+a recent local result instead of rescanning, and rescans after signature updates. Next release
+would be pilot.22; the user may install pilot.21 first.
+
 **2026-10-05 archive report follow-up (committed as `bf01efa`).** The archive-wide decision
 now reaches the console report, exports, print view, public status/result and
 browser contract previews, using the same bounded member reader as ICAP. Recorded

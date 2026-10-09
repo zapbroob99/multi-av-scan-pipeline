@@ -46,6 +46,7 @@ from app.services.auth import (
 from app.services.audit import append_http_audit_event, request_id_for, should_audit_request
 from app.services.decisions import ScanDecision
 from app.services import api_schemas
+from app.services import file_history
 from app.services import metrics
 from app.services.engine_registry import (
     adapter_definition,
@@ -1003,6 +1004,8 @@ def api_hash_lookup(request: Request, sha256: str,
             headers=headers,
         ) from exc
     payload = build_hash_scan_payload(normalized_sha256, runs)
+    # MASP's own record of the file, beside the hash engines and never mixed into their decision.
+    payload["masp_history"] = file_history.public(normalized_sha256)
     print(
         f"[hash-scan] {normalized_sha256[:12]}...: "
         f"{payload['decision']['action']} ({len(runs)} engine(s))",

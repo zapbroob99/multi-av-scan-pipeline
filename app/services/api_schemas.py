@@ -156,6 +156,35 @@ class HashEngineCountsPayload(ContractModel):
     failed: int
 
 
+class MaspEngineFactPayload(ContractModel):
+    engine_name: str
+    status: str
+    detected: bool
+    signature: str | None
+    engine_version: str | None
+    signature_version: str | None
+
+
+class MaspHistoryPayload(ContractModel):
+    """What this MASP deployment's own engines recorded about the file.
+
+    Separate from ``decision``, which comes only from the hash engines in
+    ``results``: a past scan is not a current verdict, and signatures change.
+    No file name, client or sample content is included.
+    """
+
+    seen: bool
+    first_seen_at: str | None
+    last_seen_at: str | None
+    scan_count: int
+    detected_count: int
+    last_detected_at: str | None
+    last_status: str | None
+    last_verdict: str | None
+    last_engines: list[MaspEngineFactPayload]
+    note: str
+
+
 class HashScanResponse(ContractModel):
     """Engine-neutral ``GET /api/v1/hashes/{sha256}`` response."""
 
@@ -164,6 +193,7 @@ class HashScanResponse(ContractModel):
     decision: VirusTotalDecisionPayload
     engines: HashEngineCountsPayload
     results: list[HashEngineResultPayload]
+    masp_history: MaspHistoryPayload
 
 
 class TimingPayload(ContractModel):

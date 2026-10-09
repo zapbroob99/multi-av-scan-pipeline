@@ -156,6 +156,10 @@ def main():
             with db.connect() as connection:
                 connection.execute("UPDATE deferred_scan_submissions SET status = ?, attempt_count = 1, last_error = ? WHERE id = ?",
                                    (status, 'Source SHA-256 does not match expected_sha256.' if status == 'failed' else None, record.id))
+        # Seeded scans never settle through a worker: carry them into file history as an upgrade would.
+        from app.services import file_history
+        with db.connect() as connection:
+            file_history.backfill(connection)
         app = FastAPI()
         app.include_router(router)
         uvicorn.run(app, host="127.0.0.1", port=18765, access_log=False)

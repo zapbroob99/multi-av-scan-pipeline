@@ -222,6 +222,29 @@
         "title": "AccountPayload",
         "type": "object"
       },
+      "ActiveException": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "reason"
+        ],
+        "title": "ActiveException",
+        "type": "object"
+      },
       "ActiveQueuePage": {
         "properties": {
           "items": {
@@ -1988,6 +2011,65 @@
         "title": "EngineCapabilityProfile",
         "type": "object"
       },
+      "EngineFact": {
+        "properties": {
+          "detected": {
+            "title": "Detected",
+            "type": "boolean"
+          },
+          "engine_name": {
+            "title": "Engine Name",
+            "type": "string"
+          },
+          "engine_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Version"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          },
+          "signature_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature Version"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "engine_name",
+          "status",
+          "detected",
+          "signature",
+          "engine_version",
+          "signature_version"
+        ],
+        "title": "EngineFact",
+        "type": "object"
+      },
       "EngineMetric": {
         "properties": {
           "avg_duration_ms": {
@@ -2537,6 +2619,296 @@
           "choices"
         ],
         "title": "FieldPayload",
+        "type": "object"
+      },
+      "FileHistory": {
+        "description": "The browser's file page: the facts plus where this file has been seen.",
+        "properties": {
+          "detected_count": {
+            "default": 0,
+            "title": "Detected Count",
+            "type": "integer"
+          },
+          "exceptions": {
+            "items": {
+              "$ref": "#/components/schemas/ActiveException"
+            },
+            "title": "Exceptions",
+            "type": "array"
+          },
+          "first_seen_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen At"
+          },
+          "hash_list": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hash List"
+          },
+          "last_detected_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Detected At"
+          },
+          "last_engines": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EngineFact"
+            },
+            "title": "Last Engines",
+            "type": "array"
+          },
+          "last_not_allowed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Not Allowed"
+          },
+          "last_not_allowed_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Not Allowed Label"
+          },
+          "last_risk_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Risk Score"
+          },
+          "last_rule_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Rule Action"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "last_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Status"
+          },
+          "last_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verdict"
+          },
+          "recent_scans": {
+            "items": {
+              "$ref": "#/components/schemas/FileScan"
+            },
+            "title": "Recent Scans",
+            "type": "array"
+          },
+          "scan_count": {
+            "default": 0,
+            "title": "Scan Count",
+            "type": "integer"
+          },
+          "seen": {
+            "title": "Seen",
+            "type": "boolean"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seen",
+          "sha256",
+          "hash_list",
+          "exceptions",
+          "recent_scans"
+        ],
+        "title": "FileHistory",
+        "type": "object"
+      },
+      "FileScan": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "client_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Name"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "exception_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exception Id"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "not_allowed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Allowed"
+          },
+          "not_allowed_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Allowed Label"
+          },
+          "risk_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Score"
+          },
+          "rule_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Action"
+          },
+          "scan_role": {
+            "title": "Scan Role",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "scan_role",
+          "status",
+          "verdict",
+          "risk_score",
+          "created_at",
+          "filename",
+          "client_id",
+          "client_name",
+          "exception_id",
+          "not_allowed",
+          "rule_action"
+        ],
+        "title": "FileScan",
         "type": "object"
       },
       "FindingPage": {
@@ -12784,6 +13156,119 @@
           }
         },
         "summary": "Browser Revoke Exception",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/files/{sha256}": {
+      "get": {
+        "description": "What MASP itself recorded about one file; readable like the dashboards.",
+        "operationId": "browser_file_history_api_ui_v1_files__sha256__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sha256",
+            "required": true,
+            "schema": {
+              "title": "Sha256",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileHistory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser File History",
         "tags": [
           "Browser console"
         ]

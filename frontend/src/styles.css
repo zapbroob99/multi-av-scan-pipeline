@@ -673,6 +673,16 @@ button.entity-row:disabled { cursor: default; opacity: 1; }
 :root { --verdict-allow: var(--ok); --verdict-allow-bg: var(--ok-bg); --verdict-review: var(--warn); --verdict-review-bg: var(--warn-bg);
   --verdict-block: var(--crit); --verdict-block-bg: var(--crit-bg); }
 .hash-page { max-width: 1040px; }
+.file-history-page > section { margin-top: 24px; }
+.file-history-page > section > h2 { margin: 0 0 10px; font-size: 15px; }
+.stats-row strong.stat-time { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.plain-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.hash-local { margin-top: 18px; padding: 16px 22px; display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); font-size: 13px; }
+.hash-local p { margin: 0; overflow-wrap: anywhere; }
+.hash-local-head { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
+.hash-local-head h2 { margin: 0; font-size: 15px; color: var(--text); }
+.hash-local-head a { margin-left: auto; }
+.hash-local-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .hash-lookup-panel { padding: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); }
 .hash-lookup-panel label.hash-lookup-label { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; }
 .hash-lookup-row { display: flex; gap: 8px; align-items: stretch; }

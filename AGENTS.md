@@ -458,6 +458,16 @@ informational and is not an exception. Folder-scanning findings are not covered 
 Administrators add one in place from a flagged ledger row (high/critical/medium risk, not allowed or
 Block rule, finished, no exception yet) or a Block/Review report through the shared
 `ExceptionDialog`: file and client prefilled, client scope by default, reason required, one POST.
+File history (`app/services/file_history.py`, `/console/files/{sha256}`, `masp_history` on
+`GET /api/v1/hashes/{sha256}`) is MASP's own memory of a file: one row per SHA-256 updated in the
+settling transaction, surviving retention and deletion, holding no file name, client or content.
+It is never a decision and never feeds one. Keep it isolated from external reputation: results of
+adapters with `supports_hash_lookup` or `consumes_external_quota` are excluded by capability, a
+scan that also ran one is re-scored from local results with `calculate_risk`, and a scan only a
+provider answered does not make the file seen. Never store provider answers there. Hash lookup
+shows the free local record first; spending provider quota stays a separate explicit button
+(Enter never does). A retry of the latest scan must not count the file twice. Result reuse
+(skipping a rescan) and rescans after signature updates are not built and need a decision.
 `/console/scans/{id}/print` and the automation twin render a bounded printable report for
 analysts and admins. Reuse the full-export snapshot loader and shared payload builder so the
 printed decision, coverage, findings and engine rows come from one repeatable read; React

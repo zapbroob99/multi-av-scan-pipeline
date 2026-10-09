@@ -480,6 +480,21 @@ class BrowserApiTests(unittest.TestCase):
             other = self.create_scan(source=source)
             self.assertEqual(self.request(f'/scans/{other}/summary-export')[0], 404)
 
+    def test_file_history_is_read_by_analysts_and_rejects_bad_hashes(self):
+        scan, _ = self.report_fixture()
+        with db.connect() as connection:
+            digest = connection.execute('SELECT sha256 FROM samples WHERE id = ?', (db.get_scan(scan).sample_id,)).fetchone()['sha256']
+        self.assertEqual(self.request(f'/files/{digest}', session=False)[0], 401)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        status, body, _ = self.request(f'/files/{digest.upper()}')
+        self.assertEqual(status, 200, body)
+        self.assertEqual((body['sha256'], body['recent_scans'][0]['id']), (digest, scan))
+        self.assertEqual(self.request('/files/not-a-hash')[0], 422)
+        self.assertEqual(self.request('/files/' + 'a' * 200)[0], 422)
+        status, body, _ = self.request('/files/' + 'b' * 64)
+        self.assertEqual((status, body['seen'], body['recent_scans']), (200, False, []))
+
     def test_full_exports_are_snapshot_scoped_bounded_and_spreadsheet_safe(self):
         import csv
         import io

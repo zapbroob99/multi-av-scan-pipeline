@@ -100,7 +100,7 @@ export default function Report({ automation = false, session }: { automation?: b
     {scan.coverage_basis === 'legacy_configuration' && <p className="callout">Legacy scan without a routing snapshot or engine jobs: required engines fall back to current configuration.</p>}
     {scan.unavailable.length > 0 && <section className="error"><h2>Required engines not completed</h2><ul>{scan.unavailable.map((name, index) => <li key={index}>{name}</li>)}</ul></section>}
     {scan.last_error && <section className="error"><h2>Last worker error</h2><p>{scan.last_error}</p></section>}
-    <dl className="submission-card report-metadata"><dt>SHA-256</dt><dd>{scan.sha256}</dd><dt>Size</dt><dd>{scan.size_bytes.toLocaleString()} bytes</dd>
+    <dl className="submission-card report-metadata"><dt>SHA-256</dt><dd>{scan.sha256} <Link to={`/files/${scan.sha256}`}>File history</Link></dd><dt>Size</dt><dd>{scan.size_bytes.toLocaleString()} bytes</dd>
       <dt>Case</dt><dd>{scan.case_name}</dd><dt>Submitted</dt><dd><Timestamp value={scan.created_at} /></dd>
       {scan.note && <><dt>Analyst note</dt><dd>{scan.note}</dd></>}</dl>
     <div className="history-heading"><h2>Engine results</h2><p className="muted">Technical output loads only when opened.</p></div>

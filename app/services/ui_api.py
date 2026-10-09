@@ -19,6 +19,7 @@ from app import database as db
 from app.services import auth
 from app.services import login_throttle
 from app.services import date_range
+from app.services import file_history
 from app.services import dashboard_read
 from app.services import scan_report_read
 from app.services import archive_read
@@ -122,6 +123,7 @@ class BrowserRoute(APIRoute):
                     PREFIX + "/scans/{scan_id}/summary-export",
                     PREFIX + "/scans/{scan_id}/export",
                     PREFIX + "/batches/{batch_id}",
+                    PREFIX + "/files/{sha256}",
                 }
                 retry_allowed = request.method == 'POST' and self.path == PREFIX + '/scans/{scan_id}/retry'
                 hash_allowed = (request.method == 'GET' and self.path == PREFIX + '/hash-scan/options') or (request.method == 'POST' and self.path == PREFIX + '/hash-scan')
@@ -807,6 +809,14 @@ def update_browser_service_client(request: Request, body: client_admin.ServiceCl
     client_admin.update(client_id, body)
     set_audit_context(request, details={'enabled': body.enabled})
     return Response(status_code=204)
+
+
+@router.get('/files/{sha256}', response_model=file_history.FileHistory)
+def browser_file_history(sha256: str):
+    """What MASP itself recorded about one file; readable like the dashboards."""
+    if len(sha256) > 128:
+        raise HTTPException(422, "Enter the file's full SHA-256 (64 hexadecimal characters).")
+    return file_history.read(sha256)
 
 
 @router.get('/hash-scan/options', response_model=hash_console.HashLookupOptions)

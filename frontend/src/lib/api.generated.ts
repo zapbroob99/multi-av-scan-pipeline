@@ -582,6 +582,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/files/{sha256}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browser File History
+         * @description What MASP itself recorded about one file; readable like the dashboards.
+         */
+        get: operations["browser_file_history_api_ui_v1_files__sha256__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/hash-list": {
         parameters: {
             query?: never;
@@ -1690,6 +1710,15 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** ActiveException */
+        ActiveException: {
+            /** Id */
+            id: number;
+            /** Reason */
+            reason: string;
+            /** Scope */
+            scope: string;
+        };
         /** ActiveQueuePage */
         ActiveQueuePage: {
             /** Items */
@@ -2312,6 +2341,21 @@ export interface components {
              */
             supports_rules?: boolean;
         };
+        /** EngineFact */
+        EngineFact: {
+            /** Detected */
+            detected: boolean;
+            /** Engine Name */
+            engine_name: string;
+            /** Engine Version */
+            engine_version: string | null;
+            /** Signature */
+            signature: string | null;
+            /** Signature Version */
+            signature_version: string | null;
+            /** Status */
+            status: string;
+        };
         /** EngineMetric */
         EngineMetric: {
             /** Avg Duration Ms */
@@ -2472,6 +2516,86 @@ export interface components {
             required: boolean;
             /** Secret */
             secret: boolean;
+        };
+        /**
+         * FileHistory
+         * @description The browser's file page: the facts plus where this file has been seen.
+         */
+        FileHistory: {
+            /**
+             * Detected Count
+             * @default 0
+             */
+            detected_count?: number;
+            /** Exceptions */
+            exceptions: components["schemas"]["ActiveException"][];
+            /** First Seen At */
+            first_seen_at?: number | null;
+            /** Hash List */
+            hash_list: string | null;
+            /** Last Detected At */
+            last_detected_at?: number | null;
+            /**
+             * Last Engines
+             * @default []
+             */
+            last_engines?: components["schemas"]["EngineFact"][];
+            /** Last Not Allowed */
+            last_not_allowed?: string | null;
+            /** Last Not Allowed Label */
+            last_not_allowed_label?: string | null;
+            /** Last Risk Score */
+            last_risk_score?: number | null;
+            /** Last Rule Action */
+            last_rule_action?: string | null;
+            /** Last Seen At */
+            last_seen_at?: number | null;
+            /** Last Status */
+            last_status?: string | null;
+            /** Last Verdict */
+            last_verdict?: string | null;
+            /** Recent Scans */
+            recent_scans: components["schemas"]["FileScan"][];
+            /**
+             * Scan Count
+             * @default 0
+             */
+            scan_count?: number;
+            /** Seen */
+            seen: boolean;
+            /** Sha256 */
+            sha256: string;
+        };
+        /** FileScan */
+        FileScan: {
+            /** Client Id */
+            client_id: number | null;
+            /** Client Name */
+            client_name: string | null;
+            /** Created At */
+            created_at: string;
+            /** Exception Id */
+            exception_id: number | null;
+            /** Filename */
+            filename: string;
+            /** Id */
+            id: number;
+            /** Not Allowed */
+            not_allowed: string | null;
+            /** Not Allowed Label */
+            not_allowed_label?: string | null;
+            /** Risk Score */
+            risk_score: number | null;
+            /** Rule Action */
+            rule_action: string | null;
+            /** Scan Role */
+            scan_role: string;
+            /** Source */
+            source: string;
+            /** Status */
+            status: string;
+            /** Verdict */
+            verdict: string;
         };
         /** FindingPage */
         FindingPage: {
@@ -7778,6 +7902,100 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_file_history_api_ui_v1_files__sha256__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sha256: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileHistory"];
+                };
             };
             /** @description Bad Request */
             400: {
