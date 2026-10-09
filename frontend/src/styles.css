@@ -38,6 +38,15 @@
   --rail-line: #1f2328;
   --rail-text: #b6bcc3;
   --rail-muted: #6f7882;
+  /* The sign-in form sits on the rail, which is graphite in both themes, so it
+     keeps these dark values whichever theme is chosen. */
+  --rail-strong: #eef0f2;
+  --rail-input: #14171b;
+  --rail-input-line: #3b424a;
+  --rail-crit: #ef7b70;
+  --rail-crit-bg: #2c1717;
+  /* The sign-in scene's own dusk ground: the same in both themes, like the rail. */
+  --login-scene-ground: #030408;
 
   --ok: #5dbb87;
   --ok-bg: #142a1e;
@@ -78,6 +87,15 @@
   --rail-line: #2e343b;
   --rail-text: #c3c8ce;
   --rail-muted: #848c96;
+  /* The sign-in form sits on the rail, which is graphite in both themes, so it
+     keeps these dark values whichever theme is chosen. */
+  --rail-strong: #eef0f2;
+  --rail-input: #14171b;
+  --rail-input-line: #3b424a;
+  --rail-crit: #ef7b70;
+  --rail-crit-bg: #2c1717;
+  /* The sign-in scene's own dusk ground: the same in both themes, like the rail. */
+  --login-scene-ground: #030408;
 
   --ok: #1c7444;
   --ok-bg: #e5f2ea;
@@ -243,6 +261,9 @@ label.check-row { flex-direction: row; align-items: center; gap: 9px; font-weigh
 .setting-control input, .setting-control select { max-width: 260px; }
 .setting-effective { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 12.5px; color: var(--text-2); }
 .setting-effective strong { font-family: var(--font-mono); font-weight: 500; color: var(--text); }
+.setting-note { margin-top: 6px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.setting-note strong { font-family: var(--font-mono); font-weight: 500; color: var(--text); }
+.setting-note code { font-size: 12px; }
 .property-list { margin: 0; padding: 0 20px; }
 .property-list > div { display: grid; grid-template-columns: minmax(170px, 260px) minmax(0, 1fr); gap: 4px 24px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .property-list > div:first-child { border-top: 0; }
@@ -379,6 +400,25 @@ tr.row-alert > td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
 .login-card > .muted { margin: 6px 0 24px; }
 .login-card > .button { width: 100%; min-height: 36px; margin-top: 4px; }
 .login-card .brand-mark { display: none; }
+/* Sign-in with the scene (components/login-scene.tsx): the form is on the rail,
+   which keeps its dark palette in both themes, and the scene fills the rest. */
+.login-shell-scene { grid-template-columns: minmax(340px, 460px) minmax(0, 1fr); }
+.login-aside-form {
+  color-scheme: dark;
+  --text: var(--rail-strong); --text-2: var(--rail-text); --text-3: var(--rail-muted);
+  --surface: var(--rail-input); --surface-2: var(--rail-2); --surface-3: var(--rail-2);
+  --line: var(--rail-line); --line-strong: var(--rail-input-line);
+  --crit: var(--rail-crit); --crit-bg: var(--rail-crit-bg);
+}
+.login-aside-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.login-aside-form h2 { margin-top: 36px; font-size: 20px; }
+.login-aside-form .login-card { width: 100%; max-width: 360px; margin: 32px 0; }
+.login-aside-form .login-card h1 { color: var(--text); }
+.login-scene { display: none; }
+.login-main-scene { padding: 0; overflow: hidden; background: var(--login-scene-ground); }
+@media (min-width: 801px) {
+  .login-main-scene .login-scene { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+}
 
 /* -------------------------------------------- Reports and printable sheet -- */
 .archive-context { margin: 18px 0; font-size: 12.5px; }
@@ -841,6 +881,9 @@ a.notification-detection:hover { background: var(--surface-2); text-decoration: 
   .setting-row, .property-list > div { grid-template-columns: minmax(0, 1fr); }
   .settings-panel-header, .settings-panel-body, .settings-panel-footer, .property-list { padding-inline: 14px; }
   .login-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .login-shell-scene { grid-template-rows: 1fr; }
+  .login-main-scene { display: none; }
+  .login-aside-form .login-card { max-width: none; }
   .login-aside { padding: 20px; }
   .login-aside h2 { display: none; }
   .login-aside footer { margin-top: 8px; }

@@ -5,7 +5,8 @@ test('light theme covers login, forms and confirmation dialogs', async ({ page }
   await page.goto('system/pools')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(236, 238, 241)')
-  await expect(page.getByLabel('Username')).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+  // The sign-in form sits on the graphite rail, which keeps its dark palette in both themes.
+  await expect(page.getByLabel('Username')).toHaveCSS('background-color', 'rgb(20, 23, 27)')
   await expect(page.getByRole('button', { name: 'Switch to dark theme' })).toBeVisible()
   await page.screenshot({ path: '../artifacts/console-e2e/login-light.png', fullPage: true })
   await page.getByLabel('Username').fill('console-admin')

@@ -2084,3 +2084,46 @@ end (422, shown as the list error), and the window combines with search, status,
 source and the keyset cursor. Validation: Python route and PostgreSQL reader tests, frontend
 unit tests for the conversion, and an Edge workflow that finds an empty past window and today's
 scans.
+
+## Naming which upload limit actually binds (2026-10-09)
+
+Setting "Largest upload" to 0 on the limits screen reads as "no file-size limit", but the
+deployment's own HTTP body ceiling (`MASP_HTTP_UPLOAD_MAX_BYTES`) always stays in force and
+cannot be raised or removed by that policy; an administrator who had just removed the policy
+limit discovered the ceiling only by having an upload rejected, with no clue which setting to
+change. `GET /scan-policy` now also returns `deployment_http_ceiling_bytes`, shown next to
+"Largest upload" whatever that field is set to. Submit Sample's own pre-flight check (still
+client-side, from the existing `/scans/options` fields) now names which of the two limits an
+oversized file actually exceeds, instead of a generic "exceeds the current upload limits".
+Both read the same resolution `app.services.upload_admission.upload_body_limit_with_source`
+computes, which also backs the server's `413` message. No decision or policy semantics
+changed; this is visibility only. The shipped pilot/production examples now also set
+`MASP_UPLOAD_MAX_BYTES=0` (no separate console/API file-size policy) and raise
+`MASP_HTTP_UPLOAD_MAX_BYTES` to 1 GiB (still finite, not literally unlimited); ICAP's own
+`MASP_ICAP_MAX_BYTES` is unchanged and stays independent of both.
+
+## Sign-in scene (trial, 2026-10-09)
+
+At the product owner's request the sign-in screen shows the "earthrise" ASCII scene from
+https://ascii.rest/earthrise/ (bas3line/ascii, MIT; it replaced "ocean sunset" the same day).
+The piece's source is vendored unchanged apart from its type import, with the full MIT notice,
+in `frontend/src/components/login-art/earthrise.ts`, and listed in NOTICE; the build keeps
+legal comments (`comments.legal`), so the notice also ships in the built asset.
+`components/login-scene.tsx` draws it as halftone dots on a canvas covering the area right of
+the rail, at 15 frames a second, with one path per palette colour, uncovered: the sign-in
+form moved onto the rail (brand and theme switch, product line, form, notice), where it keeps
+the rail's dark palette in both themes through `--rail-strong`, `--rail-input`,
+`--rail-input-line` and `--rail-crit*` tokens scoped to `.login-aside-form`. The crop keeps the
+Earth's centre at 68% of the scene's width. Phones show the rail alone, full screen. It is decorative (`aria-hidden`), drawn only above 800 px (phones keep
+the plain form), a single still frame under `prefers-reduced-motion`, paused by the browser in
+hidden tabs, loaded as its own lazy chunk (about 12 kB, 6 kB gzipped) and unmounted on sign-in.
+It loads nothing at run time, so offline hosts and the strict CSP are unaffected. Measured in
+Edge: one 150 ms task once, when the cratered ground and its shadows are built after the
+form has painted, then no long tasks during animation. It departs from the visual language
+(colour and texture beyond the token palette) by explicit request and can be removed without
+touching anything else. Validation: a unit test for the cover layout and inert behaviour
+without a canvas, and an Edge workflow that checks painted pixels, both themes, the hidden
+phone layout and the reduced-motion still. The same run exposed a pre-existing race in the
+submission workflow (the acceptance card and the report share wording, so the test could open
+the phone menu before the report arrived and closed it); the test now waits for the report.
+

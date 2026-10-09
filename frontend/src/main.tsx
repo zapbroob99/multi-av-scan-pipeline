@@ -49,6 +49,8 @@ const ClientStorage = lazy(() => import('./pages/client-storage'))
 const ClientSetup = lazy(() => import('./pages/client-setup'))
 const Audit = lazy(() => import('./pages/audit'))
 const HashList = lazy(() => import('./pages/hash-list'))
+// Only the sign-in screen draws it, so it loads in its own chunk.
+const LoginScene = lazy(() => import('./components/login-scene').then(module => ({ default: module.LoginScene })))
 const Exceptions = lazy(() => import('./pages/exceptions'))
 const Intake = lazy(() => import('./pages/intake'))
 const Delivery = lazy(() => import('./pages/delivery'))
@@ -129,15 +131,22 @@ function App() {
     <footer>Authorized personnel only. Activity is recorded.</footer>
   </aside>
   if (session.isPending) return <main className="login-shell">{aside}<div className="login-main"><ThemeToggle className="login-theme-toggle" /><p role="status">Connecting to MASP…</p></div></main>
-  if (!session.data) return <main className="login-shell">{aside}<div className="login-main"><ThemeToggle className="login-theme-toggle" /><form className="login-card" onSubmit={login}>
-    <BrandMark size={48} label="MASP" />
-    <h1>Sign in to MASP</h1><p className="muted">Use your MASP account{loginOptions.data?.directory_login_enabled ? ' or your directory credentials' : ''}.</p>
-    {notice && <p role="status" className="callout">{notice}</p>}
-    <label>Username<input name="username" autoComplete="username" required autoFocus /></label>
-    <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
-    {(error || sessionError) && <p role="alert" className="error"><ErrorMessage message={error || sessionError} /></p>}
-    <Button disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
-  </form></div></main>
+  // The form lives on the rail; the area to its right is the scene alone.
+  if (!session.data) return <main className="login-shell login-shell-scene"><aside className="login-aside login-aside-form">
+    <div><div className="login-aside-header"><span className="brand"><BrandMark size={30} /><span>MASP<small>Scan orchestration</small></span></span>
+      <ThemeToggle /></div>
+      <h2>Multi-engine malware scanning on your own infrastructure.</h2></div>
+    <form className="login-card" onSubmit={login}>
+      <BrandMark size={48} label="MASP" />
+      <h1>Sign in to MASP</h1><p className="muted">Use your MASP account{loginOptions.data?.directory_login_enabled ? ' or your directory credentials' : ''}.</p>
+      {notice && <p role="status" className="callout">{notice}</p>}
+      <label>Username<input name="username" autoComplete="username" required autoFocus /></label>
+      <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
+      {(error || sessionError) && <p role="alert" className="error"><ErrorMessage message={error || sessionError} /></p>}
+      <Button disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
+    </form>
+    <footer>Authorized personnel only. Activity is recorded.</footer>
+  </aside><div className="login-main login-main-scene"><Suspense fallback={null}><LoginScene /></Suspense></div></main>
   const [section, title] = locationTrail(location.pathname)
   return <div className="app-shell"><aside className="sidebar">
     <Link className="brand" to="/dashboard"><BrandMark size={28} /><span>MASP<small>Scan orchestration</small></span></Link>

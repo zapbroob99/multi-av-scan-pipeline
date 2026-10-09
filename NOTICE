@@ -32,3 +32,11 @@ offers, redistribution notices, or commercial entitlements.
 Python and JavaScript dependencies are declared in requirements.txt and
 package.json and are installed from their upstream distributions under their
 respective licenses.
+
+Vendored source:
+
+  - "earthrise" ASCII scene, drawn on the console sign-in screen
+    (frontend/src/components/login-art/earthrise.ts)
+    Copyright (c) 2026 bas3line, MIT License
+    https://github.com/bas3line/ascii
+    The full MIT notice is kept in that file and in the built console asset.

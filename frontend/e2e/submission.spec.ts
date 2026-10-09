@@ -22,6 +22,10 @@ test('analyst sends a benign file and sees accepted scan in manual history', asy
   // Submitting now opens the report directly; the acceptance wording moves with it.
   await expect(page.getByText(/not a completed scan or a clean verdict/)).toBeVisible()
   await expect(page).toHaveURL(/\/console\/scans\/\d+\?accepted=1$/)
+  // The submission page's own acceptance card shows the same words while the report
+  // page is still loading; wait for the report itself, or its arrival closes the menu
+  // opened below (navigation closes it on every page change).
+  await expect(page.getByRole('button', { name: 'Refresh report' })).toBeVisible()
   const report = new URL(page.url()).pathname
   // Phone widths collapse the grouped navigation behind the Menu button.
   await page.getByRole('button', { name: 'Menu', exact: true }).click()

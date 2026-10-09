@@ -39,7 +39,15 @@ arbitrary command parsers.
   instead of shadows, 3-4 px corners, square status markers, IBM Plex Sans/Mono
   bundled through `@fontsource` (offline hosts: no font CDN, CSP `font-src
   'self'`). Avoid generic AI-template traits: gradients, glass, glows, pill
-  badges, tracked uppercase decoration, template copy. Settings pages use
+  badges, tracked uppercase decoration, template copy. One deliberate exception, requested
+  by the product owner on 2026-10-09 as a trial: the sign-in screen draws the MIT-licensed
+  "earthrise" halftone scene (bas3line/ascii, vendored with its notice in
+  `components/login-art/`, credited in NOTICE) across the area right of the rail; the
+  sign-in form moved onto the rail, which keeps its dark palette (`--rail-*` tokens, the same
+  in both themes) for the form; the scene is drawn on wide screens only,
+  a still frame under reduced motion, in its own lazy chunk; `comments.legal` keeps the
+  notice in the build. Removing it is the `<LoginScene />` line in `main.tsx`, the
+  component, its CSS block and the NOTICE entry; nothing else depends on it. Settings pages use
   `.settings-panel` (header, label-left `.setting-row`/`.form-rows`, footer
   actions); help text sits outside a control's label (`aria-describedby`) so
   accessible names stay exact.
@@ -144,9 +152,14 @@ arbitrary command parsers.
   profile's current engine set.
 - Engine-job ownership uses leases, attempt generations, and fenced result commits.
 - HTTP uploads authenticate before multipart parsing and enforce a deployment
-  body ceiling independently of sample policy. Deferred paths reject links and
-  validate opened sources; worker-control/webhook requests reject redirects.
-  See `docs/security/HARDENING_PHASE_1.md` for upgrade notes and remaining gates.
+  body ceiling independently of sample policy; the ceiling (`MASP_HTTP_UPLOAD_MAX_BYTES`)
+  cannot be set to 0 and a sample policy of 0 (no file-size limit) never raises or removes
+  it. The shipped pilot/production examples set the sample policy to 0 and the ceiling to
+  1 GiB (not literally unlimited; a single request still cannot exhaust host memory/disk),
+  deliberately separate from ICAP's own `MASP_ICAP_MAX_BYTES`, which stays explicit so ICAP's
+  synchronous whole-body buffering keeps its own, independently reasoned bound. Deferred
+  paths reject links and validate opened sources; worker-control/webhook requests reject
+  redirects. See `docs/security/HARDENING_PHASE_1.md` for upgrade notes and remaining gates.
 
 The built-in `file_type` adapter inspects a bounded header (default 4096 bytes, clamped
 512..1 MiB) and compares the detected content family with the declared extension. Keep its cost
@@ -258,6 +271,11 @@ saves them through strict, CSRF-protected JSON. Each `PolicySpec.control` tells 
 console how to edit it (`number`, `size` edited in MiB, `switch` as on/off/not set). Reuse `scan_policy.validate` and
 `resolve_raw`; validate every field before one atomic save. Blank removes an
 override; upload policy zero does not remove the deployment HTTP body ceiling.
+The read also returns `deployment_http_ceiling_bytes` (`app.services.upload_admission
+.deployment_http_ceiling_bytes`), shown next to "Largest upload" so this is visible
+rather than discovered by a failed upload; `upload_admission.upload_body_limit_with_source`
+is the one place that decides which of the two actually binds, reused by the 413 message,
+`/scans/options` and this read. Submit sample's own oversize message names whichever bound.
 Reads must surface database errors rather than presenting fallback defaults as a
 successful administrative read. No automatic save retries. Concurrent editing is
 last-save-wins; policy environment values can differ between deployed processes.

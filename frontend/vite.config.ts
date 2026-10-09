@@ -15,6 +15,8 @@ export default defineConfig(({ mode }) => {
       // Vite and its assets live entirely under /console/.
       proxy: { '^/(?!console(?:/|$))': { target, changeOrigin: false } },
     },
-    build: { sourcemap: false, chunkSizeWarningLimit: 350 },
+    // Keep /*! @license */ notices in the minified output: vendored MIT code
+    // (the sign-in scene) must carry its copyright and permission notice.
+    build: { sourcemap: false, chunkSizeWarningLimit: 350, rolldownOptions: { output: { comments: { legal: true } } } },
   }
 })
