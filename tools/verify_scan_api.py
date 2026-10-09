@@ -15,6 +15,9 @@ Scenarios:
   - optional --eicar: EICAR test string is detected and blocked
   - optional --archive: ZIP submission exposes working batch endpoints
   - optional --expect-max-bytes N: an (N+1)-byte upload is rejected with 413
+  - optional --expect-body-ceiling N: a request declaring N+1 bytes is rejected with
+    413 before its body is read (the deployment's MASP_HTTP_UPLOAD_MAX_BYTES; cheap,
+    nothing near N bytes is sent)
 
 Engine coverage is validated generically (expected == reported == completed,
 failed == 0, skipped == 0) so the tool keeps working when the MASP operator
@@ -45,7 +48,9 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from urllib import error, request
+from urllib import error, parse, request
+import http.client
+import ssl
 
 
 # Assembled from fragments so this file itself never contains the contiguous
@@ -448,6 +453,52 @@ def run_checks(args: argparse.Namespace, client: ApiClient, reporter: Reporter) 
     else:
         reporter.record("upload-413", "SKIP", "enable with --expect-max-bytes <configured limit>")
 
+    # 9. The deployment's HTTP body ceiling: refused on the declared length alone.
+    def ceiling_rejected() -> str:
+        declared = args.expect_body_ceiling + 1
+        status, detail = declared_upload(args.base_url, token_for(args), declared, args.request_timeout)
+        expect(status == 413, f"a request declaring {declared} bytes returned HTTP {status} (want 413)")
+        return f"declared {declared}-byte upload refused with 413 before its body was read: {detail[:120]}"
+
+    if args.expect_body_ceiling:
+        check("upload-ceiling-413", ceiling_rejected)
+    else:
+        reporter.record("upload-ceiling-413", "SKIP", "enable with --expect-body-ceiling <MASP_HTTP_UPLOAD_MAX_BYTES>")
+
+
+def token_for(args: argparse.Namespace) -> str:
+    return args.token or os.environ.get("MASP_API_TOKEN", "")
+
+
+def declared_upload(base_url: str, token: str, declared: int, timeout: int) -> tuple[int, str]:
+    """POST a multipart upload that declares `declared` bytes but sends only its
+    first line, and return the status and detail MASP answered with."""
+    url = parse.urlsplit(base_url.rstrip("/") + "/api/v1/scans")
+    if url.scheme == "https":
+        connection: http.client.HTTPConnection = http.client.HTTPSConnection(
+            url.hostname, url.port, timeout=timeout, context=ssl.create_default_context())
+    else:
+        connection = http.client.HTTPConnection(url.hostname, url.port, timeout=timeout)
+    try:
+        connection.putrequest("POST", url.path)
+        connection.putheader("Authorization", f"Bearer {token}")
+        connection.putheader("Content-Type", "multipart/form-data; boundary=verify-ceiling")
+        connection.putheader("Content-Length", str(declared))
+        connection.endheaders()
+        try:
+            connection.send(b"--verify-ceiling\r\n")
+        except OSError:
+            pass  # refused and closed already; the answer is waiting
+        response = connection.getresponse()
+        raw = response.read() or b"{}"
+        try:
+            detail = str(json.loads(raw).get("detail", ""))
+        except (json.JSONDecodeError, AttributeError):
+            detail = raw.decode("utf-8", "replace")
+        return response.status, detail
+    finally:
+        connection.close()
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -466,6 +517,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=0,
         help="Server-side MASP_UPLOAD_MAX_BYTES value; enables the 413 scenario",
+    )
+    parser.add_argument(
+        "--expect-body-ceiling",
+        type=int,
+        default=0,
+        help="Server-side MASP_HTTP_UPLOAD_MAX_BYTES; checks a declared larger upload is refused",
     )
     parser.add_argument(
         "--require-engine",

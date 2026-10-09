@@ -19,12 +19,17 @@ pilot_require_command docker
 pilot_compose ps
 
 max_bytes="$(pilot_compose exec -T app printenv MASP_UPLOAD_MAX_BYTES | tr -d '\r')"
+# The deployment ceiling binds whatever the file-size policy is (0 = no policy limit);
+# the app uses 64 MiB when the variable is unset.
+ceiling="$(pilot_compose exec -T app printenv MASP_HTTP_UPLOAD_MAX_BYTES | tr -d '\r' || true)"
+ceiling="${ceiling:-67108864}"
 
 printf '\n== REST API acceptance ==\n'
 pilot_compose exec -T app python tools/verify_scan_api.py \
     --base-url http://127.0.0.1:8000 \
     --eicar \
     --expect-max-bytes "$max_bytes" \
+    --expect-body-ceiling "$ceiling" \
     --require-engine static_metadata \
     --require-engine clamav \
     --require-engine yara
