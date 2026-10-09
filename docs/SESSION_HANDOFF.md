@@ -1,8 +1,8 @@
 # MASP session handoff
 
-Updated: 2026-10-08, pilot.20 (pilot.19 plus ClamAV "could not scan" reporting) packaged and its
-15 -> 20 upgrade/rollback rehearsed on `feat/archive-handling`; the user will install pilot.20
-directly, skipping pilot.16 to .19. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet
+Updated: 2026-10-09, pilot.21 (pilot.20 plus named upload limits, a 1 GiB shipped upload
+ceiling and the earthrise sign-in scene) packaged and its 15 -> 21 upgrade/rollback rehearsed on
+`feat/archive-handling`; the user will install pilot.21 directly, skipping pilot.16 to .20. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet
 runs pilot.15 as far as known; pilot.16 was never confirmed installed. This is a workspace
 checkpoint, not evidence of a deployment.
 
@@ -263,7 +263,33 @@ scanning's archive default stays "hold for the full tier". `59a0d63` fixed the I
 a rule block (found in the rehearsal). Verification: backend 1147 SQLite OK, related modules
 157 on disposable PostgreSQL OK, frontend 203, e2e 39/39, build and contracts clean.
 
-**Pilot.20, 2026-10-08: ClamAV "could not scan" is no longer clean** (`6c18339`). The user asked
+**Pilot.21, 2026-10-09.**
+- Upload limits named (`cd23882`): "Largest upload" at 0 still left the deployment ceiling
+  (`MASP_HTTP_UPLOAD_MAX_BYTES`, 64 MiB) in force without saying so. One resolution
+  (`upload_admission.upload_body_limit_with_source`) now names the binding layer in the 413,
+  `/scans/options` and `deployment_http_ceiling_bytes` on GET `/scan-policy` (shown under
+  "Largest upload"). Examples ship policy 0 and ceiling 1 GiB; the pilot nginx template and the
+  optional console nginx take 1024m on the upload routes. ICAP keeps `MASP_ICAP_MAX_BYTES`.
+  Upgrades carry the existing `.env.pilot` values, so the operator note has a one-line `sed`
+  for `.env.pilot` (before the upgrade) and one for the host nginx (after it).
+- `verify.sh` checks the ceiling (`d5966b7`): `verify_scan_api --expect-body-ceiling` declares
+  one byte more than the ceiling and expects 413 before the body is read.
+- Sign-in scene (`d8c896e`): MIT "earthrise" (bas3line/ascii) right of the rail, form moved
+  onto the rail with rail tokens in both themes; a trial the product owner approved after
+  seeing it. Also fixed a racy submission e2e (acceptance card and report share wording).
+- Local dev `.env` (gitignored) also sets policy 0 / ceiling 1 GiB; the earlier mistake was
+  editing only the example files, which the dev stack never reads.
+Bundle from `d5966b7`: zip SHA-256
+`067b3d852da0da56cd4ec28cafa26eac9867eb1fca0af05c527095d0ff22edbd`, image tar SHA-256
+`30eb3ecb46d7d747c1b8b669a69497dee5d6ab084194a31b57d0e2439f918b3b`. Rehearsal
+(`dist/rehearsal-upgrade21/`): pilot.15 refused a 70 MB API upload (413); after the operator
+`sed` and the upgrade, acceptance 7/7 including the new ceiling check, the 70 MB upload was
+accepted (202), the console served the scene chunk with its notice under CSP, every pilot.20
+check held, rollback to 15 (with the raised limits) and re-upgrade passed. Verification:
+backend 1194 SQLite OK, frontend 225, e2e 43/43, build and contracts clean. Operator steps:
+`kilavuz/PILOT_21_DURUM.md`.
+
+**Pilot.20, 2026-10-08 (superseded by pilot.21): ClamAV "could not scan" is no longer clean** (`6c18339`). The user asked
 for the industry standard and little complexity. Verified against the pinned clamd: with default
 options it answers OK for an encrypted zip and for a small zip expanding past MaxScanSize. All
 compose files now set `AlertExceedsMax` and `AlertEncrypted` (vendor gateways' "block unscannable
@@ -470,8 +496,9 @@ folders live in git-ignored `kilavuz/` and `dist/`.
 **Releases in `dist/` (git-ignored), each a bundle zip plus the MASP image alone,
 both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
-- `0.1.0-pilot.20` (commit `7fdddb5`): pilot.19 plus ClamAV unscannable reporting. Rehearsed
-  15 -> 20, passed. The one to install.
+- `0.1.0-pilot.21` (commit `d5966b7`): pilot.20 plus named upload limits, 1 GiB example
+  ceiling, verify ceiling check, earthrise sign-in. Rehearsed 15 -> 21, passed. The one to install.
+- `0.1.0-pilot.20` (commit `7fdddb5`, superseded): pilot.19 plus ClamAV unscannable reporting.
 - `0.1.0-pilot.19` (commit `712ba67`, superseded): pilot.18 plus date filters.
 - `0.1.0-pilot.18` (commit `dbbc3a1`, superseded): pilot.17 plus sign-in throttling,
   per-result versions, hash-locked dependencies and SBOM. Rehearsed 15 -> 18, passed.
