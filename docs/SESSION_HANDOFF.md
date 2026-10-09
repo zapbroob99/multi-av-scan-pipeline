@@ -1,8 +1,8 @@
 # MASP session handoff
 
-Updated: 2026-10-09, pilot.21 (pilot.20 plus named upload limits, a 1 GiB shipped upload
-ceiling and the earthrise sign-in scene) packaged and its 15 -> 21 upgrade/rollback rehearsed on
-`feat/archive-handling`; the user will install pilot.21 directly, skipping pilot.16 to .20. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet
+Updated: 2026-10-09, pilot.22 (pilot.21 plus local file history) packaged and its 15 -> 22
+upgrade/rollback rehearsed on `feat/archive-handling`; the user will install pilot.22 (from
+pilot.15, or from pilot.21 if that was installed first), skipping the releases in between. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet
 runs pilot.15 as far as known; pilot.16 was never confirmed installed. This is a workspace
 checkpoint, not evidence of a deployment.
 
@@ -161,7 +161,7 @@ file still carries partner naming. Do not `git add` it.
 
 ## Current work
 
-**File history, 2026-10-09 (after pilot.21, not packaged).** The user asked whether MASP could
+**File history, 2026-10-09 (pilot.22, commit `79c9495`).** The user asked whether MASP could
 answer hash questions from its own scans the way VirusTotal does, kept isolated from the
 VirusTotal lookup. Phases 1+2 are built: `file_history` (one row per SHA-256, updated when a scan
 settles, survives retention, no names/clients), `/console/files/{sha256}`, a free "Seen in MASP"
@@ -170,8 +170,10 @@ quota)" button, a File history link beside the report's SHA-256, and `masp_histo
 `GET /api/v1/hashes/{sha256}`. External-reputation adapters (by capability) are excluded and a
 mixed scan is re-scored from local results. Verified: backend 1215 SQLite OK, PostgreSQL
 settlement/history suites 118 OK, frontend 233 unit tests, e2e 44/44. Not built (needs a user decision): reusing
-a recent local result instead of rescanning, and rescans after signature updates. Next release
-would be pilot.22; the user may install pilot.21 first.
+a recent local result instead of rescanning, and rescans after signature updates. Rehearsed
+15 -> 22: acceptance 7/7, pilot.15 scans carried into history with signature versions and no
+names, new ICAP scans counted, console page served, exception path intact, rollback and second
+upgrade passed, rehearsal removed including `/rehearse` (the pilot.21 run had left files there).
 
 **2026-10-05 archive report follow-up (committed as `bf01efa`).** The archive-wide decision
 now reaches the console report, exports, print view, public status/result and
@@ -508,8 +510,10 @@ folders live in git-ignored `kilavuz/` and `dist/`.
 **Releases in `dist/` (git-ignored), each a bundle zip plus the MASP image alone,
 both with `.sha256`; PostgreSQL and ClamAV images unchanged since pilot.2:**
 
-- `0.1.0-pilot.21` (commit `d5966b7`): pilot.20 plus named upload limits, 1 GiB example
-  ceiling, verify ceiling check, earthrise sign-in. Rehearsed 15 -> 21, passed. The one to install.
+- `0.1.0-pilot.22` (commit `79c9495`): pilot.21 plus file history. Rehearsed 15 -> 22,
+  passed. The one to install. Zip `6b8331d6...`, image tar `ce938550...`.
+- `0.1.0-pilot.21` (commit `d5966b7`, superseded unless already installed): pilot.20 plus named
+  upload limits, 1 GiB example ceiling, verify ceiling check, earthrise sign-in.
 - `0.1.0-pilot.20` (commit `7fdddb5`, superseded): pilot.19 plus ClamAV unscannable reporting.
 - `0.1.0-pilot.19` (commit `712ba67`, superseded): pilot.18 plus date filters.
 - `0.1.0-pilot.18` (commit `dbbc3a1`, superseded): pilot.17 plus sign-in throttling,
