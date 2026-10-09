@@ -53,6 +53,7 @@ export default function ScanPolicy({ session }: { session: Session }) {
     onSettled: () => setConfirmation(null) })
   const busy = policy.isFetching || save.isPending || confirmation !== null
   const fields = policy.data?.fields ?? []
+  const httpCeiling = policy.data?.deployment_http_ceiling_bytes
   function review(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
@@ -96,7 +97,10 @@ export default function ScanPolicy({ session }: { session: Session }) {
                 {...field.control === 'size'
                   ? { inputMode: 'decimal' as const, defaultValue: toMib(field.override_raw), placeholder: `Not set: ${fallback(field)}` }
                   : { type: 'number', step: 1, min: field.minimum, max: field.maximum, defaultValue: field.override_raw, placeholder: `Not set: ${fallback(field)}` }} />}
-          <p className="setting-effective">In effect <strong>{describe(field, field.value)}</strong><span className="tag" title={field.source}>{sourceLabel(field.source)}</span></p></div>
+          <p className="setting-effective">In effect <strong>{describe(field, field.value)}</strong><span className="tag" title={field.source}>{sourceLabel(field.source)}</span></p>
+          {field.key === 'upload_max_bytes' && httpCeiling !== undefined && <p className="setting-note">
+            This can only make uploads smaller: a separate deployment ceiling of <strong>{formatBytes(httpCeiling)}</strong>{' '}
+            (<code>MASP_HTTP_UPLOAD_MAX_BYTES</code>) always applies as well, and 0 here does not raise or remove it.</p>}</div>
       </div>)}</div>
       {error && <p role="alert" className="error">{error}</p>}
       <div className="settings-panel-footer"><p>Saving replaces every value set here; the last save wins.</p><Button type="submit">Review changes</Button></div></fieldset>

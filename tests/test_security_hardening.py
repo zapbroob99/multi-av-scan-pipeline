@@ -15,7 +15,13 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from starlette.formparsers import SpooledTemporaryFile
 
 from app.models import EngineResultInput
-from app.services.upload_admission import UploadAdmissionRoute, upload_body_limit
+from app.services.upload_admission import (
+    DEPLOYMENT_CEILING_SOURCE,
+    UPLOAD_POLICY_SOURCE,
+    UploadAdmissionRoute,
+    upload_body_limit,
+    upload_body_limit_with_source,
+)
 from app.workers import control_api_worker as worker
 
 
@@ -104,10 +110,15 @@ class UploadAdmissionTests(unittest.TestCase):
             messages.append(message)
 
         with patch('app.services.upload_admission.require_api_token', side_effect=authenticate), \
-             patch('app.services.upload_admission.upload_body_limit', return_value=limit), \
+             patch('app.services.upload_admission.upload_body_limit_with_source',
+                   return_value=(limit, DEPLOYMENT_CEILING_SOURCE)), \
              patch('starlette.formparsers.SpooledTemporaryFile', side_effect=spool):
             asyncio.run(self.app(scope, receive, send))
-        return next(m['status'] for m in messages if m['type'] == 'http.response.start'), files
+        status = next(m['status'] for m in messages if m['type'] == 'http.response.start')
+        if status == 413:
+            self.assertIn(DEPLOYMENT_CEILING_SOURCE.encode(),
+                          next(m['body'] for m in messages if m['type'] == 'http.response.body'))
+        return status, files
 
     def test_invalid_token_is_rejected_without_reading_the_body(self):
         status, _ = self.invoke([b'x' * 512], authorized=False)
@@ -139,9 +150,18 @@ class UploadAdmissionTests(unittest.TestCase):
         self.assertEqual((status, self.handled), (200, 1))
 
     def test_deployment_ceiling_cannot_be_removed_by_policy(self):
+        # A policy of 0 (configured_upload_max_bytes -> None, "no limit here") never
+        # raises the deployment ceiling; it is a backstop independent of the policy.
         with patch.dict('os.environ', {'MASP_HTTP_UPLOAD_MAX_BYTES': '512'}), \
              patch('app.services.upload_admission.configured_upload_max_bytes', return_value=None):
             self.assertEqual(upload_body_limit(), 512)
+            self.assertEqual(upload_body_limit_with_source(), (512, DEPLOYMENT_CEILING_SOURCE))
+
+    def test_a_tighter_policy_binds_and_names_itself(self):
+        with patch.dict('os.environ', {'MASP_HTTP_UPLOAD_MAX_BYTES': '999999999'}), \
+             patch('app.services.upload_admission.configured_upload_max_bytes', return_value=256):
+            limit, source = upload_body_limit_with_source()
+            self.assertEqual((limit, source), (256 + 1024 * 1024, UPLOAD_POLICY_SOURCE))
 
 
 class WorkerLivenessTests(unittest.TestCase):

@@ -744,6 +744,10 @@ class BrowserApiTests(unittest.TestCase):
                          ['api_max_wait_seconds', 'api_retry_after_seconds', 'upload_max_bytes', 'siem_not_allowed_events'])
         # The console edits sizes in MiB and the SIEM setting as on/off; stored values stay bytes and 0/1.
         self.assertEqual([field['control'] for field in result['fields']], ['number', 'number', 'size', 'switch'])
+        # The deployment HTTP ceiling: shown beside "Largest upload" because a
+        # policy of 0 never raises or removes it.
+        from app.services.upload_admission import deployment_http_ceiling_bytes
+        self.assertEqual(result['deployment_http_ceiling_bytes'], deployment_http_ceiling_bytes())
         self.assertEqual(result['fields'][0]['value'], scan_policy.resolve_int('api_max_wait_seconds'))
         self.assertEqual(result['fields'][0]['value'], 300)
         self.assertNotIn('PRIVATE_TOKEN', json.dumps(result))
@@ -2855,7 +2859,7 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual(self.request('/scans/options', session=False)[0], 401)
 
     def test_submission_byte_ceiling_before_and_during_stream(self):
-        with patch('app.services.upload_admission.upload_body_limit', return_value=350):
+        with patch('app.services.upload_admission.upload_body_limit_with_source', return_value=(350, 'test ceiling')):
             self.assertEqual(self.upload_request(content_length=351)[0], 413)
             self.assertEqual(self.reads, 0)
             self.assertEqual(self.upload_request(data=b'x' * 1000)[0], 413)
@@ -2880,7 +2884,7 @@ class BrowserApiTests(unittest.TestCase):
             files.append(file)
             return file
         with patch('starlette.formparsers.SpooledTemporaryFile', side_effect=spool), \
-             patch('app.services.upload_admission.upload_body_limit', return_value=600):
+             patch('app.services.upload_admission.upload_body_limit_with_source', return_value=(600, 'test ceiling')):
             self.assertEqual(self.upload_request(data=b'x' * 1000, content_length=1)[0], 413)
         self.assertTrue(files)
         self.assertTrue(all(file.closed for file in files))

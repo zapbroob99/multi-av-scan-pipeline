@@ -307,7 +307,9 @@ REGISTERED_ADAPTERS: dict[str, RegisteredEngineAdapter] = {
                                   help_text="A scan that takes longer is recorded as failed."),
                 EngineConfigField("max_file_size_bytes", "Largest file to scan (bytes)", "number", False, "0",
                                   help_text="ClamAV skips larger files and the result says so. "
-                                            "0: no limit here; clamd's own limit still applies."),
+                                            "0: no limit here; clamd's own StreamMaxLength/MaxFileSize/MaxScanSize "
+                                            "(set in the deployment's environment, not here) still apply and may "
+                                            "bind first -- the result names whichever one actually skipped the file."),
             ),
         ),
         capabilities=EngineCapabilityProfile(

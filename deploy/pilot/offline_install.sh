@@ -444,8 +444,10 @@ server {
     proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
     proxy_read_timeout 120s;
 
-    location = /api/v1/scans    { client_max_body_size 64m; proxy_pass http://127.0.0.1:8000; }
-    location = /api/ui/v1/scans { client_max_body_size 64m; proxy_pass http://127.0.0.1:8000; }
+    # Upload routes: at least MASP_HTTP_UPLOAD_MAX_BYTES (1 GiB in the example), so MASP,
+    # not the proxy, answers an oversized upload and names the limit it hit.
+    location = /api/v1/scans    { client_max_body_size 1024m; proxy_pass http://127.0.0.1:8000; }
+    location = /api/ui/v1/scans { client_max_body_size 1024m; proxy_pass http://127.0.0.1:8000; }
     location / { proxy_pass http://127.0.0.1:8000; }
 }
 EOF

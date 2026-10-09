@@ -15,7 +15,7 @@ const FIELDS = [
 function mount(fail = false) {
   const fetcher = vi.fn(async (_url: string, options?: RequestInit) => options?.method === 'PUT'
     ? fail ? new Response(JSON.stringify({ detail: 'Unavailable' }), { status: 503 }) : new Response(null, { status: 204 })
-    : new Response(JSON.stringify({ fields: FIELDS })))
+    : new Response(JSON.stringify({ fields: FIELDS, deployment_http_ceiling_bytes: 67108864 })))
   vi.stubGlobal('fetch', fetcher)
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><ScanPolicy session={{ user: { id: 1, username: 'admin', role: 'admin' }, csrf_token: 'csrf' }} /></MemoryRouter></QueryClientProvider>)
   return fetcher
@@ -31,6 +31,8 @@ describe('System limits and notifications', () => {
     expect(size).toHaveValue('2')
     expect(size).toHaveAccessibleDescription('Help for Largest upload')
     expect(screen.getByText('2.0 MiB')).toBeInTheDocument()
+    // The deployment's own HTTP body ceiling always applies too, whatever this is set to.
+    expect(screen.getByText(/separate deployment ceiling of/)).toHaveTextContent('64 MiB')
     const siem = screen.getByLabelText('Send not-allowed files to SIEM')
     expect(siem).toHaveValue('')
     expect(screen.getByRole('option', { name: 'Not set here (Off)' })).toBeInTheDocument()

@@ -5,6 +5,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, Upload } from 'lucide-react'
 import { request, ApiError, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
+import { formatBytes } from '../lib/storage'
+
+/** Which admission layer actually refuses this file, named so "exceeds the
+ * limit" is never the only thing an operator is told. The file size policy can
+ * only tighten this deployment's own HTTP request ceiling, never raise it, so
+ * an oversize that the policy did not cause still names the ceiling. */
+export function sizeLimitMessage(file: File, options: { file_max_bytes: number | null; body_max_bytes: number }): string | null {
+  const { file_max_bytes: fileMax, body_max_bytes: bodyMax } = options
+  const limit = Math.min(fileMax ?? Infinity, bodyMax)
+  if (file.size < bodyMax && file.size <= limit) return null
+  if (fileMax !== null && fileMax < bodyMax && file.size > fileMax) {
+    return `This file is larger than this deployment's ${formatBytes(fileMax)} upload size policy. No upload was sent.`
+  }
+  return `This file is larger than this deployment's ${formatBytes(bodyMax)} HTTP request ceiling. No upload was sent.`
+}
 
 export default function NewScan({ session }: { session: Session }) {
   const client = useQueryClient()
@@ -27,10 +42,8 @@ export default function NewScan({ session }: { session: Session }) {
     if (!file?.name) { setValidation('Select one sample file.'); return }
     body.set('sample', file)
     if (!options.data) { setValidation('Load submission limits before uploading.'); return }
-    const limit = Math.min(options.data.file_max_bytes ?? Infinity, options.data.body_max_bytes)
-    if (file.size >= options.data.body_max_bytes || file.size > limit) {
-      setValidation('This file exceeds the current upload limits. No upload was sent.'); return
-    }
+    const message = sizeLimitMessage(file, options.data)
+    if (message) { setValidation(message); return }
     upload.mutate(body)
   }
   const uncertain = upload.error && (!(upload.error instanceof ApiError) || upload.error.status >= 500)

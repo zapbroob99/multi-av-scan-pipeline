@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app import database as db
 from app.services import scan_policy
 from app.services.browser_db_budget import apply_read_budget, write_lock_timeout_ms
+from app.services.upload_admission import deployment_http_ceiling_bytes
 
 
 class ScanPolicyBody(BaseModel):
@@ -30,6 +31,11 @@ class ScanPolicyField(BaseModel):
 
 class ScanPolicySnapshot(BaseModel):
     fields: list[ScanPolicyField]
+    # The deployment's own HTTP body ceiling (MASP_HTTP_UPLOAD_MAX_BYTES), shown
+    # beside "Largest upload": that policy field can only tighten admission, it
+    # can never raise or remove this backstop, so an administrator who sets it
+    # to 0 must still see what actually binds.
+    deployment_http_ceiling_bytes: int
 
 
 def read() -> ScanPolicySnapshot:
@@ -50,7 +56,7 @@ def read() -> ScanPolicySnapshot:
         fields.append(ScanPolicyField(key=spec.key, label=spec.label, help=spec.help, unit=spec.unit, control=spec.control,
             minimum=spec.minimum, maximum=spec.maximum, default=spec.default,
             value=scan_policy.resolve_raw(spec.key, raw), override_raw=raw.strip(), source=source))
-    return ScanPolicySnapshot(fields=fields)
+    return ScanPolicySnapshot(fields=fields, deployment_http_ceiling_bytes=deployment_http_ceiling_bytes())
 
 
 def save(body: ScanPolicyBody) -> dict[str, int | None]:

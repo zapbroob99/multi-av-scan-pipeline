@@ -120,7 +120,7 @@ server {
     listen 8443 ssl;
     ssl_certificate /etc/nginx/tls/cert.pem;
     ssl_certificate_key /etc/nginx/tls/key.pem;
-    client_max_body_size 64m;
+    client_max_body_size 1024m;
     resolver 127.0.0.11 valid=5s;
     set $upstream http://app:8000;
     location / {

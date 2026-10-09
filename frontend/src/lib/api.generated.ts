@@ -3652,6 +3652,8 @@ export interface components {
         };
         /** ScanPolicySnapshot */
         ScanPolicySnapshot: {
+            /** Deployment Http Ceiling Bytes */
+            deployment_http_ceiling_bytes: number;
             /** Fields */
             fields: components["schemas"]["ScanPolicyField"][];
         };

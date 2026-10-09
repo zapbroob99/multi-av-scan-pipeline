@@ -317,10 +317,14 @@ curl -fsS http://127.0.0.1:8000/health          # {"status":"ok"}
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v1/scans/1   # 401
 
 # End-to-end acceptance (clean allow, EICAR block, 202/polling, 409, 413):
+# --expect-max-bytes must match whatever actually binds. With MASP_UPLOAD_MAX_BYTES=0
+# (no separate file-size policy, the shipped example's value), that is this deployment's
+# MASP_HTTP_UPLOAD_MAX_BYTES ceiling; use "$MASP_UPLOAD_MAX_BYTES" instead if that policy
+# is set to a nonzero value tighter than the ceiling.
 python tools/verify_scan_api.py \
     --base-url https://<public-masp-url> \
     --token "$MASP_API_TOKEN" \
-    --eicar --archive --expect-max-bytes "$MASP_UPLOAD_MAX_BYTES"
+    --eicar --archive --expect-max-bytes "$MASP_HTTP_UPLOAD_MAX_BYTES"
 
 # From an approved client on the private ICAP network:
 python tools/icap_probe.py --host <masp-private-ip> --port 1344 --options

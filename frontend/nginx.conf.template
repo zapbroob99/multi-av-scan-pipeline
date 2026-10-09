@@ -8,7 +8,8 @@ server {
     listen 8080;
     server_name _;
     root /usr/share/nginx/html;
-    client_max_body_size 64m;
+    # At least MASP_HTTP_UPLOAD_MAX_BYTES (1 GiB in the examples) for the upload routes.
+    client_max_body_size 1024m;
     client_body_timeout 30s;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto $masp_scheme;
@@ -38,7 +39,7 @@ server {
     }
     # Only sample submission may exceed the browser JSON limit.
     location = /api/ui/v1/scans {
-        client_max_body_size 64m;
+        client_max_body_size 1024m;
         proxy_pass ${MASP_BACKEND_URL};
     }
 }

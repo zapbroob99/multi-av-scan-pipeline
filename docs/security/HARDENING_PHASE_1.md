@@ -11,19 +11,31 @@ before reading them and counts actual received bytes for chunked or misleading
 Content-Length requests. Partial parser spool files are closed on limit failure.
 
 `MASP_HTTP_UPLOAD_MAX_BYTES` is a positive deployment-wide multipart-body ceiling
-(default `67108864`, 64 MiB). The effective body limit is the smaller of that
-ceiling and the configured sample limit plus 1 MiB of multipart overhead; when
-the sample policy is unlimited, the deployment ceiling still applies. Extra
-file parts and form fields count toward the same body limit. File content is
-also checked against the sample policy during persistence. Rejection is `413`;
-an invalid deployment ceiling fails closed with `503`.
+(built-in code default `67108864`, 64 MiB; the shipped pilot/production examples
+raise it to `1073741824`, 1 GiB, deliberately finite rather than unlimited). The
+effective body limit is the smaller of that ceiling and the configured sample
+limit (`MASP_UPLOAD_MAX_BYTES`, the console's "Largest upload") plus 1 MiB of
+multipart overhead; when the sample policy is 0 (unlimited; the shipped examples'
+value), the deployment ceiling still applies and binds alone. Extra file parts
+and form fields count toward the same body limit. File content is also checked
+against the sample policy during persistence. Rejection is `413`, naming whichever
+of the two actually bound and its byte value; an invalid deployment ceiling fails
+closed with `503`. `app.services.upload_admission.upload_body_limit_with_source`
+is the one place that decides which layer binds; it backs the `413` message, the
+`/scans/options` response Submit Sample reads for its own pre-flight message, and
+`deployment_http_ceiling_bytes` on `GET /scan-policy`, shown next to "Largest
+upload" so an administrator who sets that policy to 0 still sees the ceiling that
+remains in force, rather than discovering it from a failed upload.
 
 Upgrades that previously allowed unlimited HTTP uploads now have a finite
 ceiling. Raise it explicitly, with multipart overhead, if the approved file
-contract requires more than 64 MiB. This does not change the separate deferred
-source or ICAP limits. Keep proxy body limits, upload timeouts, connection limits,
-and spool disk budgets aligned; the application boundary is not a substitute
-for ingress concurrency/rate controls.
+contract requires more than the configured value. This does not change the
+separate deferred source or ICAP limits (`MASP_ICAP_MAX_BYTES`, which is set
+explicitly in both example files so it always takes priority over
+`MASP_UPLOAD_MAX_BYTES` for ICAP and keeps ICAP's own synchronous whole-body
+buffering independently bounded). Keep proxy body limits, upload timeouts,
+connection limits, and spool disk budgets aligned; the application boundary is
+not a substitute for ingress concurrency/rate controls.
 
 Sample copying/hashing, upload routing/enqueue database work, and terminal-state
 wait reads execute in the thread pool instead of the API event-loop thread.

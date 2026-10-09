@@ -6162,6 +6162,10 @@
       },
       "ScanPolicySnapshot": {
         "properties": {
+          "deployment_http_ceiling_bytes": {
+            "title": "Deployment Http Ceiling Bytes",
+            "type": "integer"
+          },
           "fields": {
             "items": {
               "$ref": "#/components/schemas/ScanPolicyField"
@@ -6171,7 +6175,8 @@
           }
         },
         "required": [
-          "fields"
+          "fields",
+          "deployment_http_ceiling_bytes"
         ],
         "title": "ScanPolicySnapshot",
         "type": "object"

@@ -398,9 +398,12 @@ database monitoring and p95/p99 load.
 Also test from the real network segments:
 
 ```bash
+# --expect-max-bytes must match whatever actually binds: MASP_UPLOAD_MAX_BYTES if it
+# is set (nonzero), otherwise MASP_HTTP_UPLOAD_MAX_BYTES (1073741824 in the shipped
+# example, since the example's MASP_UPLOAD_MAX_BYTES is 0, i.e. no separate policy).
 python3 tools/verify_scan_api.py \
   --base-url https://masp.example.internal \
-  --eicar --expect-max-bytes 52428800 \
+  --eicar --expect-max-bytes 1073741824 \
   --require-engine static_metadata --require-engine clamav --require-engine yara
 
 python3 tools/icap_probe.py --host <masp-private-ip> --port 1344 --options

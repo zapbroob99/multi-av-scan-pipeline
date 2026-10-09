@@ -3,12 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
-import NewScan from './new-scan'
+import NewScan, { sizeLimitMessage } from './new-scan'
 
-function mount({ limit = 1000, engines = 1, fail = false } = {}) {
+function mount({ limit = 1000, ceiling = 10000, engines = 1, fail = false }: { limit?: number | null; ceiling?: number; engines?: number; fail?: boolean } = {}) {
   const fetcher = vi.fn(async (url: string) => {
     if (url.endsWith('/options')) return new Response(JSON.stringify({ file_max_bytes: limit,
-      body_max_bytes: 10000, enabled_engine_count: engines, archive_mode: 'lazy_extract_on_detection' }))
+      body_max_bytes: ceiling, enabled_engine_count: engines, archive_mode: 'lazy_extract_on_detection' }))
     if (fail) throw new TypeError('Network unavailable')
     return new Response(JSON.stringify({ scan_id: 42, status: 'accepted', report_url: '/scans/42' }), { status: 202 })
   })
@@ -42,12 +42,24 @@ describe('Scan submission', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Submit another sample' }))
     expect(screen.getByLabelText('Sample file')).toHaveValue('')
   })
-  it('rejects oversized files before any upload request', async () => {
-    const fetcher = mount({ limit: 3 })
+  it('rejects a file over the policy limit and names that limit, not the deployment ceiling', async () => {
+    const fetcher = mount({ limit: 3, ceiling: 10000 })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Create scan' })).toBeEnabled())
     await userEvent.upload(screen.getByLabelText('Sample file'), new File(['too large'], 'safe.txt'))
     fireEvent.submit(screen.getByLabelText('Sample file').closest('form')!)
-    expect(await screen.findByRole('alert')).toHaveTextContent('No upload was sent')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('upload size policy')
+    expect(alert).toHaveTextContent('No upload was sent')
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/scans'))).toHaveLength(0)
+  })
+  it('rejects a file over the deployment ceiling and names that ceiling, even with no policy limit', async () => {
+    const fetcher = mount({ limit: null, ceiling: 3 })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create scan' })).toBeEnabled())
+    await userEvent.upload(screen.getByLabelText('Sample file'), new File(['too large'], 'safe.txt'))
+    fireEvent.submit(screen.getByLabelText('Sample file').closest('form')!)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('HTTP request ceiling')
+    expect(alert).toHaveTextContent('No upload was sent')
     expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/scans'))).toHaveLength(0)
   })
   it('preserves form and warns about uncertain acceptance without retrying', async () => {
@@ -78,5 +90,22 @@ describe('Scan submission', () => {
     expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/scans'))).toHaveLength(1)
     finish(new Response(JSON.stringify({ scan_id: 42, status: 'accepted', report_url: '/scans/42' }), { status: 202 }))
     await screen.findByRole('heading', { name: 'Scan accepted' })
+  })
+})
+
+describe('sizeLimitMessage', () => {
+  const file = (size: number) => { const f = new File(['x'], 'f.bin'); Object.defineProperty(f, 'size', { value: size }); return f }
+  it('allows a file under both limits', () => {
+    expect(sizeLimitMessage(file(5), { file_max_bytes: 10, body_max_bytes: 20 })).toBeNull()
+  })
+  it('names the policy only when it is the tighter, actually-binding limit', () => {
+    expect(sizeLimitMessage(file(15), { file_max_bytes: 10, body_max_bytes: 20 })).toContain('upload size policy')
+  })
+  it('names the deployment ceiling when there is no policy limit', () => {
+    expect(sizeLimitMessage(file(25), { file_max_bytes: null, body_max_bytes: 20 })).toContain('HTTP request ceiling')
+  })
+  it('names the deployment ceiling even when a misconfigured policy limit is looser than it', () => {
+    // The policy can only tighten the ceiling; it never raises or replaces it.
+    expect(sizeLimitMessage(file(25), { file_max_bytes: 1000, body_max_bytes: 20 })).toContain('HTTP request ceiling')
   })
 })
