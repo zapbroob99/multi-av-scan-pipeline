@@ -161,6 +161,21 @@ file still carries partner naming. Do not `git add` it.
 
 ## Current work
 
+**Open after pilot.22 (2026-10-12, offered, not started; wait for the user's go-ahead).** The user
+asked about limits and nested archives; answered from code: ICAP `MASP_ICAP_MAX_BYTES` 50 MB acts
+before the rules and blocks fail-closed with no ledger row (gateway counters only); clamd 64 MB
+(`MASP_CLAMD_*`), clamd's MaxRecursion 17 / MaxFiles 10000 defaults; MASP archive opening 3 levels,
+1000 files, 250 MB total, 50 MB per member. A size rule "larger than X -> Allow without scanning"
+(or Light check) already exists (ledger: Not scanned badge, risk unscored, decision
+`profile_rule_not_scanned`), but over ICAP it only works if `MASP_ICAP_MAX_BYTES` is raised.
+Offered: (1) a ledger risk filter for not-scanned/light-check rows; (2) pass
+`MASP_ARCHIVE_MAX_*` through the pilot/prod compose and env examples (today the code reads them
+but compose does not forward them, so they are fixed on the pilot) and expose clamd MaxRecursion/
+MaxFiles; (3) show these limits read-only on the profile screen; (4) set the `fil` size rule and
+ICAP limit, once the user picks Allow vs Light check and the threshold. Phases 3/4 of file history
+(result reuse, rescans after signature updates) also await a decision. The intranet is on pilot.15
+until the user reports installing pilot.22.
+
 **File history, 2026-10-09 (pilot.22, commit `79c9495`).** The user asked whether MASP could
 answer hash questions from its own scans the way VirusTotal does, kept isolated from the
 VirusTotal lookup. Phases 1+2 are built: `file_history` (one row per SHA-256, updated when a scan
