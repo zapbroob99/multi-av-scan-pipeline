@@ -55,9 +55,9 @@ export default function ScanManagement({ session }: { session: Session }) {
   const scan = report.error ? undefined : report.data
   const busy = operation.isPending || download.isPending
   const active = scan && ['queued', 'running', 'finalizing'].includes(scan.status)
-  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to="/dashboard">Dashboard</Link></section>
+  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to="/dashboard">Manual scans</Link></section>
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">MANUAL SCAN #{scanId}</p>
-    <h1>Exports and scan management</h1></div><Link className="button button-secondary" to="/dashboard">Dashboard</Link></div>
+    <h1>Exports and scan management</h1></div><Link className="button button-secondary" to="/dashboard">Manual scans</Link></div>
     {!deleted && <p><Link to={`/scans/${scanId}`}>Back to report</Link></p>}
     {receipt && <p role="status" className="callout">{receipt}</p>}
     {operation.error && <p role="alert" className="error"><ErrorMessage message={operation.error.message || ''} /> The request may have reached the server. Check the report or Dashboard before trying again.</p>}

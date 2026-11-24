@@ -10,7 +10,7 @@ type Archive = NonNullable<Rule['archive']>
 type Inconclusive = RulesPolicy['inconclusive']
 export type EngineChoice = components['schemas']['ProfileEngineChoice']
 
-const MB = 1024 * 1024
+const MIB = 1024 * 1024
 export const FAMILY_SHORT: Record<string, string> = {
   executable: 'Programs', script: 'Scripts', archive: 'Archives', office: 'Office', pdf: 'PDF',
   image: 'Images', markup: 'XML', unrecognized: 'Unrecognized',
@@ -21,7 +21,7 @@ const ARCHIVES: Record<Archive, string> = { whole: 'as one file', inspect: 'open
 export const INCONCLUSIVE_HELP = 'Not conclusive: an engine failed or did not finish, an engine asked for review, or the risk is elevated without a detection.'
 
 function megabytes(bytes: number) {
-  const value = bytes / MB
+  const value = bytes / MIB
   return Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100)
 }
 
@@ -31,9 +31,9 @@ export function conditionText(rule: Rule, last: boolean) {
   if (last) return 'Every other file'
   const parts: string[] = []
   const above = when.larger_than_bytes, upTo = when.up_to_bytes
-  if (above != null && upTo != null) parts.push(`Size ${megabytes(above)}–${megabytes(upTo)} MB`)
-  else if (above != null) parts.push(`Larger than ${megabytes(above)} MB`)
-  else if (upTo != null) parts.push(`Up to ${megabytes(upTo)} MB`)
+  if (above != null && upTo != null) parts.push(`Size ${megabytes(above)}–${megabytes(upTo)} MiB`)
+  else if (above != null) parts.push(`Larger than ${megabytes(above)} MiB`)
+  else if (upTo != null) parts.push(`Up to ${megabytes(upTo)} MiB`)
   if (when.families?.length) parts.push(`Type: ${when.families.map(family => FAMILY_SHORT[family] ?? family).join(', ')}`)
   if (when.masquerade) parts.push('Extension contradicts content')
   return parts.join(' · ')
@@ -79,8 +79,8 @@ function matchesArchives(draft: Draft) {
 function bytes(text: string, label: string): number | null {
   if (!text.trim()) return null
   const value = Number(text)
-  if (!Number.isFinite(value) || value < 0) throw new Error(`${label}: enter a size in MB.`)
-  return Math.round(value * MB)
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${label}: enter a size in MiB.`)
+  return Math.round(value * MIB)
 }
 
 function build(drafts: Draft[], inconclusive: Inconclusive | '', engines: EngineChoice[]): RulesPolicy {
@@ -126,8 +126,8 @@ function RuleRow({ draft, index, last, count, engines, update, move, remove }: {
     <div className="profile-rule-part"><span className="profile-rule-part-label">When</span>
       {last ? <p className="profile-rule-every">Every other file</p> : <div className="profile-rule-conditions">
         <div className="profile-rule-sizes">
-          <label>Larger than (MB)<input inputMode="decimal" value={draft.above} onChange={event => update({ above: event.target.value })} /></label>
-          <label>Up to (MB)<input inputMode="decimal" value={draft.upTo} onChange={event => update({ upTo: event.target.value })} /></label>
+          <label>Larger than (MiB)<input inputMode="decimal" value={draft.above} onChange={event => update({ above: event.target.value })} /></label>
+          <label>Up to (MiB)<input inputMode="decimal" value={draft.upTo} onChange={event => update({ upTo: event.target.value })} /></label>
         </div>
         <fieldset className="profile-rule-families"><legend>Type (any of)</legend>
           {FAMILIES.map(family => <label key={family} className="check-row"><input type="checkbox" checked={draft.families.includes(family)}

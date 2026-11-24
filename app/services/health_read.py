@@ -234,7 +234,7 @@ def storage_check(path=STORAGE_DIR) -> HealthCheck:
 
 
 def intake_checks(overview: intake_read.IntakeOverview) -> list[HealthCheck]:
-    link = '/system/intake'
+    link = '/storage/intake'
     worker = overview.manifest_worker
     if overview.manifest_record_invalid:
         manifest = HealthCheck(key='manifest', label='Manifest intake', state='unknown', link=link,
@@ -279,7 +279,7 @@ def intake_checks(overview: intake_read.IntakeOverview) -> list[HealthCheck]:
 
 
 def notifications_check(connection, now: float) -> HealthCheck:
-    link = '/system/delivery'
+    link = '/administration/notifications'
     row = connection.execute('''SELECT COUNT(*) AS pending,
         SUM(CASE WHEN attempt_count > 0 THEN 1 ELSE 0 END) AS retrying, MIN(created_at) AS oldest
         FROM notification_outbox WHERE status IN ('pending', 'delivering')''').fetchone()
@@ -429,7 +429,7 @@ def with_icap_bindings(connection, gateways: list[dict]) -> list[dict]:
 
 
 def icap_check(gateways: list[dict], now: float) -> HealthCheck:
-    link = '/system/delivery'
+    link = '/integrations/gateways'
     current = [g for g in gateways if now - int(g['at']) < ICAP_FORGOTTEN_SECONDS]
     if not current:
         return HealthCheck(key='icap', label='ICAP gateway', state='inactive', link=link,

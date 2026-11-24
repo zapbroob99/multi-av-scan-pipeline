@@ -10,11 +10,11 @@ test('an administrator watches a folder from the client only after confirmation;
   await page.goto('dashboard')
   await signIn(page, 'console-admin')
   const nav = page.getByRole('navigation', { name: 'Workspace' })
-  await expect(nav.getByRole('link', { name: 'Dashboard', exact: true })).toBeVisible()
-  // Not in use yet: no worker has reported and no folder is watched.
-  await expect(nav.getByRole('link', { name: 'Folder scanning', exact: true })).toHaveCount(0)
+  await expect(nav.getByRole('link', { name: 'Scans', exact: true })).toBeVisible()
+  // Storage remains discoverable before setup.
+  await expect(nav.getByRole('link', { name: 'Storage', exact: true })).toBeVisible()
 
-  await nav.getByRole('link', { name: 'Service clients', exact: true }).click()
+  await nav.getByRole('link', { name: 'Integrations', exact: true }).click()
   await page.getByRole('button', { name: 'Manage Acceptance integration' }).click()
   await page.getByRole('tab', { name: 'Storage' }).click()
   const watched = page.getByRole('region', { name: 'Watched folders' })
@@ -40,10 +40,10 @@ test('an administrator watches a folder from the client only after confirmation;
   expect(writes).toBe(1)
   await expect(page.getByText('This folder is disabled.', { exact: false })).toBeVisible()
   await expect(page.getByText('shared:/incoming/client-a')).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Acceptance routing' })).toHaveAttribute('href', /\/service-clients\/1\/profiles$/)
+  await expect(page.getByRole('link', { name: 'Acceptance routing' })).toHaveAttribute('href', /\/policies\/profiles\/1$/)
   await page.screenshot({ path: '../artifacts/console-e2e/folder-scanning-location.png', fullPage: true })
-  // In use now: the menu shows it.
-  await expect(nav.getByRole('link', { name: 'Folder scanning', exact: true })).toBeVisible()
+  // Watching a folder does not change navigation order.
+  await expect(nav.getByRole('link', { name: 'Storage', exact: true })).toBeVisible()
   await page.goto('storage/locations/new?client=1')
   await expect(page.getByLabel('Name', { exact: true })).toBeVisible()
   await page.screenshot({ path: '../artifacts/console-e2e/folder-scanning-form.png', fullPage: true })
@@ -58,10 +58,10 @@ test('an administrator watches a folder from the client only after confirmation;
 
   await page.getByRole('button', { name: 'Sign out' }).click()
   await signIn(page, 'console-analyst')
-  await nav.getByRole('link', { name: 'Folder scanning', exact: true }).click()
+  await nav.getByRole('link', { name: 'Storage', exact: true }).click()
   await expect(page.getByRole('link', { name: 'Acceptance share' })).toBeVisible()
   await expect(page.getByRole('link', { name: /New location|Watch a folder/ })).toHaveCount(0)
-  await page.getByRole('link', { name: 'Findings', exact: true }).click()
+  await page.getByRole('link', { name: 'Folder findings', exact: true }).click()
   await expect(page.getByText('No findings match these filters.')).toBeVisible()
   expect((await page.request.get('/api/ui/v1/storage/options')).status()).toBe(403)
 })

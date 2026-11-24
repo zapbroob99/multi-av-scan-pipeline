@@ -57,7 +57,7 @@ describe('Engine console', () => {
       return new Response(JSON.stringify(data))
     })
     mount(fetcher)
-    await userEvent.click(await screen.findByRole('button', { name: 'Test connection' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Request health check' }))
     await screen.findByText('pending')
     expect(screen.getByRole('status')).toHaveTextContent('not a connection success')
     expect(screen.queryByText('healthy')).not.toBeInTheDocument()

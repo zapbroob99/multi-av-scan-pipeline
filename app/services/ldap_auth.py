@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import math
 import os
 import ssl
 from dataclasses import dataclass
@@ -27,6 +30,7 @@ class LdapConfig:
     port: int = 636
     tls_mode: str = "ldaps"
     ca_cert_file: str | None = None
+    ca_cert_data: str | None = None
     connect_timeout: float = 5.0
     receive_timeout: float = 8.0
     bind_dn: str = ""
@@ -72,7 +76,7 @@ def _positive_number(
         value = converter(raw)
     except ValueError as exc:
         raise LdapConfigurationError(f"{name} must be a number.") from exc
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise LdapConfigurationError(f"{name} must be greater than zero.")
     return value
 
@@ -90,12 +94,20 @@ def load_ldap_config(env: Mapping[str, str] | None = None) -> LdapConfig:
         )
 
     default_port = 636 if tls_mode == "ldaps" else 389
+    ca_data = source.get("MASP_LDAP_CA_PEM_B64", "").strip()
+    try:
+        ca_pem = base64.b64decode(ca_data, validate=True).decode("ascii") if ca_data else None
+        if ca_pem:
+            ssl.create_default_context(cadata=ca_pem)
+    except (binascii.Error, UnicodeError, ssl.SSLError, ValueError) as exc:
+        raise LdapConfigurationError("Invalid LDAP CA certificate bundle.") from exc
     config = LdapConfig(
         enabled=True,
         host=source.get("MASP_LDAP_HOST", "").strip(),
         port=int(_positive_number(source, "MASP_LDAP_PORT", default_port, int)),
         tls_mode=tls_mode,
         ca_cert_file=source.get("MASP_LDAP_CA_CERT_FILE", "").strip() or None,
+        ca_cert_data=ca_pem,
         connect_timeout=float(
             _positive_number(source, "MASP_LDAP_CONNECT_TIMEOUT", 5.0, float)
         ),
@@ -180,6 +192,7 @@ def authenticate_ldap(
     tls = ldap3.Tls(
         validate=ssl.CERT_REQUIRED,
         ca_certs_file=active_config.ca_cert_file,
+        ca_certs_data=active_config.ca_cert_data,
         valid_names=[active_config.host],
     )
     server = ldap3.Server(
@@ -212,7 +225,7 @@ def authenticate_ldap(
             client_strategy=ldap3.SAFE_SYNC,
             read_only=True,
             raise_exceptions=True,
-            receive_timeout=active_config.receive_timeout,
+            receive_timeout=math.ceil(active_config.receive_timeout),
         )
         escaped_username = escape_filter_chars(clean_username)
         search_filter = active_config.user_filter.replace(
@@ -241,7 +254,7 @@ def authenticate_ldap(
         entry = entries[0]
         user_dn = str(entry.get("dn", "")).strip()
         values = entry.get("attributes") or {}
-        if not user_dn or not isinstance(values, dict):
+        if not user_dn or not isinstance(values, Mapping):
             return None
         raw_groups = values.get(active_config.group_attribute)
         directory_username = _first_text(
@@ -269,9 +282,9 @@ def authenticate_ldap(
             client_strategy=ldap3.SAFE_SYNC,
             read_only=True,
             raise_exceptions=True,
-            receive_timeout=active_config.receive_timeout,
+            receive_timeout=math.ceil(active_config.receive_timeout),
         )
-    except ldap_exceptions.LDAPBindError:
+    except (ldap_exceptions.LDAPBindError, ldap_exceptions.LDAPInvalidCredentialsResult):
         return None
     except ldap_exceptions.LDAPException as exc:
         raise LdapUnavailableError("LDAP user bind failed.") from exc

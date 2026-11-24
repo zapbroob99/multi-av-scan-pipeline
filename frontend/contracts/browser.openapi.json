@@ -1087,6 +1087,43 @@
         "title": "BulkDeleteResult",
         "type": "object"
       },
+      "ChatAnswer": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "title": "ChatAnswer",
+        "type": "object"
+      },
+      "ChatQuestion": {
+        "additionalProperties": false,
+        "properties": {
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/Turn"
+            },
+            "maxItems": 3,
+            "title": "History",
+            "type": "array"
+          },
+          "question": {
+            "maxLength": 1500,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "ChatQuestion",
+        "type": "object"
+      },
       "ClientChoice": {
         "properties": {
           "client_key": {
@@ -1121,6 +1158,122 @@
           "profiles"
         ],
         "title": "ClientChoice",
+        "type": "object"
+      },
+      "ClientConfiguration": {
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "integer"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "engines": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationEngine"
+            },
+            "title": "Engines",
+            "type": "array"
+          },
+          "gateways": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationGateway"
+            },
+            "title": "Gateways",
+            "type": "array"
+          },
+          "gateways_incomplete": {
+            "title": "Gateways Incomplete",
+            "type": "boolean"
+          },
+          "header_types": {
+            "items": {
+              "$ref": "#/components/schemas/HeaderTypeOption"
+            },
+            "title": "Header Types",
+            "type": "array"
+          },
+          "http_body_ceiling_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Body Ceiling Bytes"
+          },
+          "http_configuration_valid": {
+            "title": "Http Configuration Valid",
+            "type": "boolean"
+          },
+          "http_context": {
+            "$ref": "#/components/schemas/ConfigurationContext"
+          },
+          "managed": {
+            "title": "Managed",
+            "type": "boolean"
+          },
+          "observed_at": {
+            "title": "Observed At",
+            "type": "integer"
+          },
+          "placement_context": {
+            "$ref": "#/components/schemas/ConfigurationContext"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profile_context": {
+            "$ref": "#/components/schemas/ConfigurationContext"
+          },
+          "upload_policy_bytes": {
+            "title": "Upload Policy Bytes",
+            "type": "integer"
+          },
+          "upload_policy_context": {
+            "$ref": "#/components/schemas/ConfigurationContext"
+          },
+          "upload_policy_source": {
+            "title": "Upload Policy Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_name",
+          "enabled",
+          "managed",
+          "profile",
+          "upload_policy_bytes",
+          "upload_policy_source",
+          "http_body_ceiling_bytes",
+          "http_configuration_valid",
+          "gateways",
+          "gateways_incomplete",
+          "engines",
+          "observed_at",
+          "upload_policy_context",
+          "http_context",
+          "profile_context",
+          "placement_context",
+          "header_types"
+        ],
+        "title": "ClientConfiguration",
         "type": "object"
       },
       "ClientCreateBody": {
@@ -1509,6 +1662,199 @@
           "config"
         ],
         "title": "ConfigBody",
+        "type": "object"
+      },
+      "ConfigurationContext": {
+        "properties": {
+          "applies": {
+            "title": "Applies",
+            "type": "string"
+          },
+          "edit_at": {
+            "title": "Edit At",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "restart": {
+            "title": "Restart",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "default": "resolved",
+            "enum": [
+              "resolved",
+              "defaulted",
+              "clamped",
+              "invalid",
+              "unknown"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "scope",
+          "applies",
+          "edit_at",
+          "restart"
+        ],
+        "title": "ConfigurationContext",
+        "type": "object"
+      },
+      "ConfigurationEngine": {
+        "properties": {
+          "eligible": {
+            "title": "Eligible",
+            "type": "boolean"
+          },
+          "excluded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excluded Reason"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerObservation"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "observations_incomplete": {
+            "title": "Observations Incomplete",
+            "type": "boolean"
+          },
+          "pool_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pool Enabled"
+          },
+          "pool_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pool Id"
+          },
+          "pool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pool Name"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "eligible",
+          "excluded_reason",
+          "pool_id",
+          "pool_name",
+          "pool_enabled",
+          "observations",
+          "observations_incomplete"
+        ],
+        "title": "ConfigurationEngine",
+        "type": "object"
+      },
+      "ConfigurationGateway": {
+        "properties": {
+          "fail_closed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fail Closed"
+          },
+          "max_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Bytes"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "reported_at": {
+            "title": "Reported At",
+            "type": "integer"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "wait_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Seconds"
+          }
+        },
+        "required": [
+          "port",
+          "reported_at",
+          "stale",
+          "max_bytes",
+          "wait_seconds",
+          "fail_closed"
+        ],
+        "title": "ConfigurationGateway",
         "type": "object"
       },
       "ConnectionMethod": {
@@ -2244,6 +2590,54 @@
         "title": "EnginePayload",
         "type": "object"
       },
+      "EngineProfileReference": {
+        "properties": {
+          "client_enabled": {
+            "title": "Client Enabled",
+            "type": "boolean"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "integer"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "names_truncated": {
+            "title": "Names Truncated",
+            "type": "boolean"
+          },
+          "profile_enabled": {
+            "title": "Profile Enabled",
+            "type": "boolean"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "integer"
+          },
+          "profile_name": {
+            "title": "Profile Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_id",
+          "profile_name",
+          "profile_enabled",
+          "is_default",
+          "client_id",
+          "client_name",
+          "client_enabled",
+          "names_truncated"
+        ],
+        "title": "EngineProfileReference",
+        "type": "object"
+      },
       "EngineSummary": {
         "properties": {
           "detected": {
@@ -2340,6 +2734,49 @@
           "duration_ms"
         ],
         "title": "EngineSummary",
+        "type": "object"
+      },
+      "EngineUsage": {
+        "properties": {
+          "engine_id": {
+            "title": "Engine Id",
+            "type": "integer"
+          },
+          "engine_name": {
+            "title": "Engine Name",
+            "type": "string"
+          },
+          "next_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next After"
+          },
+          "observed_at": {
+            "title": "Observed At",
+            "type": "integer"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/EngineProfileReference"
+            },
+            "title": "Profiles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "engine_id",
+          "engine_name",
+          "profiles",
+          "next_after",
+          "observed_at"
+        ],
+        "title": "EngineUsage",
         "type": "object"
       },
       "ErrorPayload": {
@@ -3365,6 +3802,24 @@
           "existing"
         ],
         "title": "HashesAdded",
+        "type": "object"
+      },
+      "HeaderTypeOption": {
+        "properties": {
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "family"
+        ],
+        "title": "HeaderTypeOption",
         "type": "object"
       },
       "HealthCheck": {
@@ -4879,6 +5334,21 @@
         "title": "NotificationFailure",
         "type": "object"
       },
+      "NotificationPolicyBody": {
+        "additionalProperties": false,
+        "properties": {
+          "siem_not_allowed_events": {
+            "maxLength": 128,
+            "title": "Siem Not Allowed Events",
+            "type": "string"
+          }
+        },
+        "required": [
+          "siem_not_allowed_events"
+        ],
+        "title": "NotificationPolicyBody",
+        "type": "object"
+      },
       "NotificationSummary": {
         "properties": {
           "delivered": {
@@ -4996,6 +5466,33 @@
           "next_before"
         ],
         "title": "ObjectPage",
+        "type": "object"
+      },
+      "OperationalPolicyBody": {
+        "additionalProperties": false,
+        "properties": {
+          "api_max_wait_seconds": {
+            "maxLength": 128,
+            "title": "Api Max Wait Seconds",
+            "type": "string"
+          },
+          "api_retry_after_seconds": {
+            "maxLength": 128,
+            "title": "Api Retry After Seconds",
+            "type": "string"
+          },
+          "upload_max_bytes": {
+            "maxLength": 128,
+            "title": "Upload Max Bytes",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_max_wait_seconds",
+          "api_retry_after_seconds",
+          "upload_max_bytes"
+        ],
+        "title": "OperationalPolicyBody",
         "type": "object"
       },
       "PassSummary": {
@@ -5266,6 +5763,113 @@
           "enabled"
         ],
         "title": "PoolUpdateBody",
+        "type": "object"
+      },
+      "PreviewEngine": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PreviewEngine",
+        "type": "object"
+      },
+      "PreviewLimit": {
+        "properties": {
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "limit_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit Bytes"
+          },
+          "state": {
+            "enum": [
+              "blocked",
+              "exceeds_limit",
+              "within_limit",
+              "unknown"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "state",
+          "explanation"
+        ],
+        "title": "PreviewLimit",
+        "type": "object"
+      },
+      "PreviewMatch": {
+        "properties": {
+          "action": {
+            "enum": [
+              "scan",
+              "light",
+              "allow",
+              "block"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "archive": {
+            "anyOf": [
+              {
+                "enum": [
+                  "whole",
+                  "inspect",
+                  "members"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive"
+          },
+          "engine_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Engine Ids",
+            "type": "array"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "number",
+          "action",
+          "engine_ids",
+          "archive"
+        ],
+        "title": "PreviewMatch",
         "type": "object"
       },
       "PrintEngine": {
@@ -6251,6 +6855,133 @@
         "title": "RulePayload",
         "type": "object"
       },
+      "RulePreview": {
+        "properties": {
+          "configuration_fingerprint": {
+            "title": "Configuration Fingerprint",
+            "type": "string"
+          },
+          "engines": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewEngine"
+            },
+            "title": "Engines",
+            "type": "array"
+          },
+          "limits": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewLimit"
+            },
+            "title": "Limits",
+            "type": "array"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewMatch"
+            },
+            "title": "Matches",
+            "type": "array"
+          },
+          "observed_at": {
+            "title": "Observed At",
+            "type": "integer"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "integer"
+          },
+          "profile_revision": {
+            "title": "Profile Revision",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "matched",
+              "ambiguous"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile_id",
+          "profile_revision",
+          "observed_at",
+          "configuration_fingerprint",
+          "status",
+          "matches",
+          "engines",
+          "limits",
+          "warnings"
+        ],
+        "title": "RulePreview",
+        "type": "object"
+      },
+      "RulePreviewBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "extension": {
+            "default": "",
+            "maxLength": 16,
+            "pattern": "^[a-z0-9]*$",
+            "title": "Extension",
+            "type": "string"
+          },
+          "header_type": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Header Type"
+          },
+          "profile_id": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Profile Id",
+            "type": "integer"
+          },
+          "size_bytes": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "source": {
+            "enum": [
+              "api",
+              "icap"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_id",
+          "expected_revision",
+          "source",
+          "size_bytes"
+        ],
+        "title": "RulePreviewBody",
+        "type": "object"
+      },
       "RuleSaved": {
         "properties": {
           "name": {
@@ -6438,6 +7169,7 @@
       },
       "ScanPolicyBody": {
         "additionalProperties": false,
+        "description": "Compatibility write; new task-specific editors only write their own keys.",
         "properties": {
           "api_max_wait_seconds": {
             "maxLength": 128,
@@ -6461,22 +7193,29 @@
           }
         },
         "required": [
+          "siem_not_allowed_events",
           "api_max_wait_seconds",
           "api_retry_after_seconds",
-          "upload_max_bytes",
-          "siem_not_allowed_events"
+          "upload_max_bytes"
         ],
         "title": "ScanPolicyBody",
         "type": "object"
       },
       "ScanPolicyField": {
         "properties": {
+          "context": {
+            "$ref": "#/components/schemas/ConfigurationContext"
+          },
           "control": {
             "title": "Control",
             "type": "string"
           },
           "default": {
             "title": "Default",
+            "type": "integer"
+          },
+          "fallback_value": {
+            "title": "Fallback Value",
             "type": "integer"
           },
           "help": {
@@ -6526,8 +7265,10 @@
           "maximum",
           "default",
           "value",
+          "fallback_value",
           "override_raw",
-          "source"
+          "source",
+          "context"
         ],
         "title": "ScanPolicyField",
         "type": "object"
@@ -6535,8 +7276,22 @@
       "ScanPolicySnapshot": {
         "properties": {
           "deployment_http_ceiling_bytes": {
-            "title": "Deployment Http Ceiling Bytes",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Http Ceiling Bytes"
+          },
+          "deployment_http_ceiling_valid": {
+            "title": "Deployment Http Ceiling Valid",
+            "type": "boolean"
+          },
+          "deployment_http_context": {
+            "$ref": "#/components/schemas/ConfigurationContext"
           },
           "fields": {
             "items": {
@@ -6548,7 +7303,9 @@
         },
         "required": [
           "fields",
-          "deployment_http_ceiling_bytes"
+          "deployment_http_ceiling_bytes",
+          "deployment_http_ceiling_valid",
+          "deployment_http_context"
         ],
         "title": "ScanPolicySnapshot",
         "type": "object"
@@ -6966,6 +7723,17 @@
       },
       "SessionPayload": {
         "properties": {
+          "assistant_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistant Enabled"
+          },
           "csrf_token": {
             "title": "Csrf Token",
             "type": "string"
@@ -7781,6 +8549,29 @@
         "title": "ThroughDetection",
         "type": "object"
       },
+      "Turn": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "maxLength": 6000,
+            "minLength": 1,
+            "title": "Answer",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 1500,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "title": "Turn",
+        "type": "object"
+      },
       "UpdateUserBody": {
         "additionalProperties": false,
         "properties": {
@@ -8044,6 +8835,52 @@
           "lifecycle_state"
         ],
         "title": "WorkerLifecycleSaved",
+        "type": "object"
+      },
+      "WorkerObservation": {
+        "properties": {
+          "check": {
+            "enum": [
+              "unknown",
+              "stale",
+              "passed",
+              "failed"
+            ],
+            "title": "Check",
+            "type": "string"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "lifecycle": {
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "node_id",
+          "lifecycle",
+          "online",
+          "checked_at",
+          "check"
+        ],
+        "title": "WorkerObservation",
         "type": "object"
       },
       "WorkerPage": {
@@ -9618,6 +10455,130 @@
         ]
       }
     },
+    "/api/ui/v1/api-ledger/scans/{scan_id}/assistant": {
+      "post": {
+        "operationId": "automation_assistant_api_ui_v1_api_ledger_scans__scan_id__assistant_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scan_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Scan Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatQuestion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAnswer"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Automation Assistant",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
     "/api/ui/v1/api-ledger/scans/{scan_id}/children": {
       "get": {
         "operationId": "read_automation_archive_children_api_ui_v1_api_ledger_scans__scan_id__children_get",
@@ -10820,6 +11781,117 @@
           }
         },
         "summary": "Automation Summary Export",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/assistant/chat": {
+      "post": {
+        "operationId": "assistant_chat_api_ui_v1_assistant_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatQuestion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAnswer"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Assistant Chat",
         "tags": [
           "Browser console"
         ]
@@ -12785,6 +13857,138 @@
         ]
       }
     },
+    "/api/ui/v1/engines/{instance_id}/usage": {
+      "get": {
+        "operationId": "browser_engine_usage_api_ui_v1_engines__instance_id__usage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Instance Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineUsage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Engine Usage",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
     "/api/ui/v1/exceptions": {
       "get": {
         "operationId": "browser_exceptions_api_ui_v1_exceptions_get",
@@ -13861,6 +15065,110 @@
         ]
       }
     },
+    "/api/ui/v1/notification-policy": {
+      "put": {
+        "operationId": "save_browser_notification_policy_api_ui_v1_notification_policy_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationPolicyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Save Browser Notification Policy",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
     "/api/ui/v1/notifications": {
       "get": {
         "operationId": "browser_notifications_api_ui_v1_notifications_get",
@@ -14165,6 +15473,110 @@
           }
         },
         "summary": "Browser Mark Notifications Read",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/operational-policy": {
+      "put": {
+        "operationId": "save_browser_operational_policy_api_ui_v1_operational_policy_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationalPolicyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Save Browser Operational Policy",
         "tags": [
           "Browser console"
         ]
@@ -14925,6 +16337,130 @@
           }
         },
         "summary": "Read Scan Report",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/scans/{scan_id}/assistant": {
+      "post": {
+        "operationId": "manual_assistant_api_ui_v1_scans__scan_id__assistant_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scan_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Scan Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatQuestion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAnswer"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Manual Assistant",
         "tags": [
           "Browser console"
         ]
@@ -16388,6 +17924,118 @@
       }
     },
     "/api/ui/v1/service-clients/{client_id}": {
+      "get": {
+        "operationId": "read_browser_client_api_ui_v1_service_clients__client_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Client Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceClientSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Read Browser Client",
+        "tags": [
+          "Browser console"
+        ]
+      },
       "put": {
         "operationId": "update_browser_service_client_api_ui_v1_service_clients__client_id__put",
         "parameters": [
@@ -16499,6 +18147,262 @@
           }
         },
         "summary": "Update Browser Service Client",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/service-clients/{client_id}/configuration": {
+      "get": {
+        "operationId": "browser_client_configuration_api_ui_v1_service_clients__client_id__configuration_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Client Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "profile_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Client Configuration",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
+    "/api/ui/v1/service-clients/{client_id}/configuration/preview": {
+      "post": {
+        "operationId": "browser_rule_preview_api_ui_v1_service_clients__client_id__configuration_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Client Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RulePreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulePreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Browser Rule Preview",
         "tags": [
           "Browser console"
         ]

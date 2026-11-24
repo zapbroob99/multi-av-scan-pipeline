@@ -14,7 +14,7 @@ import { Timestamp } from '../components/timestamp'
 function SettingsSummary({ detail }: { detail: LocationDetail }) {
   const settings = detail.policy
   return <dl className="report-metadata">
-    <dt>Rules</dt><dd>Each file takes the first rule of the profile <Link to={`/service-clients/${detail.client.id}/profiles`}>{detail.profile.name}</Link> it
+    <dt>Rules</dt><dd>Each file takes the first rule of the profile <Link to={`/policies/profiles/${detail.client.id}`}>{detail.profile.name}</Link> it
       matches. Light check and Block are applied here; a file a Scan rule matches waits for antivirus scanning of folders.</dd>
     <dt>Ignored names</dt><dd>{settings.ignore_patterns?.length ? settings.ignore_patterns.map(item => <code key={item}>{item} </code>) : 'None'}</dd>
     <dt>Timing</dt><dd>Settles after {settings.stability_seconds} s; crawled every {settings.crawl_interval_seconds} s,

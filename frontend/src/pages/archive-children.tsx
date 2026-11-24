@@ -34,7 +34,7 @@ export default function ArchiveChildren({ automation = false }: { automation?: b
     }
     setParams(next)
   }
-  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></section>
+  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "Integration scans" : "Manual scans"}</Link></section>
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">REGISTERED CHILD SCANS</p>
     <h1>Archive contents</h1><p className="muted report-filename">{page?.parent_filename || `Scan #${scanId}`}</p></div>
     <div className="report-actions"><Link className="button button-secondary" to={`${scope}/scans/${scanId}`}>Parent report</Link>

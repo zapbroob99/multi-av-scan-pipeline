@@ -19,7 +19,7 @@ export default function AutomationManagement({ session }: { session: Session }) 
     onSettled: () => { setConfirm(false); setNeedsRefresh(true) } })
   const current = !scan.error && !scan.isFetching && !needsRefresh ? scan.data : undefined
   return <section className="page management-page"><h1>Automation scan management</h1>
-    <nav className="report-actions"><Link to="/api-ledger">API ledger</Link>{!deletion.isSuccess && <Link to={`/api-ledger/scans/${scanId}`}>Back to report</Link>}</nav>
+    <nav className="report-actions"><Link to="/api-ledger">Integration scans</Link>{!deletion.isSuccess && <Link to={`/api-ledger/scans/${scanId}`}>Back to report</Link>}</nav>
     <p className="callout">Delete only this scan. Active jobs, registered children, shared samples and undelivered notifications prevent deletion.
       Database deletion commits before sample cleanup; a cleanup failure is reported separately. No automatic retry is performed.</p>
     {scan.error && !deletion.isSuccess && <p role="alert" className="error"><ErrorMessage message={scan.error.message || ''} /></p>}

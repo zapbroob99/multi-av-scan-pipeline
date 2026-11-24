@@ -4,6 +4,29 @@ MASP supports optional LDAP/Active Directory login alongside its local
 accounts. It uses the normal MASP login form and session cookie; there is no
 separate LDAP-only endpoint.
 
+## Single-command pilot upgrade
+
+For an existing single-host pilot with a working local administrator, transfer
+`masp-pilot-0.1.0-pilot.24-install.run` to the server and run in an interactive SSH session:
+
+```bash
+sudo bash /tmp/masp-pilot-0.1.0-pilot.24-install.run --ldap
+```
+
+Prepare the directory DNS name, TLS mode and port, read-only service account DN
+and password, user base DN, at least one direct group DN, and a directory test
+account with a known expected MASP role. For an internal CA, supply the path
+to its public PEM bundle on the host. The wizard carries the public chain in the
+protected pilot environment. Leave the path blank for the image's trust store.
+Use a directory username distinct from existing local accounts. Password prompts
+are hidden. The test user's password is used only for the preflight.
+
+The new application image tests bind, user search, user password, group mapping
+and local username collisions before live services are switched. A failed check
+leaves the current services running. Correct the settings and repeat the same
+command. After the normal backup, switch and acceptance checks, verify sign-in
+through HTTPS as described below. LDAP role changes take effect on a new login.
+
 ## Authentication flow
 
 1. If the submitted username belongs to a local MASP account, MASP verifies

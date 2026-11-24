@@ -154,6 +154,17 @@ def classify(header: bytes, filename: str) -> Classification:
     detected = detect_type(header)
     if detected == "zip" and _OOXML_MARKER in header:
         detected = "ooxml"
+    return classify_detected_type(detected, filename)
+
+
+def classify_detected_type(detected: str | None, filename: str) -> Classification:
+    """Apply extension semantics to an already identified header type.
+
+    Used by header inspection and metadata-only rule previews alike. A preview
+    supplies the header fact explicitly; a file extension never invents it.
+    """
+    if detected is not None and detected not in TYPE_FAMILIES:
+        raise ValueError('Unknown header content type.')
     extension = declared_extension(filename)
     expected = EXTENSION_TYPES.get(extension)
     if expected is not None and "zip" in expected:

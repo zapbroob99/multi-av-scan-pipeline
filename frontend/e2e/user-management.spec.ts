@@ -29,7 +29,7 @@ test('admin changes role, resets password and removes a local account', async ({
     await target.getByLabel('Username', { exact: true }).fill('managed-analyst')
     await target.getByLabel('Password', { exact: true }).fill('reset-test-only')
     await target.getByRole('button', { name: 'Sign in', exact: true }).click()
-    await expect(target.getByRole('link', { name: 'Users', exact: true })).toBeVisible()
+    await expect(target.getByRole('link', { name: 'Operators', exact: true })).toBeVisible()
     await row.click()
     await page.getByRole('button', { name: 'Review removal' }).click()
     await page.getByRole('button', { name: 'Confirm removal' }).click()

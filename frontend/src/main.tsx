@@ -1,14 +1,14 @@
 import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Route, Routes, Outlet, useLocation, useParams } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
 import { ApiError, request } from './lib/api'
+import { locationTrail } from './lib/navigation'
 import { Button } from './components/ui/button'
 import { ThemeToggle } from './components/theme-toggle'
 import { BrandMark } from './components/brand-mark'
-import { SystemLayout } from './components/section-tabs'
-import { WorkspaceNavigation } from './components/workspace-navigation'
+import { WorkspaceNavigation, AreaNavigation } from './components/workspace-navigation'
 import { ErrorMessage } from './components/error-message'
 import { NotificationBell } from './components/notifications'
 import '@fontsource/ibm-plex-sans/latin-400.css'
@@ -23,6 +23,7 @@ import './styles.css'
 
 const Users = lazy(() => import('./pages/users'))
 const Account = lazy(() => import('./pages/account'))
+const AselixAssistant = lazy(() => import('./components/aselix-assistant'))
 const Engines = lazy(() => import('./pages/engines'))
 const Dashboard = lazy(() => import('./pages/dashboard'))
 const NewScan = lazy(() => import('./pages/new-scan'))
@@ -39,15 +40,15 @@ const Runtime = lazy(() => import('./pages/runtime'))
 const SystemOverview = lazy(() => import('./pages/system-overview'))
 const Retention = lazy(() => import('./pages/retention'))
 const ScanPolicy = lazy(() => import('./pages/scan-policy'))
+const Configuration = lazy(() => import('./pages/configuration'))
 const HashScan = lazy(() => import('./pages/hash-scan'))
 const FileHistory = lazy(() => import('./pages/file-history'))
 const AutomationManagement = lazy(() => import('./pages/automation-management'))
 const ApiLedger = lazy(() => import('./pages/api-ledger'))
 const ServiceClients = lazy(() => import('./pages/service-clients'))
 const ClientCredentials = lazy(() => import('./pages/client-credentials'))
-const ClientProfiles = lazy(() => import('./pages/client-profiles'))
-const ClientStorage = lazy(() => import('./pages/client-storage'))
 const ClientSetup = lazy(() => import('./pages/client-setup'))
+const ClientOverview = lazy(() => import('./pages/client-overview'))
 const Audit = lazy(() => import('./pages/audit'))
 const HashList = lazy(() => import('./pages/hash-list'))
 // Only the sign-in screen draws it, so it loads in its own chunk.
@@ -58,31 +59,21 @@ const Delivery = lazy(() => import('./pages/delivery'))
 const About = lazy(() => import('./pages/about'))
 const ScanPrint = lazy(() => import('./pages/scan-print'))
 const Storage = lazy(() => import('./pages/storage'))
-const StorageLayout = lazy(() => import('./pages/storage').then(module => ({ default: module.StorageLayout })))
+
 const StorageLocation = lazy(() => import('./pages/storage-location'))
 const StorageLocationForm = lazy(() => import('./pages/storage-location-form'))
 const StorageFindings = lazy(() => import('./pages/storage-findings'))
+const ClientScope = lazy(() => import('./pages/client-scope'))
+const Notifications = lazy(() => import('./pages/notification-settings'))
 const client = new QueryClient({ defaultOptions: {
   queries: { staleTime: 15000, retry: false, refetchOnWindowFocus: false, refetchIntervalInBackground: false },
   mutations: { retry: false },
 } })
 
-const SECTIONS: [string, string, string][] = [
-  ['/account', 'Personal', 'Account'], ['/about', 'Personal', 'About'], ['/audit', 'Administration', 'Audit trail'],
-  ['/users', 'Administration', 'Users'], ['/scan-policy', 'Administration', 'Limits & notifications'],
-  ['/api-ledger', 'Integrations', 'API ledger'], ['/service-clients', 'Integrations', 'Service clients'],
-  ['/storage', 'Operations', 'Folder scanning'], ['/hash-scan', 'Operations', 'Hash lookup'], ['/files/', 'Operations', 'File history'],
-  ['/engines/hash-list', 'Infrastructure', 'Hash list'], ['/engines/exceptions', 'Infrastructure', 'Exceptions'], ['/engines', 'Infrastructure', 'Engines'], ['/system', 'Infrastructure', 'System'],
-  ['/scans/new', 'Operations', 'Submit sample'], ['/batches/', 'Operations', 'Batch overview'],
-]
-
-function locationTrail(pathname: string): [string, string] {
-  if (pathname.endsWith('/print')) return ['Operations', 'Printable report']
-  if (pathname.endsWith('/children')) return ['Operations', 'Archive contents']
-  const match = SECTIONS.find(([prefix]) => pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`) || pathname.startsWith(prefix))
-  if (match) return [match[1], match[2]]
-  if (pathname.startsWith('/scans/')) return ['Operations', 'Scan report']
-  return ['Operations', 'Dashboard']
+function ClientAreaRedirect({ kind }: { kind: 'profiles' | 'storage' }) {
+  const { clientId } = useParams()
+  const location = useLocation()
+  return <Navigate replace to={`${kind === 'storage' ? '/storage/access' : '/policies/profiles'}/${encodeURIComponent(clientId ?? '')}${location.search}${location.hash}`} />
 }
 
 function initials(name: string) {
@@ -149,12 +140,13 @@ function App() {
     <footer>Authorized personnel only. Activity is recorded.</footer>
   </aside><div className="login-main login-main-scene"><Suspense fallback={null}><LoginScene /></Suspense></div></main>
   const [section, title] = locationTrail(location.pathname)
-  return <div className="app-shell"><aside className="sidebar">
+  return <div className="app-shell"><a className="skip-link" href="#workspace-content">Skip to content</a><aside className="sidebar">
     <Link className="brand" to="/dashboard"><BrandMark size={28} /><span>MASP<small>Scan orchestration</small></span></Link>
     <WorkspaceNavigation admin={session.data.user.role === 'admin'} />
   </aside><main className="workspace"><header className="topbar">
     <ol className="breadcrumb" aria-label="Location"><li>MASP</li><li>{section}</li><li>{title}</li></ol>
     <div className="topbar-status"><span className="offline-label">SELF-HOSTED</span>
+      {session.data.assistant_enabled && <Link to="/assistant">Aselix AI</Link>}
       <NotificationBell admin={session.data.user.role === 'admin'} csrf={session.data.csrf_token} />
       <span className="topbar-divider" aria-hidden="true" />
       <div className="topbar-user"><span className="user-avatar" aria-hidden="true">{initials(session.data.user.username)}</span>
@@ -162,12 +154,15 @@ function App() {
         <ThemeToggle /><Button variant="secondary" disabled={busy} onClick={logout} aria-label="Sign out" title="Sign out"><LogOut size={16} /></Button></div></div>
   </header>
     {error && <p role="alert" className="error"><ErrorMessage message={error} /></p>}
-      <Suspense fallback={<p role="status">Loading page…</p>}><Routes>
+      <AreaNavigation admin={session.data.user.role === 'admin'} />
+      <div id="workspace-content" tabIndex={-1}><Suspense fallback={<p role="status">Loading page…</p>}><Routes>
         <Route path="/account" element={<Account session={session.data} onPasswordChanged={() => {
           clearPrivateQueries(); client.setQueryData(['session'], null); setError(''); setNotice('Password updated. All your sessions were signed out. Sign in with your new password.')
         }} />} />
         <Route path="/users" element={session.data.user.role === 'admin' ? <Users session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/about" element={<About session={session.data} />} />
+        {session.data.assistant_enabled && <Route path="/assistant" element={<section className="page"><h1>Aselix AI</h1>
+          <AselixAssistant key={session.data.user.id} csrf={session.data.csrf_token} /></section>} />}
         <Route path="/audit" element={session.data.user.role === 'admin' ? <Audit /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/dashboard" element={<Dashboard session={session.data} />} />
         <Route path="/scans/new" element={<NewScan session={session.data} />} />
@@ -182,12 +177,12 @@ function App() {
         <Route path="/api-ledger" element={<ApiLedger session={session.data} />} />
         <Route path="/hash-scan" element={<HashScan session={session.data} />} />
         <Route path="/files/:sha256" element={<FileHistory key={location.pathname} session={session.data} />} />
-        <Route element={<StorageLayout />}>
+        <Route element={<Outlet />}>
           <Route path="/storage" element={<Storage session={session.data} />} />
           <Route path="/storage/findings" element={<StorageFindings />} />
         </Route>
-        <Route path="/storage/locations/new" element={<StorageLocationForm key={location.pathname} session={session.data} />} />
-        <Route path="/storage/locations/:locationId/edit" element={<StorageLocationForm key={location.pathname} session={session.data} />} />
+        <Route path="/storage/locations/new" element={session.data.user.role === 'admin' ? <StorageLocationForm key={location.pathname} session={session.data} /> : <section className="page"><h1>Administrator access required</h1></section>} />
+        <Route path="/storage/locations/:locationId/edit" element={session.data.user.role === 'admin' ? <StorageLocationForm key={location.pathname} session={session.data} /> : <section className="page"><h1>Administrator access required</h1></section>} />
         <Route path="/storage/locations/:locationId" element={<StorageLocation key={location.pathname} session={session.data} />} />
         <Route path="/scans/:scanId" element={<Report session={session.data} />} />
         <Route path="/scans/:scanId/results/:resultId" element={<EngineOutput />} />
@@ -199,21 +194,30 @@ function App() {
         <Route path="/batches/:batchId" element={<BatchOverview />} />
         <Route path="/service-clients/new" element={session.data.user.role === 'admin' ? <ClientCredentials key={location.pathname} create session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients/:clientId/credentials" element={session.data.user.role === 'admin' ? <ClientCredentials key={location.pathname} session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
+        <Route path="/service-clients/:clientId/overview" element={session.data.user.role === 'admin' ? <ClientOverview key={location.pathname} session={session.data} /> : <section className="page"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients/:clientId/setup" element={session.data.user.role === 'admin' ? <ClientSetup key={location.pathname} /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route path="/service-clients/:clientId/profiles" element={session.data.user.role === 'admin' ? <ClientProfiles key={location.pathname} session={session.data} /> :
+        <Route path="/service-clients/:clientId/profiles" element={session.data.user.role === 'admin' ? <ClientAreaRedirect kind="profiles" /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route path="/service-clients/:clientId/storage" element={session.data.user.role === 'admin' ? <ClientStorage key={location.pathname} session={session.data} /> :
+        <Route path="/service-clients/:clientId/storage" element={session.data.user.role === 'admin' ? <ClientAreaRedirect kind="storage" /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/service-clients" element={session.data.user.role === 'admin' ? <ServiceClients session={session.data} /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route path="/scan-policy" element={session.data.user.role === 'admin' ? <ScanPolicy session={session.data} /> :
+        <Route path="/configuration" element={session.data.user.role === 'admin' ? <Configuration /> : <section className="empty"><h1>Administrator access required</h1></section>} />
+        <Route path="/scan-policy" element={session.data.user.role === 'admin' ? <ScanPolicy session={session.data} area="limits" /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
-        <Route element={session.data.user.role === 'admin' ? <SystemLayout /> : <section className="empty"><h1>Administrator access required</h1><p>Your session does not have system-management permissions.</p></section>}>
+        <Route element={session.data.user.role === 'admin' ? <Outlet /> : <section className="empty"><h1>Administrator access required</h1><p>Your session does not have system-management permissions.</p></section>}>
           <Route path="/system/pools" element={<WorkerPools session={session.data} />} />
           <Route path="/system/runtime" element={<Runtime />} />
-          <Route path="/system/intake" element={<Intake session={session.data} />} />
-          <Route path="/system/delivery" element={<Delivery session={session.data} />} />
+          <Route path="/system/intake" element={<Navigate to="/storage/intake" replace />} />
+          <Route path="/storage/intake" element={<Intake session={session.data} />} />
+          <Route path="/system/delivery" element={<section className="page"><h1>Connection and delivery monitoring</h1><p>These tasks now have dedicated workspaces.</p><div className="report-actions"><Link to="/integrations/gateways">ICAP gateways</Link><Link to="/administration/notifications">Notifications</Link></div></section>} />
+          <Route path="/integrations/gateways" element={<Delivery session={session.data} section="gateways" />} />
+          <Route path="/administration/notifications" element={<Notifications session={session.data} />} />
+          <Route path="/storage/access" element={<ClientScope key={location.pathname} kind="storage" session={session.data} />} />
+          <Route path="/storage/access/:clientId" element={<ClientScope key={location.pathname} kind="storage" session={session.data} />} />
+          <Route path="/policies/profiles" element={<ClientScope key={location.pathname} kind="profiles" session={session.data} />} />
+          <Route path="/policies/profiles/:clientId" element={<ClientScope key={location.pathname} kind="profiles" session={session.data} />} />
           <Route path="/system/retention" element={<Retention session={session.data} />} />
           <Route path="/system/overview" element={<SystemOverview session={session.data} />} />
           <Route path="/system" element={<System session={session.data} />} />
@@ -222,7 +226,7 @@ function App() {
           <Route path="/engines" element={<Engines session={session.data} />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes></Suspense>
+      </Routes></Suspense></div>
   </main></div>
 }
 

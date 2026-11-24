@@ -9,7 +9,7 @@ test('analyst dashboard pagination, URL history, filters, mobile navigation and 
   await page.getByLabel('Username').fill('console-analyst')
   await page.getByLabel('Password').fill('console-test-only')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Manual scans', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await expect(page.locator('tbody tr')).toHaveCount(20)
@@ -44,7 +44,7 @@ test('analyst dashboard pagination, URL history, filters, mobile navigation and 
   await page.setViewportSize({ width: 390, height: 844 })
   // Phone widths collapse the grouped navigation behind the Menu button.
   await page.getByRole('button', { name: 'Menu', exact: true }).click()
-  await expect(page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Dashboard' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Scans' })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('link', { name: 'Engines', exact: true })).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

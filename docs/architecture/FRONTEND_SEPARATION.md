@@ -2103,30 +2103,25 @@ changed; this is visibility only. The shipped pilot/production examples now also
 `MASP_HTTP_UPLOAD_MAX_BYTES` to 1 GiB (still finite, not literally unlimited); ICAP's own
 `MASP_ICAP_MAX_BYTES` is unchanged and stays independent of both.
 
-## Sign-in scene (trial, 2026-10-09)
+## Sign-in contour pattern (2026-11-11)
 
-At the product owner's request the sign-in screen shows the "earthrise" ASCII scene from
-https://ascii.rest/earthrise/ (bas3line/ascii, MIT; it replaced "ocean sunset" the same day).
-The piece's source is vendored unchanged apart from its type import, with the full MIT notice,
-in `frontend/src/components/login-art/earthrise.ts`, and listed in NOTICE; the build keeps
-legal comments (`comments.legal`), so the notice also ships in the built asset.
-`components/login-scene.tsx` draws it as halftone dots on a canvas covering the area right of
-the rail, at 15 frames a second, with one path per palette colour, uncovered: the sign-in
-form moved onto the rail (brand and theme switch, product line, form, notice), where it keeps
-the rail's dark palette in both themes through `--rail-strong`, `--rail-input`,
-`--rail-input-line` and `--rail-crit*` tokens scoped to `.login-aside-form`. The crop keeps the
-Earth's centre at 68% of the scene's width. Phones show the rail alone, full screen. It is decorative (`aria-hidden`), drawn only above 800 px (phones keep
-the plain form), a single still frame under `prefers-reduced-motion`, paused by the browser in
-hidden tabs, loaded as its own lazy chunk (about 12 kB, 6 kB gzipped) and unmounted on sign-in.
-It loads nothing at run time, so offline hosts and the strict CSP are unaffected. Measured in
-Edge: one 150 ms task once, when the cratered ground and its shadows are built after the
-form has painted, then no long tasks during animation. It departs from the visual language
-(colour and texture beyond the token palette) by explicit request and can be removed without
-touching anything else. Validation: a unit test for the cover layout and inert behaviour
-without a canvas, and an Edge workflow that checks painted pixels, both themes, the hidden
-phone layout and the reduced-motion still. The same run exposed a pre-existing race in the
-submission workflow (the acceptance card and the report share wording, so the test could open
-the phone menu before the report arrived and closed it); the test now waits for the report.
+At the product owner's request, the earthrise trial has been replaced with
+an original full-bleed SVG pattern of flowing contours. Earlier monogram and
+spiral explorations were rejected; the current composition has no lettering,
+artwork captions or slogans. The 166 fine lines vary in spacing over a diagonal
+field, suggesting draped fabric without a discrete central object. The SVG
+covers the artwork panel across aspect ratios using `xMidYMid slice`.
+Warm paper/graphite in light mode and ink/silver in dark mode come entirely from
+`--login-scene-ground` and `--login-art-ink` tokens. No third-party artwork remains.
+
+`components/login-scene.tsx` stays in its own lazy chunk and unmounts on sign-in.
+There are no external requests, animation loops or canvas APIs; reduced motion
+receives the same static composition. Below 801 px the artwork is hidden and the
+form fills the screen. The form retains its labels, autofocus, autocomplete,
+authentication behavior and dark rail palette in both themes. Inputs and the
+submit action have 44 px minimum heights. Artwork is decorative (`aria-hidden`).
+Validation: production build including TypeScript and all three login-specific
+Edge workflows passed (both palettes, phone overflow, reduced motion and sign-in).
 
 ## File history (2026-10-09)
 
@@ -2156,3 +2151,88 @@ beside `decision`, which still comes only from the hash engines.
 
 Not yet built: reusing a recent local result to skip a rescan (needs a policy decision about
 signature age) and rescanning stored samples after signature updates.
+
+## Client configuration overview (2026-11-12)
+
+The first client tab now follows a submission in four steps: Connection, Profile
+and file rules, Limits before the rules, and Engines/worker evidence. REST API
+supports own named profiles through bounded ID-keyset choice pages; ICAP always
+uses the current default. Existing editor links select mounted client tabs, retaining
+confirmation/write guards. Returning to Overview reads fresh data. The direct
+admin route is `/console/service-clients/{clientId}/overview`.
+
+The new admin/session GET `/api/ui/v1/service-clients/{client_id}/configuration`
+returns a coherent current metadata snapshot under PostgreSQL statement budgets.
+Admission: 64 KiB policy text, 100 engines, 200 total worker observations (20 per
+engine), 64 gateway records. Truncated lists and invalid/absent rules are explicit.
+Worker observations expose bounded node ID, lifecycle, heartbeat recency and last
+check time/outcome; they omit configuration, hostnames, raw detail, storage paths
+and credentials. They may describe earlier placement and never assert current
+scheduler eligibility. Gateway settings show their report time and stale status;
+missing limit/wait/fail-mode values remain unknown. Invalid deployment HTTP ceiling
+is shown as invalid, using the same strict helper as upload admission.
+
+This read changes no routing, engine health, credentials or recorded scan snapshot.
+Connection readiness and profile choice pagination remain separate reads with
+separate error states. No polling, probes or provider calls were added. The
+configuration review's later slices are tracked below. Wider transport coverage
+and production-shaped PostgreSQL query/load validation remain open.
+
+## Configuration task hub and consistency (2026-11-12)
+
+Admin `/console/configuration` is a static task-based directory for existing
+client, profile, engine/worker, storage, notification/limit, retention and access
+editors. It replaces the direct Limits item in the rail; direct routes continue
+to work and the Limits editor links back. Client Overview remains the entry to
+client-specific effective settings. The hub does not probe services, read config
+or provide an env/secrets editor. Saved-rule preview and engine references were
+added in the next slice below; full dependency impact and a complete read-only
+deployment catalogue remain future work.
+
+Profile rules consistently label binary sizes MiB; persisted byte values and
+matching semantics are unchanged. Engine checks are labelled Request health check
+to reflect their asynchronous worker execution. ScanPolicySnapshot now returns
+nullable deployment_http_ceiling_bytes plus deployment_http_ceiling_valid; invalid
+values are shown as a deployment fault rather than a working fallback. Shared
+strict validation preserves upload admission behavior; the operational form can
+still edit its own settings without pretending to fix the deployment ceiling.
+
+## Configuration explanation, rule preview and references (2026-11-12)
+
+`ConfigurationContext` is a shared browser contract and collapsed detail component
+for source, scope, application time, edit location and restart requirements. Limits
+fields and the client overview now use it. Malformed/clamped operational values
+explain their actual fallback without echoing environment contents. SIEM event
+selection display matches the producer's literal `1` check. The limits read also
+returns each field's environment/default fallback when an override exists; save
+confirmation shows current and proposed values. An untouched MiB control preserves
+the exact stored bytes. Existing all-field atomic save/last-save-wins semantics stay.
+
+Client Overview has an explicit saved-rule preview for API/ICAP. Admin/CSRF POST
+`/api/ui/v1/service-clients/{client_id}/configuration/preview` reads the same bounded
+configuration snapshot, checks profile ownership and displayed management revision,
+and requires ICAP's current default. Managed/unreadable/incomplete policies fail
+explicitly. Inputs are size, extension and optional known header type; null means
+unknown, while `unrecognized` means inspection found no signature. The shared
+`classify_detected_type` applies existing extension-family/mismatch semantics and
+`profile_rules.match` evaluates each possible supported header when unknown. Multiple
+possible first matches remain ambiguous; React performs no policy matching.
+
+The response contains current engine display names, profile revision, observation
+time, a configuration fingerprint and separate transport-limit observations. Even
+a match never proves upload admission, complete coverage or an allow decision.
+Exceptions, hashes, archive content, engine limits and current capacity are outside
+this preview. No files/providers/quota/scans/queues/outbox are touched; the exact
+preview POST is excluded from audit. No retries, polling or retained query cache;
+input/profile/path/tab changes clear results and abort outstanding requests. The
+form fits inside mobile dialogs; tests check actual control bounds, not only page
+scroll width. Draft-rule preview and shadowed-rule analysis remain future work.
+
+Admin GET `/api/ui/v1/engines/{instance_id}/usage` projects only current profile and
+client metadata under a repeatable budgeted read. Pages contain at most 20 profiles,
+seek by profile ID over `idx_profile_engines_instance_seek`, include disabled clients
+and profiles and exclude tombstones. No totals, policies, configs or history are read.
+Engine cards and placement/removal confirmations offer explicit on-demand reads;
+profile links open `/console/service-clients/{id}/overview?profile_id={profile_id}`.
+References are not a complete impact graph or proof that deletion is safe. Index
+creation is idempotent on SQLite/PostgreSQL; PostgreSQL upgrade/load acceptance is open.

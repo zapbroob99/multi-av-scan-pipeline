@@ -5,7 +5,7 @@ test('an admin sees what a client still needs and where to point it', async ({ p
   await page.getByLabel('Username', { exact: true }).fill('console-admin')
   await page.getByLabel('Password', { exact: true }).fill('console-test-only')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Service clients' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Connected systems' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Manage Acceptance integration' }).click()
   await page.getByRole('tab', { name: 'Connection' }).click()
@@ -24,7 +24,7 @@ test('an admin sees what a client still needs and where to point it', async ({ p
   await expect(page.getByRole('listitem', { name: 'Manifest intake connection' })).toContainText('Needs attention')
   await expect(page.getByRole('listitem', { name: 'Manifest intake connection' })).toContainText('stopped or is stuck')
 
-  await expect(page.getByRole('heading', { name: 'Engines this client would run' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Configuration overview', exact: true })).toBeVisible()
   await page.setViewportSize({ width: 1440, height: 960 })
   for (const theme of ['light', 'dark']) {
     await page.getByRole('button', { name: 'Close dialog' }).click()
@@ -32,7 +32,7 @@ test('an admin sees what a client still needs and where to point it', async ({ p
     if (await toggle.count()) await toggle.click()
     await page.getByRole('button', { name: 'Manage Acceptance integration' }).click()
     await page.getByRole('tab', { name: 'Connection' }).click()
-    await expect(page.getByRole('heading', { name: 'Engines this client would run' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Configuration overview', exact: true })).toBeVisible()
     await page.screenshot({ path: `../artifacts/console-e2e/client-setup-${theme}.png`, fullPage: true, animations: 'disabled' })
   }
 
@@ -42,7 +42,7 @@ test('an admin sees what a client still needs and where to point it', async ({ p
   await page.setViewportSize({ width: 1280, height: 800 })
 
   await page.getByRole('button', { name: 'Close dialog' }).click()
-  await expect(page.getByRole('heading', { name: 'Service clients' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Connected systems' })).toBeVisible()
 })
 
 test('an analyst cannot reach client setup', async ({ page }) => {

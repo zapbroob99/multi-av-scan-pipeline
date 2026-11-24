@@ -44,7 +44,7 @@ export default function Runtime() {
       {(workerAfter || workers.data.next_after) && <div className="history-pagination"><Button variant="secondary" disabled={!workerAfter || workers.isFetching} onClick={() => paginate('worker_after', '')}>First workers</Button>
         <Button variant="secondary" disabled={!workers.data.next_after || workers.isFetching} onClick={() => paginate('worker_after', workers.data!.next_after!)}>Next workers</Button></div>}
     </>}
-    <h2>Active queue</h2><p className="muted">Manual and automation scans in progress. <Link to="/system/intake">Check files waiting for intake</Link>.</p>
+    <h2>Active queue</h2><p className="muted">Manual and automation scans in progress. <Link to="/storage/intake">Check files waiting for intake</Link>.</p>
     <HelpDetails title="What the active queue includes">Includes archive children and scans in queued, running or finalizing state.
       Ordered by scan ID, not scheduling priority or queue position. Completed rows disappear; pages can change as workers run.
       Deferred intake that has not yet created a scan is not included.</HelpDetails>

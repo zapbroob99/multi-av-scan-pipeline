@@ -25,6 +25,19 @@ class ServiceClientUpdate(BaseModel):
     enabled: bool
 
 
+def read(client_id: int) -> ServiceClientSummary:
+    with db.connect() as connection:
+        apply_read_budget(connection)
+        row = connection.execute('''SELECT id, SUBSTR(client_key, 1, 128) AS client_key,
+            SUBSTR(display_name, 1, 100) AS display_name, enabled,
+            client_key = 'legacy-default' AS managed,
+            (LENGTH(client_key) > 128 OR LENGTH(display_name) > 100) AS metadata_incomplete
+            FROM service_clients WHERE id = ?''', (client_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, 'Connected system not found.')
+    return ServiceClientSummary(**dict(row))
+
+
 def page(limit: int, after: int | None, query: str = '') -> ServiceClientPage:
     matched, params = name_filter(query, ('client_key', 'display_name'))
     conditions = [c for c in (matched, 'id > ?' if after is not None else '') if c]

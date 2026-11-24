@@ -73,6 +73,7 @@ ALLOWED_SUFFIXES = {
 }
 VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 FORBIDDEN_PATTERNS = (
+    ("real Aselix API key", re.compile(r"(?m)^MASP_ASELIX_API_KEY=[^\s$<{]+$")),
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     (
         "real API token",
@@ -220,7 +221,7 @@ def main() -> int:
         return 1
 
     release_metadata = json.dumps(
-        {"version": args.version, "commit": commit},
+        {"version": args.version, "commit": commit, "working_tree_snapshot": args.allow_dirty},
         indent=2,
         sort_keys=True,
     ).encode() + b"\n"

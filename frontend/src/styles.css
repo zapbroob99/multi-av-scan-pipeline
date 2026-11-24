@@ -45,8 +45,8 @@
   --rail-input-line: #3b424a;
   --rail-crit: #ef7b70;
   --rail-crit-bg: #2c1717;
-  /* The sign-in scene's own dusk ground: the same in both themes, like the rail. */
-  --login-scene-ground: #030408;
+  --login-scene-ground: #151c21;
+  --login-art-ink: #9aaeb9;
 
   --ok: #5dbb87;
   --ok-bg: #142a1e;
@@ -94,8 +94,8 @@
   --rail-input-line: #3b424a;
   --rail-crit: #ef7b70;
   --rail-crit-bg: #2c1717;
-  /* The sign-in scene's own dusk ground: the same in both themes, like the rail. */
-  --login-scene-ground: #030408;
+  --login-scene-ground: #e8e3d9;
+  --login-art-ink: #525d5b;
 
   --ok: #1c7444;
   --ok-bg: #e5f2ea;
@@ -140,6 +140,20 @@ code { font-size: .92em; }
 /* --------------------------------------------------------------- Shell -- */
 .app-shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100dvh; background: linear-gradient(90deg, var(--rail) 0 236px, var(--bg) 236px); }
 .workspace { min-width: 0; display: flex; flex-direction: column; }
+.workspace > .section-tabs { width: calc(100% - 56px); max-width: 1384px; margin: 12px auto 0; }
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 10px 16px; background: var(--surface); color: var(--text); border: 1px solid var(--line-strong); transform: translateY(-180%); }
+.skip-link:focus { transform: translateY(0); }
+.scope-workspace { max-width: 1440px; margin: 0 auto; min-width: 0; }
+.scope-context { margin: 22px 28px 0; padding: 14px 18px; border: 1px solid var(--line); background: var(--surface-2); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.scope-context > div { min-width: 0; display: grid; gap: 3px; overflow-wrap: anywhere; }
+.scope-client-list { list-style: none; padding: 0; margin: 18px 0; border-top: 1px solid var(--line); }
+.scope-client-list a { display: grid; gap: 5px; padding: 16px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.scope-client-list a:hover { background: var(--surface-2); }
+.settings-workspace-section { margin: 24px 0; padding-top: 22px; border-top: 1px solid var(--line); min-width: 0; }
+@media (max-width: 760px) {
+  .workspace > .section-tabs { width: calc(100% - 28px); }
+  .scope-context { margin-inline: 14px; }
+}
 
 .sidebar { position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; background: var(--rail); color: var(--rail-text); border-right: 1px solid var(--rail-line); }
 .brand { display: flex; align-items: center; gap: 11px; height: 56px; padding: 0 18px; flex-shrink: 0; border-bottom: 1px solid var(--rail-line); color: #fff; font-size: 16px; font-weight: 600; letter-spacing: .02em; }
@@ -391,7 +405,7 @@ tr.row-alert > td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
 .login-shell { min-height: 100dvh; display: grid; grid-template-columns: minmax(320px, 440px) minmax(0, 1fr); background: var(--bg); }
 .login-aside { display: flex; flex-direction: column; justify-content: space-between; padding: 36px 40px; background: var(--rail); color: var(--rail-text); }
 .login-aside .brand { height: auto; padding: 0; border: 0; font-size: 18px; }
-.login-aside h2 { margin-top: 48px; color: #fff; font-size: 24px; font-weight: 500; line-height: 1.3; letter-spacing: -.01em; max-width: 340px; }
+.login-aside h2 { margin-top: 48px; color: var(--rail-strong); font-size: 24px; font-weight: 500; line-height: 1.3; letter-spacing: -.01em; max-width: 340px; }
 .login-aside footer { font-family: var(--font-mono); font-size: 11px; color: var(--rail-muted); }
 .login-main { position: relative; display: grid; place-items: center; padding: 32px 24px; }
 .login-theme-toggle { position: absolute; top: 18px; right: 18px; }
@@ -402,7 +416,7 @@ tr.row-alert > td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
 .login-card .brand-mark { display: none; }
 /* Sign-in with the scene (components/login-scene.tsx): the form is on the rail,
    which keeps its dark palette in both themes, and the scene fills the rest. */
-.login-shell-scene { grid-template-columns: minmax(340px, 460px) minmax(0, 1fr); }
+.login-shell-scene { grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); }
 .login-aside-form {
   color-scheme: dark;
   --text: var(--rail-strong); --text-2: var(--rail-text); --text-3: var(--rail-muted);
@@ -411,13 +425,17 @@ tr.row-alert > td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
   --crit: var(--rail-crit); --crit-bg: var(--rail-crit-bg);
 }
 .login-aside-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.login-aside-form h2 { margin-top: 36px; font-size: 20px; }
+.login-aside-form h2 { margin-top: 28px; max-width: 250px; font-size: 14px; line-height: 1.6; font-weight: 400; color: var(--rail-text); }
 .login-aside-form .login-card { width: 100%; max-width: 360px; margin: 32px 0; }
-.login-aside-form .login-card h1 { color: var(--text); }
+.login-aside-form .login-card h1 { color: var(--text); font-size: 28px; font-weight: 400; letter-spacing: -.025em; }
+.login-aside-form .login-card input { min-height: 44px; }
+.login-aside-form .login-card > .button { min-height: 44px; margin-top: 12px; }
 .login-scene { display: none; }
 .login-main-scene { padding: 0; overflow: hidden; background: var(--login-scene-ground); }
+.login-engraving { position: absolute; inset: 0; width: 100%; height: 100%; }
+.login-filaments { stroke: var(--login-art-ink); stroke-width: .7; stroke-linejoin: round; opacity: .7; }
 @media (min-width: 801px) {
-  .login-main-scene .login-scene { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+  .login-main-scene .login-scene { display: block; position: absolute; inset: 0; }
 }
 
 /* -------------------------------------------- Reports and printable sheet -- */
@@ -913,10 +931,48 @@ a.notification-detection:hover { background: var(--surface-2); text-decoration: 
 
 /* ---------------------------------------------------------------- Print -- */
 @media print {
-  .sidebar, .topbar, .print-hidden, .button { display: none !important; }
+  .sidebar, .topbar, .section-tabs, .skip-link, .print-hidden, .button { display: none !important; }
   .app-shell, .workspace, .page { display: block; margin: 0; padding: 0; background: #fff; color: #000; }
   .print-sheet, .print-sheet section, .technical-panel pre { background: #fff; color: #000; border-color: #666; }
   .technical-panel pre { max-height: none; overflow: visible; }
   .print-engine, .history-table-wrap { break-inside: avoid; overflow: visible; }
   .history-table-wrap { border: 0; }
 }
+
+/* The client overview follows a submission in four steps. */
+.configuration-selectors { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 0; }
+.configuration-selectors > div { flex: 1 1 220px; min-width: 0; }
+.configuration-steps { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.configuration-steps > li { min-width: 0; }
+.configuration-steps .settings-panel { margin: 0; }
+.configuration-steps .settings-panel-header { gap: 16px; flex-wrap: wrap; }
+.configuration-steps .settings-panel-body { padding-block: 16px; }
+.configuration-steps .settings-panel-body > p + p { margin-top: 10px; }
+.configuration-engine, .configuration-gateway { border-top: 1px solid var(--line); padding: 16px 0; }
+.configuration-engine h3 { margin-bottom: 8px; }
+.configuration-engine p { margin-top: 6px; overflow-wrap: anywhere; }
+.configuration-hub { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 20px; margin: 20px 0; }
+.configuration-hub .settings-panel { margin: 0; }
+.configuration-task-body { padding: 16px 20px; }
+.configuration-task-body > p + p { margin-top: 8px; font-size: 12px; }
+.configuration-task-body ul { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 8px; }
+/* Shared setting provenance stays secondary to the controls. */
+.configuration-context { margin-block: 10px; font-size: 13px; }
+.configuration-context summary { cursor: pointer; color: var(--text-2); }
+.configuration-context dl { display: grid; grid-template-columns: minmax(80px, 100px) minmax(0, 1fr); gap: 8px 12px; margin-block: 12px; }
+.configuration-context dt { font-weight: 500; }
+.configuration-context dd { margin: 0; overflow-wrap: anywhere; }
+.rule-preview { margin-block: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.rule-preview > summary { cursor: pointer; font-weight: 500; }
+.rule-preview-result { margin-top: 16px; }
+.configuration-reference { overflow-wrap: anywhere; }
+.engine-usage-list { list-style: none; padding: 0; margin-block: 16px; }
+.engine-usage-list li { padding-block: 10px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.preview-limits { margin-block: 16px; }
+.preview-limits > div { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 16px; padding-block: 12px; border-top: 1px solid var(--line); }
+.preview-limits dd { margin: 0; }
+.preview-limits p { margin-top: 4px; }
+@media (max-width: 600px) {
+  .preview-limits > div { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}
+.assistant-answer { white-space: pre-wrap; overflow-wrap: anywhere; }

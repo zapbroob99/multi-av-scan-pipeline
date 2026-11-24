@@ -19,7 +19,7 @@ export default function ClientSetup() {
       params: { client_id: Number(clientId) }, signal }),
     staleTime: 0, gcTime: 0, retry: false, refetchOnMount: 'always',
     refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: false })
-  if (!valid) return <section className="page"><h1>Invalid client ID</h1><Link to="/service-clients">Service clients</Link></section>
+  if (!valid) return <section className="page"><h1>Invalid client ID</h1><Link to="/service-clients">Connected systems</Link></section>
   const data = !setup.error && !setup.isFetching ? setup.data : undefined
   const blocking = data?.checks.filter(check => !check.passed) ?? []
   const connected = data?.methods.filter(method => method.ready) ?? []
@@ -77,17 +77,7 @@ export default function ClientSetup() {
           listener to this client key instead, and keep the host firewall authoritative for source control.</p>
       </section></div>
 
-      <section className="submission-card" aria-label="Assigned engines">
-        <div className="client-section-heading"><div><p className="eyebrow">AUTOMATION ROUTING</p><h2>Engines this client would run</h2></div>
-          <ClientPanelLink className="button button-secondary" clientId={clientId} tab="profiles">Manage routing<ArrowRight size={14} aria-hidden="true" /></ClientPanelLink></div>
-        {!data.engines.length && <p>No engines are assigned to the default profile.</p>}
-        {data.engines.length > 0 && <div className="history-table-wrap"><table className="history-table client-engine-table"><thead><tr>
-          <th>Engine</th><th>Adapter</th><th>Eligible for API/ICAP</th><th>Reason</th></tr></thead><tbody>
-          {data.engines.map(engine => <tr key={engine.id}><td>{engine.display_name}</td><td>{engine.adapter_key}</td>
-            <td><span className={`client-badge ${engine.eligible ? 'client-badge-enabled' : ''}`}>{engine.eligible ? 'Eligible' : 'Excluded'}</span></td><td>{engine.excluded_reason || 'Available for automation routing.'}</td></tr>)}</tbody></table></div>}
-        <p className="muted client-note">Eligibility is configuration, not health: an eligible engine can still be unavailable at scan time.
-          Assigned engines are fixed into each accepted scan, so editing routing later does not change scans already accepted.</p>
-      </section>
+      <p className="muted">Inspect profile routing, engine eligibility and recorded worker checks in <ClientPanelLink clientId={clientId} tab="overview">Configuration overview</ClientPanelLink>.</p>
 
       <p className="muted client-note">Readiness read <Timestamp value={data.generated_at} />. Network reachability, TLS and firewall
         rules are outside MASP and are not checked here.</p>

@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import database as db
 from app.services import auth
+from app.services import aselix
 from app.services import login_throttle
 from app.services import date_range
 from app.services import file_history
@@ -35,6 +36,9 @@ from app.services import scan_policy_admin
 from app.services import hash_console
 from app.services import client_admin
 from app.services import client_readiness
+from app.services import client_configuration
+from app.services import rule_preview
+from app.services import engine_usage
 from app.services import profile_admin
 from app.services import client_storage_admin
 from app.services import credential_admin
@@ -126,6 +130,10 @@ class BrowserRoute(APIRoute):
                     PREFIX + "/files/{sha256}",
                 }
                 retry_allowed = request.method == 'POST' and self.path == PREFIX + '/scans/{scan_id}/retry'
+                assistant_allowed = request.method == 'POST' and self.path in {
+                    PREFIX + '/assistant/chat', PREFIX + '/scans/{scan_id}/assistant',
+                    PREFIX + '/api-ledger/scans/{scan_id}/assistant',
+                }
                 hash_allowed = (request.method == 'GET' and self.path == PREFIX + '/hash-scan/options') or (request.method == 'POST' and self.path == PREFIX + '/hash-scan')
                 account_allowed = (request.method == 'GET' and self.path == PREFIX + '/account') or (request.method == 'POST' and self.path == PREFIX + '/account/password')
                 about_allowed = request.method == 'GET' and self.path == PREFIX + '/about'
@@ -136,7 +144,7 @@ class BrowserRoute(APIRoute):
                     PREFIX + '/storage/overview', PREFIX + '/storage/locations/{location_id}',
                     PREFIX + '/storage/locations/{location_id}/objects', PREFIX + '/storage/findings',
                 }
-                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not hash_allowed and not account_allowed and not about_allowed and not notifications_allowed and not storage_read_allowed and user.role != "admin":
+                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not assistant_allowed and not hash_allowed and not account_allowed and not about_allowed and not notifications_allowed and not storage_read_allowed and user.role != "admin":
                     raise HTTPException(403, "Admin permission is required.")
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 origin = str(request.base_url).rstrip("/")
@@ -237,6 +245,21 @@ def submission_options():
 @router.get('/scans/{scan_id}', response_model=scan_report_read.ScanReport)
 def read_scan_report(scan_id: int = Path(ge=1, le=9007199254740991)):
     return scan_report_read.report(scan_id)
+
+
+@router.post('/assistant/chat', response_model=aselix.ChatAnswer)
+def assistant_chat(body: aselix.ChatQuestion):
+    return aselix.ask(body)
+
+
+@router.post('/scans/{scan_id}/assistant', response_model=aselix.ChatAnswer)
+def manual_assistant(body: aselix.ChatQuestion, scan_id: int = Path(ge=1, le=9007199254740991)):
+    return aselix.ask(body, scan_id)
+
+
+@router.post('/api-ledger/scans/{scan_id}/assistant', response_model=aselix.ChatAnswer)
+def automation_assistant(body: aselix.ChatQuestion, scan_id: int = Path(ge=1, le=9007199254740991)):
+    return aselix.ask(body, scan_id, automation=True)
 
 
 @router.get('/scans/{scan_id}/children', response_model=archive_read.ArchivePage)
@@ -732,6 +755,28 @@ def browser_client_readiness(request: Request, client_id: int = Path(ge=1, le=90
     return client_readiness.readiness(client_id, str(request.base_url))
 
 
+@router.get('/service-clients/{client_id}/configuration', response_model=client_configuration.ClientConfiguration)
+def browser_client_configuration(client_id: int = Path(ge=1, le=9007199254740991),
+                                 profile_id: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return client_configuration.read(client_id, profile_id)
+
+
+@router.get('/service-clients/{client_id}', response_model=client_admin.ServiceClientSummary)
+def read_browser_client(client_id: int = Path(ge=1, le=9007199254740991)):
+    return client_admin.read(client_id)
+
+
+@router.get('/engines/{instance_id}/usage', response_model=engine_usage.EngineUsage)
+def browser_engine_usage(instance_id: int = Path(ge=1, le=9007199254740991),
+                         after: int | None = Query(default=None, ge=1, le=9007199254740991)):
+    return engine_usage.read(instance_id, after)
+
+
+@router.post('/service-clients/{client_id}/configuration/preview', response_model=rule_preview.RulePreview)
+def browser_rule_preview(body: rule_preview.RulePreviewBody, client_id: int = Path(ge=1, le=9007199254740991)):
+    return rule_preview.preview(client_id, body)
+
+
 @router.get('/service-clients/{client_id}/profiles', response_model=profile_admin.ClientProfiles)
 def read_browser_profiles(client_id: int = Path(ge=1, le=9007199254740991),
                           after: int | None = Query(default=None, ge=1, le=9007199254740991)):
@@ -834,6 +879,22 @@ def browser_hash_lookup(request: Request, body: hash_console.HashLookupBody):
 
 @router.put('/scan-policy', status_code=204)
 def save_browser_scan_policy(request: Request, body: scan_policy_admin.ScanPolicyBody):
+    set_audit_context(request, action='scan_policy.update', target_type='scan_policy', actor=request.state.ui_user)
+    resolved = scan_policy_admin.save(body)
+    set_audit_context(request, details={'settings': resolved})
+    return Response(status_code=204)
+
+
+@router.put('/operational-policy', status_code=204)
+def save_browser_operational_policy(request: Request, body: scan_policy_admin.OperationalPolicyBody):
+    set_audit_context(request, action='scan_policy.update', target_type='scan_policy', actor=request.state.ui_user)
+    resolved = scan_policy_admin.save(body)
+    set_audit_context(request, details={'settings': resolved})
+    return Response(status_code=204)
+
+
+@router.put('/notification-policy', status_code=204)
+def save_browser_notification_policy(request: Request, body: scan_policy_admin.NotificationPolicyBody):
     set_audit_context(request, action='scan_policy.update', target_type='scan_policy', actor=request.state.ui_user)
     resolved = scan_policy_admin.save(body)
     set_audit_context(request, details={'settings': resolved})
@@ -1070,6 +1131,7 @@ class UserPayload(BaseModel):
 class SessionPayload(BaseModel):
     user: UserPayload
     csrf_token: str
+    assistant_enabled: bool | None = None
 
 
 class HealthPayload(BaseModel):
@@ -1148,7 +1210,7 @@ class RuleSaved(BaseModel):
 
 def session_payload(user, token: str):
     return {"user": {"id": user.id, "username": user.username, "role": user.role},
-            "csrf_token": csrf_token(token)}
+            "csrf_token": csrf_token(token), "assistant_enabled": aselix.enabled()}
 
 
 @router.get("/session", response_model=SessionPayload)

@@ -144,6 +144,8 @@ class AuditSanitizationTests(unittest.TestCase):
                 self.assertTrue(should_audit_request(request_for(path, method=method)))
 
     def test_audit_policy_excludes_navigation_scans_and_api_polling(self) -> None:
+        self.assertFalse(should_audit_request(request_for('/api/ui/v1/service-clients/12/configuration/preview', method='POST')))
+        self.assertTrue(should_audit_request(request_for('/api/ui/v1/service-clients/12/profiles', method='POST')))
         self.assertFalse(should_audit_request(request_for("/api/ui/v1/audit")))
         self.assertFalse(should_audit_request(request_for("/console/audit")))
         self.assertFalse(should_audit_request(request_for("/api/v1/scans", method="POST")))

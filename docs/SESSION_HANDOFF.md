@@ -1,5 +1,263 @@
 # MASP session handoff
 
+## Aselix pilot and GitHub synchronization (2026-11-24)
+
+Pilot.25 includes optional operator-initiated Aselix assistance for general MASP
+questions and manual/integration reports using an OpenAI-compatible HTTPS chat
+completion endpoint. The report context contains bounded decision and coverage
+metadata. Credentials stay in the deployment environment. The single-file
+installer supports `--aselix` with hidden key entry, optional public CA chain
+and a connection test from the candidate app before switching services.
+Institutional endpoint/model/credential acceptance remains deployment-owned.
+
+Production console build, browser contracts and all 250 frontend unit tests
+passed during packaging. Aselix/LDAP/browser guard tests passed. The packaged
+image passed a synthetic local HTTPS test for Bearer authentication, model
+selection, custom CA trust and rejection of an untrusted certificate. The Linux
+installer payload checksum passed. There was no live deployment or complete
+PostgreSQL upgrade/rollback rehearsal for pilot.25.
+
+The user requested publishing accumulated product changes to GitHub on the
+existing `feat/archive-handling` branch. Preserve the five previously staged
+local sample/skill files and the private `docs/PILOT_FOLLOWUPS.md` note outside
+the product commit. The generated offline installers stay under ignored
+`dist/`. Product HTML/PDF manuals remain labelled pilot.23.
+
+Pre-publication verification passed: 258 selected backend tests (20 environment
+skips), 250 frontend tests, production build, browser contract consistency,
+three contract generator tests and Git whitespace checks.
+
+## LDAP pilot upgrade (2026-11-24)
+
+Pilot.24 is packaged from the working tree. Transfer only
+`dist/masp-pilot-0.1.0-pilot.24-install.run` and start it on an existing pilot
+with `sudo bash /tmp/masp-pilot-0.1.0-pilot.24-install.run --ldap`.
+The interactive wizard prompts for directory settings and a test login. It runs
+the new image on the pilot network and checks TLS, bind, expected role, effective
+Compose values and local account collisions before switching services. Keep the
+local emergency administrator. Setup and role boundaries are in
+`docs/security/LDAP_AUTHENTICATION.md`.
+
+Tested real isolated OpenLDAP over LDAPS and StartTLS, both authorized roles,
+invalid password, unmatched groups, and console HTTP login/session reuse.
+Confirmed special-character credential transport with Compose, verified the .run
+payload on Linux and passed 29 Linux LDAP/installer/upgrade suite tests.
+No live deployment, institution AD acceptance, or complete pilot.24 PostgreSQL
+upgrade/rollback rehearsal. No staging or commit.
+
+## Single-file pilot upgrade (2026-11-18)
+
+User requested the latest server package and a single installer invocation.
+Built `dist/masp-pilot-0.1.0-pilot.23-install.run` from the current working tree
+and the Linux application image built from the packaged source. Release metadata
+explicitly records `working_tree_snapshot: true`; HEAD and existing staged work
+were preserved. New `tools/package_pilot_installer.py` combines release sources,
+application image and checksums. Run on the existing pilot host with
+`sudo bash /tmp/masp-pilot-0.1.0-pilot.23-install.run`, then confirm the upgrade.
+It expects `/opt/masp/current/.env.pilot` and delegates backup/settings/install/
+verification to the existing upgrade.sh. Failed attempts retain the offline image
+and extracted release. Existing release directories are preserved.
+
+Validation: application image and production console build passed; all 250
+frontend tests passed; contracts:check passed. Linux installer lifecycle test
+passed, covering extraction/delegation, existing settings, collision, cleanup and
+corruption rejection. Actual installer payload and image checksums passed in a
+Linux container. Pilot bundle/script tests passed (25 run, 15 Windows skips).
+Backend API/configuration/preview/engine-usage/archive selection passed
+(211 run, 4 environment skips), with existing Python 3.14 SQLite ResourceWarnings.
+No deployment or full pilot.23 PostgreSQL upgrade/rollback rehearsal performed.
+The user will transfer and execute the installer. Packaging used --allow-dirty
+to include the previously uncommitted console changes. Installer generation is
+documented in docs/deployment/PILOT.md.
+
+## Task information architecture (2026-11-13, implemented and uncommitted)
+
+User approved professional-standard analysis AND correction, after clarifying the
+actual problem was scattered tasks. The six-domain navigation now uses one registry
+(`frontend/src/lib/navigation.ts`) for rail, area links and location trail. Scans
+contains Manual scans / Integration scans / submission / hash lookup. Integrations
+owns Connected systems and ICAP gateways. Storage owns watched folders, sources &
+access, file intake and findings, and is discoverable even before setup. Policies
+owns scoped scan profiles, hash list and exceptions. Scan infrastructure owns
+health, engines, workers, groups and runtime; Administration owns users, limits,
+notifications, retention and audit. Existing API source/role semantics remain.
+
+Canonical client editors: `/storage/access/:clientId`, `/policies/profiles/:clientId`.
+Their picker reuses the bounded client list; GET `/api/ui/v1/service-clients/{id}`
+returns only bounded admin metadata. Same editors remain in the quick client dialog.
+Old client storage/profile routes redirect preserving query/fragment; old intake
+redirects to `/storage/intake`; former delivery screen offers its two new targets.
+Health actions link directly to the new task. No duplicate System/Storage layouts.
+
+Notifications combines event selection with existing scan-outbox delivery state;
+ICAP has a separate view. New strict admin/CSRF PUT `/notification-policy` and
+`/operational-policy` save disjoint key sets using shared validation/transactions.
+Existing full `/scan-policy` write stays compatible. Save once then read once;
+uncertain writes still require explicit reconciliation. Folder notification outbox
+is NOT included in the delivery counts and the UI explicitly says so.
+Retention policy is visible at cleanup, not repeated in overview. Connection's
+repeated engine table now links to Overview. Configuration stays a help guide.
+
+Validation: frontend 250 tests/51 files pass; BrowserApiTests 187 run, 4 gated skips;
+operations-health/configuration-context/scan-policy/audit 62 run, 9 gated skips
+(total 236 backend passes). Production build, contracts:check, git diff --check
+pass. 13 distinct Edge workflows passed across two selections (one common folder
+workflow); includes new task journey, role gates, old links, independent notification
+save, limits, storage grants, folder create/refusal, client setup/profile lifecycle,
+infrastructure navigation and overview. Initial failures were changed-label/link
+expectations and an assertion against aria-hidden background during a modal; fixed
+and relevant suites rerun. Final screenshots in ignored artifacts/console-e2e:
+`task-navigation-{light,dark,mobile}.png`. Test-owned Python/Vite servers stopped;
+Windows Playwright teardown required stopping the verified fixture PIDs after all
+tests finished. Python 3.14 reports existing unclosed-SQLite ResourceWarnings;
+backend unittest summaries are OK. No PostgreSQL load/upgrade run or deployment.
+
+Detailed before/after analysis, official Carbon/W3C/Microsoft reference links and
+remaining work: `docs/architecture/ADMIN_INFORMATION_ARCHITECTURE.md`. This is not a
+certification or measured usability improvement. Still open: method-specific client
+onboarding (API credential remains mandatory at creation), combining Connection /
+API access and general client settings, folder-outbox delivery visibility, real
+operator task evaluation. Do not claim these are implemented. No stage/commit/push
+or deployment. Five unrelated staged files and private untracked note preserved.
+
+## Configuration explanation, preview and engine references (2026-11-12, uncommitted)
+
+The user authorized continuing the admin simplification roadmap and working until
+20% session capacity remains. No remaining-session percentage is exposed here; this
+was explained, and the work was completed in tested, reviewable slices. No commit,
+staging, push, release packaging, service recreation or deployment was performed.
+
+Delivered:
+- Shared `ConfigurationContext` backend contract/component in limits and client
+  Overview: source, scope, application time, edit location, restart and explicit
+  invalid/defaulted/clamped states. API environment never claims worker values.
+  SIEM display now matches the unchanged event producer's literal `1` semantics.
+- Limits reads expose the API process fallback even with an override. Confirmation
+  shows current/proposed values and application scope. MiB conversion preserves
+  exact untouched byte counts (including a tested 1 MiB + 1 byte value).
+- Metadata-only saved-profile preview in Overview: size, extension, known/unknown
+  header type; shared `profile_rules.match` and factored `classify_detected_type`.
+  Unknown enumerates actual supported header types; unrecognized is a distinct
+  explicit fact. Return possible first matches, current engine names, transport
+  observations, profile revision and a SHA-256 configuration reference. No scan or
+  allow decision. Fenced admin/CSRF POST, no sample/provider/quota/state mutation;
+  exact route excluded from audit. No retry/poll/cache; abort/clear on edits and
+  context changes. ICAP requires current default; incomplete/managed rules refused.
+- On-demand engine profile references: card Used by and disclosures in placement/
+  removal dialogs. Admin-only metadata read, 20-row profile-ID pagination, disabled
+  references included, tombstones omitted. New idempotent
+  `idx_profile_engines_instance_seek` on (engine_instance_id, scan_profile_id).
+  Links open the selected profile via Overview's `profile_id` query parameter.
+- Mobile overview grid fixed to constrain its internal width; browser assertions
+  now verify form controls fit inside the dialog, not merely document scroll width.
+
+Validation: full frontend 242 tests/50 files passed; backend selection 317 tests,
+OK (17 environment-gated skips), covering browser API/contracts, preview/context/
+references, classification engines, rules/policy, migration, notifications and audit.
+Production build, contracts:check and git diff --check passed. Seven distinct Edge
+workflows passed: client overview, rule preview (both themes/mobile), limits,
+profile edit, named profile lifecycle, engine reference deep link, engine lifecycle.
+Test-owned servers were stopped. Preview screenshots are ignored artifacts:
+`artifacts/console-e2e/rule-preview-{light,dark,mobile}.png`.
+
+Open: complete source/scope catalogue across other areas, draft-rule preview,
+provable shadowing, folder/deferred behavior, pool/profile/folder dependency graph
+and field-level history. Current references do not cover manual/historical scans
+and are not deletion safety proof. No PostgreSQL upgrade/load run or deployment
+rehearsal; new index still needs deployment-shaped acceptance. The approved login,
+previous admin changes, five unrelated staged files and private untracked follow-up
+note remain preserved.
+
+## Configuration hub and consistency fixes (2026-11-12, uncommitted)
+
+The user authorized the next two steps: consistency fixes and a task-based entry
+point. Admin `/console/configuration` replaces the direct Limits item in main
+navigation; the existing `/console/scan-policy` and every editor remain reachable.
+Seven task panels link to client Overview/profile management, engines/workers,
+storage, limits/events/delivery, retention and operator access/audit. The hub
+performs no reads or writes itself. It explains scope and where deployment changes
+belong; it is not a general env editor or an effective configuration catalogue.
+
+Profile size labels now say MiB throughout editor/summary; byte arithmetic and
+stored rules are unchanged. Engine connection-test actions now say Request health
+check. The existing Limits read uses the shared strict HTTP ceiling validator:
+invalid values return null plus `deployment_http_ceiling_valid=false`; the form
+explains that uploads are refused and this requires a deployment fix. Operational
+policy editing remains available. Admission/write behavior is unchanged.
+
+Pilot/prod shared environment now forwards five MASP_ARCHIVE_MAX_* bounds; examples
+ship the existing defaults (1000 members, 250 MiB total, 50 MiB per member, 8 path
+components, 3 nested archive levels). These are MASP extraction limits, not clamd
+limits. Recreate affected services to apply. Previously ignored custom values in
+an existing env file will start applying; review them before upgrade. No services
+were recreated here and no release/upgrade rehearsal was performed.
+
+Validation: 235 frontend unit tests; rendered both Compose templates with custom
+bounds and verified app/worker/icap/deferred-intake receive them. Targeted backend
+configuration/security tests passed (14); seven Edge configuration/navigation/
+engine/profile/limits workflows passed, including both themes, mobile and analyst
+denial. Backend/browser-contract selection: 187 tests, OK (4 PostgreSQL-gated
+skips). Final contracts:check and production build passed. No PostgreSQL load
+validation, deployment or release/upgrade rehearsal was performed.
+Previews: `artifacts/console-e2e/configuration-{light,dark,mobile}.png` (ignored).
+
+## Client configuration workflow (2026-11-12, uncommitted)
+
+The user authorized starting with one complete client management path before
+expanding the wider admin redesign. A new Overview is the first tab when opening
+a client; `/console/service-clients/{id}/overview` also works directly. REST API
+and ICAP paths explain connection evidence, default/selected profile rules,
+pre-rule limits and engine/pool/recorded worker evidence with links to existing
+editors. ICAP is fixed to the default profile. Returning from another client tab
+refreshes the overview; no new writes, probes, quota calls or scan records.
+
+`GET /api/ui/v1/service-clients/{id}/configuration` is admin/session-only. It reads
+one repeatable, budgeted metadata snapshot: client-owned selected profile, bounded
+64 KiB rules, at most 100 engines, 200 worker observations (20 per engine) and
+64 gateway records, with explicit incomplete/stale/unknown states. No engine config,
+secrets, credential hashes/prefixes, paths, raw health details or scan blobs.
+Recorded worker checks are not scheduler eligibility; current placement and the
+worker's observed lifecycle/heartbeat are separate. A shared strict HTTP ceiling
+helper preserves admission behavior while the overview reports invalid config.
+Connection readiness and profile-choice pages are separate reads, not a global
+atomic snapshot. Accepted scan snapshots are unchanged.
+
+Validation: 234 frontend tests; backend/browser-contract selection 191 tests
+(4 PostgreSQL-gated skips); configuration/security-hardening selection 18 tests;
+production build and contracts:check passed. Four Edge client overview/setup/
+management workflows passed, with a subsequent overview run for both themes and
+mobile. No PostgreSQL run or deployment-shaped query/load acceptance this turn.
+Preview artifacts: `artifacts/console-e2e/client-overview*.png` (ignored).
+
+`docs/architecture/ADMIN_CONFIGURATION_REVIEW.md` remains the broader proposal.
+Global configuration hub, policy simulation, change-impact analysis, deferred/
+folder paths and full current worker eligibility are later slices, not delivered
+by this first client workflow. No deployment, commit, push or release packaging.
+
+## Local login redesign (2026-11-11, uncommitted)
+
+Approved by the product owner on 2026-11-12; keep the current contour pattern.
+
+The product owner disliked the earthrise artwork and requested a new artistic login.
+The latest iteration discards the monogram/spiral explorations: the artwork panel
+now shows only a full-bleed field of 166 flowing SVG contours, like draped fabric,
+with no letters, artwork captions or slogans. Diagonal geometry and variable line
+spacing provide depth; `xMidYMid slice` covers the panel across aspect ratios.
+Warm paper/graphite in light mode and ink/silver in dark mode use theme tokens.
+The graphite form rail is narrower, with quieter product copy and 44 px inputs/action.
+Mobile keeps the form alone. The art remains static, in its own lazy chunk.
+Removed the unused vendored earthrise source and its NOTICE entry. No external
+assets, new dependencies, deployment or release packaging; pilot.22 artifacts
+still contain the previous design.
+
+Validation of the latest pattern: production build (including TypeScript) passed,
+and all three Edge login workflows passed (both themes, mobile overflow, reduced
+motion and successful sign-in). Earlier iterations also passed the component
+accessibility unit test and the theme/settings dialog workflow. Screenshots are
+in ignored `artifacts/console-e2e/login-scene-*-theme.png`.
+Preserve the pre-existing staged sample files and skills lock and the untracked
+private follow-up note. The older release checkpoint below remains historical.
+
 Updated: 2026-10-09, pilot.22 (pilot.21 plus local file history) packaged and its 15 -> 22
 upgrade/rollback rehearsed on `feat/archive-handling`; the user will install pilot.22 (from
 pilot.15, or from pilot.21 if that was installed first), skipping the releases in between. The branch is pushed to origin (the user authorized pushing work without institutional data). The intranet

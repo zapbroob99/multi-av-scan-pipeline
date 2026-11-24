@@ -5,9 +5,9 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import ClientProfiles from './client-profiles'
 
-const MB = 1024 * 1024
+const MiB = 1024 * 1024
 const RULES = { version: 2, inconclusive: 'block', rules: [
-  { when: { larger_than_bytes: 500 * MB, up_to_bytes: null, families: [], masquerade: false }, action: 'light', engines: [2], archive: null },
+  { when: { larger_than_bytes: 500 * MiB, up_to_bytes: null, families: [], masquerade: false }, action: 'light', engines: [2], archive: null },
   { when: { larger_than_bytes: null, up_to_bytes: null, families: [], masquerade: false }, action: 'scan', engines: [1], archive: 'whole' },
 ] }
 const ENGINES = [
@@ -22,7 +22,7 @@ function mount({ fail = false, named = false, rules = RULES as object | null } =
       : options.method === 'POST' ? new Response(JSON.stringify({ profile_id: 8 }), { status: 201 }) : new Response(null, { status: 204 })
     : new Response(JSON.stringify({ client_id: 3, managed: false, next_after: null, engines_incomplete: false,
       default_profile_id: named ? 6 : 7, upload_cap_bytes: 0,
-      gateways: [{ port: 1344, fail_closed: true, max_bytes: 50 * MB, wait_seconds: 30 }],
+      gateways: [{ port: 1344, fail_closed: true, max_bytes: 50 * MiB, wait_seconds: 30 }],
       items: [{ id: 7, name: '<script>Profile</script>', enabled: true, is_default: !named, engine_ids: [1, 2], incomplete: false,
         management_revision: 4, rules, rules_invalid: rules === null }],
       engines: ENGINES })))
@@ -41,7 +41,7 @@ describe('Profile rules', () => {
     mount()
     const section = await screen.findByRole('region', { name: 'Rules for <script>Profile</script>' })
     const rows = within(section).getAllByRole('row').slice(1)
-    expect(rows.map(row => row.textContent)).toEqual(['1Larger than 500 MBLight check: File Type', '2Every other fileScan: ClamAV'])
+    expect(rows.map(row => row.textContent)).toEqual(['1Larger than 500 MiBLight check: File Type', '2Every other fileScan: ClamAV'])
     expect(section).toHaveTextContent('When the result is not conclusive: Block')
     expect(document.querySelector('script')).toBeNull()
     expect(screen.getByText(/ICAP gateway on port 1344: files over 50 MiB are blocked; no verdict within 30 s or MASP unreachable: blocked/)).toBeInTheDocument()
@@ -59,7 +59,7 @@ describe('Profile rules', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Review rules' }))
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getAllByRole('row').slice(1).map(row => row.textContent)).toEqual(
-      ['1Larger than 500 MBLight check: File Type', '2Type: ProgramsBlock', '3Every other fileScan: ClamAV'])
+      ['1Larger than 500 MiBLight check: File Type', '2Type: ProgramsBlock', '3Every other fileScan: ClamAV'])
     expect(writes(fetcher, 'PUT')).toHaveLength(0)
     await userEvent.click(within(dialog).getByRole('button', { name: 'Save rules' }))
     await screen.findByText('Rules saved.')
@@ -80,7 +80,7 @@ describe('Profile rules', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Edit rules' }))
     await userEvent.click(screen.getByRole('button', { name: 'Add rule' }))
     const added = screen.getByRole('listitem', { name: 'Rule 2' })
-    await userEvent.type(within(added).getByLabelText('Up to (MB)'), '5')
+    await userEvent.type(within(added).getByLabelText('Up to (MiB)'), '5')
     await userEvent.selectOptions(within(added).getByRole('combobox', { name: 'Action' }), 'light')
     // A light check offers only checks; paid reputation services never appear.
     const engines = within(within(added).getByRole('group', { name: 'Engines' })).getAllByRole('checkbox')
@@ -92,7 +92,7 @@ describe('Profile rules', () => {
     await screen.findByText('Rules saved.')
     const body = JSON.parse(String(writes(fetcher, 'PUT')[0][1]?.body))
     expect(body.rules.rules.map((rule: { action: string }) => rule.action)).toEqual(['light', 'light', 'scan'])
-    expect(body.rules.rules[0].when.up_to_bytes).toBe(5 * MB)
+    expect(body.rules.rules[0].when.up_to_bytes).toBe(5 * MiB)
   })
 
   it('refuses incomplete rules in the browser without a request', async () => {

@@ -13,6 +13,20 @@ arbitrary command parsers.
 
 ## Current Runtime
 
+- Console navigation is task-owned (2026-11-13): Scans, Integrations, Storage,
+  Policies, Scan infrastructure, Administration. Keep rail, section links and
+  breadcrumbs in `frontend/src/lib/navigation.ts`. Storage stays discoverable before
+  setup; analysts see results, admins also see sources/access and file intake.
+  Canonical scoped editors are `/console/storage/access/{clientId}` and
+  `/console/policies/profiles/{clientId}`; bounded client pickers precede them.
+  Reuse client dialog editors and guards; profile ownership remains per client.
+  Old client storage/profile links redirect with query/fragment preserved. ICAP
+  belongs to `/console/integrations/gateways`; event selection and scan notification
+  delivery to `/console/administration/notifications`. Strict admin/CSRF writes
+  `/api/ui/v1/operational-policy` and `/notification-policy` affect disjoint keys;
+  preserve the compatible full `/scan-policy` write. Folder outbox counts are not
+  part of scan delivery status. See `docs/architecture/ADMIN_INFORMATION_ARCHITECTURE.md`
+  for remaining onboarding/client-detail work and validation boundaries.
 - FastAPI app/UI, scan workers, and optional ICAP gateway are separate processes.
 - An opt-in React/TypeScript console in `frontend/` serves `/console/dashboard`,
   `/console/engines`, `/console/scans/new`, manual `/console/scans/{id}` reports
@@ -39,15 +53,13 @@ arbitrary command parsers.
   instead of shadows, 3-4 px corners, square status markers, IBM Plex Sans/Mono
   bundled through `@fontsource` (offline hosts: no font CDN, CSP `font-src
   'self'`). Avoid generic AI-template traits: gradients, glass, glows, pill
-  badges, tracked uppercase decoration, template copy. One deliberate exception, requested
-  by the product owner on 2026-10-09 as a trial: the sign-in screen draws the MIT-licensed
-  "earthrise" halftone scene (bas3line/ascii, vendored with its notice in
-  `components/login-art/`, credited in NOTICE) across the area right of the rail; the
-  sign-in form moved onto the rail, which keeps its dark palette (`--rail-*` tokens, the same
-  in both themes) for the form; the scene is drawn on wide screens only,
-  a still frame under reduced motion, in its own lazy chunk; `comments.legal` keeps the
-  notice in the build. Removing it is the `<LoginScene />` line in `main.tsx`, the
-  component, its CSS block and the NOTICE entry; nothing else depends on it. Settings pages use
+  badges, tracked uppercase decoration, template copy. The sign-in screen uses an original static SVG contour pattern
+  (replaced the earthrise trial on 2026-11-11) in its own lazy chunk. Fine flowing
+  lines fill the artwork panel edge to edge, with no letters, titles, captions or
+  slogans. Linework and ground use `--login-art-ink` / `--login-scene-ground`
+  theme tokens. The form stays on the graphite rail; phones show the form alone.
+  No external assets, canvas or animation loop. Removing the art only requires
+  the `<LoginScene />` line, the component and its CSS. Settings pages use
   `.settings-panel` (header, label-left `.setting-row`/`.form-rows`, footer
   actions); help text sits outside a control's label (`aria-describedby`) so
   accessible names stay exact.
@@ -235,9 +247,9 @@ runs only the checks its rule names (File Type mismatch, Hash List lookup; hashi
 when the rule names Hash List), and a Scan rule's object waits as `full_pending`. A folder's
 `policy_json` keeps only discovery settings (ignored names, settle time, crawl interval and
 per-cycle limits); fields from before rules are dropped when read. A profile without readable
-rules stops its folders and cannot be chosen for one. Folders are added and listed on the
-client's Storage tab (Watched folders); `/console/storage` is the cross-client results view and
-appears in the menu only once a worker has reported or a folder exists.
+rules stops its folders and cannot be chosen for one. Folders are added from `/console/storage` or the client's Storage tab; the
+cross-client results view is always discoverable. Central Sources & access also
+reuses the client-scoped grants editor and shows its watched folders.
 
 The frontend target is all browser UI migrated incrementally, not permanent
 legacy escape links. Track every remaining screen and cutover gate in the complete
@@ -265,9 +277,10 @@ active/child/shared-sample/outbox protections. Commit each record separately and
 report deletion/file-cleanup outcomes. Never auto-replay uncertain requests or
 infer recursive deletion. No raw engine data is read for previews. ID pagination
 and PostgreSQL read budgets do not waive deployment-scale acceptance.
-Admin `/console/scan-policy` (titled "System limits & notifications"; the per-client
-file rules live under Scan profiles) reads only the operational policy overrides and
-saves them through strict, CSRF-protected JSON. Each `PolicySpec.control` tells the
+Admin `/console/scan-policy` (titled "Limits & API behavior"; the per-client
+file rules live under Scan profiles) reads operational policy metadata; its form writes only limits/timing through
+strict, CSRF-protected `/operational-policy`. Notifications owns the SIEM switch
+and writes only `/notification-policy`. Each `PolicySpec.control` tells the
 console how to edit it (`number`, `size` edited in MiB, `switch` as on/off/not set). Reuse `scan_policy.validate` and
 `resolve_raw`; validate every field before one atomic save. Blank removes an
 override; upload policy zero does not remove the deployment HTTP body ceiling.
@@ -297,6 +310,45 @@ policies for this list. Preserve the SQL-level `legacy-default` update exclusion
 strict admin/CSRF checks and identity-specific updates. Truncated metadata must not
 be silently saved by the UI. Client enabled state does not prove valid profile or
 credential configuration; edits do not rewrite accepted routing snapshots.
+Admin `/console/configuration` is the task-based entry to existing editors and
+read-only status views; the old direct `/console/scan-policy` route remains.
+The hub performs no probes/writes and exposes no deployment secrets or roots.
+Size controls in profile rules use MiB (bytes remain unchanged). Engine health
+requests are asynchronous worker checks, labelled Request health check. Limits
+reads expose invalid deployment HTTP ceilings as null with an explicit validity
+flag; policy editing cannot repair deployment configuration. Pilot/prod forward
+MASP_ARCHIVE_MAX_* extraction bounds with existing defaults; env changes need
+service recreation, and previously ignored custom values begin applying.
+Client management opens on a read-only Overview (`/console/service-clients/{id}/overview`).
+Its admin-only `/api/ui/v1/service-clients/{id}/configuration` explains current
+client-owned profile rules, API/ICAP limits and bounded engine/pool/recorded worker
+metadata under one repeatable budgeted read. ICAP uses the default profile; API
+may select an own profile. Report stale/unknown/incomplete evidence explicitly;
+recorded checks never prove current worker eligibility or capacity. No engine
+configuration, credentials, raw health detail, storage roots or scan blobs are read.
+Connection readiness and paginated profile choices are separate observations.
+Refresh the overview on return from client editors; existing write guards remain.
+Shared `ConfigurationContext` explains source, scope, application time and restart
+requirements in the limits editor and client overview. Invalid/clamped runtime
+fallbacks must be explicit; API environment values never claim to describe workers.
+The event-selection switch follows the event producer's literal `1` semantics.
+Limits reads include the API process's fallback even when a DB override is present;
+confirmations show current/proposed values and untouched size fields retain exact bytes.
+Admin/CSRF POST `/api/ui/v1/service-clients/{id}/configuration/preview` is a metadata-only
+read of a saved profile, fenced by its displayed revision. Reuse `profile_rules.match`
+and `content_types.classify_detected_type`; unknown header means enumerate supported
+header classifications, never infer content from extension or treat unknown as
+unrecognized. Return possible first matches, transport limitations and a configuration
+fingerprint, never an allow/clean decision. ICAP requires the current default. Reject
+managed, unreadable or incomplete rules. No sample, provider, quota, scan, outbox or
+audit write; the exact preview POST is excluded from audit. No retries/polling/cache;
+clear preview on input/profile/path/tab changes and abort late responses.
+Admin GET `/api/ui/v1/engines/{id}/usage` lists 20 current profile references per
+ID-keyset page using `idx_profile_engines_instance_seek`, in a repeatable budgeted
+read. Include disabled clients/profiles, exclude tombstones, omit policy/config/secrets
+and history. An empty list never proves an engine unused by manual or accepted scans.
+Engine cards and placement/removal dialogs load references only on request; links
+open the selected client overview via `profile_id`. No dependency mutation is implied.
 The client list uses compact clickable rows opening a large dialog with Settings,
 Connection, Scan profiles, Storage and Credentials tabs; standalone deep links remain.
 Load panels on first selection and keep visited panels mounted until dialog close

@@ -94,6 +94,57 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual(status, 201, body)
         return body['id']
 
+    def test_scan_policy_reports_invalid_http_ceiling_without_a_fake_default(self):
+        for value in ('invalid', '0', '-1'):
+            with patch.dict('os.environ', {'MASP_HTTP_UPLOAD_MAX_BYTES': value}):
+                status, body, _ = self.request('/scan-policy')
+                self.assertEqual(status, 200)
+                self.assertFalse(body['deployment_http_ceiling_valid'])
+                self.assertIsNone(body['deployment_http_ceiling_bytes'])
+                self.assertEqual(len(body['fields']), len(scan_policy.SPECS))
+
+    def test_client_configuration_requires_operator_admin_and_validates_profile_query(self):
+        self.assertEqual(self.request('/service-clients/999/configuration', session=False)[0], 401)
+        self.assertEqual(self.request('/service-clients/999/configuration')[0], 404)
+        self.assertEqual(self.request('/service-clients/999/configuration?profile_id=-1')[0], 422)
+        db.update_user(self.user_id, 'analyst')
+        self.assertEqual(self.request('/service-clients/999/configuration')[0], 403)
+
+    def test_rule_preview_checks_admin_csrf_before_body_and_validates_metadata(self):
+        path = '/service-clients/999/configuration/preview'
+        body = dict(profile_id=1, expected_revision=0, source='api', size_bytes=10)
+        for options in ({'session': False}, {'csrf': False}, {'origin': 'http://evil'}):
+            self.assertIn(self.request(path, 'POST', body, **options)[0], (401, 403))
+            self.assertEqual(self.reads, 0)
+        for change in ({'size_bytes': True}, {'header_type': 'unknown-type'}, {'sample': 'no'}, {'expected_revision': -1}):
+            self.assertEqual(self.request(path, 'POST', {**body, **change})[0], 422)
+        self.assertEqual(self.request(path, 'POST', body)[0], 404)
+        db.update_user(self.user_id, 'analyst')
+        self.assertEqual(self.request(path, 'POST', body)[0], 403)
+        self.assertEqual(self.reads, 0)
+
+    def test_engine_usage_is_admin_only_and_bounded_cursor_is_validated(self):
+        engine = self.create_clamav()
+        path = f'/engines/{engine}/usage'
+        self.assertEqual(self.request(path, session=False)[0], 401)
+        status, result, headers = self.request(path)
+        self.assertEqual(status, 200)
+        self.assertEqual(result['engine_id'], engine)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(self.request(path + '?after=-1')[0], 422)
+        db.update_user(self.user_id, 'analyst')
+        self.assertEqual(self.request(path)[0], 403)
+
+    def test_scan_policy_exposes_environment_fallback_even_with_override(self):
+        db.set_setting('scan_policy.upload_max_bytes', '1048577')
+        with patch.dict(os.environ, {'MASP_UPLOAD_MAX_BYTES': '2097152'}):
+            status, result, _ = self.request('/scan-policy')
+        self.assertEqual(status, 200)
+        upload = next(field for field in result['fields'] if field['key'] == 'upload_max_bytes')
+        self.assertEqual(upload['value'], 1048577)
+        self.assertEqual(upload['fallback_value'], 2097152)
+        self.assertEqual(upload['context']['source'], 'Console override')
+
     def test_user_management_prebody_guards_and_revision_contract(self):
         target = db.create_user('managed', auth.hash_password('managed-password'), 'analyst')
         path = f'/users/{target}'
@@ -726,6 +777,49 @@ class BrowserApiTests(unittest.TestCase):
         system_read._summary_cache = None
         result = system_read.summary()
         self.assertEqual((result.completed, result.active_online_nodes), (1, 0))
+
+    def test_task_policy_writes_are_isolated_strict_and_authenticated(self):
+        limits = {'api_max_wait_seconds': '20', 'api_retry_after_seconds': '3', 'upload_max_bytes': '1048577'}
+        notifications = {'siem_not_allowed_events': '1'}
+        for path, body in (('/operational-policy', limits), ('/notification-policy', notifications)):
+            for options, expected in (({'session': False}, 401), ({'csrf': False}, 403)):
+                self.assertEqual(self.request(path, 'PUT', body, **options)[0], expected)
+                self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request(path, 'PUT', limits | notifications)[0], 422)
+            self.assertEqual(self.request(path, 'PUT', {})[0], 422)
+        self.assertEqual(self.request('/operational-policy', 'PUT', limits)[0], 204)
+        self.assertEqual(self.request('/notification-policy', 'PUT', notifications)[0], 204)
+        self.assertEqual(db.get_setting('scan_policy.upload_max_bytes'), '1048577')
+        self.assertEqual(self.request('/notification-policy', 'PUT', {'siem_not_allowed_events': ''})[0], 204)
+        self.assertEqual(db.get_setting('scan_policy.upload_max_bytes'), '1048577')
+        self.assertIsNone(db.get_setting(db.SIEM_NOT_ALLOWED_SETTING))
+        self.assertEqual(self.request('/notification-policy', 'PUT', notifications)[0], 204)
+        self.assertEqual(self.request('/operational-policy', 'PUT', dict.fromkeys(limits, ''))[0], 204)
+        self.assertEqual(db.get_setting(db.SIEM_NOT_ALLOWED_SETTING), '1')
+        for path, body in (('/notification-policy', {'siem_not_allowed_events': '2'}),
+                           ('/operational-policy', limits | {'api_retry_after_seconds': '0'})):
+            self.assertEqual(self.request(path, 'PUT', body)[0], 422)
+        self.assertIsNone(db.get_setting('scan_policy.api_max_wait_seconds'))
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        for path, body in (('/operational-policy', limits), ('/notification-policy', notifications)):
+            self.assertEqual(self.request(path, 'PUT', body)[0], 403)
+            self.assertEqual(self.reads, 0)
+
+    def test_client_scope_read_is_bounded_metadata_and_admin_only(self):
+        client = db.create_service_client('scope-test', 'x' * 101)
+        self.assertEqual(self.request(f'/service-clients/{client}', session=False)[0], 401)
+        status, body, headers = self.request(f'/service-clients/{client}')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers[b'cache-control'], b'no-store')
+        self.assertEqual(set(body), {'id', 'client_key', 'display_name', 'enabled', 'managed', 'metadata_incomplete'})
+        self.assertEqual(body['display_name'], 'x' * 100)
+        self.assertTrue(body['metadata_incomplete'])
+        self.assertEqual(self.request('/service-clients/9007199254740991')[0], 404)
+        self.assertEqual(self.request('/service-clients/0')[0], 422)
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        self.assertEqual(self.request(f'/service-clients/{client}')[0], 403)
 
     def test_scan_policy_auth_validation_and_no_partial_invalid_save(self):
         body = {'api_max_wait_seconds': '20', 'api_retry_after_seconds': '3', 'upload_max_bytes': '',
@@ -2326,6 +2420,46 @@ class BrowserApiTests(unittest.TestCase):
         batch = db.create_scan_batch(source='manual', original_filename='outer.zip', archive_mode='lazy_extract_on_detection')
         parent = self.create_scan('outer.zip', batch_id=batch, scan_role='container', status='completed')
         return parent, batch
+
+    def test_aselix_browser_guards_report_scope_and_provider_payload(self):
+        import io
+        scan, _ = self.report_fixture(detected=True)
+        auto = self.create_scan(source='api', status='completed')
+        body = {'question': 'What does the coverage mean?'}
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+        env = dict(MASP_ASELIX_ENABLED='1', MASP_ASELIX_URL='https://ai.test/v1/chat/completions',
+                   MASP_ASELIX_MODEL='test-model', MASP_ASELIX_API_KEY='test-key', MASP_ASELIX_CA_PEM_B64='')
+        with patch.dict(os.environ, env), patch('app.services.http_transport.open_without_redirects') as send:
+            self.assertTrue(self.request('/session')[1]['assistant_enabled'])
+            for route in ('/assistant/chat', f'/scans/{scan}/assistant', f'/api-ledger/scans/{auto}/assistant'):
+                self.assertEqual(self.request(route, 'POST', body, session=False)[0], 401)
+                self.assertEqual(self.reads, 0)
+                self.assertEqual(self.request(route, 'POST', body, csrf=False)[0], 403)
+                self.assertEqual(self.reads, 0)
+            self.assertEqual(self.request(f'/scans/{auto}/assistant', 'POST', body)[0], 404)
+            self.assertEqual(self.request(f'/api-ledger/scans/{scan}/assistant', 'POST', body)[0], 404)
+            self.assertEqual(self.request('/assistant/chat', 'POST', body | {'url': 'https://other.test'})[0], 422)
+            send.assert_not_called()
+            for route in ('/assistant/chat', f'/scans/{scan}/assistant', f'/api-ledger/scans/{auto}/assistant'):
+                send.return_value = io.BytesIO(b'{"choices":[{"message":{"content":"answer"}}]}')
+                status, result, headers = self.request(route, 'POST', body)
+                self.assertEqual((status, result), (200, {'answer': 'answer'}))
+                self.assertEqual(headers[b'cache-control'], b'no-store')
+                req = send.call_args.args[0]
+                self.assertEqual(req.get_header('Authorization'), 'Bearer test-key')
+                payload = json.loads(req.data)
+                self.assertEqual(payload['model'], 'test-model')
+                context = payload['messages'][0]['content']
+                self.assertEqual('Current MASP scan summary:' in context, route != '/assistant/chat')
+                if route == f'/scans/{scan}/assistant':
+                    self.assertEqual(json.loads(context.split('Current MASP scan summary: ')[1])['detecting_engines'], 1)
+                for private in ('sample.bin', 'internal note', 'Fixture.Test', 'Historic Defender', 'Case A', '<script>', 'c' * 64, 'test-key'):
+                    self.assertNotIn(private, context)
+            send.reset_mock()
+            with patch.dict(os.environ, MASP_ASELIX_ENABLED='0'):
+                self.assertEqual(self.request('/assistant/chat', 'POST', body)[0], 503)
+                send.assert_not_called()
 
     def test_printable_report_is_source_scoped_for_analysts(self):
         scan, _ = self.report_fixture(detected=True)

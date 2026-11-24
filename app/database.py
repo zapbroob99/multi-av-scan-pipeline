@@ -1561,6 +1561,8 @@ def ensure_service_client_schema(connection: Any) -> None:
         ON scan_profiles (service_client_id) WHERE is_default = TRUE AND deleted_at IS NULL''')
     connection.execute('''CREATE INDEX IF NOT EXISTS idx_scan_profiles_client_seek
         ON scan_profiles (service_client_id, id) WHERE deleted_at IS NULL''')
+    connection.execute('''CREATE INDEX IF NOT EXISTS idx_profile_engines_instance_seek
+        ON scan_profile_engines (engine_instance_id, scan_profile_id)''')
     ensure_column(connection, "scan_jobs", "service_client_id", id_type)
     ensure_column(connection, "scan_jobs", "scan_profile_id", id_type)
     ensure_column(connection, "scan_jobs", "profile_snapshot_json", snapshot_type)

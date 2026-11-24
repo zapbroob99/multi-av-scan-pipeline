@@ -51,7 +51,7 @@ export default function StorageLocationForm({ session }: { session: Session }) {
   const chosenClient = options.data?.clients.find(item => String(item.id) === clientId)
   const chosenProfile = chosenClient?.profiles.find(item => String(item.id) === profileId)
   const baseSettings = (locationId ? existing.data?.policy : options.data?.default_policy) ?? {}
-  const back = locationId ? `/storage/locations/${locationId}` : presetClient ? `/service-clients/${presetClient}/storage` : '/storage'
+  const back = locationId ? `/storage/locations/${locationId}` : presetClient ? `/storage/access/${presetClient}` : '/storage'
 
   function settings(): StoragePolicy {
     return { ...baseSettings, ignore_patterns: ignore.split('\n').map(item => item.trim()).filter(Boolean),
@@ -107,7 +107,7 @@ export default function StorageLocationForm({ session }: { session: Session }) {
           {item.name}{item.enabled ? '' : ' · disabled'}</option>)}</select></label>
       <p className="muted">Every file in the folder takes the first rule of this profile it matches, like a file the client sends.
         Light check and Block are applied while the folder is read; a file a Scan rule matches waits until antivirus scanning of folders is available.
-        {chosenClient && <> Edit the rules on <Link to={`/service-clients/${chosenClient.id}/profiles`}>{chosenClient.name}'s Scan profiles</Link>.</>}</p>
+        {chosenClient && <> Edit the rules on <Link to={`/policies/profiles/${chosenClient.id}`}>{chosenClient.name}'s Scan profiles</Link>.</>}</p>
       <label>Storage backend<select value={backend} required disabled={locationId !== null} onChange={e => setBackend(e.target.value)}>
         <option value="">Select a backend</option>{options.data.backends.map(key => <option key={key} value={key}>{key}</option>)}</select></label>
       {!options.data.backends.length && <p className="notice error" role="alert">No storage backend is configured on this deployment. Backends are

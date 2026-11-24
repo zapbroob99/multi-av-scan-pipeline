@@ -31,5 +31,5 @@ test('admin manages worker lifecycle and revocation; analyst cannot access Syste
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Administrator access required' })).toBeVisible()
   expect((await page.request.get('/api/ui/v1/system/workers')).status()).toBe(403)
-  await expect(page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'System' })).toHaveCount(0)
+  await expect(page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Scan infrastructure' })).toHaveCount(0)
 })

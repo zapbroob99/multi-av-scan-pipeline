@@ -60,11 +60,10 @@ describe('Connect a client', () => {
     expect(screen.getByRole('listitem', { name: 'ICAP gateway connection' })).toHaveTextContent('Not used')
   })
 
-  it('explains why an assigned engine cannot run automation work', async () => {
+  it('links to the routing owner without repeating its engine table', async () => {
     mount()
-    await screen.findByText('VirusTotal')
-    expect(screen.getByText(/Paid reputation service/)).toBeInTheDocument()
-    expect(screen.getByText(/Eligibility is configuration, not health/)).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Configuration overview' })).toHaveAttribute('href', '/service-clients/3/overview')
+    expect(screen.queryByRole('region', { name: 'Assigned engines' })).toBeNull()
   })
 
   it('raises an alert and counts what is still blocking when not ready', async () => {

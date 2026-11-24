@@ -11,12 +11,14 @@ import { Dialog } from '../components/ui/dialog'
 import { ClientWorkspace, type ClientTab } from '../components/client-workspace'
 
 const ClientSetup = lazy(() => import('./client-setup'))
+const ClientOverview = lazy(() => import('./client-overview'))
 const ClientProfiles = lazy(() => import('./client-profiles'))
 const ClientStorage = lazy(() => import('./client-storage'))
 const ClientCredentials = lazy(() => import('./client-credentials'))
 type Client = components['schemas']['ServiceClientSummary']
 type Values = components['schemas']['ServiceClientUpdate']
 const tabs = [
+  { key: 'overview', label: 'Overview', icon: Cable },
   { key: 'settings', label: 'Settings', icon: Settings2 },
   { key: 'setup', label: 'Connection', icon: Cable },
   { key: 'profiles', label: 'Scan profiles', icon: GitBranch },
@@ -25,8 +27,8 @@ const tabs = [
 ] as const
 
 function ClientEditor({ client, session, close, updated }: { client: Client; session: Session; close: () => void; updated: () => void }) {
-  const [tab, setTab] = useState<ClientTab>('settings')
-  const [visited, setVisited] = useState<Set<ClientTab>>(() => new Set(['settings']))
+  const [tab, setTab] = useState<ClientTab>('overview')
+  const [visited, setVisited] = useState<Set<ClientTab>>(() => new Set(['overview']))
   const [guards, setGuards] = useState<Record<string, boolean>>({})
   const guard = useCallback((panel: string, blocked: boolean) => setGuards(current => current[panel] === blocked ? current : { ...current, [panel]: blocked }), [])
   const [confirmation, setConfirmation] = useState<Values | null>(null)
@@ -82,6 +84,7 @@ function ClientEditor({ client, session, close, updated }: { client: Client; ses
               <div className="client-form-footer"><Button type="submit">Review client changes</Button></div>
             </fieldset></form>}
           </section>}
+          {key === 'overview' && <ClientOverview session={session} />}
           {key === 'setup' && <ClientSetup />}
           {key === 'profiles' && <ClientProfiles session={session} />}
           {key === 'storage' && <ClientStorage session={session} />}
@@ -109,7 +112,7 @@ export default function ServiceClients({ session }: { session: Session }) {
     query: listQuery(after, q), signal }),
     retry: false, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: false, refetchOnReconnect: false })
   const busy = clients.isFetching || selected !== null
-  return <section className="page management-page client-page"><div className="page-heading"><div><p className="eyebrow">INTEGRATIONS</p><h1>Service clients</h1>
+  return <section className="page management-page client-page"><div className="page-heading"><div><p className="eyebrow">INTEGRATIONS</p><h1>Connected systems</h1>
     <p className="muted">Select a client to manage its settings and integration access.</p></div><div className="client-heading-actions">
     <Button ref={refresh} variant="secondary" disabled={busy} onClick={async () => { const result = await clients.refetch(); if (!result.error) setNeedsRefresh(false) }}><RefreshCw size={14} aria-hidden="true" />Refresh clients</Button>
     <Link className="button button-primary" to="/service-clients/new"><Plus size={16} aria-hidden="true" />Create service client</Link></div></div>

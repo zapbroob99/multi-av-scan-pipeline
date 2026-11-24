@@ -14,7 +14,7 @@ longer, not simpler.
 
 The product owner asked for something else: policies that are simple and explicit,
 with nothing forced by a hidden default, where different files can get different
-engines, for example "above this many MB run these engines; when very large, only the
+engines, for example "above this many MiB run these engines; when very large, only the
 header and hash checks".
 
 ## The model
@@ -23,8 +23,8 @@ A profile is an ordered list of rules. A file takes the **first** rule it matche
 
 ```
  #  When                              Do
- 1  Size > 500 MB                     Light check: File Type, Hash List
- 2  Size 50-500 MB                    Scan: ClamAV
+ 1  Size > 500 MiB                     Light check: File Type, Hash List
+ 2  Size 50-500 MiB                    Scan: ClamAV
  3  Type: program, script             Scan: ClamAV, Defender, YARA
  4  Type: archive                     Scan (open the archive, scan every file): ClamAV, Defender
  5  Extension contradicts content     Block
@@ -34,7 +34,7 @@ A profile is an ordered list of rules. A file takes the **first** rule it matche
 ```
 
 **Conditions** (all given conditions must match; a rule without conditions matches
-everything): a size range in MB (from, up to), content types (any of the families
+everything): a size range in MiB (from, up to), content types (any of the families
 the header classifier knows), and "extension contradicts content".
 
 **Actions**:
@@ -136,6 +136,17 @@ a flagged API ledger row ("Add exception") and a blocked or review report ("Add 
 exception for this file") open the same dialog with the file and its client filled in, and
 the ledger and report badge an excepted scan. Folder-scanning
 findings are not covered by exceptions yet.
+
+## Saved-rule preview
+
+The client Overview can preview **saved** rules without a sample. It uses the same
+backend matcher and extension classification as intake; header type is supplied
+separately from the declared extension. Unknown header enumerates the supported
+classifications and can produce several possible first matches; it is distinct
+from an inspected but unrecognized header. A displayed revision is required and
+ICAP uses only the current default. The preview changes nothing and predicts no
+malware verdict, exception, archive result or guaranteed admission. Draft-rule
+preview and shadowing diagnostics are not implemented.
 
 ## Upgrading existing profiles
 

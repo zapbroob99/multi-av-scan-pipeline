@@ -104,10 +104,10 @@ export default function ClientStorage({ session }: { session: Session }) {
   useClientPanelGuard('storage', confirmation !== null || save.isPending)
   const busy = access.isFetching || save.isPending || confirmation !== null
   return <section className="page management-page client-page"><ClientNavigation clientId={clientId} />
-    <div className="page-heading"><div><p className="eyebrow">INTEGRATIONS</p><h1>Storage</h1><p className="muted">Watched folders, and where this client may have MASP read files.</p></div>
+    <div className="page-heading"><div><p className="eyebrow">STORAGE</p><h1>{workspace?.mode === 'route' ? 'Sources & access' : 'Storage'}</h1><p className="muted">Watched folders, and where this client may have MASP read files.</p></div>
       <Button variant="secondary" disabled={busy} onClick={async () => { save.reset(); const result = await access.refetch(); if (!result.error) setNeedsRefresh(false) }}>
         <RefreshCw size={14} aria-hidden="true" />Refresh storage access</Button></div>
-    <WatchedFolders clientId={clientId} />
+    {workspace?.mode !== 'route' && <WatchedFolders clientId={clientId} />}
     <h2 className="client-storage-access-title">Storage access</h2>
     <p className="callout">Where this client may have MASP read files: watched folders, large files it names over the API, and manifests.
       Backend locations stay deployment-managed. Access is checked when a file is named or read, and again before copying.</p>
@@ -123,6 +123,7 @@ export default function ClientStorage({ session }: { session: Session }) {
       <StorageForm key={access.dataUpdatedAt} data={access.data} disabled={busy} review={setConfirmation} />
       <p className="muted client-note">Configured here does not prove that an intake worker can reach the backend. Deployment settings can differ between processes.</p>
     </>}
+    {workspace?.mode === 'route' && <WatchedFolders clientId={clientId} />}
     <Dialog open={confirmation !== null} locked={save.isPending} onOpenChange={open => { if (!open && !save.isPending) setConfirmation(null) }}
       title="Update storage access?" description={confirmation?.mode === 'environment'
         ? `Return client #${clientId} to deployment-managed access? The grants below will apply on this server.`

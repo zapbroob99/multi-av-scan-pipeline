@@ -20,7 +20,7 @@ export default function SystemOverview({ session }: { session: Session }) {
     queryFn: ({ signal }) => request('/api/ui/v1/system/engine-metrics', 'get', {
       query: new URLSearchParams({ limit: '20', ...(after ? { after } : {}) }), signal }),
     retry: false, gcTime: 60000, refetchOnMount: 'always', refetchOnWindowFocus: false, refetchOnReconnect: false })
-  return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>System overview</h1>
+  return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Health &amp; overview</h1>
     <p className="muted">Recorded scan totals, worker liveness and historical result statistics.</p></div>
     <div className="heading-actions"><SupportBundleButton session={session} />
       <Button variant="secondary" disabled={summary.isFetching} onClick={() => { void summary.refetch() }}>Refresh overview</Button></div></div>
@@ -38,10 +38,6 @@ export default function SystemOverview({ session }: { session: Session }) {
         <dt>Online and active</dt><dd>{summary.data.active_online_nodes}</dd></dl>
         <p className="muted">Online and active nodes may still lack capacity, matching adapters or eligible pool assignments.</p>
         <div className="report-actions"><Link to="/system">Inspect worker nodes</Link><Link to="/engines">Check engine health</Link><Link to="/system/runtime">Open active queue</Link></div></section>
-      <section className="submission-card"><h2>Retention policy</h2><p>{summary.data.retention_days > 0
-        ? `Enabled: ${summary.data.retention_days} days; configured batch limit ${summary.data.retention_batch_size}. Console runs are capped at 20 records.` : 'Retention cleanup is disabled.'}</p>
-        <p className="muted">Policy is configured on the server. Viewing this page does not delete data.</p>
-        <Link to="/system/retention">Review retention cleanup</Link></section>
       <p className="muted">Overview generated <Timestamp value={summary.data.generated_at} /></p>
     </>}
     <div className="history-heading"><div><h2>Historical engine metrics</h2><p className="muted">Statistics by the engine name recorded on retained results.</p></div>

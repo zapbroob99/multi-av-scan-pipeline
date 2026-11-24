@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from collections import UserDict
 from pathlib import Path
 from unittest.mock import patch
 
@@ -72,6 +73,7 @@ class FakeLdapBindError(FakeLdapException):
 class FakeExceptions:
     LDAPException = FakeLdapException
     LDAPBindError = FakeLdapBindError
+    LDAPInvalidCredentialsResult = FakeLdapBindError
 
 
 class FakeLdap:
@@ -141,6 +143,7 @@ class LdapProtocolTests(unittest.TestCase):
         )
 
     def test_searches_with_service_account_then_binds_as_user(self) -> None:
+        FakeLdap.response[0]["attributes"] = UserDict(FakeLdap.response[0]["attributes"])
         with self.loader:
             identity = ldap_auth.authenticate_ldap("alice*)(uid=*)", "user-secret", self.config)
 
@@ -151,6 +154,8 @@ class LdapProtocolTests(unittest.TestCase):
         self.assertEqual(len(FakeLdap.connections), 2)
         self.assertEqual(FakeLdap.connections[1]["user"], identity.external_id)
         self.assertEqual(FakeLdap.connections[1]["password"], "user-secret")
+        for connection in FakeLdap.connections:
+            self.assertIsInstance(connection["receive_timeout"], int)
 
     def test_invalid_user_bind_is_rejected(self) -> None:
         FakeLdap.invalid_password = True

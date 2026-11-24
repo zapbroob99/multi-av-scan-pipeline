@@ -83,7 +83,7 @@ export default function ApiLedger({ session }: { session?: Session }) {
     setParams(next)
   }
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">AUTOMATION HISTORY</p>
-    <h1>API ledger</h1><p className="muted">API and ICAP submissions. Manual scans and archive children are excluded.</p></div>
+    <h1>Integration scans</h1><p className="muted">API and ICAP submissions. Manual scans and archive children are excluded.</p></div>
     <Button variant="secondary" disabled={scans.isFetching || locked} onClick={() => { void refresh() }}>Refresh ledger</Button></div>
     {admin && <Button variant="destructive" disabled={locked || scans.isFetching || !!scans.error || requiresRefresh || selected.length === 0}
       onClick={() => setDraft((scans.data?.items ?? []).filter(scan => selected.includes(scan.id)).map(scan => ({

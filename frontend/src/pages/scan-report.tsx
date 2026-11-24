@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type ScanReport, type ReportEngine, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
+import AselixAssistant from '../components/aselix-assistant'
 import { BackLink } from '../components/section-tabs'
 import { Timestamp } from '../components/timestamp'
 import { ExceptionBadge, NotAllowedBadge, RuleBadge } from '../components/risk-badge'
@@ -60,7 +61,7 @@ export default function Report({ automation = false, session }: { automation?: b
     refetchInterval: query => reportPollInterval(query.state.data), refetchIntervalInBackground: false,
     refetchOnWindowFocus: true, refetchOnMount: 'always', gcTime: 60000 })
   const scan = report.data
-  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></section>
+  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "Integration scans" : "Manual scans"}</Link></section>
   // Do not leave an earlier allow card visible when a refresh fails or expires.
   if (report.error) return <section className="page"><h1>Report unavailable</h1><p role="alert" className="error"><ErrorMessage message={report.error.message || ''} /></p>
     <Button onClick={() => { void report.refetch() }}>Retry report</Button></section>
@@ -70,7 +71,7 @@ export default function Report({ automation = false, session }: { automation?: b
     <div className="report-actions"><BackLink to={automation ? '/api-ledger' : '/dashboard'} />
       <Button variant="secondary" disabled={report.isFetching} onClick={() => { void report.refetch() }}>{report.isFetching ? 'Refreshing…' : 'Refresh report'}</Button>
       <Link className="button button-secondary" to={`${automation ? '/api-ledger' : ''}/scans/${scan.id}/print`}>Printable report</Link>
-      <Link className="button button-secondary" to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></div></div>
+      <Link className="button button-secondary" to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "Integration scans" : "Manual scans"}</Link></div></div>
     {justAccepted && <p role="status" className="callout">Scan #{scan.id} was stored and queued. This is not a completed scan or a clean verdict:
       workers run the engines asynchronously and this page updates as they finish. <Link to="/scans/new">Submit another sample</Link></p>}
     {automation && <p className="callout">Source: {scan.source} ? Client: {scan.service_client_id ?? 'Unassigned'}. Operator view; accepted routing determines coverage.</p>}
@@ -91,6 +92,9 @@ export default function Report({ automation = false, session }: { automation?: b
         It applies to this exact SHA-256 when it is sent again; this scan keeps its decision.</p>}
       {exceptionAdded && <p role="status" className="notice">{exceptionAdded}</p>}
     </section>
+    {session?.assistant_enabled && <details className="submission-card"><summary>Ask Aselix about this scan</summary>
+      <AselixAssistant key={[scan.source, scan.id, scan.attempt_count, scan.job_revision, scan.status, scan.completed_engines, scan.detected_engines, scan.decision?.action].join('/')}
+        csrf={session.csrf_token} scanId={scan.id} automation={automation} /></details>}
     {scan.batch_id !== null && <p className="callout">The risk, coverage and engine results below describe this file.
       When the profile scans every archive member, the policy decision also includes those members.</p>}
     <div className="stats-row"><div><span>Recorded risk</span><strong>{scan.risk_score === null ? '—' : `${scan.risk_score}/100`}</strong></div>

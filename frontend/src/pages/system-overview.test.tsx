@@ -25,10 +25,11 @@ function mount() {
 describe('System overview', () => {
   it('loads metrics only on demand, renders names as text and preserves the pagination cursor', async () => {
     const fetcher = mount()
-    await screen.findByText(/Enabled: 30 days/)
+    await screen.findByText(/Overview generated/)
+    expect(screen.queryByRole('heading', { name: 'Retention policy' })).toBeNull()
     // The health panel has its own read; the summary itself is fetched once and metrics not at all.
     expect(fetcher.mock.calls.filter(([url]) => !String(url).includes('/system/health'))).toHaveLength(1)
-    expect(screen.getByRole('link', { name: 'Review retention cleanup' })).toHaveAttribute('href', '/system/retention')
+    expect(screen.queryByRole('link', { name: 'Review retention cleanup' })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Load engine metrics' }))
     await screen.findByText('<script>historic</script>')
     expect(document.querySelector('script')).toBeNull()

@@ -40,7 +40,7 @@ export default function Intake({ session }: { session: Session }) {
   const data = view.data, worker = data?.manifest_worker
 
   return <section className="page management-page">
-    <div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Deferred intake</h1>
+    <div className="page-heading"><div><p className="eyebrow">STORAGE</p><h1>File intake</h1>
       <p className="muted">Storage manifests and deferred submissions before they become scans.</p></div>
       <Button variant="secondary" disabled={view.isFetching} onClick={() => { void view.refetch() }}>Refresh intake</Button></div>
     <p className="muted">Snapshot of the recorded state. Failed copies can be retried and rejections dismissed from the tables below.</p>

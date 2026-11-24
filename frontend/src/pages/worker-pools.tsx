@@ -58,7 +58,7 @@ export default function WorkerPools({ session }: { session: Session }) {
     client.invalidateQueries({ queryKey: ['system-pools'] }), client.invalidateQueries({ queryKey: ['engines'] }),
   ]) } })
   const busy = pools.isFetching || action.isPending
-  return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Worker pools</h1>
+  return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>Worker groups</h1>
     <p className="muted">Route engine instances to workers with matching labels.</p></div>
     <div className="heading-actions"><Button variant="secondary" disabled={busy} onClick={() => { void pools.refetch() }}><RefreshCw size={14} aria-hidden="true" />Refresh pools</Button>
       <Button disabled={busy} onClick={() => setEditor({})}><Plus size={16} aria-hidden="true" />New pool</Button></div></div>

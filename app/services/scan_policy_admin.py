@@ -4,15 +4,24 @@ from pydantic import BaseModel, ConfigDict, Field
 from app import database as db
 from app.services import scan_policy
 from app.services.browser_db_budget import apply_read_budget, write_lock_timeout_ms
-from app.services.upload_admission import deployment_http_ceiling_bytes
+from app.services.upload_admission import validated_deployment_http_ceiling_bytes
+from app.services.configuration_context import ConfigurationContext, policy_context, http_context
 
 
-class ScanPolicyBody(BaseModel):
+class OperationalPolicyBody(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     api_max_wait_seconds: str = Field(max_length=128)
     api_retry_after_seconds: str = Field(max_length=128)
     upload_max_bytes: str = Field(max_length=128)
+
+
+class NotificationPolicyBody(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
     siem_not_allowed_events: str = Field(max_length=128)
+
+
+class ScanPolicyBody(OperationalPolicyBody, NotificationPolicyBody):
+    """Compatibility write; new task-specific editors only write their own keys."""
 
 
 class ScanPolicyField(BaseModel):
@@ -25,8 +34,10 @@ class ScanPolicyField(BaseModel):
     maximum: int
     default: int
     value: int
+    fallback_value: int
     override_raw: str
     source: str
+    context: ConfigurationContext
 
 
 class ScanPolicySnapshot(BaseModel):
@@ -35,7 +46,9 @@ class ScanPolicySnapshot(BaseModel):
     # beside "Largest upload": that policy field can only tighten admission, it
     # can never raise or remove this backstop, so an administrator who sets it
     # to 0 must still see what actually binds.
-    deployment_http_ceiling_bytes: int
+    deployment_http_ceiling_bytes: int | None
+    deployment_http_ceiling_valid: bool
+    deployment_http_context: ConfigurationContext
 
 
 def read() -> ScanPolicySnapshot:
@@ -55,11 +68,18 @@ def read() -> ScanPolicySnapshot:
                   f'environment ({spec.env_var})' if scan_policy.env_value(spec.key) else 'default')
         fields.append(ScanPolicyField(key=spec.key, label=spec.label, help=spec.help, unit=spec.unit, control=spec.control,
             minimum=spec.minimum, maximum=spec.maximum, default=spec.default,
-            value=scan_policy.resolve_raw(spec.key, raw), override_raw=raw.strip(), source=source))
-    return ScanPolicySnapshot(fields=fields, deployment_http_ceiling_bytes=deployment_http_ceiling_bytes())
+            fallback_value=scan_policy.resolve_raw(spec.key, None),
+            value=scan_policy.resolve_raw(spec.key, raw), override_raw=raw.strip(), source=source,
+            context=policy_context(spec.key, raw)))
+    try:
+        ceiling = validated_deployment_http_ceiling_bytes()
+    except HTTPException:
+        ceiling = None
+    return ScanPolicySnapshot(fields=fields, deployment_http_ceiling_bytes=ceiling,
+                              deployment_http_ceiling_valid=ceiling is not None, deployment_http_context=http_context(ceiling is not None))
 
 
-def save(body: ScanPolicyBody) -> dict[str, int | None]:
+def save(body: ScanPolicyBody | OperationalPolicyBody | NotificationPolicyBody) -> dict[str, int | None]:
     resolved = {}
     for key, raw in body.model_dump().items():
         value, error = scan_policy.validate(key, raw)

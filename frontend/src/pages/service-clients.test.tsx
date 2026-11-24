@@ -5,6 +5,8 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi } from 'vitest'
 import ServiceClients from './service-clients'
 
+vi.mock('./client-overview', () => ({ default: () => <p>Configuration overview</p> }))
+
 function mount(fail = false) {
   const fetcher = vi.fn(async (_url: string, options?: RequestInit) => options?.method === 'PUT'
     ? fail ? new Response(JSON.stringify({ detail: 'Unavailable' }), { status: 503 }) : new Response(null, { status: 204 })
@@ -20,10 +22,12 @@ describe('Service clients', () => {
   it('protects managed clients and confirms a scoped state update with CSRF', async () => {
     const fetcher = mount()
     await userEvent.click(await screen.findByRole('button', { name: 'Manage Managed' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))
     const managed = within(await screen.findByRole('form', { name: 'Edit client 1' }))
     expect(managed.getByRole('button')).toBeDisabled()
     await userEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
     await userEvent.click(screen.getByRole('button', { name: 'Manage <script>Client</script>' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))
     const form = within(screen.getByRole('form', { name: 'Edit client 2' }))
     expect(document.querySelector('script')).toBeNull()
     await userEvent.selectOptions(form.getByLabelText('Client state'), 'disabled')
@@ -42,6 +46,7 @@ describe('Service clients', () => {
   it('requires refresh after uncertain writes without replay', async () => {
     const fetcher = mount(true)
     await userEvent.click(await screen.findByRole('button', { name: 'Manage <script>Client</script>' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))
     const form = within(await screen.findByRole('form', { name: 'Edit client 2' }))
     await userEvent.click(form.getByRole('button'))
     await userEvent.click(screen.getByRole('button', { name: 'Confirm client changes' }))
@@ -51,6 +56,7 @@ describe('Service clients', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
     await userEvent.click(screen.getByRole('button', { name: 'Refresh clients' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Manage <script>Client</script>' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))
     await screen.findByRole('form', { name: 'Edit client 2' })
     await userEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
     await userEvent.click(screen.getByRole('button', { name: 'Next clients' }))
@@ -63,6 +69,7 @@ describe('Service clients', () => {
     expect(screen.queryByRole('tab')).toBeNull()
     const clientButton = screen.getByRole('button', { name: 'Manage <script>Client</script>' })
     await userEvent.click(clientButton)
+    await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))
     expect(screen.getAllByRole('form')).toHaveLength(1)
     expect(fetcher).toHaveBeenCalledTimes(1)
     fetcher.mockImplementation(async () => new Response(JSON.stringify({ items: [], next_after: null })))

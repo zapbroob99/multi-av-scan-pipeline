@@ -27,7 +27,7 @@ const SAVED: Record<Change['kind'], string> = {
 /** The only settings outside the rules: they act before any rule runs. */
 function OutsideRules({ data }: { data: Profiles }) {
   const upload = data.upload_cap_bytes ? `files over ${formatBytes(data.upload_cap_bytes)} are refused` : 'no upload limit is set'
-  return <p className="client-note muted">Before any rule: over the API {upload} (System limits &amp; notifications).
+  return <p className="client-note muted">Before any rule: over the API {upload} (Administration / Limits &amp; API behavior).
     {(data.gateways ?? []).map(gateway => <span key={gateway.port}> ICAP gateway on port {gateway.port}: {gateway.max_bytes == null ? 'size limit not reported'
       : gateway.max_bytes ? `files over ${formatBytes(gateway.max_bytes)} are ${gateway.fail_closed ? 'blocked' : 'allowed unscanned'}` : 'no size limit'};
       {' '}{gateway.wait_seconds == null ? 'wait time not reported' : `no verdict within ${gateway.wait_seconds} s`} or MASP unreachable: {gateway.fail_closed ? 'blocked' : 'allowed'}.</span>)}
@@ -76,8 +76,8 @@ export default function ClientProfiles({ session }: { session: Session }) {
   const clientId = workspace?.clientId ?? Number(routeClientId)
   const [params, setParams] = useSearchParams()
   const [dialogAfter, setDialogAfter] = useState('')
-  const after = workspace ? dialogAfter : params.get('after') || ''
-  const setAfter = (value: string) => workspace ? setDialogAfter(value) : setParams(value ? { after: value } : {})
+  const after = workspace && workspace.mode !== 'route' ? dialogAfter : params.get('after') || ''
+  const setAfter = (value: string) => workspace && workspace.mode !== 'route' ? setDialogAfter(value) : setParams(value ? { after: value } : {})
   const [confirmation, setConfirmation] = useState<Change | null>(null)
   const [needsRefresh, setNeedsRefresh] = useState(false)
   const [editor, setEditor] = useState<Profile | 'create' | null>(null)

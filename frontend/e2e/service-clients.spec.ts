@@ -13,6 +13,7 @@ test('admin updates client state and analyst is denied', async ({ page }) => {
     await page.screenshot({ path: `../artifacts/console-e2e/service-clients-${theme}.png`, fullPage: true, animations: 'disabled' })
   }
   await page.getByRole('button', { name: 'Manage Acceptance integration' }).click()
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click()
   await page.screenshot({ path: '../artifacts/console-e2e/client-settings-dialog.png', animations: 'disabled' })
   await page.getByLabel('Display name').fill('Updated integration')
   await page.getByLabel('Client state').selectOption('disabled')
@@ -23,6 +24,7 @@ test('admin updates client state and analyst is denied', async ({ page }) => {
   await expect(page.getByText('Service client updated. Close this window and refresh clients to see the current state.')).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name: 'Manage Updated integration' }).click()
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click()
   await expect(page.getByLabel('Client state')).toHaveValue('disabled')
   await expect(page.getByRole('heading', { name: 'Updated integration' })).toBeVisible()
   await page.getByRole('button', { name: 'Close dialog' }).click()
@@ -31,6 +33,7 @@ test('admin updates client state and analyst is denied', async ({ page }) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: '../artifacts/console-e2e/service-clients-mobile.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: 'Manage Updated integration' }).click()
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click()
   await page.screenshot({ path: '../artifacts/console-e2e/client-settings-dialog-mobile.png', animations: 'disabled' })
   await page.getByRole('button', { name: 'Close dialog' }).click()
   await page.getByRole('button', { name: 'Sign out' }).click()

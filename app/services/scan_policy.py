@@ -136,6 +136,9 @@ def resolve_raw(key: str, raw: str | None) -> int:
 
     if raw == "":
         return spec.default
+    if key == 'siem_not_allowed_events':
+        # Match the event producer: only literal 1 enables this switch.
+        return int(raw.strip() == '1')
     try:
         return _clamp(int(raw), spec)
     except ValueError:

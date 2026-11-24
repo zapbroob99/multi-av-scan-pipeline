@@ -476,3 +476,17 @@ and sufficient disk space rather than assuming a zero-downtime restart.
       export/SIEM forwarding, and legal-hold ownership are documented. The local
       trail is application-level append-only and best effort, not immutable
       storage; see [Audit trail](../security/AUDIT_TRAIL.md).
+
+## MASP archive inspection bounds
+
+The pilot/production Compose shared environment forwards these deployment settings:
+`MASP_ARCHIVE_MAX_FILES` (1000), `MASP_ARCHIVE_MAX_TOTAL_BYTES` (262144000),
+`MASP_ARCHIVE_MAX_SINGLE_FILE_BYTES` (52428800), `MASP_ARCHIVE_MAX_DEPTH` (8 path
+components) and `MASP_ARCHIVE_MAX_NESTED_LEVELS` (3 archive nesting levels).
+The defaults preserve existing behavior. Byte limits are integer bytes. They are
+independent of HTTP/ICAP admission and clamd's own scanning limits. Recreate the
+affected MASP services after editing deployment environment values. On upgrade,
+review any existing custom MASP_ARCHIVE_MAX_* values: earlier pilot/production
+Compose templates did not forward them, so previously ignored values now apply.
+The console Configuration hub links to existing administrative editors; these
+extraction bounds remain deployment-managed.

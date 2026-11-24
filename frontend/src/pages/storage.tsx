@@ -1,27 +1,12 @@
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Suspense } from 'react'
-import { Outlet } from 'react-router-dom'
 import { request, type Session } from '../lib/api'
 import { shortAge } from '../lib/utils'
 import { STATE_LABELS, locationPath, type LocationSummary } from '../lib/storage'
 import { ErrorMessage } from '../components/error-message'
 import { HelpDetails } from '../components/help-details'
-import { SectionTabs } from '../components/section-tabs'
 import { Button } from '../components/ui/button'
 import { Timestamp } from '../components/timestamp'
-
-export const STORAGE_TABS = [
-  { to: '/storage', label: 'Folders', end: true },
-  { to: '/storage/findings', label: 'Findings' },
-]
-
-export function StorageLayout() {
-  return <div className="system-layout">
-    <SectionTabs tabs={STORAGE_TABS} label="Folder scanning sections" />
-    <Suspense fallback={<p role="status">Loading section…</p>}><Outlet /></Suspense>
-  </div>
-}
 
 export function cycleProblem(location: LocationSummary): string | null {
   if (!location.enabled) return null
@@ -39,9 +24,9 @@ export default function Storage({ session }: { session: Session }) {
   const data = view.data, worker = data?.worker
 
   return <section className="page management-page">
-    <div className="page-heading"><div><p className="eyebrow">FOLDER SCANNING</p><h1>Watched folders</h1>
-      <p className="muted">Folders MASP reads itself, and what it found in them. Folders are added on a service client's Storage tab.</p></div>
-      <div className="report-actions">
+    <div className="page-heading"><div><p className="eyebrow">STORAGE</p><h1>Watched folders</h1>
+      <p className="muted">Folders MASP discovers and checks, with a profile and access scope for each connected system.</p></div>
+      <div className="report-actions">{admin && <><Link className="button button-secondary" to="/storage/access">Sources &amp; access</Link><Link className="button" to="/storage/locations/new">Watch a folder</Link></>}
         <Button variant="secondary" disabled={view.isFetching} onClick={() => { void view.refetch() }}>Refresh</Button></div></div>
     <p className="callout">Each file follows the rules of its folder's scan profile. Light check and Block are applied here; a file a Scan rule
       matches waits as <strong>Awaiting antivirus scan</strong> until antivirus scanning of folders is available. A light check never runs an
@@ -70,7 +55,7 @@ export default function Storage({ session }: { session: Session }) {
         </>}
       </article>
 
-      {!data.locations.length && <p className="empty">No folder is watched yet.{admin ? " Add one on a service client's Storage tab." : ''}</p>}
+      {!data.locations.length && <p className="empty">No folder is watched yet.{admin ? " Choose Watch a folder to select a connected system, source and scan profile." : ''}</p>}
       {data.locations.length > 0 && <div className="history-table-wrap" role="region" aria-label="Watched folders" tabIndex={0}>
         <table className="history-table compact-table"><thead><tr>
           <th scope="col">Folder</th><th scope="col">Detected</th><th scope="col">Awaiting antivirus scan</th>

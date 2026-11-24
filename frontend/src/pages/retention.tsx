@@ -30,7 +30,7 @@ export default function Retention({ session }: { session: Session }) {
   const busy = preview.isFetching || action.isPending || confirmation !== null
   const data = !preview.error && !needsRefresh ? preview.data : undefined
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">SYSTEM</p>
-    <h1>Retention cleanup</h1><p className="muted">Review expired records before permanently deleting a bounded batch.</p></div>
+    <h1>Retention &amp; cleanup</h1><p className="muted">Review expired records before permanently deleting a bounded batch.</p></div>
     <Button variant="secondary" disabled={busy} onClick={async () => { action.reset(); const result = await preview.refetch(); if (!result.error) setNeedsRefresh(false) }}>Refresh preview</Button></div>
     <p className="callout">Includes all scan sources and archive children. Each run is limited to 20 displayed records or the smaller server batch limit.
       Active scans, records with children, shared samples and undelivered notifications are protected. Records can become blocked after preview.</p>

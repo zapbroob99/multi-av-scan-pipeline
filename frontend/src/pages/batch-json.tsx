@@ -13,7 +13,7 @@ export default function BatchJson({ status = false }: { status?: boolean }) {
       params: { batch_id: Number(batchId) }, query: new URLSearchParams({ kind }), signal }),
     staleTime: 0, gcTime: 0, retry: false, refetchOnMount: 'always',
     refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: false })
-  if (!valid) return <section className="page"><h1>Invalid batch ID</h1><Link to="/api-ledger">API ledger</Link></section>
+  if (!valid) return <section className="page"><h1>Invalid batch ID</h1><Link to="/api-ledger">Integration scans</Link></section>
   const data = !result.error && !result.isFetching ? result.data : undefined
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">AUTOMATION BATCH #{batchId}</p>
     <h1>Batch {kind} JSON</h1></div><Button variant="secondary" disabled={result.isFetching}

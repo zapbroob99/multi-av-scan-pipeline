@@ -16,6 +16,59 @@
 
 ## Upgrade notes
 
+### Aselix AI on an existing pilot
+
+Copy `masp-pilot-0.1.0-pilot.25-install.run` to the Linux host and run
+`sudo bash masp-pilot-0.1.0-pilot.25-install.run --aselix` in an interactive SSH terminal.
+Enter the full HTTPS URL ending in `/v1/chat/completions`, the exact model ID, the
+API key at the hidden prompt and, for an internal CA, the path to its public PEM
+chain on that host. The application container must be able to resolve the Aselix
+hostname and reach its HTTPS port. The installer sends a short test question from
+the candidate application before switching releases. A failed test stops the
+upgrade. Existing LDAP settings carry forward.
+
+After signing in, open **Aselix AI** in the console header for general chat or
+**Ask Aselix about this scan** on a manual or integration report. Each click on
+**Send to Aselix** sends the question and up to three previous exchanges in that
+conversation. Report questions also include status, risk score, coverage counts,
+policy action, and rule/exception indicators. Automatic context excludes sample
+bytes, identifiers, filenames, signatures, analyst notes and raw output. Operators
+choose what to type. MASP keeps the conversation in page memory. The institution's
+Aselix service controls retention of messages it receives. AI replies are advisory.
+
+For manual configuration, set `MASP_ASELIX_ENABLED=1`, `MASP_ASELIX_URL`,
+`MASP_ASELIX_MODEL` and `MASP_ASELIX_API_KEY` in the protected deployment
+environment. `MASP_ASELIX_CA_PEM_B64` optionally provides a base64-encoded public
+CA chain. Recreate the app service to apply changes or disable the feature with
+`MASP_ASELIX_ENABLED=0`. Each app process allows four concurrent assistant requests.
+
+### Single-file offline upgrade
+
+For an existing pilot registered at `/opt/masp/current`, copy the generated
+`masp-pilot-<version>-install.run` to the server, for example into `/tmp`, then run
+`sudo bash /tmp/masp-pilot-<version>-install.run`.
+The installer checks its payload, extracts a new release under `/opt/masp`, and
+invokes the existing upgrade flow with the bundled image. That flow carries the
+settings forward, backs up the installation, switches versions and runs acceptance
+checks. Confirm the upgrade when prompted. Services stop briefly during backup
+and switching. A successful run ends with `MASP upgraded`.
+
+The single-file artifact includes the application image. Existing PostgreSQL and
+ClamAV images stay on the server. For another installation root, set
+`MASP_INSTALL_ROOT` in the root environment. First installation uses the offline
+installation procedure below.
+
+For a failed attempt, follow the error and rollback instructions in the log at
+`/var/log/masp-upgrade.log`. The extracted release and temporary offline image
+remain available so the underlying upgrade can be resumed. An existing release
+directory is preserved and reported on a repeated installer run.
+
+Build the single file after packaging and exporting the matching Docker image
+with `python tools/package_pilot_installer.py --release dist/masp-pilot-<version>.zip
+--image dist/masp-pilot-<version>-image.tar`.
+`bash masp-pilot-<version>-install.run --check` verifies its payload without
+installing. The adjacent `.run.sha256` records the complete installer's checksum.
+
 From pilot.20, clamd reports archives it could not fully scan (a scan limit inside the archive)
 and encrypted archives and PDFs instead of answering OK. MASP records them as "ClamAV could not
 scan", not as malware, and the client's profile decides: a profile whose inconclusive choice is
@@ -704,3 +757,17 @@ instead of shared-storage access. Use **Engines > Test
 connection** to request an immediate worker-side refresh. Confirm the version and
 last successful scan fields after the EICAR acceptance scan; heartbeat-only
 coverage is not an engine-health acceptance result.
+
+## MASP archive inspection bounds
+
+The pilot/production Compose shared environment forwards these deployment settings:
+`MASP_ARCHIVE_MAX_FILES` (1000), `MASP_ARCHIVE_MAX_TOTAL_BYTES` (262144000),
+`MASP_ARCHIVE_MAX_SINGLE_FILE_BYTES` (52428800), `MASP_ARCHIVE_MAX_DEPTH` (8 path
+components) and `MASP_ARCHIVE_MAX_NESTED_LEVELS` (3 archive nesting levels).
+The defaults preserve existing behavior. Byte limits are integer bytes. They are
+independent of HTTP/ICAP admission and clamd's own scanning limits. Recreate the
+affected MASP services after editing deployment environment values. On upgrade,
+review any existing custom MASP_ARCHIVE_MAX_* values: earlier pilot/production
+Compose templates did not forward them, so previously ignored values now apply.
+The console Configuration hub links to existing administrative editors; these
+extraction bounds remain deployment-managed.

@@ -21,6 +21,18 @@ const VIEW = {
 }
 
 describe('ICAP and SIEM', () => {
+  it.each(['gateways', 'notifications'] as const)('separates %s from the other task', async section => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(VIEW))))
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Delivery session={SESSION} section={section} /></MemoryRouter></QueryClientProvider>)
+    if (section === 'gateways') {
+      await screen.findByRole('article', { name: 'ICAP gateway storage' })
+      expect(screen.queryByRole('article', { name: 'SIEM notifications' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Retry failed now' })).toBeNull()
+    } else {
+      await screen.findByRole('article', { name: 'SIEM notifications' })
+      expect(screen.queryByRole('article', { name: 'ICAP gateway storage' })).toBeNull()
+    }
+  })
   it('shows a silent gateway, its events and failed notifications, and retries only after confirmation', async () => {
     const fetcher = vi.fn(async (_url: string, options?: RequestInit) =>
       new Response(JSON.stringify(options?.method === 'POST' ? { rescheduled: 1 } : VIEW)))

@@ -12,7 +12,7 @@ export default function EngineOutput({ automation = false }: { automation?: bool
       params: { scan_id: Number(scanId), result_id: Number(resultId) }, signal }),
     staleTime: 0, gcTime: 0, retry: false, refetchOnMount: 'always',
     refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: false })
-  if (!valid) return <section className="page"><h1>Invalid scan or result ID</h1><Link to="/dashboard">Dashboard</Link></section>
+  if (!valid) return <section className="page"><h1>Invalid scan or result ID</h1><Link to="/dashboard">Manual scans</Link></section>
   // Hide the previous output while refreshing or after a failure. Never show a
   // cached result as evidence that a deleted/retried scan still has this output.
   const data = !output.error && !output.isFetching ? output.data : undefined

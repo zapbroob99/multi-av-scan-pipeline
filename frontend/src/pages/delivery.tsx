@@ -77,7 +77,7 @@ function GatewayCard({ gateway }: { gateway: Gateway }) {
   </article>
 }
 
-export default function Delivery({ session }: { session: Session }) {
+export default function Delivery({ session, section = 'all', embedded = false }: { session: Session; section?: 'gateways' | 'notifications' | 'all'; embedded?: boolean }) {
   const client = useQueryClient()
   const [confirm, setConfirm] = useState(false)
   const [receipt, setReceipt] = useState('')
@@ -88,24 +88,23 @@ export default function Delivery({ session }: { session: Session }) {
     onSuccess: result => setReceipt(`${result.rescheduled} notification(s) will be attempted on the next delivery cycle.`),
     onSettled: async () => { setConfirm(false); await client.invalidateQueries({ queryKey: ['delivery'] }); await client.invalidateQueries({ queryKey: ['system-health'] }) } })
   const data = view.data, notes = data?.notifications
-  return <section className="page management-page">
-    <div className="page-heading"><div><p className="eyebrow">SYSTEM</p><h1>ICAP and SIEM</h1>
-      <p className="muted">Upload gateways and outbound detection notifications.</p></div>
+  return <section className={embedded ? 'settings-workspace-section' : 'page management-page'}>
+    <div className="page-heading"><div>{embedded ? <h2>Delivery status</h2> : <h1>{section === 'gateways' ? 'ICAP gateways' : section === 'notifications' ? 'Notification delivery' : 'ICAP and SIEM'}</h1>}
+      <p className="muted">{section === 'gateways' ? 'Incoming ICAP connections, client bindings and gateway events.' : section === 'notifications' ? 'Outbound SIEM events, delivery outcomes and retry controls.' : 'Upload gateways and outbound detection notifications.'}</p></div>
       <Button variant="secondary" disabled={view.isFetching} onClick={() => { void view.refetch() }}>Refresh</Button></div>
-    <HelpDetails title="Where this information comes from">Each ICAP gateway writes its counters and recent events every 30 seconds;
-      a gateway that stops writing is shown as not reporting. Counters restart with the gateway. Notifications are the malware.detected
-      events queued for the SIEM webhook; the notification service retries failures with increasing delays.</HelpDetails>
+    <HelpDetails title="Where this information comes from">{section !== 'notifications' && <>Each ICAP gateway reports every 30 seconds; a gateway that stops reporting is shown as unavailable. Counters restart with the gateway. </>}
+      {section !== 'gateways' && <>The notification worker delivers queued scan events to the configured SIEM webhook and retries failures with increasing delays. Folder findings use a separate delivery queue; the status below does not include that queue.</>}</HelpDetails>
     {view.isPending && <p role="status">Loading delivery state…</p>}
     {view.error && <p role="alert" className="error"><ErrorMessage message={view.error.message || ''} /></p>}
     {receipt && <p role="status" className="callout">{receipt}</p>}
     {retry.error && <p role="alert" className="error"><ErrorMessage message={retry.error.message || ''} /></p>}
     {data && notes && <>
-      {!data.gateways.length && <article className="submission-card"><h2>ICAP gateway</h2>
+      {section !== 'notifications' && !data.gateways.length && <article className="submission-card"><h2>ICAP gateway</h2>
         <p className="muted">No ICAP gateway has reported. Gateways report from this release on; an older gateway, or one that cannot
           reach the database, does not appear here.</p></article>}
-      {data.gateways.map(gateway => <GatewayCard key={gateway.key} gateway={gateway} />)}
+      {section !== 'notifications' && data.gateways.map(gateway => <GatewayCard key={gateway.key} gateway={gateway} />)}
 
-      <article className="submission-card" aria-label="SIEM notifications">
+      {section !== 'gateways' && <article className="submission-card" aria-label="SIEM notifications">
         <div className="delivery-card-heading"><h2>SIEM notifications</h2>
           <Button variant="secondary" disabled={!notes.retrying || retry.isPending} onClick={() => setConfirm(true)}>Retry failed now</Button></div>
         <dl className="report-metadata">
@@ -124,7 +123,7 @@ export default function Delivery({ session }: { session: Session }) {
         {!notes.pending && !notes.delivered && <p className="muted">No notification has been produced. Detections on deferred and API scans create them.</p>}
         {notes.pending > 0 && !notes.delivered && !notes.retrying && !notes.delivering && <p className="muted">No delivery has been attempted yet.
           Detections queue notifications whether or not SIEM delivery is deployed; enable the notifications profile with a SIEM webhook, or ignore this if SIEM is not used.</p>}
-      </article>
+      </article>}
     </>}
     <Dialog open={confirm} onOpenChange={open => { if (!retry.isPending) setConfirm(open) }} title="Retry failed notifications now?"
       description="Failed notifications waiting in backoff are attempted on the next delivery cycle. Delivered notifications are not sent again.">

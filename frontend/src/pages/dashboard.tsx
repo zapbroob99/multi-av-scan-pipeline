@@ -68,7 +68,7 @@ export default function Dashboard({ session }: { session: Session }) {
   }
   const isBusy = scans.isFetching || summary.isFetching || deletion.isPending
   return <section className="page dashboard-page">
-    <div className="page-heading"><div><p className="eyebrow">MANUAL SCAN ACTIVITY</p><h1>Dashboard</h1>
+    <div className="page-heading"><div><p className="eyebrow">MANUAL SCAN ACTIVITY</p><h1>Manual scans</h1>
       <p className="muted">Recent submissions, processing state and recorded risk.</p></div>
       <Link className="button button-primary" to="/scans/new"><ArrowUpRight size={16} />Submit sample</Link></div>
     {summary.error && <p role="alert" className="error">Summary unavailable: <ErrorMessage message={summary.error.message || ''} /></p>}

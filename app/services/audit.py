@@ -213,6 +213,11 @@ def should_audit_request(request: Request) -> bool:
         return False
 
     path = request.url.path.rstrip("/") or "/"
+    parts = path.split('/')
+    if (request.method == 'POST' and len(parts) == 8 and parts[1:5] == ['api', 'ui', 'v1', 'service-clients']
+            and parts[5].isascii() and parts[5].isdigit() and parts[6:] == ['configuration', 'preview']):
+        # Metadata-only policy read. It changes no configuration or scan state.
+        return False
     # Browser writes all go through /api/ui/v1 now that the server-rendered UI
     # is retired; its former form paths no longer exist.
     if path in {"/api/ui/v1/notifications/read", "/api/ui/v1/notifications/clear"}:

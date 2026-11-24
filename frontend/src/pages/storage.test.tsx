@@ -42,7 +42,7 @@ function renderAt(path: string, element: React.ReactNode, pattern = '*') {
 }
 
 describe('Folder scanning overview', () => {
-  it('shows coverage without calling light-checked files clean, and sends folder creation to the client', async () => {
+  it('shows coverage without calling light-checked files clean, and offers folder creation in Storage', async () => {
     stub({ '/api/ui/v1/storage/overview': { worker: WORKER, worker_record_invalid: false, locations: [LOCATION], locations_truncated: false } })
     renderAt('/storage', <Storage session={ADMIN} />)
     const table = await screen.findByRole('region', { name: 'Watched folders' })
@@ -51,7 +51,8 @@ describe('Folder scanning overview', () => {
     expect(within(table).getByText('6')).toBeInTheDocument()
     expect(document.querySelector('.callout')).toHaveTextContent(/A light check never runs an antivirus engine/)
     expect(screen.queryByText(/clean/i)).toBeNull()
-    expect(screen.getByText(/Folders are added on a service client's Storage tab/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Watch a folder' })).toHaveAttribute('href', '/storage/locations/new')
+    expect(screen.getByRole('link', { name: 'Sources & access' })).toHaveAttribute('href', '/storage/access')
     expect(screen.queryByRole('link', { name: /New location/ })).toBeNull()
   })
 
@@ -78,7 +79,7 @@ describe('Folder detail', () => {
     expect(within(files).getByText('Detected or blocked by a rule')).toBeInTheDocument()
     expect(screen.getByText(/not a clean antivirus result/)).toBeInTheDocument()
     // The folder's files follow its profile's rules, linked from here.
-    expect(screen.getByRole('link', { name: 'Default' })).toHaveAttribute('href', '/service-clients/2/profiles')
+    expect(screen.getByRole('link', { name: 'Default' })).toHaveAttribute('href', '/policies/profiles/2')
     expect(screen.queryByRole('link', { name: 'Edit folder' })).toBeNull()
   })
 })
@@ -103,7 +104,7 @@ describe('Folder form', () => {
     expect(screen.getByLabelText('Service client')).toHaveValue('2')
     expect(screen.getByLabelText('Service client')).toBeDisabled()
     await userEvent.selectOptions(screen.getByLabelText('Scan profile'), '3')
-    expect(screen.getByRole('link', { name: "Drive's Scan profiles" })).toHaveAttribute('href', '/service-clients/2/profiles')
+    expect(screen.getByRole('link', { name: "Drive's Scan profiles" })).toHaveAttribute('href', '/policies/profiles/2')
     await userEvent.selectOptions(screen.getByLabelText('Storage backend'), 'share')
     await userEvent.type(screen.getByLabelText('Folder inside the backend'), 'finance')
     await userEvent.click(screen.getByRole('button', { name: 'Review' }))

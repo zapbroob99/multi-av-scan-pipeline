@@ -33,7 +33,7 @@ export default function StorageFindings() {
   }
 
   return <section className="page management-page">
-    <div className="page-heading"><div><p className="eyebrow">FOLDER SCANNING</p><h1>Findings</h1>
+    <div className="page-heading"><div><p className="eyebrow">FOLDER SCANNING</p><h1>Folder findings</h1>
       <p className="muted">What the light tier found in protected locations, newest first.</p></div>
       <Button variant="secondary" disabled={findings.isFetching} onClick={() => { void findings.refetch() }}>Refresh</Button></div>
     <p className="muted">A detected finding with high severity is also sent to SIEM when notification delivery is deployed. A finding that is not

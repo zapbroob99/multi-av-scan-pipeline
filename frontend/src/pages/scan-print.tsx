@@ -14,7 +14,7 @@ export default function ScanPrint({ automation = false }: { automation?: boolean
       params: { scan_id: Number(scanId) }, signal }),
     staleTime: 0, gcTime: 0, retry: false, refetchOnMount: 'always',
     refetchOnWindowFocus: false, refetchOnReconnect: false, refetchInterval: false })
-  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to="/dashboard">Dashboard</Link></section>
+  if (!valid) return <section className="page"><h1>Invalid scan ID</h1><Link to="/dashboard">Manual scans</Link></section>
   const data = !printable.error && !printable.isFetching ? printable.data : undefined
   return <section className="page print-report"><div className="page-heading print-hidden"><div>
     <p className="eyebrow">{automation ? 'AUTOMATION' : 'MANUAL'} SCAN #{scanId}</p><h1>Printable report</h1>

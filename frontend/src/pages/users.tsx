@@ -57,7 +57,7 @@ export default function Users({ session }: { session: Session }) {
     }
   }
   return <section className="page management-page"><div className="page-heading"><div><p className="eyebrow">ACCESS MANAGEMENT</p>
-    <h1>Users</h1><p className="muted">Local accounts and directory identities.</p></div>
+    <h1>Operators</h1><p className="muted">Local accounts and directory identities.</p></div>
     <div className="heading-actions">
       <Button variant="secondary" disabled={locked || users.isFetching} onClick={async () => {
         const result = await users.refetch(); if (!result.isError) setNeedsRefresh(false)

@@ -34,10 +34,10 @@ export default function BatchOverview({ automation = false }: { automation?: boo
     refetchOnMount: 'always', gcTime: 60000 })
   const page = batch.error ? undefined : batch.data
   function firstPage() { const next = new URLSearchParams(params); next.delete('after_id'); next.delete('after_created'); setParams(next) }
-  if (!valid) return <section className="page"><h1>Invalid batch ID</h1><Link to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link></section>
+  if (!valid) return <section className="page"><h1>Invalid batch ID</h1><Link to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "Integration scans" : "Manual scans"}</Link></section>
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">{automation ? 'AUTOMATION' : 'MANUAL'} ARCHIVE BATCH #{batchId}</p>
     <h1>Batch overview</h1><p className="muted report-filename">{page?.filename || `Batch #${batchId}`}{page?.filename_truncated ? '…' : ''}</p></div>
-    <div className="report-actions"><Link className="button button-secondary" to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "API ledger" : "Dashboard"}</Link>
+    <div className="report-actions"><Link className="button button-secondary" to={automation ? "/api-ledger" : "/dashboard"}>{automation ? "Integration scans" : "Manual scans"}</Link>
       <Button variant="secondary" disabled={batch.isFetching} onClick={() => { void batch.refetch() }}>Refresh batch</Button></div></div>
     <p className="callout">This page lists registered {automation ? 'automation scans matching the batch source and client' : 'manual scans'}. Recorded counts and risk may lag active workers and do not prove clean coverage or complete extraction. Open each report for the backend policy decision and required-engine coverage.</p>
     {automation && <p><Link to={`/api-ledger/batches/${batchId}/status-json`}>Batch status JSON</Link> ? <Link to={`/api-ledger/batches/${batchId}/result-json`}>Batch result JSON</Link></p>}

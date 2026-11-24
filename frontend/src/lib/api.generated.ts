@@ -171,6 +171,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/api-ledger/scans/{scan_id}/assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Automation Assistant */
+        post: operations["automation_assistant_api_ui_v1_api_ledger_scans__scan_id__assistant_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/api-ledger/scans/{scan_id}/children": {
         parameters: {
             query?: never;
@@ -318,6 +335,23 @@ export interface paths {
         get: operations["automation_summary_export_api_ui_v1_api_ledger_scans__scan_id__summary_export_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/assistant/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Assistant Chat */
+        post: operations["assistant_chat_api_ui_v1_assistant_chat_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -547,6 +581,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/engines/{instance_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Engine Usage */
+        get: operations["browser_engine_usage_api_ui_v1_engines__instance_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/exceptions": {
         parameters: {
             query?: never;
@@ -671,6 +722,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/notification-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save Browser Notification Policy */
+        put: operations["save_browser_notification_policy_api_ui_v1_notification_policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/notifications": {
         parameters: {
             query?: never;
@@ -716,6 +784,23 @@ export interface paths {
         put?: never;
         /** Browser Mark Notifications Read */
         post: operations["browser_mark_notifications_read_api_ui_v1_notifications_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/operational-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save Browser Operational Policy */
+        put: operations["save_browser_operational_policy_api_ui_v1_operational_policy_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -771,6 +856,23 @@ export interface paths {
         post?: never;
         /** Delete Manual Scan */
         delete: operations["delete_manual_scan_api_ui_v1_scans__scan_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/scans/{scan_id}/assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Manual Assistant */
+        post: operations["manual_assistant_api_ui_v1_scans__scan_id__assistant_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -954,10 +1056,45 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Read Browser Client */
+        get: operations["read_browser_client_api_ui_v1_service_clients__client_id__get"];
         /** Update Browser Service Client */
         put: operations["update_browser_service_client_api_ui_v1_service_clients__client_id__put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/service-clients/{client_id}/configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Client Configuration */
+        get: operations["browser_client_configuration_api_ui_v1_service_clients__client_id__configuration_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/service-clients/{client_id}/configuration/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Browser Rule Preview */
+        post: operations["browser_rule_preview_api_ui_v1_service_clients__client_id__configuration_preview_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1995,6 +2132,18 @@ export interface components {
             /** Requested Count */
             requested_count: number;
         };
+        /** ChatAnswer */
+        ChatAnswer: {
+            /** Answer */
+            answer: string;
+        };
+        /** ChatQuestion */
+        ChatQuestion: {
+            /** History */
+            history?: components["schemas"]["Turn"][];
+            /** Question */
+            question: string;
+        };
         /** ClientChoice */
         ClientChoice: {
             /** Client Key */
@@ -2007,6 +2156,40 @@ export interface components {
             name: string;
             /** Profiles */
             profiles: components["schemas"]["ProfileChoice"][];
+        };
+        /** ClientConfiguration */
+        ClientConfiguration: {
+            /** Client Id */
+            client_id: number;
+            /** Client Name */
+            client_name: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Engines */
+            engines: components["schemas"]["ConfigurationEngine"][];
+            /** Gateways */
+            gateways: components["schemas"]["ConfigurationGateway"][];
+            /** Gateways Incomplete */
+            gateways_incomplete: boolean;
+            /** Header Types */
+            header_types: components["schemas"]["HeaderTypeOption"][];
+            /** Http Body Ceiling Bytes */
+            http_body_ceiling_bytes: number | null;
+            /** Http Configuration Valid */
+            http_configuration_valid: boolean;
+            http_context: components["schemas"]["ConfigurationContext"];
+            /** Managed */
+            managed: boolean;
+            /** Observed At */
+            observed_at: number;
+            placement_context: components["schemas"]["ConfigurationContext"];
+            profile: components["schemas"]["ProfileSummary"] | null;
+            profile_context: components["schemas"]["ConfigurationContext"];
+            /** Upload Policy Bytes */
+            upload_policy_bytes: number;
+            upload_policy_context: components["schemas"]["ConfigurationContext"];
+            /** Upload Policy Source */
+            upload_policy_source: string;
         };
         /** ClientCreateBody */
         ClientCreateBody: {
@@ -2140,6 +2323,66 @@ export interface components {
             config: {
                 [key: string]: string;
             };
+        };
+        /** ConfigurationContext */
+        ConfigurationContext: {
+            /** Applies */
+            applies: string;
+            /** Edit At */
+            edit_at: string;
+            /**
+             * Note
+             * @default
+             */
+            note?: string;
+            /** Restart */
+            restart: string;
+            /** Scope */
+            scope: string;
+            /** Source */
+            source: string;
+            /**
+             * State
+             * @default resolved
+             * @enum {string}
+             */
+            state?: "resolved" | "defaulted" | "clamped" | "invalid" | "unknown";
+        };
+        /** ConfigurationEngine */
+        ConfigurationEngine: {
+            /** Eligible */
+            eligible: boolean;
+            /** Excluded Reason */
+            excluded_reason: string | null;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Observations */
+            observations: components["schemas"]["WorkerObservation"][];
+            /** Observations Incomplete */
+            observations_incomplete: boolean;
+            /** Pool Enabled */
+            pool_enabled: boolean | null;
+            /** Pool Id */
+            pool_id: number | null;
+            /** Pool Name */
+            pool_name: string | null;
+        };
+        /** ConfigurationGateway */
+        ConfigurationGateway: {
+            /** Fail Closed */
+            fail_closed: boolean | null;
+            /** Max Bytes */
+            max_bytes: number | null;
+            /** Port */
+            port: number;
+            /** Reported At */
+            reported_at: number;
+            /** Stale */
+            stale: boolean;
+            /** Wait Seconds */
+            wait_seconds: number | null;
         };
         /** ConnectionMethod */
         ConnectionMethod: {
@@ -2410,6 +2653,25 @@ export interface components {
             /** Pool Id */
             pool_id: number | null;
         };
+        /** EngineProfileReference */
+        EngineProfileReference: {
+            /** Client Enabled */
+            client_enabled: boolean;
+            /** Client Id */
+            client_id: number;
+            /** Client Name */
+            client_name: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Names Truncated */
+            names_truncated: boolean;
+            /** Profile Enabled */
+            profile_enabled: boolean;
+            /** Profile Id */
+            profile_id: number;
+            /** Profile Name */
+            profile_name: string;
+        };
         /** EngineSummary */
         EngineSummary: {
             /** Detected */
@@ -2432,6 +2694,19 @@ export interface components {
             signature_version?: string | null;
             /** Status */
             status: string;
+        };
+        /** EngineUsage */
+        EngineUsage: {
+            /** Engine Id */
+            engine_id: number;
+            /** Engine Name */
+            engine_name: string;
+            /** Next After */
+            next_after: number | null;
+            /** Observed At */
+            observed_at: number;
+            /** Profiles */
+            profiles: components["schemas"]["EngineProfileReference"][];
         };
         /** ErrorPayload */
         ErrorPayload: {
@@ -2746,6 +3021,13 @@ export interface components {
             total: number;
             /** Undetected */
             undetected: number;
+        };
+        /** HeaderTypeOption */
+        HeaderTypeOption: {
+            /** Family */
+            family: string;
+            /** Key */
+            key: string;
         };
         /** HealthCheck */
         HealthCheck: {
@@ -3225,6 +3507,11 @@ export interface components {
             /** Scan Job Id */
             scan_job_id: number;
         };
+        /** NotificationPolicyBody */
+        NotificationPolicyBody: {
+            /** Siem Not Allowed Events */
+            siem_not_allowed_events: string;
+        };
         /** Notifications */
         Notifications: {
             /** Cleared */
@@ -3259,6 +3546,15 @@ export interface components {
             items: components["schemas"]["StorageObject"][];
             /** Next Before */
             next_before: number | null;
+        };
+        /** OperationalPolicyBody */
+        OperationalPolicyBody: {
+            /** Api Max Wait Seconds */
+            api_max_wait_seconds: string;
+            /** Api Retry After Seconds */
+            api_retry_after_seconds: string;
+            /** Upload Max Bytes */
+            upload_max_bytes: string;
         };
         /** PassSummary */
         PassSummary: {
@@ -3356,6 +3652,41 @@ export interface components {
             name: string;
             /** Selector */
             selector: string;
+        };
+        /** PreviewEngine */
+        PreviewEngine: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+        };
+        /** PreviewLimit */
+        PreviewLimit: {
+            /** Explanation */
+            explanation: string;
+            /** Label */
+            label: string;
+            /** Limit Bytes */
+            limit_bytes?: number | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "blocked" | "exceeds_limit" | "within_limit" | "unknown";
+        };
+        /** PreviewMatch */
+        PreviewMatch: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "scan" | "light" | "allow" | "block";
+            /** Archive */
+            archive: ("whole" | "inspect" | "members") | null;
+            /** Engine Ids */
+            engine_ids: number[];
+            /** Number */
+            number: number;
         };
         /** PrintableReport */
         PrintableReport: {
@@ -3669,6 +4000,51 @@ export interface components {
             /** Size Bytes */
             size_bytes: number;
         };
+        /** RulePreview */
+        RulePreview: {
+            /** Configuration Fingerprint */
+            configuration_fingerprint: string;
+            /** Engines */
+            engines: components["schemas"]["PreviewEngine"][];
+            /** Limits */
+            limits: components["schemas"]["PreviewLimit"][];
+            /** Matches */
+            matches: components["schemas"]["PreviewMatch"][];
+            /** Observed At */
+            observed_at: number;
+            /** Profile Id */
+            profile_id: number;
+            /** Profile Revision */
+            profile_revision: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "matched" | "ambiguous";
+            /** Warnings */
+            warnings: string[];
+        };
+        /** RulePreviewBody */
+        RulePreviewBody: {
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Extension
+             * @default
+             */
+            extension?: string;
+            /** Header Type */
+            header_type?: string | null;
+            /** Profile Id */
+            profile_id: number;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "api" | "icap";
+        };
         /** RuleSaved */
         RuleSaved: {
             /** Name */
@@ -3738,7 +4114,10 @@ export interface components {
             /** Next Before */
             next_before: number | null;
         };
-        /** ScanPolicyBody */
+        /**
+         * ScanPolicyBody
+         * @description Compatibility write; new task-specific editors only write their own keys.
+         */
         ScanPolicyBody: {
             /** Api Max Wait Seconds */
             api_max_wait_seconds: string;
@@ -3751,10 +4130,13 @@ export interface components {
         };
         /** ScanPolicyField */
         ScanPolicyField: {
+            context: components["schemas"]["ConfigurationContext"];
             /** Control */
             control: string;
             /** Default */
             default: number;
+            /** Fallback Value */
+            fallback_value: number;
             /** Help */
             help: string;
             /** Key */
@@ -3777,7 +4159,10 @@ export interface components {
         /** ScanPolicySnapshot */
         ScanPolicySnapshot: {
             /** Deployment Http Ceiling Bytes */
-            deployment_http_ceiling_bytes: number;
+            deployment_http_ceiling_bytes: number | null;
+            /** Deployment Http Ceiling Valid */
+            deployment_http_ceiling_valid: boolean;
+            deployment_http_context: components["schemas"]["ConfigurationContext"];
             /** Fields */
             fields: components["schemas"]["ScanPolicyField"][];
         };
@@ -3907,6 +4292,8 @@ export interface components {
         };
         /** SessionPayload */
         SessionPayload: {
+            /** Assistant Enabled */
+            assistant_enabled?: boolean | null;
             /** Csrf Token */
             csrf_token: string;
             user: components["schemas"]["UserPayload"];
@@ -4186,6 +4573,13 @@ export interface components {
             /** Through Scan Id */
             through_scan_id: number;
         };
+        /** Turn */
+        Turn: {
+            /** Answer */
+            answer: string;
+            /** Question */
+            question: string;
+        };
         /** UpdateUserBody */
         UpdateUserBody: {
             /** Expected Revision */
@@ -4273,6 +4667,22 @@ export interface components {
             lifecycle_state: string;
             /** Node Id */
             node_id: string;
+        };
+        /** WorkerObservation */
+        WorkerObservation: {
+            /**
+             * Check
+             * @enum {string}
+             */
+            check: "unknown" | "stale" | "passed" | "failed";
+            /** Checked At */
+            checked_at: number | null;
+            /** Lifecycle */
+            lifecycle: string;
+            /** Node Id */
+            node_id: string;
+            /** Online */
+            online: boolean;
         };
         /** WorkerPage */
         WorkerPage: {
@@ -5378,6 +5788,104 @@ export interface operations {
             };
         };
     };
+    automation_assistant_api_ui_v1_api_ledger_scans__scan_id__assistant_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scan_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatQuestion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatAnswer"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
     read_automation_archive_children_api_ui_v1_api_ledger_scans__scan_id__children_get: {
         parameters: {
             query?: {
@@ -6169,6 +6677,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SummaryExport"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    assistant_chat_api_ui_v1_assistant_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatQuestion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatAnswer"];
                 };
             };
             /** @description Bad Request */
@@ -7692,6 +8296,102 @@ export interface operations {
             };
         };
     };
+    browser_engine_usage_api_ui_v1_engines__instance_id__usage_get: {
+        parameters: {
+            query?: {
+                after?: number | null;
+            };
+            header?: never;
+            path: {
+                instance_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineUsage"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
     browser_exceptions_api_ui_v1_exceptions_get: {
         parameters: {
             query?: {
@@ -8544,6 +9244,100 @@ export interface operations {
             };
         };
     };
+    save_browser_notification_policy_api_ui_v1_notification_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPolicyBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
     browser_notifications_api_ui_v1_notifications_get: {
         parameters: {
             query?: never;
@@ -8740,6 +9534,100 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ThroughDetection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    save_browser_operational_policy_api_ui_v1_operational_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationalPolicyBody"];
             };
         };
         responses: {
@@ -9318,6 +10206,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScanDeleted"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    manual_assistant_api_ui_v1_scans__scan_id__assistant_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scan_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatQuestion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatAnswer"];
                 };
             };
             /** @description Bad Request */
@@ -10455,6 +11441,100 @@ export interface operations {
             };
         };
     };
+    read_browser_client_api_ui_v1_service_clients__client_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceClientSummary"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
     update_browser_service_client_api_ui_v1_service_clients__client_id__put: {
         parameters: {
             query?: never;
@@ -10476,6 +11556,200 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_client_configuration_api_ui_v1_service_clients__client_id__configuration_get: {
+        parameters: {
+            query?: {
+                profile_id?: number | null;
+            };
+            header?: never;
+            path: {
+                client_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientConfiguration"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    browser_rule_preview_api_ui_v1_service_clients__client_id__configuration_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RulePreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RulePreview"];
+                };
             };
             /** @description Bad Request */
             400: {

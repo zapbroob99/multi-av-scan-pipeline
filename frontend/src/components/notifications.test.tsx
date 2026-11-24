@@ -86,7 +86,7 @@ describe('Notification bell', () => {
     mount({ admin: false, feed: { detections: [], unread: 0, unread_capped: false, cleared: true } })
     await userEvent.click(await screen.findByRole('button', { name: 'Notifications' }))
     expect(screen.getByText(/No new detections/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'API ledger' })).toHaveAttribute('href', '/api-ledger')
+    expect(screen.getByRole('link', { name: 'Integration scans' })).toHaveAttribute('href', '/api-ledger')
     expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
   })
 

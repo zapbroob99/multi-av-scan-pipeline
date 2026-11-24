@@ -7,8 +7,8 @@ test('admin sees a stopped manifest worker, backlog, rejections and pre-scan fai
   await page.getByLabel('Username', { exact: true }).fill('console-admin')
   await page.getByLabel('Password', { exact: true }).fill('console-test-only')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Deferred intake' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Deferred intake' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { name: 'File intake' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'File intake' })).toHaveAttribute('aria-current', 'page')
 
   const worker = page.getByRole('article', { name: 'Manifest worker' })
   await expect(worker.getByRole('alert').filter({ hasText: 'stopped or is stuck' })).toBeVisible()

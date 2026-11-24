@@ -30,6 +30,16 @@ def deployment_http_ceiling_bytes() -> int:
         return DEFAULT_HTTP_UPLOAD_MAX_BYTES
 
 
+def validated_deployment_http_ceiling_bytes() -> int:
+    try:
+        ceiling = int(os.getenv("MASP_HTTP_UPLOAD_MAX_BYTES", str(DEFAULT_HTTP_UPLOAD_MAX_BYTES)))
+    except ValueError as exc:
+        raise HTTPException(503, "Invalid HTTP upload byte limit.") from exc
+    if ceiling <= 0:
+        raise HTTPException(503, "HTTP upload byte limit must be positive.")
+    return ceiling
+
+
 def upload_body_limit_with_source() -> tuple[int, str]:
     """The byte ceiling an upload request must stay under, and which layer set it.
 
@@ -37,12 +47,7 @@ def upload_body_limit_with_source() -> tuple[int, str]:
     policy of 0 (no file-size limit) never raises it, so this can still bind
     even when an administrator removed the policy's own limit.
     """
-    try:
-        ceiling = int(os.getenv("MASP_HTTP_UPLOAD_MAX_BYTES", str(DEFAULT_HTTP_UPLOAD_MAX_BYTES)))
-    except ValueError as exc:
-        raise HTTPException(503, "Invalid HTTP upload byte limit.") from exc
-    if ceiling <= 0:
-        raise HTTPException(503, "HTTP upload byte limit must be positive.")
+    ceiling = validated_deployment_http_ceiling_bytes()
     file_limit = configured_upload_max_bytes()
     if file_limit and file_limit + MULTIPART_OVERHEAD_BYTES < ceiling:
         return file_limit + MULTIPART_OVERHEAD_BYTES, UPLOAD_POLICY_SOURCE

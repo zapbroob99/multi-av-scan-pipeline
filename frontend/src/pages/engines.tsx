@@ -8,6 +8,7 @@ import { Button } from '../components/ui/button'
 import { EngineIcon } from '../components/engine-icon'
 import { Dialog } from '../components/ui/dialog'
 import { formatBytes } from '../lib/storage'
+import { EngineUsage, EngineUsageDisclosure } from '../components/engine-usage'
 
 /** Operator wording for stored choice values; the value sent to the server stays the key. */
 const CHOICE_LABELS: Record<string, Record<string, string>> = {
@@ -103,6 +104,7 @@ export default function Engines({ session }: { session: Session }) {
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Engine | null>(null)
   const [deleting, setDeleting] = useState<Engine | null>(null)
+  const [usage, setUsage] = useState<Engine | null>(null)
   const [rulesEngine, setRulesEngine] = useState<Engine | null>(null)
   const [placement, setPlacement] = useState<{ engine: Engine; poolId: number | null } | null>(null)
   const [adapterKey, setAdapterKey] = useState('')
@@ -183,8 +185,9 @@ export default function Engines({ session }: { session: Session }) {
         <label className="placement">Worker pool<select aria-label={`Worker pool for ${engine.display_name}`} disabled={mutation.isPending} value={engine.pool_id ?? ''} onChange={e => setPlacement({ engine, poolId: e.target.value ? Number(e.target.value) : null })}>
           <option value="">Any worker that runs this engine</option>{inventory.pools.map(pool => <option value={pool.id} key={pool.id}>{pool.name}{pool.enabled ? '' : ' (disabled)'}</option>)}
         </select></label>
-        <div className="card-actions"><Button variant="secondary" disabled={mutation.isPending || !engine.enabled} onClick={() => void check(engine, adapter)}><FlaskConical size={16} />Test connection</Button>
+        <div className="card-actions"><Button variant="secondary" disabled={mutation.isPending || !engine.enabled} onClick={() => void check(engine, adapter)}><FlaskConical size={16} />Request health check</Button>
           <Button variant="secondary" disabled={mutation.isPending} onClick={() => edit(engine)} aria-label={`Settings for ${engine.display_name}`}><Settings2 size={16} />Settings</Button>
+          <Button variant="secondary" disabled={mutation.isPending} onClick={() => setUsage(engine)} aria-label={`Profiles using ${engine.display_name}`}>Used by</Button>
           {adapter.capabilities.supports_rules && <Button variant="secondary" onClick={() => setRulesEngine(engine)}><FileCode2 size={16} />Rules</Button>}
         </div><div className="card-footer"><Button variant="secondary" disabled={mutation.isPending} onClick={() => void perform(() => request('/api/ui/v1/engines/{instance_id}/enabled', 'put', { params: { instance_id: engine.id }, csrf, body: { enabled: !engine.enabled } }), `${engine.display_name} ${engine.enabled ? 'disabled' : 'enabled'}.`)}>{engine.enabled ? 'Disable' : 'Enable'}</Button>
           <Button variant="destructive" disabled={mutation.isPending} onClick={() => setDeleting(engine)} aria-label={`Remove ${engine.display_name}`}><Trash2 size={15} /></Button></div>
@@ -201,6 +204,7 @@ export default function Engines({ session }: { session: Session }) {
       </form>}
     </Dialog>
     <Dialog open={!!deleting} onOpenChange={open => { if (!open && !mutation.isPending) setDeleting(null) }} title="Remove engine deployment?" description="Historical jobs keep their original identity. Jobs from this instance will not be rebound to another deployment.">
+      {deleting && !mutation.isPending && <EngineUsageDisclosure key={deleting.id} instanceId={deleting.id} />}
       {formError && <p role="alert" className="error"><ErrorMessage message={formError} /></p>}
       <p>Remove <strong>{deleting?.display_name}</strong>?</p><div className="dialog-actions"><Button variant="secondary" onClick={() => setDeleting(null)}>Cancel</Button><Button variant="destructive" disabled={mutation.isPending} onClick={async () => {
         if (deleting && await perform(() => request('/api/ui/v1/engines/{instance_id}', 'delete', { params: { instance_id: deleting.id }, csrf }), 'Engine deployment removed.')) setDeleting(null)
@@ -208,10 +212,13 @@ export default function Engines({ session }: { session: Session }) {
     </Dialog>
     <Dialog open={!!placement} onOpenChange={open => { if (!open && !mutation.isPending) setPlacement(null) }} title="Change worker pool?"
       description={placement ? `${placement.engine.display_name} will run on ${placement.poolId === null ? 'any worker that runs this engine' : `the ${inventory.pools.find(pool => pool.id === placement.poolId)?.name ?? `pool #${placement.poolId}`} pool only`}. Its health is checked again.` : ''}>
+      {placement && !mutation.isPending && <EngineUsageDisclosure key={placement.engine.id} instanceId={placement.engine.id} />}
       <div className="dialog-actions"><Button variant="secondary" disabled={mutation.isPending} onClick={() => setPlacement(null)}>Cancel</Button><Button disabled={mutation.isPending} onClick={async () => {
         if (placement && await perform(() => request('/api/ui/v1/engines/{instance_id}/placement', 'put', { params: { instance_id: placement.engine.id }, csrf, body: { pool_id: placement.poolId } }), 'Worker pool saved. Health will be checked again.')) setPlacement(null)
       }}>{mutation.isPending ? 'Saving…' : 'Change worker pool'}</Button></div>
     </Dialog>
     <Dialog open={!!rulesEngine} onOpenChange={open => { if (!open) setRulesEngine(null) }} title="YARA rules" description="Manage the local rule files for this configured YARA instance.">{rulesEngine && <RuleManager engine={rulesEngine} session={session} />}</Dialog>
+    <Dialog open={!!usage} onOpenChange={open => { if (!open) setUsage(null) }} title={usage ? `Profiles using ${usage.display_name}` : 'Engine references'}
+      description="Inspect current dependencies before changing an engine. This view makes no changes.">{usage && <EngineUsage key={usage.id} instanceId={usage.id} />}</Dialog>
   </section>
 }

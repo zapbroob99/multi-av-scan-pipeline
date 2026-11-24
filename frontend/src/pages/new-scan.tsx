@@ -49,7 +49,7 @@ export default function NewScan({ session }: { session: Session }) {
   const uncertain = upload.error && (!(upload.error instanceof ApiError) || upload.error.status >= 500)
   return <section className="page"><div className="page-heading"><div><p className="eyebrow">MANUAL INTAKE</p>
     <h1>Submit sample</h1><p className="muted">Store a file and queue it for the configured scan engines.</p></div>
-    <Link className="button button-secondary" to="/dashboard">Dashboard</Link></div>
+    <Link className="button button-secondary" to="/dashboard">Manual scans</Link></div>
     {upload.data ? <section className="submission-card" aria-live="polite"><h2>Scan accepted</h2>
       <p className="notice">Scan #{upload.data.scan_id} was stored and queued. This is not a completed scan or a clean verdict.</p>
       <p className="muted">Workers execute the engines asynchronously. The report shows progress, detection coverage and the policy decision.</p>

@@ -94,7 +94,7 @@ export function NotificationBell({ admin, csrf }: { admin: boolean; csrf: string
         {feed.isPending && <p className="muted notifications-empty">Loading…</p>}
         {feed.error && <p role="alert" className="error"><ErrorMessage message={feed.error.message} /></p>}
         {feed.data && !detections.length && <p className="muted notifications-empty">{feed.data.cleared
-          ? <>No new detections. Earlier ones stay in the <Link to="/dashboard">dashboard</Link> and the <Link to="/api-ledger">API ledger</Link>.</>
+          ? <>No new detections. Earlier ones stay in the <Link to="/dashboard">dashboard</Link> and the <Link to="/api-ledger">Integration scans</Link>.</>
           : 'No detections recorded.'}</p>}
         {detections.length > 0 && <ul>{detections.map(item => <li key={item.scan_id}>
           <Link to={detectionLink(item)} className={`notification notification-detection${item.unread ? ' is-unread' : ''}`}>

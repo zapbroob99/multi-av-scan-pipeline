@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 
-export type ClientTab = 'settings' | 'setup' | 'profiles' | 'storage' | 'credentials'
+export type ClientTab = 'overview' | 'settings' | 'setup' | 'profiles' | 'storage' | 'credentials'
 export const ClientWorkspace = createContext<{
+  mode?: 'route'
   clientId: number
   tab: ClientTab
   select: (tab: ClientTab) => void
@@ -25,5 +26,5 @@ export function ClientPanelLink({ clientId, tab, children, className }: {
   const workspace = useContext(ClientWorkspace)
   return workspace
     ? <button type="button" className={className || 'client-inline-link'} onClick={() => workspace.select(tab)}>{children}</button>
-    : <Link className={className} to={tab === 'settings' ? '/service-clients' : `/service-clients/${clientId}/${tab}`}>{children}</Link>
+    : <Link className={className} to={tab === 'settings' ? '/service-clients' : tab === 'profiles' ? `/policies/profiles/${clientId}` : tab === 'storage' ? `/storage/access/${clientId}` : `/service-clients/${clientId}/${tab}`}>{children}</Link>
 }
