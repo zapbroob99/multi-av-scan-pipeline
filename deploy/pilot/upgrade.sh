@@ -262,10 +262,11 @@ else
         set_env MASP_WORKER_ENROLLMENT_TOKEN "" "$candidate_env"
         note "MASP_WORKER_ENROLLMENT_TOKEN emptied (placeholder); enrolled workers keep working"
     fi
-    if [[ "$(env_value MASP_SECRET_ENCRYPTION_KEY "$candidate_env")" == CHANGE_ME* ]]; then
+    encryption_key="$(env_value MASP_SECRET_ENCRYPTION_KEY "$candidate_env")"
+    if [[ -z "$encryption_key" || "$encryption_key" == '""' || "$encryption_key" == "''" || "$encryption_key" == CHANGE_ME* ]]; then
         command -v openssl >/dev/null || die "openssl is needed to generate MASP_SECRET_ENCRYPTION_KEY"
         set_env MASP_SECRET_ENCRYPTION_KEY "$(openssl rand 32 | base64 | tr '+/' '-_')" "$candidate_env"
-        note "MASP_SECRET_ENCRYPTION_KEY generated (was a placeholder)"
+        note "MASP_SECRET_ENCRYPTION_KEY generated (was empty or a placeholder)"
     fi
 
     # An explicit worker engine list must name the built-in engines to run them.

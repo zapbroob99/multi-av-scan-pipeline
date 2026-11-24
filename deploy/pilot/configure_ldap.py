@@ -56,13 +56,13 @@ def quoted(value):
 
 PROBE = """
 import json, os, sys
-from app.services.ldap_auth import authenticate_ldap
+from app.services.ldap_auth import authenticate_ldap, load_ldap_config
 from app.database import connect
 try:
     args = json.load(sys.stdin)
     if any(os.getenv(k) != v for k, v in args['settings'].items()):
         sys.exit('LDAP ayarları Compose üzerinden doğru aktarılmadı.')
-    user = authenticate_ldap(args['user'], args['password'])
+    user = authenticate_ldap(args['user'], args['password'], load_ldap_config(os.environ))
     if not user or user.role != args['role']:
         sys.exit('Test girişi veya beklenen rol doğrulanamadı.')
     with connect() as db:

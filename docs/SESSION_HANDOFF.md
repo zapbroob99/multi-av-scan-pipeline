@@ -1,5 +1,33 @@
 # MASP session handoff
 
+## Console-managed connections (2026-11-24)
+
+The user requested changing LDAP/AI settings from the browser. Admin-only
+`/console/administration/connections` exposes complete saved settings, enabled
+state, replacement credentials and explicit saved-connection tests. Credential
+fields are write-only and bypass React/query/mutation state. Secrets are Fernet
+encrypted using the existing deployment key. Blank preserves a credential.
+First save imports any inherited credential, including meaningful LDAP password
+whitespace. Provider records atomically replace environment configuration and
+use compare-and-swap revision guards. Runtime reads are uncached. Failures do
+not fall back to environment configuration. Local login remains available.
+
+LDAP tests reuse throttling, verify the expected role and reject local-user
+collisions without creating sessions/users. AI tests use the saved endpoint,
+model and key. All writes/tests use existing pre-body admin/CSRF guards.
+Deployment CA file compatibility is retained, with public PEM editing in the UI.
+Wizard probes test their explicit environment configuration. Console overrides
+take precedence at runtime, so mixed-version API fleets must upgrade together.
+Pilot.26 prepares an encryption key if the previous env value is empty or a
+placeholder. Existing keys are retained. No live institutional acceptance or
+PostgreSQL upgrade/rollback rehearsal has been performed.
+
+Validation passed: 241 selected backend tests (20 environment skips), 253
+frontend tests, browser contract consistency and production build. The packaged
+pilot.26 image passed 33 Linux connection/installer/script tests. The final
+single-file installer's Linux payload check passed. Source and installer
+artifacts are under ignored `dist/`.
+
 ## Aselix pilot and GitHub synchronization (2026-11-24)
 
 Pilot.25 includes optional operator-initiated Aselix assistance for general MASP

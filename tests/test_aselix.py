@@ -1,15 +1,23 @@
 import io
 import os
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 from pydantic import ValidationError
 from fastapi import HTTPException
 
 from app.services import aselix
+from app import database as db
 
 
 class AselixTests(unittest.TestCase):
     def setUp(self):
+        temporary = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(temporary.cleanup)
+        self.enterContext(patch.object(db, "DB_PATH", Path(temporary.name) / "test.db"))
+        self.enterContext(patch.object(db, "DATABASE_URL", ""))
+        db.init_db()
         self.enterContext(patch.dict(os.environ, MASP_ASELIX_ENABLED='1',
             MASP_ASELIX_URL='https://ai.test/v1/chat/completions', MASP_ASELIX_MODEL='model',
             MASP_ASELIX_API_KEY='test-only', MASP_ASELIX_CA_PEM_B64=''))

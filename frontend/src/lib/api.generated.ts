@@ -51,6 +51,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/administration/connections/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Connection Settings */
+        get: operations["read_connection_settings_api_ui_v1_administration_connections__provider__get"];
+        /** Save Connection Settings */
+        put: operations["save_connection_settings_api_ui_v1_administration_connections__provider__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ui/v1/administration/connections/{provider}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test Connection Settings */
+        post: operations["test_connection_settings_api_ui_v1_administration_connections__provider__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/api-ledger": {
         parameters: {
             query?: never;
@@ -2384,6 +2419,27 @@ export interface components {
             /** Wait Seconds */
             wait_seconds: number | null;
         };
+        /** ConnectionField */
+        ConnectionField: {
+            /**
+             * Advanced
+             * @default false
+             */
+            advanced?: boolean;
+            /** Choices */
+            choices?: string[];
+            /** Help */
+            help: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Value
+             * @default
+             */
+            value?: string;
+        };
         /** ConnectionMethod */
         ConnectionMethod: {
             /** Checks */
@@ -2401,6 +2457,81 @@ export interface components {
             ready: boolean;
             /** Summary */
             summary: string;
+        };
+        /** ConnectionSave */
+        ConnectionSave: {
+            /** Enabled */
+            enabled: boolean;
+            /** Expected Revision */
+            expected_revision: string;
+            /** Secret */
+            secret?: string | null;
+            /** Values */
+            values: {
+                [key: string]: string;
+            };
+        };
+        /** ConnectionSaved */
+        ConnectionSaved: {
+            /**
+             * Saved
+             * @default true
+             */
+            saved?: boolean;
+        };
+        /** ConnectionSnapshot */
+        ConnectionSnapshot: {
+            /**
+             * Deployment Ca File
+             * @default false
+             */
+            deployment_ca_file?: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Fields */
+            fields: components["schemas"]["ConnectionField"][];
+            /** Has Secret */
+            has_secret: boolean;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "ldap" | "aselix";
+            /** Revision */
+            revision: string;
+            /** Secret Storage Available */
+            secret_storage_available: boolean;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "environment" | "console";
+        };
+        /** ConnectionTest */
+        ConnectionTest: {
+            /** Expected Revision */
+            expected_revision: string;
+            /** Expected Role */
+            expected_role?: ("admin" | "analyst") | null;
+            /** Password */
+            password?: string | null;
+            /**
+             * Username
+             * @default
+             */
+            username?: string;
+        };
+        /** ConnectionTestResult */
+        ConnectionTestResult: {
+            /** Message */
+            message: string;
+            /** Role */
+            role?: ("admin" | "analyst") | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
         };
         /** CreateBody */
         CreateBody: {
@@ -4940,6 +5071,296 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    read_connection_settings_api_ui_v1_administration_connections__provider__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: "ldap" | "aselix";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionSnapshot"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    save_connection_settings_api_ui_v1_administration_connections__provider__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: "ldap" | "aselix";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionSave"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionSaved"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    test_connection_settings_api_ui_v1_administration_connections__provider__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: "ldap" | "aselix";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionTest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionTestResult"];
+                };
             };
             /** @description Bad Request */
             400: {

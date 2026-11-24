@@ -133,3 +133,14 @@ services:
 No live directory is exercised by the unit suite. Production acceptance must
 use the organization's actual certificate chain, directory topology, and group
 membership behavior.
+
+## Console configuration (pilot.26)
+
+Administrators can configure LDAP under **Administration > LDAP & AI**.
+Search-account credentials are encrypted with the deployment's
+`MASP_SECRET_ENCRYPTION_KEY`. GET returns only credential presence. Replacement
+and test passwords are write-only. Tests reuse login throttling and never create
+a user or session. Keep a local emergency administrator and back up the encryption
+key together with the deployment configuration. A console record takes precedence
+over environment values for subsequent directory sign-ins. Role/password changes
+follow the existing sign-in and session lifecycle.

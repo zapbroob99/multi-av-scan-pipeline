@@ -41,6 +41,7 @@ const SystemOverview = lazy(() => import('./pages/system-overview'))
 const Retention = lazy(() => import('./pages/retention'))
 const ScanPolicy = lazy(() => import('./pages/scan-policy'))
 const Configuration = lazy(() => import('./pages/configuration'))
+const ConnectionSettings = lazy(() => import('./pages/connection-settings'))
 const HashScan = lazy(() => import('./pages/hash-scan'))
 const FileHistory = lazy(() => import('./pages/file-history'))
 const AutomationManagement = lazy(() => import('./pages/automation-management'))
@@ -204,6 +205,7 @@ function App() {
         <Route path="/service-clients" element={session.data.user.role === 'admin' ? <ServiceClients session={session.data} /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/configuration" element={session.data.user.role === 'admin' ? <Configuration /> : <section className="empty"><h1>Administrator access required</h1></section>} />
+        <Route path="/administration/connections" element={session.data.user.role === 'admin' ? <ConnectionSettings session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/scan-policy" element={session.data.user.role === 'admin' ? <ScanPolicy session={session.data} area="limits" /> :
           <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route element={session.data.user.role === 'admin' ? <Outlet /> : <section className="empty"><h1>Administrator access required</h1><p>Your session does not have system-management permissions.</p></section>}>

@@ -1,6 +1,8 @@
 ﻿import { Link } from 'react-router-dom'
 
 const TASKS = [
+  { title: 'Configure LDAP and AI', text: 'Manage directory sign-in, role groups and the internal Aselix endpoint. Test saved connections before rollout.', scope: 'Global · subsequent sign-ins and AI requests',
+    links: [['/administration/connections', 'Manage LDAP & AI']] },
   { title: 'Connect an integration', text: 'Choose a client to follow its connection, profile, limits and engine routing.', scope: 'Per client · new submissions',
     links: [['/service-clients', 'Choose a client'], ['/service-clients/new', 'Create a service client']] },
   { title: 'Change file handling', text: 'Edit ordered rules on a client profile. Hash allowlist entries are informational; exact-file exceptions change the decision.', scope: 'Client profiles and security policy',

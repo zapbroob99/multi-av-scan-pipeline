@@ -11,11 +11,11 @@ from configure_ldap import ask, verify_settings
 
 
 PROBE = """
-import sys
+import os, sys
 from fastapi import HTTPException
 from app.services.aselix import ask, ChatQuestion
 try:
-    ask(ChatQuestion(question='Connection test. Reply OK.'))
+    ask(ChatQuestion(question='Connection test. Reply OK.'), environment=dict(os.environ))
 except HTTPException as exc:
     sys.exit(exc.detail)
 print('Aselix HTTPS, credential and model check passed.')

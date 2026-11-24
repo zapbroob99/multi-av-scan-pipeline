@@ -13,6 +13,15 @@ arbitrary command parsers.
 
 ## Current Runtime
 
+- Admin `/console/administration/connections` manages LDAP and Aselix settings.
+  Per-provider encrypted database records replace environment fallbacks. Reads
+  and writes must omit plaintext credentials, preserve revision CAS guards and
+  admin/CSRF checks, and keep test passwords outside UI/query state. Runtime
+  configuration reads fail closed and are uncached. LDAP tests use throttling,
+  role and local-username collision checks without creating users or sessions.
+  The encryption master key remains deployment-owned. Upgrade all API processes
+  before using console overrides. See `docs/deployment/PILOT.md`.
+
 - Console navigation is task-owned (2026-11-13): Scans, Integrations, Storage,
   Policies, Scan infrastructure, Administration. Keep rail, section links and
   breadcrumbs in `frontend/src/lib/navigation.ts`. Storage stays discoverable before

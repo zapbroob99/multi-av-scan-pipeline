@@ -31,6 +31,7 @@ export const NAVIGATION: NavigationArea[] = [
     { to: '/system/runtime', label: 'Runtime & queue' },
   ] },
   { id: 'administration', label: 'Administration', admin: true, items: [
+    { to: '/administration/connections', label: 'LDAP & AI' },
     { to: '/users', label: 'Operators' },
     { to: '/scan-policy', label: 'Limits & API behavior' },
     { to: '/administration/notifications', label: 'Notifications' },

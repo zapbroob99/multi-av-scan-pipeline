@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from app import database as db
 from app.services import auth
 from app.services import aselix
+from app.services import connection_settings
 from app.services import login_throttle
 from app.services import date_range
 from app.services import file_history
@@ -198,6 +199,25 @@ class ErrorPayload(BaseModel):
 
 router = APIRouter(prefix=PREFIX, tags=["Browser console"], route_class=BrowserRoute,
     responses={status: {"model": ErrorPayload} for status in (400, 401, 403, 404, 409, 413, 422, 503)})
+
+
+@router.get('/administration/connections/{provider}', response_model=connection_settings.ConnectionSnapshot)
+def read_connection_settings(provider: connection_settings.Provider):
+    return connection_settings.read(provider)
+
+
+@router.put('/administration/connections/{provider}', response_model=connection_settings.ConnectionSaved)
+def save_connection_settings(request: Request, provider: connection_settings.Provider, body: connection_settings.ConnectionSave):
+    connection_settings.save(provider, body)
+    set_audit_context(request, details={'provider': provider, 'enabled': body.enabled})
+    return connection_settings.ConnectionSaved()
+
+
+@router.post('/administration/connections/{provider}/test', response_model=connection_settings.ConnectionTestResult)
+def test_connection_settings(request: Request, provider: connection_settings.Provider, body: connection_settings.ConnectionTest):
+    result = connection_settings.test(provider, body, address=request.client.host if request.client else None)
+    set_audit_context(request, details={'provider': provider, 'success': True})
+    return result
 
 
 class SubmissionOptions(BaseModel):

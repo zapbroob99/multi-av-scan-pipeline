@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import binascii
 import math
-import os
 import ssl
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -82,7 +81,16 @@ def _positive_number(
 
 
 def load_ldap_config(env: Mapping[str, str] | None = None) -> LdapConfig:
-    source = os.environ if env is None else env
+    source = env
+    if source is None:
+        from fastapi import HTTPException
+        from app import database as db
+        from app.services.connection_settings import effective_environment
+        from app.services.secret_store import SecretStoreError
+        try:
+            source = effective_environment("ldap")
+        except (HTTPException, SecretStoreError, ValueError) + db.DatabaseOperationalError as exc:
+            raise LdapConfigurationError("LDAP settings could not be read.") from exc
     enabled = _env_bool(source, "MASP_LDAP_ENABLED")
     if not enabled:
         return LdapConfig(enabled=False)

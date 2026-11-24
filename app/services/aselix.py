@@ -2,7 +2,6 @@
 
 import base64
 import json
-import os
 import ssl
 from http.client import HTTPException as HTTPTransportError
 from threading import BoundedSemaphore
@@ -47,13 +46,25 @@ _slots = BoundedSemaphore(4)
 
 
 def enabled():
-    return os.getenv("MASP_ASELIX_ENABLED") == "1"
+    from app.services.connection_settings import is_enabled
+    from app import database as db
+    try:
+        return is_enabled("aselix")
+    except (HTTPException,) + db.DatabaseOperationalError:
+        return False
 
 
-def settings():
-    url = os.getenv("MASP_ASELIX_URL", "").strip()
-    key = os.getenv("MASP_ASELIX_API_KEY", "").strip()
-    model = os.getenv("MASP_ASELIX_MODEL", "").strip()
+def settings(environment=None):
+    from app.services.connection_settings import effective_environment
+    from app.services.secret_store import SecretStoreError
+    from app import database as db
+    try:
+        env = effective_environment("aselix") if environment is None else environment
+    except (SecretStoreError, ValueError) + db.DatabaseOperationalError:
+        raise HTTPException(503, "Aselix settings could not be read.") from None
+    url = env.get("MASP_ASELIX_URL", "").strip()
+    key = env.get("MASP_ASELIX_API_KEY", "").strip()
+    model = env.get("MASP_ASELIX_MODEL", "").strip()
     try:
         parts = urlsplit(url)
         if (parts.scheme != "https" or not parts.hostname or parts.username is not None
@@ -63,7 +74,7 @@ def settings():
                 or any(ord(c) < 33 or ord(c) == 127 for c in url + key)):
             raise ValueError()
         context = ssl.create_default_context()
-        ca = os.getenv("MASP_ASELIX_CA_PEM_B64", "")
+        ca = env.get("MASP_ASELIX_CA_PEM_B64", "")
         if ca:
             context.load_verify_locations(cadata=base64.b64decode(ca, validate=True).decode("ascii"))
         return url, key, model, context
@@ -82,13 +93,13 @@ def report_context(scan):
     }
 
 
-def ask(question: ChatQuestion, scan_id: int | None = None, *, automation=False) -> ChatAnswer:
-    if not enabled():
+def ask(question: ChatQuestion, scan_id: int | None = None, *, automation=False, environment=None) -> ChatAnswer:
+    if not (enabled() if environment is None else environment.get("MASP_ASELIX_ENABLED") == "1"):
         raise HTTPException(503, "Aselix is disabled.")
     if not _slots.acquire(blocking=False):
         raise HTTPException(429, "Aselix is busy. Try again later.")
     try:
-        url, key, model, context = settings()
+        url, key, model, context = settings(environment)
         system = SYSTEM
         if scan_id is not None:
             scan = scan_report_read.report(scan_id, automation=automation)

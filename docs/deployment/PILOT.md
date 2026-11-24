@@ -16,6 +16,38 @@
 
 ## Upgrade notes
 
+### Console-managed LDAP and AI (pilot.26)
+
+Upgrade an existing pilot with
+`sudo bash /tmp/masp-pilot-0.1.0-pilot.26-install.run`.
+Open **Administration > LDAP & AI** as an administrator. Existing deployment
+settings appear on first load. Enter directory host, TLS method, search-account
+DN/password, search base and role-group DNs, or the Aselix HTTPS URL/model/key.
+Advanced settings include directory attributes, timeouts and public PEM CA
+certificates. Save with the switch off while preparing a connection, use
+**Test saved settings**, then enable and save it.
+
+LDAP testing asks for a test user's username, password and expected role. It
+checks credentials, group mapping and local-username collisions. Aselix testing
+sends a short synthetic question. Test results describe one request. A test
+uses the displayed saved revision and is refused after a concurrent edit.
+
+Search-account passwords and API keys can be replaced at any time. Blank keeps
+the existing credential. First save copies an inherited environment credential
+into encrypted database storage. New logins and AI calls read current settings
+without restarting the app. Existing sign-in sessions follow their existing
+lifecycle. Preserve a working local administrator account for recovery.
+The console record replaces that provider's environment configuration. After
+saving here, change the connection in the console. Installer wizard flags
+configure and test environment fallbacks only.
+
+Credentials use the existing `MASP_SECRET_ENCRYPTION_KEY` outside the database.
+Keep this key with deployment backups. The pilot upgrade generates it when
+empty or still a placeholder, and preserves an existing configured key.
+Other deployments must configure a valid Fernet key before saving a credential.
+All API processes must run pilot.26 or newer before console overrides are used.
+Older processes read environment configuration only.
+
 ### Aselix AI on an existing pilot
 
 Copy `masp-pilot-0.1.0-pilot.25-install.run` to the Linux host and run

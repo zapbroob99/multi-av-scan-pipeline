@@ -2421,6 +2421,76 @@ class BrowserApiTests(unittest.TestCase):
         parent = self.create_scan('outer.zip', batch_id=batch, scan_role='container', status='completed')
         return parent, batch
 
+    def test_connection_settings_require_admin_csrf_and_do_not_return_credentials(self):
+        from app.services import connection_settings
+        paths = ('/administration/connections/ldap', '/administration/connections/aselix')
+        with patch.object(connection_settings, 'save') as save, patch.object(connection_settings, 'test') as test:
+            for path in paths:
+                self.assertEqual(self.request(path, session=False)[0], 401)
+                self.assertEqual(self.request(path, 'PUT', {}, csrf=False)[0], 403)
+                self.assertEqual(self.reads, 0)
+                self.assertEqual(self.request(path + '/test', 'POST', {}, origin='https://other.test')[0], 403)
+                self.assertEqual(self.reads, 0)
+            with db.connect() as connection:
+                connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+            for path in paths:
+                self.assertEqual(self.request(path)[0], 403)
+                self.assertEqual(self.request(path, 'PUT', {})[0], 403)
+                self.assertEqual(self.reads, 0)
+                self.assertEqual(self.request(path + '/test', 'POST', {})[0], 403)
+                self.assertEqual(self.reads, 0)
+            save.assert_not_called()
+            test.assert_not_called()
+        with db.connect() as connection:
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
+        env = dict(MASP_SECRET_ENCRYPTION_KEY=Fernet.generate_key().decode(),
+                   MASP_ASELIX_ENABLED='0', MASP_ASELIX_API_KEY='', MASP_ASELIX_CA_PEM_B64='')
+        with patch.dict(os.environ, env):
+            path = paths[1]
+            status, snapshot, headers = self.request(path)
+            self.assertEqual(status, 200)
+            self.assertEqual(headers[b'cache-control'], b'no-store')
+            body = dict(expected_revision=snapshot['revision'], enabled=True,
+                        values={field['key']: field['value'] for field in snapshot['fields']}, secret='browser-secret')
+            body['values'].update(URL='https://ai.test/v1/chat/completions', MODEL='browser-model')
+            self.assertEqual(self.request(path, 'PUT', body)[0], 200)
+            status, snapshot, _ = self.request(path)
+            self.assertEqual(status, 200)
+            self.assertTrue(snapshot['has_secret'])
+            self.assertEqual(snapshot['source'], 'console')
+            self.assertNotIn('browser-secret', json.dumps(snapshot))
+            self.assertNotIn('browser-secret', db.get_setting('connection.aselix'))
+            self.assertTrue(self.request('/session')[1]['assistant_enabled'])
+            self.assertEqual(self.request(path, 'PUT', body)[0], 409)
+            status, invalid, _ = self.request(path, 'PUT', body | {'unknown': 'sensitive-input'})
+            self.assertEqual(status, 422)
+            self.assertNotIn('sensitive-input', json.dumps(invalid))
+
+    def test_connection_ldap_saved_disabled_settings_test_role_and_local_collision(self):
+        from app.services import connection_settings, ldap_auth
+        with patch.dict(os.environ, MASP_SECRET_ENCRYPTION_KEY=Fernet.generate_key().decode(),
+                        MASP_LDAP_ENABLED='0', MASP_LDAP_CA_PEM_B64='', MASP_LDAP_BIND_PASSWORD=''):
+            snapshot = connection_settings.read('ldap')
+            values = {field.key: field.value for field in snapshot.fields}
+            values.update(HOST='directory.test', BASE_DN='DC=test', BIND_DN='CN=reader',
+                          ADMIN_GROUP_DN='CN=admins,DC=test')
+            connection_settings.save('ldap', connection_settings.ConnectionSave(
+                expected_revision=snapshot.revision, enabled=False, values=values, secret='search password'))
+            body = dict(expected_revision=connection_settings.read('ldap').revision,
+                        username='directory-operator', password='test password', expected_role='admin')
+            identity = ldap_auth.LdapIdentity(username='directory-operator', external_id='CN=operator', display_name=None, role='admin')
+            path = '/administration/connections/ldap/test'
+            with patch.object(ldap_auth, 'authenticate_ldap', return_value=identity) as authenticate:
+                status, result, _ = self.request(path, 'POST', body)
+                self.assertEqual(status, 200, result)
+                self.assertEqual(result['role'], 'admin')
+                self.assertEqual(authenticate.call_args.args[2].bind_password, 'search password')
+                self.assertFalse(ldap_auth.ldap_enabled())
+                self.assertIsNone(db.get_user_by_username('directory-operator'))
+                identity = ldap_auth.LdapIdentity(username='browser-admin', external_id='CN=operator', display_name=None, role='admin')
+                authenticate.return_value = identity
+                self.assertEqual(self.request(path, 'POST', body)[0], 409)
+
     def test_aselix_browser_guards_report_scope_and_provider_payload(self):
         import io
         scan, _ = self.report_fixture(detected=True)
