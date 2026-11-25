@@ -1,0 +1,40 @@
+MASP HTTPS 443 erişim testi
+
+1. ZIP'i Windows'ta yazılabilir bir klasöre çıkarın. sunucu-test.sh dosyasını
+   HTTPS 443'ü karşılayan Linux/Nginx sunucusunda /tmp altına kopyalayın.
+   Adres bir VIP/yük dengeleyiciye aitse ilk bağlantıyı orada gözlemleyin.
+2. SSH oturumunda çalıştırın: bash /tmp/sunucu-test.sh
+   tcpdump, timeout, ss, curl ve paket dinleme yetkisi gerekir. Betik başlarken
+   ve biterken raporun tam yolunu gösterir. Uygulama veya firewall ayarı değişmez.
+3. Dinleme başlayınca Windows'ta PC-Baslat.cmd dosyasına çift tıklayın.
+   Tarayıcıdaki doğrudan HTTPS adresini girin. Birden fazla IPv4 adresi
+   gösterilirse önceki başarısız testin RemoteAddress değerini seçin.
+   Aynı hedef için terminal sunucusunda da PC testini çalıştırabilirsiniz.
+   Kurumun PowerShell politikası betiği engellerse onaylı çalıştırma yolunu kullanın.
+4. PC her seferinde iki ayrı bağlantı açar: önce TCP 443, ardından aynı IP'ye
+   HTTPS /health. HTTPS testi alan adını ve sertifika doğrulamasını korur,
+   doğrudan erişimi ölçmek için proxy kullanmaz. Tarayıcı PAC/proxy veya IPv6
+   kullanıyorsa tarayıcının izlediği yol farklı olabilir. On deneme yapılır.
+5. Windows'taki masp-pc-*.csv ile Linux'ta bildirilen masp-sunucu.log dosyasını
+   birlikte değerlendirin. Her iki kayıt UTC kullanır. Saatler senkron olmalı.
+   NAT kaynak IP ve portu değiştirebilir. Sunucu kaydı diğer istemcilerin de
+   bağlantı üstbilgilerini içerebilir. Trafiğin içeriği veya parola kaydedilmez.
+
+Sonuçları okuma
+
+TCP=OK ve HTTP=200 o denemede doğrudan yolun ve sağlık uç noktasının çalıştığını
+gösterir. TCP ve HTTPS ayrı denemelerdir; birinin başarılı olması diğerinin de
+başarılı olduğunu göstermez. HTTPS kaydındaki süreler saniyedir.
+TCP zaman aşımında TCP denemesinin UTC saati ve kaynak portunu sunucu kaydıyla
+eşleştirin. Başarısız sokette kaynak IP bazen 0.0.0.0 olarak görünebilir.
+HTTPS için https_utc satırını ve varsa curl'ün yerel portunu kullanın.
+Sunucu kaydındaki [S] istek, [S.] cevap, [R] veya [R.] sıfırlama paketidir.
+Bu kayıt son ACK paketini içermez. İstek gözlenmiyorsa önce doğru TLS giriş
+noktasında dinlendiğini ve NAT eşleşmesini kontrol edin. SYN geliyor ve cevap
+görülmüyorsa dinleyici/yerel filtre/dönüş rotasını inceleyin. SYN-ACK çıkıyorsa
+cevabın istemciye ulaştığını ağ ekibiyle doğrulayın. Paket sınırına ulaşılmışsa
+veya tcpdump paket kaçırmışsa eksik satırlardan kesin sonuç çıkarmayın.
+TCP kuruluyor ancak TLS tamamlanmıyorsa curl hata metnine bakın. HTTP 502/504
+geliyorsa aynı saniyedeki Nginx ve backend durumunu inceleyin. Bu test LDAP
+oturumu açmaz. /health başarılıyken panel sorunluysa F12 Network'te bekleyen
+gerçek isteğin yolu ve durumunu kontrol edin.

@@ -31,7 +31,7 @@ export const NAVIGATION: NavigationArea[] = [
     { to: '/system/runtime', label: 'Runtime & queue' },
   ] },
   { id: 'administration', label: 'Administration', admin: true, items: [
-    { to: '/administration/connections', label: 'LDAP & AI' },
+    { to: '/administration/connections', label: 'Directory sign-in' },
     { to: '/users', label: 'Operators' },
     { to: '/scan-policy', label: 'Limits & API behavior' },
     { to: '/administration/notifications', label: 'Notifications' },
@@ -56,7 +56,6 @@ export function visibleNavigation(admin: boolean) {
 }
 
 export function locationTrail(path: string): [string, string] {
-  if (path === '/assistant') return ['Help', 'Aselix AI']
   if (path === '/account') return ['Personal', 'Account']
   if (path === '/about') return ['Personal', 'About']
   if (path === '/system/delivery') return ['Help', 'Connection and delivery monitoring']

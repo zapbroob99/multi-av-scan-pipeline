@@ -72,8 +72,38 @@ ALLOWED_SUFFIXES = {
     ".yml",
 }
 VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
+DISPLAY_NAME = re.compile(r"(?<![\w/-])MASP(?![\w/-])")
+
+
+def apply_brand(payloads: list[tuple[str, bytes]], profile: Path) -> list[tuple[str, bytes]]:
+    """Apply a deployment's display name and single-path glyph to the release copy."""
+    brand = json.loads(profile.read_text(encoding="utf-8"))
+    name, glyph = brand["name"], brand["glyph"]
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 ]{0,39}", name) or name != name.strip():
+        raise ValueError("Invalid deployment display name")
+    if len(glyph) > 4096 or not re.fullmatch(r"[Mm][MmZzLlHhVvCcSsQqTtAa0-9,. +\-]+", glyph):
+        raise ValueError("Invalid deployment logo path")
+    # Never rename protocol headers, environment variables, persisted keys,
+    # Windows service paths, image tags, or the operator's CLI.
+    app_files = {"app/main.py", "app/services/ui_api.py", "app/services/connection_settings.py",
+                 "app/services/engine_registry.py", "app/services/file_history.py", "app/services/hash_console.py",
+                 "app/services/worker_control.py", "app/services/profile_policy.py", "app/icap/server.py",
+                 "app/icap/protocol.py", "app/services/archive_inspection.py"}
+    branded = []
+    for path, data in payloads:
+        if (path.startswith("frontend/src/") or path == "frontend/index.html" or path in app_files
+                or path.startswith("tests/") or path.startswith("docs/") or path == "frontend/public/favicon.svg"):
+            content = DISPLAY_NAME.sub(name, data.decode("utf-8"))
+            if path in {"frontend/src/components/brand-mark.tsx", "frontend/public/favicon.svg"}:
+                content, changed = re.subn(r'(<path\b[^>]*?\sd=")[^"]+(")', rf'\g<1>{glyph}\2', content)
+                if changed != 1:
+                    raise ValueError(f"Expected a single logo path in {path}")
+            data = content.encode("utf-8")
+        branded.append((path, data))
+    return branded
+
+
 FORBIDDEN_PATTERNS = (
-    ("real Aselix API key", re.compile(r"(?m)^MASP_ASELIX_API_KEY=[^\s$<{]+$")),
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     (
         "real API token",
@@ -196,6 +226,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True, help="Example: 0.1.0-pilot.1")
     parser.add_argument("--output-dir", default=str(DIST_DIR))
+    parser.add_argument("--brand-file", type=Path, help="Local JSON with a display name and SVG path for a 64 by 64 logo.")
     parser.add_argument(
         "--allow-dirty",
         action="store_true",
@@ -215,8 +246,10 @@ def main() -> int:
         if not args.allow_dirty:
             ensure_clean_release_inputs(paths)
         payloads = checked_payloads(paths)
+        if args.brand_file:
+            payloads = apply_brand(payloads, args.brand_file)
         commit = git_output("rev-parse", "HEAD")
-    except (RuntimeError, subprocess.CalledProcessError) as exc:
+    except (OSError, KeyError, TypeError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"Refusing to package: {exc}", file=sys.stderr)
         return 1
 

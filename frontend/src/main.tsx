@@ -23,7 +23,6 @@ import './styles.css'
 
 const Users = lazy(() => import('./pages/users'))
 const Account = lazy(() => import('./pages/account'))
-const AselixAssistant = lazy(() => import('./components/aselix-assistant'))
 const Engines = lazy(() => import('./pages/engines'))
 const Dashboard = lazy(() => import('./pages/dashboard'))
 const NewScan = lazy(() => import('./pages/new-scan'))
@@ -147,7 +146,6 @@ function App() {
   </aside><main className="workspace"><header className="topbar">
     <ol className="breadcrumb" aria-label="Location"><li>MASP</li><li>{section}</li><li>{title}</li></ol>
     <div className="topbar-status"><span className="offline-label">SELF-HOSTED</span>
-      {session.data.assistant_enabled && <Link to="/assistant">Aselix AI</Link>}
       <NotificationBell admin={session.data.user.role === 'admin'} csrf={session.data.csrf_token} />
       <span className="topbar-divider" aria-hidden="true" />
       <div className="topbar-user"><span className="user-avatar" aria-hidden="true">{initials(session.data.user.username)}</span>
@@ -162,8 +160,6 @@ function App() {
         }} />} />
         <Route path="/users" element={session.data.user.role === 'admin' ? <Users session={session.data} /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/about" element={<About session={session.data} />} />
-        {session.data.assistant_enabled && <Route path="/assistant" element={<section className="page"><h1>Aselix AI</h1>
-          <AselixAssistant key={session.data.user.id} csrf={session.data.csrf_token} /></section>} />}
         <Route path="/audit" element={session.data.user.role === 'admin' ? <Audit /> : <section className="empty"><h1>Administrator access required</h1></section>} />
         <Route path="/dashboard" element={<Dashboard session={session.data} />} />
         <Route path="/scans/new" element={<NewScan session={session.data} />} />

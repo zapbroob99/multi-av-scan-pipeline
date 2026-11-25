@@ -27,3 +27,4 @@ agent.md
 
 # Operator-local ClamAV update settings (see clamav.env.example)
 clamav.env
+kilavuz/

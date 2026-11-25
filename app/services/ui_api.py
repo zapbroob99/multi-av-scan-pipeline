@@ -17,7 +17,6 @@ from starlette.concurrency import run_in_threadpool
 
 from app import database as db
 from app.services import auth
-from app.services import aselix
 from app.services import connection_settings
 from app.services import login_throttle
 from app.services import date_range
@@ -131,10 +130,6 @@ class BrowserRoute(APIRoute):
                     PREFIX + "/files/{sha256}",
                 }
                 retry_allowed = request.method == 'POST' and self.path == PREFIX + '/scans/{scan_id}/retry'
-                assistant_allowed = request.method == 'POST' and self.path in {
-                    PREFIX + '/assistant/chat', PREFIX + '/scans/{scan_id}/assistant',
-                    PREFIX + '/api-ledger/scans/{scan_id}/assistant',
-                }
                 hash_allowed = (request.method == 'GET' and self.path == PREFIX + '/hash-scan/options') or (request.method == 'POST' and self.path == PREFIX + '/hash-scan')
                 account_allowed = (request.method == 'GET' and self.path == PREFIX + '/account') or (request.method == 'POST' and self.path == PREFIX + '/account/password')
                 about_allowed = request.method == 'GET' and self.path == PREFIX + '/about'
@@ -145,7 +140,7 @@ class BrowserRoute(APIRoute):
                     PREFIX + '/storage/overview', PREFIX + '/storage/locations/{location_id}',
                     PREFIX + '/storage/locations/{location_id}/objects', PREFIX + '/storage/findings',
                 }
-                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not assistant_allowed and not hash_allowed and not account_allowed and not about_allowed and not notifications_allowed and not storage_read_allowed and user.role != "admin":
+                if not self.path.startswith(PREFIX + "/session") and not dashboard_read_allowed and not upload and not retry_allowed and not hash_allowed and not account_allowed and not about_allowed and not notifications_allowed and not storage_read_allowed and user.role != "admin":
                     raise HTTPException(403, "Admin permission is required.")
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 origin = str(request.base_url).rstrip("/")
@@ -220,6 +215,11 @@ def test_connection_settings(request: Request, provider: connection_settings.Pro
     return result
 
 
+@router.post('/administration/connections/ldap/search', response_model=connection_settings.DirectoryMatches)
+def search_directory(body: connection_settings.DirectoryLookup):
+    return connection_settings.lookup(body)
+
+
 class SubmissionOptions(BaseModel):
     file_max_bytes: int | None
     body_max_bytes: int
@@ -265,21 +265,6 @@ def submission_options():
 @router.get('/scans/{scan_id}', response_model=scan_report_read.ScanReport)
 def read_scan_report(scan_id: int = Path(ge=1, le=9007199254740991)):
     return scan_report_read.report(scan_id)
-
-
-@router.post('/assistant/chat', response_model=aselix.ChatAnswer)
-def assistant_chat(body: aselix.ChatQuestion):
-    return aselix.ask(body)
-
-
-@router.post('/scans/{scan_id}/assistant', response_model=aselix.ChatAnswer)
-def manual_assistant(body: aselix.ChatQuestion, scan_id: int = Path(ge=1, le=9007199254740991)):
-    return aselix.ask(body, scan_id)
-
-
-@router.post('/api-ledger/scans/{scan_id}/assistant', response_model=aselix.ChatAnswer)
-def automation_assistant(body: aselix.ChatQuestion, scan_id: int = Path(ge=1, le=9007199254740991)):
-    return aselix.ask(body, scan_id, automation=True)
 
 
 @router.get('/scans/{scan_id}/children', response_model=archive_read.ArchivePage)
@@ -1151,7 +1136,6 @@ class UserPayload(BaseModel):
 class SessionPayload(BaseModel):
     user: UserPayload
     csrf_token: str
-    assistant_enabled: bool | None = None
 
 
 class HealthPayload(BaseModel):
@@ -1230,7 +1214,7 @@ class RuleSaved(BaseModel):
 
 def session_payload(user, token: str):
     return {"user": {"id": user.id, "username": user.username, "role": user.role},
-            "csrf_token": csrf_token(token), "assistant_enabled": aselix.enabled()}
+            "csrf_token": csrf_token(token)}
 
 
 @router.get("/session", response_model=SessionPayload)

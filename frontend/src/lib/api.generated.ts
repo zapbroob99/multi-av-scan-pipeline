@@ -86,6 +86,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ui/v1/administration/connections/ldap/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search Directory */
+        post: operations["search_directory_api_ui_v1_administration_connections_ldap_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui/v1/api-ledger": {
         parameters: {
             query?: never;
@@ -201,23 +218,6 @@ export interface paths {
         post?: never;
         /** Delete Automation Scan */
         delete: operations["delete_automation_scan_api_ui_v1_api_ledger_scans__scan_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ui/v1/api-ledger/scans/{scan_id}/assistant": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Automation Assistant */
-        post: operations["automation_assistant_api_ui_v1_api_ledger_scans__scan_id__assistant_post"];
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -370,23 +370,6 @@ export interface paths {
         get: operations["automation_summary_export_api_ui_v1_api_ledger_scans__scan_id__summary_export_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ui/v1/assistant/chat": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Assistant Chat */
-        post: operations["assistant_chat_api_ui_v1_assistant_chat_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -891,23 +874,6 @@ export interface paths {
         post?: never;
         /** Delete Manual Scan */
         delete: operations["delete_manual_scan_api_ui_v1_scans__scan_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ui/v1/scans/{scan_id}/assistant": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Manual Assistant */
-        post: operations["manual_assistant_api_ui_v1_scans__scan_id__assistant_post"];
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2167,18 +2133,6 @@ export interface components {
             /** Requested Count */
             requested_count: number;
         };
-        /** ChatAnswer */
-        ChatAnswer: {
-            /** Answer */
-            answer: string;
-        };
-        /** ChatQuestion */
-        ChatQuestion: {
-            /** History */
-            history?: components["schemas"]["Turn"][];
-            /** Question */
-            question: string;
-        };
         /** ClientChoice */
         ClientChoice: {
             /** Client Key */
@@ -2494,9 +2448,9 @@ export interface components {
             has_secret: boolean;
             /**
              * Provider
-             * @enum {string}
+             * @constant
              */
-            provider: "ldap" | "aselix";
+            provider: "ldap";
             /** Revision */
             revision: string;
             /** Secret Storage Available */
@@ -2657,6 +2611,32 @@ export interface components {
             unread: boolean;
             /** Verdict */
             verdict: string;
+        };
+        /** DirectoryLookup */
+        DirectoryLookup: {
+            /** Expected Revision */
+            expected_revision: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "group";
+            /** Term */
+            term: string;
+        };
+        /** DirectoryMatch */
+        DirectoryMatch: {
+            /** Dn */
+            dn: string;
+            /** Name */
+            name: string;
+        };
+        /** DirectoryMatches */
+        DirectoryMatches: {
+            /** Limited */
+            limited: boolean;
+            /** Matches */
+            matches: components["schemas"]["DirectoryMatch"][];
         };
         /** EnabledBody */
         EnabledBody: {
@@ -4423,8 +4403,6 @@ export interface components {
         };
         /** SessionPayload */
         SessionPayload: {
-            /** Assistant Enabled */
-            assistant_enabled?: boolean | null;
             /** Csrf Token */
             csrf_token: string;
             user: components["schemas"]["UserPayload"];
@@ -4703,13 +4681,6 @@ export interface components {
         ThroughDetection: {
             /** Through Scan Id */
             through_scan_id: number;
-        };
-        /** Turn */
-        Turn: {
-            /** Answer */
-            answer: string;
-            /** Question */
-            question: string;
         };
         /** UpdateUserBody */
         UpdateUserBody: {
@@ -5151,7 +5122,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                provider: "ldap" | "aselix";
+                provider: "ldap";
             };
             cookie?: never;
         };
@@ -5245,7 +5216,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                provider: "ldap" | "aselix";
+                provider: "ldap";
             };
             cookie?: never;
         };
@@ -5343,7 +5314,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                provider: "ldap" | "aselix";
+                provider: "ldap";
             };
             cookie?: never;
         };
@@ -5360,6 +5331,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionTestResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorPayload"];
+                };
+            };
+        };
+    };
+    search_directory_api_ui_v1_administration_connections_ldap_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectoryLookup"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryMatches"];
                 };
             };
             /** @description Bad Request */
@@ -6133,104 +6200,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScanDeleted"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Content Too Large */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Unprocessable Content */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-        };
-    };
-    automation_assistant_api_ui_v1_api_ledger_scans__scan_id__assistant_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scan_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChatQuestion"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ChatAnswer"];
                 };
             };
             /** @description Bad Request */
@@ -7098,102 +7067,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SummaryExport"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Content Too Large */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Unprocessable Content */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-        };
-    };
-    assistant_chat_api_ui_v1_assistant_chat_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChatQuestion"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ChatAnswer"];
                 };
             };
             /** @description Bad Request */
@@ -10627,104 +10500,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScanDeleted"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Content Too Large */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Unprocessable Content */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorPayload"];
-                };
-            };
-        };
-    };
-    manual_assistant_api_ui_v1_scans__scan_id__assistant_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scan_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChatQuestion"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ChatAnswer"];
                 };
             };
             /** @description Bad Request */

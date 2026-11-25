@@ -54,7 +54,6 @@ if [[ "${1:-}" == --help ]]; then
     echo 'Usage: sudo bash INSTALLER.run [upgrade.sh options]'
     echo 'Use --check to verify this file without installing.'
     echo 'Use --ldap to configure and verify directory login during upgrade (pilot.24+).'
-    echo 'Use --aselix to configure and verify the internal AI assistant (pilot.25+).'
     exit 0
 fi
 self="$(realpath "$0")"
@@ -70,7 +69,7 @@ root="${MASP_INSTALL_ROOT:-/opt/masp}"
 mkdir -p "$root"
 destination="$root/@PREFIX@"
 if [[ -e "$destination" || -L "$destination" ]]; then
-  if [[ ( "${1:-}" != --ldap && "${1:-}" != --aselix ) || ! -d "$destination" || -L "$destination" || "$destination" -ef "$root/current" ]]; then
+  if [[ "${1:-}" != --ldap || ! -d "$destination" || -L "$destination" || "$destination" -ef "$root/current" ]]; then
     echo "Release directory already exists: $destination" >&2
     exit 1
   fi

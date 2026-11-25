@@ -11,7 +11,7 @@
 # rollback command is printed.
 #
 # Usage: deploy/pilot/upgrade.sh [--image FILE] [--from DIR] [--backup-root DIR]
-#          [--skip-current-verify] [--dry-run] [--yes] [--ldap] [--aselix]
+#          [--skip-current-verify] [--dry-run] [--yes] [--ldap]
 #
 #   --image FILE            masp-pilot-<version>-image.tar (or -images.tar) with its
 #                           .sha256 beside it; looked up next to the bundle and in
@@ -39,7 +39,6 @@ SKIP_CURRENT_VERIFY=0
 DRY_RUN=0
 ASSUME_YES=0
 CONFIGURE_LDAP=0
-CONFIGURE_ASELIX=0
 BACKUP_DIR=""
 
 usage() {
@@ -55,13 +54,12 @@ while [[ $# -gt 0 ]]; do
         --dry-run) DRY_RUN=1; shift ;;
         --yes) ASSUME_YES=1; shift ;;
         --ldap) CONFIGURE_LDAP=1; shift ;;
-        --aselix) CONFIGURE_ASELIX=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
 done
 BACKUP_ROOT="${BACKUP_ROOT:-$DATA_ROOT/backups}"
-if [[ $DRY_RUN == 1 && ( $CONFIGURE_LDAP == 1 || $CONFIGURE_ASELIX == 1 ) ]]; then
+if [[ $DRY_RUN == 1 && $CONFIGURE_LDAP == 1 ]]; then
     echo "Provider setup requires an interactive upgrade; use --check to validate only the installer." >&2
     exit 2
 fi
@@ -319,13 +317,6 @@ if [[ $CONFIGURE_LDAP == 1 ]]; then
     if ! python3 "$SCRIPT_DIR/configure_ldap.py" "$candidate_env" "$PROJECT"; then
         [[ "$candidate_env" == "$NEW_ENV" ]] || rm -f "$candidate_env"
         die "LDAP preflight failed; the current release is still running"
-    fi
-fi
-if [[ $CONFIGURE_ASELIX == 1 ]]; then
-    note "Aselix configuration and connection test (before switching services)"
-    if ! python3 "$SCRIPT_DIR/configure_aselix.py" "$candidate_env" "$PROJECT"; then
-        [[ "$candidate_env" == "$NEW_ENV" ]] || rm -f "$candidate_env"
-        die "Aselix preflight failed; the current release is still running"
     fi
 fi
 validate_env="$candidate_env"

@@ -2423,7 +2423,7 @@ class BrowserApiTests(unittest.TestCase):
 
     def test_connection_settings_require_admin_csrf_and_do_not_return_credentials(self):
         from app.services import connection_settings
-        paths = ('/administration/connections/ldap', '/administration/connections/aselix')
+        paths = ('/administration/connections/ldap',)
         with patch.object(connection_settings, 'save') as save, patch.object(connection_settings, 'test') as test:
             for path in paths:
                 self.assertEqual(self.request(path, session=False)[0], 401)
@@ -2444,27 +2444,53 @@ class BrowserApiTests(unittest.TestCase):
         with db.connect() as connection:
             connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (self.user_id,))
         env = dict(MASP_SECRET_ENCRYPTION_KEY=Fernet.generate_key().decode(),
-                   MASP_ASELIX_ENABLED='0', MASP_ASELIX_API_KEY='', MASP_ASELIX_CA_PEM_B64='')
+                   MASP_LDAP_ENABLED='0', MASP_LDAP_BIND_PASSWORD='', MASP_LDAP_CA_PEM_B64='')
         with patch.dict(os.environ, env):
-            path = paths[1]
+            path = paths[0]
             status, snapshot, headers = self.request(path)
             self.assertEqual(status, 200)
             self.assertEqual(headers[b'cache-control'], b'no-store')
             body = dict(expected_revision=snapshot['revision'], enabled=True,
                         values={field['key']: field['value'] for field in snapshot['fields']}, secret='browser-secret')
-            body['values'].update(URL='https://ai.test/v1/chat/completions', MODEL='browser-model')
+            body['values'].update(HOST='directory.test', BIND_DN='CN=reader', BASE_DN='DC=test', ADMIN_GROUP_DN='CN=admins,DC=test')
             self.assertEqual(self.request(path, 'PUT', body)[0], 200)
             status, snapshot, _ = self.request(path)
             self.assertEqual(status, 200)
             self.assertTrue(snapshot['has_secret'])
             self.assertEqual(snapshot['source'], 'console')
             self.assertNotIn('browser-secret', json.dumps(snapshot))
-            self.assertNotIn('browser-secret', db.get_setting('connection.aselix'))
-            self.assertTrue(self.request('/session')[1]['assistant_enabled'])
+            self.assertNotIn('browser-secret', db.get_setting('connection.ldap'))
             self.assertEqual(self.request(path, 'PUT', body)[0], 409)
             status, invalid, _ = self.request(path, 'PUT', body | {'unknown': 'sensitive-input'})
             self.assertEqual(status, 422)
             self.assertNotIn('sensitive-input', json.dumps(invalid))
+
+    def test_directory_search_checks_access_and_uses_saved_unmapped_connection(self):
+        from app.services import connection_settings, ldap_auth
+        path = '/administration/connections/ldap/search'
+        self.assertEqual(self.request(path, 'POST', {}, session=False)[0], 401)
+        self.assertEqual(self.request(path, 'POST', {}, csrf=False)[0], 403)
+        self.assertEqual(self.reads, 0)
+        with patch.dict(os.environ, MASP_SECRET_ENCRYPTION_KEY=Fernet.generate_key().decode(),
+                        MASP_LDAP_CA_PEM_B64=''):
+            snapshot = connection_settings.read('ldap')
+            values = {field.key: field.value for field in snapshot.fields}
+            values.update(HOST='directory.test', BASE_DN='DC=test', BIND_DN='CN=reader',
+                          ADMIN_GROUP_DN='', ANALYST_GROUP_DN='')
+            connection_settings.save('ldap', connection_settings.ConnectionSave(
+                expected_revision=snapshot.revision, enabled=False, values=values, secret='reader password'))
+            body = dict(expected_revision=connection_settings.read('ldap').revision, kind='group', term='Team')
+            with patch.object(ldap_auth, 'directory_lookup', return_value={'matches': [], 'limited': False}) as lookup:
+                self.assertEqual(self.request(path, 'POST', body | {'expected_revision': 'stale'})[0], 409)
+                self.assertEqual(self.request(path, 'POST', body | {'term': ' '})[0], 422)
+                lookup.assert_not_called()
+                self.assertEqual(self.request(path, 'POST', body)[0], 200)
+                self.assertEqual(lookup.call_args.args[0].bind_password, 'reader password')
+                self.assertFalse(ldap_auth.ldap_enabled())
+                with db.connect() as connection:
+                    connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
+                self.assertEqual(self.request(path, 'POST', body)[0], 403)
+                lookup.assert_called_once()
 
     def test_connection_ldap_saved_disabled_settings_test_role_and_local_collision(self):
         from app.services import connection_settings, ldap_auth
@@ -2490,46 +2516,6 @@ class BrowserApiTests(unittest.TestCase):
                 identity = ldap_auth.LdapIdentity(username='browser-admin', external_id='CN=operator', display_name=None, role='admin')
                 authenticate.return_value = identity
                 self.assertEqual(self.request(path, 'POST', body)[0], 409)
-
-    def test_aselix_browser_guards_report_scope_and_provider_payload(self):
-        import io
-        scan, _ = self.report_fixture(detected=True)
-        auto = self.create_scan(source='api', status='completed')
-        body = {'question': 'What does the coverage mean?'}
-        with db.connect() as connection:
-            connection.execute("UPDATE users SET role = 'analyst' WHERE id = ?", (self.user_id,))
-        env = dict(MASP_ASELIX_ENABLED='1', MASP_ASELIX_URL='https://ai.test/v1/chat/completions',
-                   MASP_ASELIX_MODEL='test-model', MASP_ASELIX_API_KEY='test-key', MASP_ASELIX_CA_PEM_B64='')
-        with patch.dict(os.environ, env), patch('app.services.http_transport.open_without_redirects') as send:
-            self.assertTrue(self.request('/session')[1]['assistant_enabled'])
-            for route in ('/assistant/chat', f'/scans/{scan}/assistant', f'/api-ledger/scans/{auto}/assistant'):
-                self.assertEqual(self.request(route, 'POST', body, session=False)[0], 401)
-                self.assertEqual(self.reads, 0)
-                self.assertEqual(self.request(route, 'POST', body, csrf=False)[0], 403)
-                self.assertEqual(self.reads, 0)
-            self.assertEqual(self.request(f'/scans/{auto}/assistant', 'POST', body)[0], 404)
-            self.assertEqual(self.request(f'/api-ledger/scans/{scan}/assistant', 'POST', body)[0], 404)
-            self.assertEqual(self.request('/assistant/chat', 'POST', body | {'url': 'https://other.test'})[0], 422)
-            send.assert_not_called()
-            for route in ('/assistant/chat', f'/scans/{scan}/assistant', f'/api-ledger/scans/{auto}/assistant'):
-                send.return_value = io.BytesIO(b'{"choices":[{"message":{"content":"answer"}}]}')
-                status, result, headers = self.request(route, 'POST', body)
-                self.assertEqual((status, result), (200, {'answer': 'answer'}))
-                self.assertEqual(headers[b'cache-control'], b'no-store')
-                req = send.call_args.args[0]
-                self.assertEqual(req.get_header('Authorization'), 'Bearer test-key')
-                payload = json.loads(req.data)
-                self.assertEqual(payload['model'], 'test-model')
-                context = payload['messages'][0]['content']
-                self.assertEqual('Current MASP scan summary:' in context, route != '/assistant/chat')
-                if route == f'/scans/{scan}/assistant':
-                    self.assertEqual(json.loads(context.split('Current MASP scan summary: ')[1])['detecting_engines'], 1)
-                for private in ('sample.bin', 'internal note', 'Fixture.Test', 'Historic Defender', 'Case A', '<script>', 'c' * 64, 'test-key'):
-                    self.assertNotIn(private, context)
-            send.reset_mock()
-            with patch.dict(os.environ, MASP_ASELIX_ENABLED='0'):
-                self.assertEqual(self.request('/assistant/chat', 'POST', body)[0], 503)
-                send.assert_not_called()
 
     def test_printable_report_is_source_scoped_for_analysts(self):
         scan, _ = self.report_fixture(detected=True)

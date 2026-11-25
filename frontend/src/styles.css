@@ -975,4 +975,3 @@ a.notification-detection:hover { background: var(--surface-2); text-decoration: 
 @media (max-width: 600px) {
   .preview-limits > div { grid-template-columns: minmax(0, 1fr); gap: 6px; }
 }
-.assistant-answer { white-space: pre-wrap; overflow-wrap: anywhere; }

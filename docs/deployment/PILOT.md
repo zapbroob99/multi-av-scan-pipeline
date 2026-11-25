@@ -16,25 +16,77 @@
 
 ## Upgrade notes
 
-### Console-managed LDAP and AI (pilot.26)
+### Deployment branding (pilot.31)
+
+Release builders can supply a local JSON file to `package_pilot_release.py
+--brand-file PATH`. Provide a `name` and a `glyph` (SVG path data on a
+64 by 64 canvas). The console, printed report and browser tab use the packaged
+identity. The default build uses MASP. Keep proprietary assets outside Git.
+Existing installs keep the same service names, environment keys and data.
+
+### Find directory users and role groups (pilot.28)
+
+1. Open **Administration > Directory sign-in** with a local administrator account.
+   For initial setup, save the host, TLS settings, search account, its password
+   and the common base DN with LDAP off. Active Directory accepts a full DN,
+   UPN or `DOMAIN\username` as the search account.
+2. Under **Search directory**, choose **Users** and enter at least the first two
+   characters of a short username. Results use the saved filter and base.
+   **Use as test username** fills the sign-in test. With the default filter
+   `(sAMAccountName={username})`, enter the short account name without a domain.
+3. Choose **Groups** and search by the start of the group common name. Select
+   **Use as administrator group** or **Use as analyst group**, check the full DN
+   and confirm **Review LDAP changes** to save it. The search displays at most
+   20 matches. Narrow the prefix if the list is limited. Groups outside the
+   search base can still be mapped by entering their full DN manually.
+4. Run **Test LDAP connection** with the test user's password and expected role.
+   A rejected search account points to the saved bind identity or credential.
+   A successful search with zero matches points to the username, base, filter
+   or visibility. LDAP code 32 indicates a missing base and 50 reports
+   insufficient access. A role mismatch after sign-in calls for checking the
+   user's direct membership. Once verified, enable LDAP and save.
+
+Searching and testing do not create accounts. The first successful sign-in
+creates the MASP directory user and subsequent sign-ins recalculate its role.
+
+### LDAP setup and connection recovery (pilot.27)
+
+Install the single-file update without wizard flags and sign in with a local
+administrator. In **Administration > Directory sign-in**, keep LDAP off during initial
+setup. Save the directory host (certificate DNS name), port/TLS method, bind
+account DN/password, user search base and at least one direct role-group DN.
+Under Advanced settings add the public PEM CA chain when using an internal CA.
+Test the saved settings with an actual directory username, its password and the
+expected role. After successful verification enable LDAP and confirm the save.
+Verify a new sign-in in a separate browser session before closing the local one.
+
+Save stores settings without contacting the directory. If the browser loses
+its connection, reopen the console using its normal intranet URL or restore the
+SSH tunnel for localhost access. Select **Reload LDAP** to inspect the current
+settings before deciding whether to save again. Tests connect from the MASP
+application to the directory. Verify the corresponding DNS, TCP port, TLS
+trust and directory settings if the server reports a directory error. The
+browser stops waiting after 15 seconds for reads/writes and 60 seconds for
+tests. A client timeout can leave the outcome of a server operation unknown.
+
+### Console-managed LDAP (pilot.26)
 
 Upgrade an existing pilot with
 `sudo bash /tmp/masp-pilot-0.1.0-pilot.26-install.run`.
-Open **Administration > LDAP & AI** as an administrator. Existing deployment
+Open **Administration > Directory sign-in** as an administrator. Existing deployment
 settings appear on first load. Enter directory host, TLS method, search-account
-DN/password, search base and role-group DNs, or the Aselix HTTPS URL/model/key.
+DN/password, search base and role-group DNs.
 Advanced settings include directory attributes, timeouts and public PEM CA
 certificates. Save with the switch off while preparing a connection, use
 **Test saved settings**, then enable and save it.
 
 LDAP testing asks for a test user's username, password and expected role. It
-checks credentials, group mapping and local-username collisions. Aselix testing
-sends a short synthetic question. Test results describe one request. A test
+checks credentials, group mapping and local-username collisions. Test results describe one request. A test
 uses the displayed saved revision and is refused after a concurrent edit.
 
-Search-account passwords and API keys can be replaced at any time. Blank keeps
+Search-account passwords can be replaced at any time. Blank keeps
 the existing credential. First save copies an inherited environment credential
-into encrypted database storage. New logins and AI calls read current settings
+into encrypted database storage. New logins read current settings
 without restarting the app. Existing sign-in sessions follow their existing
 lifecycle. Preserve a working local administrator account for recovery.
 The console record replaces that provider's environment configuration. After
@@ -47,32 +99,6 @@ empty or still a placeholder, and preserves an existing configured key.
 Other deployments must configure a valid Fernet key before saving a credential.
 All API processes must run pilot.26 or newer before console overrides are used.
 Older processes read environment configuration only.
-
-### Aselix AI on an existing pilot
-
-Copy `masp-pilot-0.1.0-pilot.25-install.run` to the Linux host and run
-`sudo bash masp-pilot-0.1.0-pilot.25-install.run --aselix` in an interactive SSH terminal.
-Enter the full HTTPS URL ending in `/v1/chat/completions`, the exact model ID, the
-API key at the hidden prompt and, for an internal CA, the path to its public PEM
-chain on that host. The application container must be able to resolve the Aselix
-hostname and reach its HTTPS port. The installer sends a short test question from
-the candidate application before switching releases. A failed test stops the
-upgrade. Existing LDAP settings carry forward.
-
-After signing in, open **Aselix AI** in the console header for general chat or
-**Ask Aselix about this scan** on a manual or integration report. Each click on
-**Send to Aselix** sends the question and up to three previous exchanges in that
-conversation. Report questions also include status, risk score, coverage counts,
-policy action, and rule/exception indicators. Automatic context excludes sample
-bytes, identifiers, filenames, signatures, analyst notes and raw output. Operators
-choose what to type. MASP keeps the conversation in page memory. The institution's
-Aselix service controls retention of messages it receives. AI replies are advisory.
-
-For manual configuration, set `MASP_ASELIX_ENABLED=1`, `MASP_ASELIX_URL`,
-`MASP_ASELIX_MODEL` and `MASP_ASELIX_API_KEY` in the protected deployment
-environment. `MASP_ASELIX_CA_PEM_B64` optionally provides a base64-encoded public
-CA chain. Recreate the app service to apply changes or disable the feature with
-`MASP_ASELIX_ENABLED=0`. Each app process allows four concurrent assistant requests.
 
 ### Single-file offline upgrade
 

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from collections import UserDict
 from pathlib import Path
 from unittest.mock import patch
@@ -101,6 +102,7 @@ class FakeLdap:
         def __init__(self, server, **kwargs):
             FakeLdap.connections.append(kwargs)
             self.response = FakeLdap.response
+            self.result = {"result": 0}
             if kwargs.get("user", "").startswith("CN=Alice") and FakeLdap.invalid_password:
                 raise FakeLdapBindError("invalid credentials")
 
@@ -161,6 +163,40 @@ class LdapProtocolTests(unittest.TestCase):
         FakeLdap.invalid_password = True
         with self.loader:
             self.assertIsNone(ldap_auth.authenticate_ldap("alice", "wrong", self.config))
+
+    def test_empty_success_and_failed_search_have_distinct_diagnostics(self):
+        with self.loader, patch.object(FakeLdap.Connection, "search") as search:
+            search.return_value = (False, {"result": 0}, [], None)
+            with self.assertRaisesRegex(ldap_auth.LdapTestRejection, "No matching user"):
+                ldap_auth.authenticate_ldap("alice", "secret", self.config, diagnostic=True)
+            self.assertIsNone(ldap_auth.authenticate_ldap("alice", "secret", self.config))
+            search.return_value = (False, {"result": 32}, [], None)
+            with self.assertRaisesRegex(ldap_auth.LdapUnavailableError, "32.*base not found"):
+                ldap_auth.authenticate_ldap("alice", "secret", self.config, diagnostic=True)
+            self.assertTrue(all(conn["user"] == self.config.bind_dn for conn in FakeLdap.connections))
+
+    def test_lookup_escapes_prefix_limits_groups_and_never_binds_as_a_user(self):
+        groups = [dict(type="searchResEntry", dn=f"CN=team{i},DC=test", attributes={"cn": f"team{i}"}) for i in range(21)]
+        with self.loader, patch.object(FakeLdap.Connection, "search") as search:
+            search.return_value = (False, {"result": 4}, groups, None)
+            result = ldap_auth.directory_lookup(self.config, "group", "team*")
+            self.assertTrue(result["limited"])
+            self.assertEqual(len(result["matches"]), 20)
+            self.assertIn(r"(cn=team\2a*)", search.call_args.kwargs["search_filter"])
+            self.assertEqual(search.call_args.kwargs["size_limit"], 21)
+            search.return_value = (True, {"result": 0}, FakeLdap.response, None)
+            result = ldap_auth.directory_lookup(self.config, "user", "ali")
+            self.assertFalse(result["limited"])
+            self.assertEqual(result["matches"][0]["name"], "alice")
+            self.assertEqual(search.call_args.kwargs["search_filter"], "(sAMAccountName=ali*)")
+            self.assertEqual(len(FakeLdap.connections), 2)
+            self.assertTrue(all(conn["user"] == self.config.bind_dn for conn in FakeLdap.connections))
+
+    def test_group_filter_uses_only_classes_supported_by_the_directory_schema(self):
+        schema = SimpleNamespace(object_classes={"groupOfNames": object()})
+        with self.loader, patch.object(FakeLdap.Server, "schema", schema, create=True):
+            ldap_auth.directory_lookup(self.config, "group", "team")
+        self.assertEqual(FakeLdap.filters, ["(&(|(objectClass=groupOfNames))(cn=team*))"])
 
     def test_ambiguous_or_unauthorized_user_is_rejected_without_user_bind(self) -> None:
         FakeLdap.response = FakeLdap.response * 2

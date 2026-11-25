@@ -33,11 +33,6 @@ services:
       MASP_DEFERRED_BACKEND_CLIENTS_JSON: ${MASP_DEFERRED_BACKEND_CLIENTS_JSON:-}
       # Optional LDAP/Active Directory login. Only the app receives directory
       # credentials; workers and ICAP never need them.
-      MASP_ASELIX_ENABLED: ${MASP_ASELIX_ENABLED:-0}
-      MASP_ASELIX_URL: ${MASP_ASELIX_URL:-}
-      MASP_ASELIX_MODEL: ${MASP_ASELIX_MODEL:-}
-      MASP_ASELIX_API_KEY: ${MASP_ASELIX_API_KEY:-}
-      MASP_ASELIX_CA_PEM_B64: ${MASP_ASELIX_CA_PEM_B64:-}
       MASP_LDAP_ENABLED: ${MASP_LDAP_ENABLED:-0}
       MASP_LDAP_HOST: ${MASP_LDAP_HOST:-}
       MASP_LDAP_PORT: ${MASP_LDAP_PORT:-636}

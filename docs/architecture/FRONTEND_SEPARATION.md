@@ -2,12 +2,11 @@
 
 ## Current scope
 
-Admin `/console/administration/connections` now provides LDAP and Aselix editing
+Admin `/console/administration/connections` now provides LDAP editing
 and explicit tests of saved settings. Provider credentials are encrypted in the
 database and write-only in the browser. The editor uses local in-flight state,
 revision-fenced writes, confirmation and one fresh read after save. Uncertain
-writes require explicit reload. Runtime settings apply to subsequent sign-ins
-and AI requests, with environment fallback only before a console record exists.
+writes require explicit reload. Runtime settings apply to subsequent sign-ins, with environment fallback only before a console record exists.
 
 The independent React/TypeScript/Vite application in `frontend/` serves
 `/console/dashboard`, `/console/engines`, `/console/scans/new` and manual

@@ -16,7 +16,7 @@ from app.services.browser_db_budget import apply_read_budget, write_lock_timeout
 from app.services.secret_store import decrypt_secret, encrypt_secret, secret_encryption_available
 
 
-Provider = Literal["ldap", "aselix"]
+Provider = Literal["ldap"]
 MAX_RECORD = 98304
 _test_slots = BoundedSemaphore(2)
 
@@ -30,14 +30,13 @@ class ConnectionField(BaseModel):
     choices: list[str] = Field(default_factory=list)
 
 
-# The keys are the supported environment suffixes. Transport URLs are deployment
-# administration, never input accepted by chat or sign-in callers.
+# The keys are the supported environment suffixes. Directory settings are deployment administration.
 LDAP_FIELDS = [
     ConnectionField(key="HOST", label="Directory host", help="DNS name matching the directory TLS certificate."),
     ConnectionField(key="PORT", label="Directory port", help="Usually 636 for LDAPS or 389 for StartTLS.", value="636"),
     ConnectionField(key="TLS_MODE", label="TLS method", help="Use the method enabled by your directory team.", value="ldaps", choices=["ldaps", "starttls"]),
-    ConnectionField(key="BIND_DN", label="Search account", help="Full distinguishedName of a real account that can read users and group membership."),
-    ConnectionField(key="BASE_DN", label="User search base", help="OU or domain under which MASP searches for users."),
+    ConnectionField(key="BIND_DN", label="Search account", help=r"Account used to read the directory. Enter its full DN or, for Active Directory, DOMAIN\username or UPN."),
+    ConnectionField(key="BASE_DN", label="User search base", help="Full DN of the OU or domain containing the users and groups you want to find."),
     ConnectionField(key="ADMIN_GROUP_DN", label="Administrator group DN", help="Members receive MASP administrator access. At least one role group is required."),
     ConnectionField(key="ANALYST_GROUP_DN", label="Analyst group DN", help="Members receive analyst access. Use the group's full distinguishedName."),
     ConnectionField(key="USER_FILTER", label="User filter", help="Must contain {username}. OpenLDAP commonly uses (uid={username}).", value="(sAMAccountName={username})", advanced=True),
@@ -47,11 +46,7 @@ LDAP_FIELDS = [
     ConnectionField(key="CONNECT_TIMEOUT", label="Connect timeout (seconds)", help="From 1 to 15 seconds.", value="5", advanced=True),
     ConnectionField(key="RECEIVE_TIMEOUT", label="Receive timeout (seconds)", help="From 1 to 30 seconds.", value="8", advanced=True),
 ]
-ASELIX_FIELDS = [
-    ConnectionField(key="URL", label="Chat completion URL", help="Full HTTPS address ending in /v1/chat/completions."),
-    ConnectionField(key="MODEL", label="Model ID", help="Exact model ID supplied by your internal Aselix service."),
-]
-SECRET_SUFFIX = {"ldap": "BIND_PASSWORD", "aselix": "API_KEY"}
+SECRET_SUFFIX = {"ldap": "BIND_PASSWORD"}
 
 
 class ConnectionSnapshot(BaseModel):
@@ -92,7 +87,7 @@ class ConnectionTestResult(BaseModel):
 
 
 def field_specs(provider: Provider):
-    return (LDAP_FIELDS if provider == "ldap" else ASELIX_FIELDS) + [
+    return LDAP_FIELDS + [
         ConnectionField(key="CA_PEM", label="CA certificate chain (PEM)",
                         help="Public CA certificates for this connection. Leave blank to use system trust.",
                         advanced=True)]
@@ -128,7 +123,7 @@ def revision(raw):
 def environment_values(provider: Provider):
     prefix = "MASP_" + provider.upper() + "_"
     values = {field.key: os.getenv(prefix + field.key, field.value) for field in field_specs(provider)}
-    if provider == "ldap" and not os.getenv(prefix + "PORT"):
+    if not os.getenv(prefix + "PORT"):
         values["PORT"] = "389" if values["TLS_MODE"] == "starttls" else "636"
     ca = os.getenv(prefix + "CA_PEM_B64", "")
     try:
@@ -142,7 +137,7 @@ def environment_values(provider: Provider):
 
 def enabled_from_environment(provider):
     raw = os.getenv("MASP_" + provider.upper() + "_ENABLED", "")
-    return raw.strip().lower() in {"1", "true", "yes", "on"} if provider == "ldap" else raw == "1"
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def read(provider: Provider):
@@ -154,7 +149,7 @@ def read(provider: Provider):
         fields=[field.model_copy(update={"value": values[field.key]}) for field in field_specs(provider)],
         has_secret=bool(data["secret_encrypted"]) if data else bool(os.getenv("MASP_" + provider.upper() + "_" + SECRET_SUFFIX[provider], "")),
         secret_storage_available=secret_encryption_available(),
-        deployment_ca_file=provider == "ldap" and bool(os.getenv("MASP_LDAP_CA_CERT_FILE")))
+        deployment_ca_file=bool(os.getenv("MASP_LDAP_CA_CERT_FILE")))
 
 
 def configuration_environment(provider: Provider, data, *, include_secret=True):
@@ -179,11 +174,6 @@ def effective_environment(provider: Provider):
     return configuration_environment(provider, data, include_secret=data["enabled"] if data else True)
 
 
-def is_enabled(provider: Provider):
-    _, data = record(provider)
-    return data["enabled"] if data else enabled_from_environment(provider)
-
-
 def validate(provider, data):
     values = data["values"]
     specs = field_specs(provider)
@@ -204,27 +194,20 @@ def validate(provider, data):
             ca.encode("ascii")
         except (ValueError, OSError, UnicodeError):
             raise HTTPException(422, "Provide a valid public CA certificate chain in PEM format.") from None
-    if provider == "ldap":
-        try:
-            port = int(values["PORT"])
-            connect = float(values["CONNECT_TIMEOUT"])
-            receive = float(values["RECEIVE_TIMEOUT"])
-            if not (1 <= port <= 65535 and 1 <= connect <= 15 and 1 <= receive <= 30):
-                raise ValueError()
-        except ValueError:
-            raise HTTPException(422, "Directory port or timeout is outside the supported range.") from None
-    if not data["enabled"]:
-        return
-    env = configuration_environment(provider, data)
-    if provider == "ldap":
+    try:
+        port = int(values["PORT"])
+        connect = float(values["CONNECT_TIMEOUT"])
+        receive = float(values["RECEIVE_TIMEOUT"])
+        if not (1 <= port <= 65535 and 1 <= connect <= 15 and 1 <= receive <= 30):
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(422, "Directory port or timeout is outside the supported range.") from None
+    if data["enabled"]:
         from app.services.ldap_auth import LdapConfigurationError, load_ldap_config
         try:
-            load_ldap_config(env)
+            load_ldap_config(configuration_environment(provider, data))
         except LdapConfigurationError as exc:
             raise HTTPException(422, str(exc)) from None
-    else:
-        from app.services.aselix import settings
-        settings(env)
 
 
 def save(provider: Provider, body: ConnectionSave):
@@ -256,6 +239,43 @@ def save(provider: Provider, body: ConnectionSave):
             raise HTTPException(409, "Connection settings changed. Reload before saving.")
 
 
+class DirectoryLookup(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+    expected_revision: str = Field(min_length=1, max_length=64)
+    kind: Literal["user", "group"]
+    term: str = Field(min_length=2, max_length=100)
+
+
+class DirectoryMatch(BaseModel):
+    name: str
+    dn: str
+
+
+class DirectoryMatches(BaseModel):
+    matches: list[DirectoryMatch]
+    limited: bool
+
+
+def lookup(body: DirectoryLookup):
+    from app.services import ldap_auth
+    raw, data = record("ldap")
+    if body.expected_revision != revision(raw):
+        raise HTTPException(409, "LDAP settings changed. Reload before searching.")
+    if not _test_slots.acquire(blocking=False):
+        raise HTTPException(429, "Directory connection busy. Try again later.")
+    try:
+        env = configuration_environment("ldap", data)
+        env["MASP_LDAP_ENABLED"] = "1"
+        config = ldap_auth.load_ldap_config(env, require_role_groups=False)
+        return ldap_auth.directory_lookup(config, body.kind, body.term)
+    except ldap_auth.LdapConfigurationError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except ldap_auth.LdapUnavailableError as exc:
+        raise HTTPException(502, str(exc)) from None
+    finally:
+        _test_slots.release()
+
+
 def test(provider: Provider, body: ConnectionTest, *, address: str | None = None):
     raw, data = record(provider)
     if body.expected_revision != revision(raw):
@@ -265,11 +285,7 @@ def test(provider: Provider, body: ConnectionTest, *, address: str | None = None
     try:
         env = configuration_environment(provider, data)
         env["MASP_" + provider.upper() + "_ENABLED"] = "1"
-        if provider == "aselix":
-            from app.services.aselix import ask, ChatQuestion
-            ask(ChatQuestion(question="Connection test. Reply OK."), environment=env)
-            return ConnectionTestResult(message="Aselix answered a test question using the saved endpoint, credential and model.")
-        from app.services.ldap_auth import authenticate_ldap, load_ldap_config, LdapConfigurationError, LdapUnavailableError
+        from app.services.ldap_auth import authenticate_ldap, load_ldap_config, LdapConfigurationError, LdapUnavailableError, LdapTestRejection
         from app.services import login_throttle
         if not body.username.strip() or not body.password or not body.expected_role:
             raise HTTPException(422, "Provide a test username, password and expected role.")
@@ -278,15 +294,22 @@ def test(provider: Provider, body: ConnectionTest, *, address: str | None = None
             raise HTTPException(429, login_throttle.message(wait))
         try:
             config = load_ldap_config(env)
-            identity = authenticate_ldap(body.username, body.password.get_secret_value(), config)
-        except (LdapConfigurationError, LdapUnavailableError):
-            raise HTTPException(502, "LDAP test failed. Check DNS, TLS, search account, filter and group settings.") from None
+            identity = authenticate_ldap(body.username, body.password.get_secret_value(), config, diagnostic=True)
+        except LdapTestRejection as exc:
+            login_throttle.record_failure(body.username, address)
+            raise HTTPException(422, str(exc)) from None
+        except LdapConfigurationError as exc:
+            raise HTTPException(422, str(exc)) from None
+        except LdapUnavailableError as exc:
+            raise HTTPException(502, str(exc)) from None
+        except (OSError, ValueError):
+            raise HTTPException(502, "Could not open the LDAP connection. Verify the directory DNS name, port and trusted CA.") from None
         if identity is None:
             login_throttle.record_failure(body.username, address)
             raise HTTPException(422, "LDAP login or expected role could not be verified.")
         login_throttle.record_success(body.username)
         if identity.role != body.expected_role:
-            raise HTTPException(422, "LDAP login or expected role could not be verified.")
+            raise HTTPException(422, f"LDAP sign-in succeeded with the {identity.role} role. Check the expected role and direct group membership.")
         with db.connect() as connection:
             apply_read_budget(connection)
             local = connection.execute("""SELECT 1 FROM users WHERE auth_source = 'local'

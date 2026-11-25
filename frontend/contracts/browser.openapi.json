@@ -1087,43 +1087,6 @@
         "title": "BulkDeleteResult",
         "type": "object"
       },
-      "ChatAnswer": {
-        "properties": {
-          "answer": {
-            "title": "Answer",
-            "type": "string"
-          }
-        },
-        "required": [
-          "answer"
-        ],
-        "title": "ChatAnswer",
-        "type": "object"
-      },
-      "ChatQuestion": {
-        "additionalProperties": false,
-        "properties": {
-          "history": {
-            "items": {
-              "$ref": "#/components/schemas/Turn"
-            },
-            "maxItems": 3,
-            "title": "History",
-            "type": "array"
-          },
-          "question": {
-            "maxLength": 1500,
-            "minLength": 1,
-            "title": "Question",
-            "type": "string"
-          }
-        },
-        "required": [
-          "question"
-        ],
-        "title": "ChatQuestion",
-        "type": "object"
-      },
       "ClientChoice": {
         "properties": {
           "client_key": {
@@ -2020,10 +1983,7 @@
             "type": "boolean"
           },
           "provider": {
-            "enum": [
-              "ldap",
-              "aselix"
-            ],
+            "const": "ldap",
             "title": "Provider",
             "type": "string"
           },
@@ -2488,6 +2448,77 @@
           "unread"
         ],
         "title": "Detection",
+        "type": "object"
+      },
+      "DirectoryLookup": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Expected Revision",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "user",
+              "group"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "term": {
+            "maxLength": 100,
+            "minLength": 2,
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "kind",
+          "term"
+        ],
+        "title": "DirectoryLookup",
+        "type": "object"
+      },
+      "DirectoryMatch": {
+        "properties": {
+          "dn": {
+            "title": "Dn",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "dn"
+        ],
+        "title": "DirectoryMatch",
+        "type": "object"
+      },
+      "DirectoryMatches": {
+        "properties": {
+          "limited": {
+            "title": "Limited",
+            "type": "boolean"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/DirectoryMatch"
+            },
+            "title": "Matches",
+            "type": "array"
+          }
+        },
+        "required": [
+          "matches",
+          "limited"
+        ],
+        "title": "DirectoryMatches",
         "type": "object"
       },
       "EnabledBody": {
@@ -7960,17 +7991,6 @@
       },
       "SessionPayload": {
         "properties": {
-          "assistant_enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assistant Enabled"
-          },
           "csrf_token": {
             "title": "Csrf Token",
             "type": "string"
@@ -8786,29 +8806,6 @@
         "title": "ThroughDetection",
         "type": "object"
       },
-      "Turn": {
-        "additionalProperties": false,
-        "properties": {
-          "answer": {
-            "maxLength": 6000,
-            "minLength": 1,
-            "title": "Answer",
-            "type": "string"
-          },
-          "question": {
-            "maxLength": 1500,
-            "minLength": 1,
-            "title": "Question",
-            "type": "string"
-          }
-        },
-        "required": [
-          "question",
-          "answer"
-        ],
-        "title": "Turn",
-        "type": "object"
-      },
       "UpdateUserBody": {
         "additionalProperties": false,
         "properties": {
@@ -9563,6 +9560,117 @@
         ]
       }
     },
+    "/api/ui/v1/administration/connections/ldap/search": {
+      "post": {
+        "operationId": "search_directory_api_ui_v1_administration_connections_ldap_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectoryLookup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryMatches"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorPayload"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Search Directory",
+        "tags": [
+          "Browser console"
+        ]
+      }
+    },
     "/api/ui/v1/administration/connections/{provider}": {
       "get": {
         "operationId": "read_connection_settings_api_ui_v1_administration_connections__provider__get",
@@ -9572,10 +9680,7 @@
             "name": "provider",
             "required": true,
             "schema": {
-              "enum": [
-                "ldap",
-                "aselix"
-              ],
+              "const": "ldap",
               "title": "Provider",
               "type": "string"
             }
@@ -9686,10 +9791,7 @@
             "name": "provider",
             "required": true,
             "schema": {
-              "enum": [
-                "ldap",
-                "aselix"
-              ],
+              "const": "ldap",
               "title": "Provider",
               "type": "string"
             }
@@ -9812,10 +9914,7 @@
             "name": "provider",
             "required": true,
             "schema": {
-              "enum": [
-                "ldap",
-                "aselix"
-              ],
+              "const": "ldap",
               "title": "Provider",
               "type": "string"
             }
@@ -11058,130 +11157,6 @@
         ]
       }
     },
-    "/api/ui/v1/api-ledger/scans/{scan_id}/assistant": {
-      "post": {
-        "operationId": "automation_assistant_api_ui_v1_api_ledger_scans__scan_id__assistant_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "scan_id",
-            "required": true,
-            "schema": {
-              "maximum": 9007199254740991,
-              "minimum": 1,
-              "title": "Scan Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChatQuestion"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChatAnswer"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Content Too Large"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Unprocessable Content"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "summary": "Automation Assistant",
-        "tags": [
-          "Browser console"
-        ]
-      }
-    },
     "/api/ui/v1/api-ledger/scans/{scan_id}/children": {
       "get": {
         "operationId": "read_automation_archive_children_api_ui_v1_api_ledger_scans__scan_id__children_get",
@@ -12384,117 +12359,6 @@
           }
         },
         "summary": "Automation Summary Export",
-        "tags": [
-          "Browser console"
-        ]
-      }
-    },
-    "/api/ui/v1/assistant/chat": {
-      "post": {
-        "operationId": "assistant_chat_api_ui_v1_assistant_chat_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChatQuestion"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChatAnswer"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Content Too Large"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Unprocessable Content"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "summary": "Assistant Chat",
         "tags": [
           "Browser console"
         ]
@@ -16940,130 +16804,6 @@
           }
         },
         "summary": "Read Scan Report",
-        "tags": [
-          "Browser console"
-        ]
-      }
-    },
-    "/api/ui/v1/scans/{scan_id}/assistant": {
-      "post": {
-        "operationId": "manual_assistant_api_ui_v1_scans__scan_id__assistant_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "scan_id",
-            "required": true,
-            "schema": {
-              "maximum": 9007199254740991,
-              "minimum": 1,
-              "title": "Scan Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChatQuestion"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChatAnswer"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Content Too Large"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Unprocessable Content"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorPayload"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "summary": "Manual Assistant",
         "tags": [
           "Browser console"
         ]

@@ -1,59 +1,19 @@
 # MASP session handoff
 
-## Console-managed connections (2026-11-24)
+## LDAP directory discovery (pilot.28)
 
-The user requested changing LDAP/AI settings from the browser. Admin-only
-`/console/administration/connections` exposes complete saved settings, enabled
-state, replacement credentials and explicit saved-connection tests. Credential
-fields are write-only and bypass React/query/mutation state. Secrets are Fernet
-encrypted using the existing deployment key. Blank preserves a credential.
-First save imports any inherited credential, including meaningful LDAP password
-whitespace. Provider records atomically replace environment configuration and
-use compare-and-swap revision guards. Runtime reads are uncached. Failures do
-not fall back to environment configuration. Local login remains available.
+The admin connection settings page can search the saved LDAP base by user or
+group name prefix while sign-in is disabled. The lookup accepts the saved
+revision, requires admin/CSRF and returns at most 20 names and DNs. Group
+selection edits the existing role mapping draft. User selection fills the
+sign-in test. Provisioning remains tied to actual sign-in and direct membership.
+The admin test distinguishes empty results from directory failure, test-user
+bind rejection and missing role membership. See the pilot.28 deployment notes.
 
-LDAP tests reuse throttling, verify the expected role and reject local-user
-collisions without creating sessions/users. AI tests use the saved endpoint,
-model and key. All writes/tests use existing pre-body admin/CSRF guards.
-Deployment CA file compatibility is retained, with public PEM editing in the UI.
-Wizard probes test their explicit environment configuration. Console overrides
-take precedence at runtime, so mixed-version API fleets must upgrade together.
-Pilot.26 prepares an encryption key if the previous env value is empty or a
-placeholder. Existing keys are retained. No live institutional acceptance or
-PostgreSQL upgrade/rollback rehearsal has been performed.
+## Console-managed LDAP connections
 
-Validation passed: 241 selected backend tests (20 environment skips), 253
-frontend tests, browser contract consistency and production build. The packaged
-pilot.26 image passed 33 Linux connection/installer/script tests. The final
-single-file installer's Linux payload check passed. Source and installer
-artifacts are under ignored `dist/`.
-
-## Aselix pilot and GitHub synchronization (2026-11-24)
-
-Pilot.25 includes optional operator-initiated Aselix assistance for general MASP
-questions and manual/integration reports using an OpenAI-compatible HTTPS chat
-completion endpoint. The report context contains bounded decision and coverage
-metadata. Credentials stay in the deployment environment. The single-file
-installer supports `--aselix` with hidden key entry, optional public CA chain
-and a connection test from the candidate app before switching services.
-Institutional endpoint/model/credential acceptance remains deployment-owned.
-
-Production console build, browser contracts and all 250 frontend unit tests
-passed during packaging. Aselix/LDAP/browser guard tests passed. The packaged
-image passed a synthetic local HTTPS test for Bearer authentication, model
-selection, custom CA trust and rejection of an untrusted certificate. The Linux
-installer payload checksum passed. There was no live deployment or complete
-PostgreSQL upgrade/rollback rehearsal for pilot.25.
-
-The user requested publishing accumulated product changes to GitHub on the
-existing `feat/archive-handling` branch. Preserve the five previously staged
-local sample/skill files and the private `docs/PILOT_FOLLOWUPS.md` note outside
-the product commit. The generated offline installers stay under ignored
-`dist/`. Product HTML/PDF manuals remain labelled pilot.23.
-
-Pre-publication verification passed: 258 selected backend tests (20 environment
-skips), 250 frontend tests, production build, browser contract consistency,
-three contract generator tests and Git whitespace checks.
+The directory editor provides encrypted, revision-guarded saves and explicit sign-in tests.
+The upgrade preserves the deployment encryption key.
 
 ## LDAP pilot upgrade (2026-11-24)
 

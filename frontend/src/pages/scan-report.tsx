@@ -4,7 +4,6 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request, type ScanReport, type ReportEngine, type Session } from '../lib/api'
 import { Button } from '../components/ui/button'
-import AselixAssistant from '../components/aselix-assistant'
 import { BackLink } from '../components/section-tabs'
 import { Timestamp } from '../components/timestamp'
 import { ExceptionBadge, NotAllowedBadge, RuleBadge } from '../components/risk-badge'
@@ -92,9 +91,6 @@ export default function Report({ automation = false, session }: { automation?: b
         It applies to this exact SHA-256 when it is sent again; this scan keeps its decision.</p>}
       {exceptionAdded && <p role="status" className="notice">{exceptionAdded}</p>}
     </section>
-    {session?.assistant_enabled && <details className="submission-card"><summary>Ask Aselix about this scan</summary>
-      <AselixAssistant key={[scan.source, scan.id, scan.attempt_count, scan.job_revision, scan.status, scan.completed_engines, scan.detected_engines, scan.decision?.action].join('/')}
-        csrf={session.csrf_token} scanId={scan.id} automation={automation} /></details>}
     {scan.batch_id !== null && <p className="callout">The risk, coverage and engine results below describe this file.
       When the profile scans every archive member, the policy decision also includes those members.</p>}
     <div className="stats-row"><div><span>Recorded risk</span><strong>{scan.risk_score === null ? '—' : `${scan.risk_score}/100`}</strong></div>

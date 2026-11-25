@@ -13,7 +13,7 @@ arbitrary command parsers.
 
 ## Current Runtime
 
-- Admin `/console/administration/connections` manages LDAP and Aselix settings.
+- Admin `/console/administration/connections` manages LDAP settings.
   Per-provider encrypted database records replace environment fallbacks. Reads
   and writes must omit plaintext credentials, preserve revision CAS guards and
   admin/CSRF checks, and keep test passwords outside UI/query state. Runtime

@@ -22,6 +22,36 @@ class LdapUnavailableError(RuntimeError):
     """The configured LDAP directory cannot currently be reached or queried."""
 
 
+class LdapTestRejection(RuntimeError):
+    """Extra feedback for an administrator testing an identity."""
+
+
+def _search_failure(code):
+    reasons = {3: "Directory search time limit reached.", 4: "Too many directory matches.",
+               10: "The server returned a referral. Check the directory host and search base.",
+               32: "Search base not found. Verify its full DN.", 34: "Invalid DN syntax.",
+               50: "The search account lacks permission.", 53: "Directory refused this search."}
+    if type(code) is int:
+        return LdapUnavailableError(f"LDAP search returned code {code}. " + reasons.get(code, "Check the search base and filter."))
+    return LdapUnavailableError("LDAP search returned no usable result code.")
+
+
+def _search_entries(reply, connection, *, allow_partial=False):
+    if isinstance(reply, tuple):
+        ok, result, response = reply[:3]
+    else:
+        ok, result, response = reply, getattr(connection, "result", None), connection.response
+    code = result.get("result") if isinstance(result, Mapping) else None
+    partial = code == 4 and allow_partial
+    if type(code) is not int or (code != 0 and not partial):
+        raise _search_failure(code)
+    entries = [item for item in response or [] if isinstance(item, dict) and item.get("type") == "searchResEntry"]
+    # A successful empty SAFE_SYNC search can carry a false status.
+    if not ok and entries and not partial:
+        raise LdapUnavailableError("LDAP returned inconsistent search results.")
+    return entries, partial
+
+
 @dataclass(frozen=True)
 class LdapConfig:
     enabled: bool
@@ -80,7 +110,7 @@ def _positive_number(
     return value
 
 
-def load_ldap_config(env: Mapping[str, str] | None = None) -> LdapConfig:
+def load_ldap_config(env: Mapping[str, str] | None = None, *, require_role_groups: bool = True) -> LdapConfig:
     source = env
     if source is None:
         from fastapi import HTTPException
@@ -165,7 +195,7 @@ def load_ldap_config(env: Mapping[str, str] | None = None) -> LdapConfig:
         )
     if config.port > 65_535:
         raise LdapConfigurationError("MASP_LDAP_PORT must be at most 65535.")
-    if not config.admin_group_dn and not config.analyst_group_dn:
+    if require_role_groups and not config.admin_group_dn and not config.analyst_group_dn:
         raise LdapConfigurationError(
             "At least one LDAP admin or analyst group DN must be configured."
         )
@@ -179,10 +209,47 @@ def ldap_enabled(env: Mapping[str, str] | None = None) -> bool:
         return True
 
 
+def _transport(ldap3, config):
+    tls = ldap3.Tls(
+        validate=ssl.CERT_REQUIRED,
+        ca_certs_file=config.ca_cert_file,
+        ca_certs_data=config.ca_cert_data,
+        valid_names=[config.host],
+    )
+    server = ldap3.Server(
+        config.host,
+        port=config.port,
+        use_ssl=config.tls_mode == "ldaps",
+        tls=tls,
+        connect_timeout=config.connect_timeout,
+    )
+    auto_bind = (
+        ldap3.AUTO_BIND_TLS_BEFORE_BIND
+        if config.tls_mode == "starttls"
+        else ldap3.AUTO_BIND_NO_TLS
+    )
+    return server, auto_bind
+
+
+def _bind_search_account(ldap3, config, server, auto_bind):
+    return ldap3.Connection(
+        server,
+        user=config.bind_dn,
+        password=config.bind_password,
+        auto_bind=auto_bind,
+        auto_referrals=False,
+        client_strategy=ldap3.SAFE_SYNC,
+        read_only=True,
+        raise_exceptions=True,
+        receive_timeout=math.ceil(config.receive_timeout),
+    )
+
+
 def authenticate_ldap(
     username: str,
     password: str,
     config: LdapConfig | None = None,
+    *, diagnostic: bool = False,
 ) -> LdapIdentity | None:
     clean_username = username.strip()
     if (
@@ -197,24 +264,6 @@ def authenticate_ldap(
         return None
 
     ldap3, ldap_exceptions, escape_filter_chars = _load_ldap3()
-    tls = ldap3.Tls(
-        validate=ssl.CERT_REQUIRED,
-        ca_certs_file=active_config.ca_cert_file,
-        ca_certs_data=active_config.ca_cert_data,
-        valid_names=[active_config.host],
-    )
-    server = ldap3.Server(
-        active_config.host,
-        port=active_config.port,
-        use_ssl=active_config.tls_mode == "ldaps",
-        tls=tls,
-        connect_timeout=active_config.connect_timeout,
-    )
-    auto_bind = (
-        ldap3.AUTO_BIND_TLS_BEFORE_BIND
-        if active_config.tls_mode == "starttls"
-        else ldap3.AUTO_BIND_NO_TLS
-    )
     attributes = [
         active_config.username_attribute,
         active_config.group_attribute,
@@ -223,18 +272,11 @@ def authenticate_ldap(
         attributes.append(active_config.display_name_attribute)
 
     service_connection = None
+    stage = "contacting the directory with the search account"
     try:
-        service_connection = ldap3.Connection(
-            server,
-            user=active_config.bind_dn,
-            password=active_config.bind_password,
-            auto_bind=auto_bind,
-            auto_referrals=False,
-            client_strategy=ldap3.SAFE_SYNC,
-            read_only=True,
-            raise_exceptions=True,
-            receive_timeout=math.ceil(active_config.receive_timeout),
-        )
+        server, auto_bind = _transport(ldap3, active_config)
+        service_connection = _bind_search_account(ldap3, active_config, server, auto_bind)
+        stage = "searching for the user; check the search base, attributes and filter"
         escaped_username = escape_filter_chars(clean_username)
         search_filter = active_config.user_filter.replace(
             "{username}", escaped_username
@@ -246,18 +288,11 @@ def authenticate_ldap(
             attributes=attributes,
             size_limit=2,
         )
-        if isinstance(search_result, tuple) and len(search_result) >= 3:
-            if not search_result[0]:
-                raise LdapUnavailableError("LDAP search did not complete successfully.")
-            response = search_result[2]
-        else:
-            response = service_connection.response
-        entries = [
-            item
-            for item in (response or [])
-            if isinstance(item, dict) and item.get("type") == "searchResEntry"
-        ]
+        entries, _ = _search_entries(search_result, service_connection)
         if len(entries) != 1:
+            if diagnostic:
+                raise LdapTestRejection("No matching user. Check the short username, search base and user filter."
+                                        if not entries else "Multiple users matched. Narrow the user filter.")
             return None
         entry = entries[0]
         user_dn = str(entry.get("dn", "")).strip()
@@ -273,8 +308,12 @@ def authenticate_ldap(
         display_name = _first_text(
             values.get(active_config.display_name_attribute)
         )
-    except ldap_exceptions.LDAPException as exc:
-        raise LdapUnavailableError("LDAP search failed.") from exc
+    except ldap_exceptions.LDAPInvalidCredentialsResult as exc:
+        raise LdapUnavailableError("LDAP rejected the search account. Verify its DN and saved password.") from exc
+    except (ldap_exceptions.LDAPException, OSError) as exc:
+        if service_connection is not None and isinstance(getattr(exc, "result", None), int):
+            raise _search_failure(exc.result) from exc
+        raise LdapUnavailableError(f"LDAP failed while {stage}.") from exc
     finally:
         if service_connection is not None:
             service_connection.unbind()
@@ -293,6 +332,8 @@ def authenticate_ldap(
             receive_timeout=math.ceil(active_config.receive_timeout),
         )
     except (ldap_exceptions.LDAPBindError, ldap_exceptions.LDAPInvalidCredentialsResult):
+        if diagnostic:
+            raise LdapTestRejection("User found. Directory rejected the test user's sign-in.") from None
         return None
     except ldap_exceptions.LDAPException as exc:
         raise LdapUnavailableError("LDAP user bind failed.") from exc
@@ -302,6 +343,8 @@ def authenticate_ldap(
 
     role = _mapped_role(raw_groups, active_config)
     if role is None:
+        if diagnostic:
+            raise LdapTestRejection("User sign-in succeeded but no configured direct role group matched.")
         return None
 
     return LdapIdentity(
@@ -310,6 +353,52 @@ def authenticate_ldap(
         display_name=display_name,
         role=role,
     )
+
+
+def directory_lookup(config: LdapConfig, kind: str, term: str):
+    ldap3, exceptions, escape = _load_ldap3()
+    connection = None
+    try:
+        server, auto_bind = _transport(ldap3, config)
+        connection = _bind_search_account(ldap3, config, server, auto_bind)
+        connection.raise_exceptions = False  # Preserve bounded rows on sizeLimitExceeded.
+        prefix = escape(term) + "*"
+        if kind == "group":
+            group_classes = ("group", "groupOfNames", "groupOfUniqueNames", "posixGroup")
+            schema = getattr(server, "schema", None)
+            if schema and schema.object_classes:
+                group_classes = tuple(name for name in group_classes if name in schema.object_classes)
+                if not group_classes:
+                    raise LdapConfigurationError("The directory schema has no supported group class.")
+            classes = "".join(f"(objectClass={name})" for name in group_classes)
+            query = f"(&(|{classes})(cn={prefix}))"
+            attribute = "cn"
+        elif kind == "user":
+            query = config.user_filter.replace("{username}", prefix)
+            attribute = config.username_attribute
+        else:
+            raise LdapConfigurationError("Unsupported directory search type.")
+        reply = connection.search(search_base=config.base_dn, search_filter=query, search_scope=ldap3.SUBTREE,
+                                  attributes=[attribute], size_limit=21, time_limit=8)
+        entries, partial = _search_entries(reply, connection, allow_partial=True)
+        matches = []
+        for entry in entries[:20]:
+            dn = entry.get("dn")
+            name = _first_text((entry.get("attributes") or {}).get(attribute))
+            if not name or not isinstance(dn, str) or not 0 < len(dn) <= 2048 or len(name) > 512:
+                partial = True
+                continue
+            matches.append({"name": name, "dn": dn})
+        return {"matches": matches, "limited": partial or len(entries) > 20}
+    except exceptions.LDAPInvalidCredentialsResult:
+        raise LdapUnavailableError("LDAP rejected the search account. Verify its DN and saved password.") from None
+    except (exceptions.LDAPException, OSError, ValueError):
+        if connection is None:
+            raise LdapUnavailableError("LDAP failed while connecting with the search account. Check the host, port, TLS and account settings.") from None
+        raise LdapUnavailableError("LDAP search failed after the search account connected. Check the search base, attributes and filter.") from None
+    finally:
+        if connection is not None:
+            connection.unbind()
 
 
 def _mapped_role(raw_groups: Any, config: LdapConfig) -> str | None:
